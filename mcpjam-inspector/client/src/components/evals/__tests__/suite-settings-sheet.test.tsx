@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
+  ciOwnedSuite,
   openSettingsRow,
   renderSettingsSheet,
   baseSuite,
@@ -347,5 +348,107 @@ describe("degrading and refusing", () => {
   it("a read-only suite offers no bar to save from", () => {
     renderSettingsSheet({ readOnlyConfig: true } as never);
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+  });
+});
+
+/**
+ * A CI-managed suite renders the sheet as a viewer.
+ *
+ * The lock's whole point is that a person can still SEE what the suite is
+ * configured to do — the settings are the documentation — while the app stops
+ * offering to change something the backend will refuse.
+ */
+describe("a suite managed by CI", () => {
+  it("RENDERS THE SHEET — the settings are the documentation", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The regression this pins: an earlier revision folded the lock into
+    // `isEditMode`, which gates the whole sheet, so a CI-owned suite navigated
+    // to `suite-edit` and nothing appeared. The settings are exactly what a
+    // person opens in order to understand what CI is running.
+    expect(screen.getByTestId("suite-settings-locked")).toBeTruthy();
+  });
+
+  it("disables every control in it, not just the ones with a reason", () => {
+    const { container } = renderSettingsSheet({
+      suite: ciOwnedSuite,
+      configLocked: true,
+    });
+
+    // A `fieldset[disabled]` is the mechanism, so a row added later is locked
+    // without anybody remembering. The browser applies it to every nested form
+    // control; a control in a portal (a dialog's body) escapes the subtree, but
+    // its trigger does not, so the entry point is still blocked.
+    //
+    // Asserted on the fieldset rather than on each input: the DOM `disabled`
+    // PROPERTY of a child reflects only its own attribute, so a per-input check
+    // would read `false` here and say nothing about what a browser does.
+    const locked = screen.getByTestId("suite-settings-locked");
+    expect(locked.tagName).toBe("FIELDSET");
+    expect((locked as HTMLFieldSetElement).disabled).toBe(true);
+    expect(
+      container.querySelectorAll(
+        "fieldset[data-testid='suite-settings-locked'] input",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not offer the name at all — it lives outside the fieldset", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The name is rendered by `SuiteHeader`, ABOVE the settings column's
+    // `fieldset[disabled]`, so the fieldset cannot reach it and it needs its
+    // own lock. Static text, not a button that opens an input: editing it fed
+    // the settings draft and put the suite in the commit flow.
+    expect(screen.queryByRole("textbox", { name: "Suite name" })).toBeNull();
+    expect(
+      document.querySelector('[data-setting-key="name"] button'),
+    ).toBeNull();
+  });
+
+  it("cannot be committed even if a control is driven directly", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The second line of defence, and the one that does not depend on the
+    // browser honouring `fieldset[disabled]`: jsdom does not enforce it, so
+    // this change event reaches the field exactly as a synthetic one would.
+    // There is still nothing to save.
+    editMinIterations("7");
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
+    expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  });
+
+  it("says why, and offers the way out, at the top of the sheet", () => {
+    const onDuplicateSuite = vi.fn();
+    renderSettingsSheet({
+      suite: ciOwnedSuite,
+      configLocked: true,
+      onDuplicateSuite,
+    });
+
+    // At the top, not on the control that refuses: someone opens Settings to
+    // change something specific, and a reason reachable only by clicking the
+    // thing that does not work is a reason most people never read.
+    expect(screen.getByTestId("suite-settings-ci-owned")).toHaveTextContent(
+      /Managed by CI/i,
+    );
+    fireEvent.click(screen.getByTestId("suite-settings-duplicate-to-edit"));
+    expect(onDuplicateSuite).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no commit bar, because there is nothing a commit could do", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
+    expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  });
+
+  it("still commits for an app-authored suite", () => {
+    // The guard against over-locking: the same sheet, unlocked, is unchanged.
+    renderSettingsSheet();
+    expect(screen.queryByTestId("suite-settings-ci-owned")).toBeNull();
+    editName("Renamed");
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
   });
 });

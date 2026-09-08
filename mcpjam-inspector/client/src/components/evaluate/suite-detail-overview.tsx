@@ -58,6 +58,7 @@ import {
   buildSuiteTestCaseRows,
   runHistoryFilterOptions,
   suiteRunBlockedReason,
+  runTimestamp,
 } from "./suite-detail-model";
 import type {
   EvalCase,
@@ -67,6 +68,7 @@ import type {
 } from "../evals/types";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { ImportDatasetDialog } from "./import-dataset-dialog";
+import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -109,6 +111,7 @@ export function SuiteDetailOverview({
   environments,
   onRerun,
   onEditSuite,
+  onDuplicateSuite,
   onEditCases,
   onDescribeCases,
   onGenerateTestCases,
@@ -123,6 +126,7 @@ export function SuiteDetailOverview({
   runningTestCaseId = null,
   evalRunsDisabledReason = null,
   readOnlyConfig = false,
+  configLocked = false,
   projectId = null,
 }: {
   suite: EvalSuite;
@@ -136,6 +140,12 @@ export function SuiteDetailOverview({
   environments?: SuiteRunReviewProps["environments"];
   onRerun: SuiteRunReviewProps["onStart"];
   onEditSuite: () => void;
+  /**
+   * Take an editable copy. Offered only when {@link configLocked} — it is the
+   * one way forward for a suite the app refuses to edit, and offering it beside
+   * an ordinary Edit button would just be a second, worse Edit.
+   */
+  onDuplicateSuite?: () => void;
   onEditCases?: () => void;
   onDescribeCases?: () => void;
   onGenerateTestCases?: (refinement?: string) => Promise<void> | void;
@@ -150,6 +160,12 @@ export function SuiteDetailOverview({
   runningTestCaseId?: string | null;
   evalRunsDisabledReason?: string | null;
   readOnlyConfig?: boolean;
+  /**
+   * The suite is managed by CI: its configuration lives in a repository, so the
+   * app refuses to edit it. Run and replay stay — see
+   * `SuiteIterationsView.configLocked` on why this is not `readOnlyConfig`.
+   */
+  configLocked?: boolean;
   /** Threaded from `EvaluateTab`; never resolved in the browser. */
   projectId?: string | null;
   /** Retained for callers; verdicts are read in the report, not history rows. */
@@ -176,63 +192,99 @@ export function SuiteDetailOverview({
     () => runHistoryFilterOptions(historyRows),
     [historyRows],
   );
-  const details = new Map(
-    runs.map((run) => [
-      run._id,
-      {
-        run,
-        iterations: allIterations.filter((item) => item.suiteRunId === run._id),
-      },
-    ]),
-  );
-  const projectRows: ProjectRunRow[] = runs.map((run) => ({
-    _id: run._id,
-    suiteId: run.suiteId,
-    suiteName: suite.name,
-    suiteSource: suite.source ?? null,
-    runNumber: run.runNumber,
-    status: run.status,
-    result: run.result,
-    summary: run.summary ?? null,
-    source: run.source ?? null,
-    ciMetadata: run.ciMetadata ?? null,
-    createdBy: run.createdBy,
-    createdByName: null,
-    createdByImageUrl: null,
-    createdAt: run.createdAt,
-    completedAt: run.completedAt ?? null,
-    durationMs: null,
-  }));
-  const launches = groupProjectRuns(projectRows, details).flatMap(
-    (group) => group.launches,
-  );
-  const effectiveClient = filterOptions.clients.includes(clientFilter)
-    ? clientFilter
-    : ALL_EVAL_FILTER_VALUES;
-  const effectiveModel = filterOptions.models.includes(modelFilter)
-    ? modelFilter
-    : ALL_EVAL_FILTER_VALUES;
-  const rowMap = new Map(historyRows.map((row) => [row.runId, row]));
-  // Filters select whole runs; pairings remain together in their report.
-  const filteredRows = launches.filter((launch) =>
-    launch.runs.some((run) => {
-      const row = rowMap.get(run._id);
-      return (
-        row &&
-        (effectiveClient === ALL_EVAL_FILTER_VALUES ||
-          row.client === effectiveClient) &&
-        (effectiveModel === ALL_EVAL_FILTER_VALUES ||
-          row.models.includes(effectiveModel))
-      );
-    }),
-  );
-  const visibleRows = showAllRuns
-    ? filteredRows
-    : filteredRows.slice(0, SUITE_RUN_HISTORY_PAGE_SIZE);
-  const hiddenRunCount = filteredRows.length - visibleRows.length;
-  const filteredRunIds = new Set(
-    filteredRows.flatMap((launch) => launch.runs.map((run) => run._id)),
-  );
+  // Derived once per data/filter change. `details` and the filtered launches
+  // are passed down as props, so fresh identities on every local state change
+  // (opening the review dialog, toggling "show all") defeated the children's
+  // own memoization and regrouped every run for nothing.
+  const {
+    details,
+    effectiveClient,
+    effectiveModel,
+    rowMap,
+    filteredRows,
+    visibleRows,
+    hiddenRunCount,
+    filteredRunIds,
+  } = useMemo(() => {
+    const details = new Map(
+      runs.map((run) => [
+        run._id,
+        {
+          run,
+          iterations: allIterations.filter(
+            (item) => item.suiteRunId === run._id,
+          ),
+        },
+      ]),
+    );
+    const projectRows: ProjectRunRow[] = runs.map((run) => ({
+      _id: run._id,
+      suiteId: run.suiteId,
+      suiteName: suite.name,
+      suiteSource: suite.source ?? null,
+      runNumber: run.runNumber,
+      status: run.status,
+      result: run.result,
+      summary: run.summary ?? null,
+      source: run.source ?? null,
+      ciMetadata: run.ciMetadata ?? null,
+      createdBy: run.createdBy,
+      createdByName: null,
+      createdByImageUrl: null,
+      createdAt: runTimestamp(run),
+      completedAt: run.completedAt ?? null,
+      durationMs: null,
+    }));
+    const launches = groupProjectRuns(projectRows, details).flatMap(
+      (group) => group.launches,
+    );
+    const effectiveClient = filterOptions.clients.includes(clientFilter)
+      ? clientFilter
+      : ALL_EVAL_FILTER_VALUES;
+    const effectiveModel = filterOptions.models.includes(modelFilter)
+      ? modelFilter
+      : ALL_EVAL_FILTER_VALUES;
+    const rowMap = new Map(historyRows.map((row) => [row.runId, row]));
+    // Filters select whole runs; pairings remain together in their report.
+    const filteredRows = launches.filter((launch) =>
+      launch.runs.some((run) => {
+        const row = rowMap.get(run._id);
+        return (
+          row &&
+          (effectiveClient === ALL_EVAL_FILTER_VALUES ||
+            row.client === effectiveClient) &&
+          (effectiveModel === ALL_EVAL_FILTER_VALUES ||
+            row.models.includes(effectiveModel))
+        );
+      }),
+    );
+    const visibleRows = showAllRuns
+      ? filteredRows
+      : filteredRows.slice(0, SUITE_RUN_HISTORY_PAGE_SIZE);
+    const hiddenRunCount = filteredRows.length - visibleRows.length;
+    const filteredRunIds = new Set(
+      filteredRows.flatMap((launch) => launch.runs.map((run) => run._id)),
+    );
+    return {
+      details,
+      effectiveClient,
+      effectiveModel,
+      rowMap,
+      filteredRows,
+      visibleRows,
+      hiddenRunCount,
+      filteredRunIds,
+    };
+  }, [
+    runs,
+    allIterations,
+    suite,
+    historyRows,
+    filterOptions,
+    clientFilter,
+    modelFilter,
+    showAllRuns,
+  ]);
 
   const testCaseRows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
 
@@ -357,7 +409,17 @@ export function SuiteDetailOverview({
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!readOnlyConfig ? (
+          {configLocked ? (
+            // The reason and the way out, together. A disabled Edit button with
+            // a tooltip would make the remedy discoverable only by hovering the
+            // thing that does not work.
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid="suite-detail-ci-owned"
+            >
+              {CI_OWNED_REASON_COPY}
+            </span>
+          ) : !readOnlyConfig ? (
             <Button
               type="button"
               variant="outline"
@@ -366,6 +428,18 @@ export function SuiteDetailOverview({
               onClick={onEditSuite}
             >
               Edit
+            </Button>
+          ) : null}
+          {configLocked && onDuplicateSuite ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={onDuplicateSuite}
+              data-testid="suite-detail-duplicate-to-edit"
+            >
+              Duplicate to edit
             </Button>
           ) : null}
           {runDisabled && runBlockedReason ? (
@@ -429,8 +503,8 @@ export function SuiteDetailOverview({
               {runsLoading
                 ? "Loading runs…"
                 : hasRuns
-                  ? "No runs match these filters."
-                  : "No runs yet."}
+                ? "No runs match these filters."
+                : "No runs yet."}
             </div>
           ) : (
             <div className="overflow-x-auto bg-card">
@@ -526,7 +600,7 @@ export function SuiteDetailOverview({
       )}
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
-          readOnly={readOnlyConfig}
+          readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}
           onGenerate={() => void handleGenerateCases()}
           canGenerate={canGenerateTestCases}
@@ -549,7 +623,7 @@ export function SuiteDetailOverview({
             <h3 className="text-sm font-semibold text-foreground">
               Test Cases
             </h3>
-            {!readOnlyConfig ? (
+            {!readOnlyConfig && !configLocked ? (
               <div className="flex shrink-0 items-center gap-2">
                 {/* Generate lives here as well as in the empty hero. Reaching it
                   only through the hero would mean a suite loses the affordance
@@ -646,8 +720,8 @@ function GenerateCasesButton({
   const blocked = isGenerating
     ? "Generating test cases…"
     : !canGenerate
-      ? (disabledReason ?? "Configure suite servers before generating cases.")
-      : null;
+    ? disabledReason ?? "Configure suite servers before generating cases."
+    : null;
 
   const button = (
     <Button
@@ -748,16 +822,16 @@ export function SuiteEmptyCasesHero({
               action.id === "describe"
                 ? !onDescribe
                 : action.id === "generate"
-                  ? !onGenerate || !canGenerate || isGenerating
-                  : false;
+                ? !onGenerate || !canGenerate || isGenerating
+                : false;
             const generateTooltip =
               action.id === "generate"
                 ? isGenerating
                   ? "Generating test cases…"
                   : !canGenerate
-                    ? (generateDisabledReason ??
-                      "Configure suite servers before generating cases.")
-                    : null
+                  ? generateDisabledReason ??
+                    "Configure suite servers before generating cases."
+                  : null
                 : null;
             const button = (
               <button

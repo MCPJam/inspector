@@ -129,11 +129,12 @@ const ROUTE_ELEMENTS: Record<
   // state Connect has already built.
   "servers/plugins/:pluginId": { element: <ServersRoute /> },
   "servers/:serverId": { element: <ServersRoute /> },
-  // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
-  // renamed Client → Host). Route through `buildHostsPath` so the
-  // `:hostId` deep-link is re-encoded exactly like canonical links
-  // (router params arrive decoded; ids with reserved chars would
-  // otherwise split into extra path segments and fail to match).
+  // `/clients` URLs redirect to `/hosts`, which is where the tab still lives.
+  // The product noun went the OTHER way — Host → Client — so this points at
+  // the spelling the rename left behind, not at a canonical one. Route
+  // through `buildHostsPath` so the `:hostId` deep-link is re-encoded exactly
+  // like canonical links (router params arrive decoded; ids with reserved
+  // chars would otherwise split into extra path segments and fail to match).
   clients: { loader: () => redirect(buildHostsPath()) },
   "clients/:hostId": {
     loader: ({ params }: any) => redirect(buildHostsPath(params.hostId)),

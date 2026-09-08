@@ -54,8 +54,8 @@ export function suiteReviewTargets(
       return {
         id,
         client: environment
-          ? (names.get(environment.hostId) ??
-            `Client …${environment.hostId.slice(-6)}`)
+          ? names.get(environment.hostId) ??
+            `Client …${environment.hostId.slice(-6)}`
           : `Environment …${id.slice(-6)}`,
         model: environment?.modelId
           ? compactModelIdTail(environment.modelId)
@@ -97,13 +97,13 @@ export function selectReviewTargets(
         ),
       }
     : suite.hostAttachments?.length
-      ? {
-          ...suite,
-          hostAttachments: suite.hostAttachments.filter((host) =>
-            selected.includes(host.namedHostId),
-          ),
-        }
-      : suite;
+    ? {
+        ...suite,
+        hostAttachments: suite.hostAttachments.filter((host) =>
+          selected.includes(host.namedHostId),
+        ),
+      }
+    : suite;
   if (
     (suite.environmentIds?.length && !filtered.environmentIds?.length) ||
     (suite.hostAttachments?.length &&
@@ -142,7 +142,22 @@ export function SuiteRunReviewContent({
   const [selected, setSelected] = useState(() =>
     targets.map((target) => target.id),
   );
-  const [iterations, setIterations] = useState("3");
+  // Seeded from the suite: `minIterations` is a floor and the v2 defaults
+  // carry the configured repetitions, and the override sent below takes
+  // precedence over both, so starting at a flat 3 could launch fewer runs
+  // than the suite itself demands. 3 stays the exploratory baseline.
+  const [iterations, setIterations] = useState(() =>
+    String(
+      Math.min(
+        10,
+        Math.max(
+          3,
+          suite.minIterations ?? 1,
+          suite.verdictPolicyDefaults?.repetitions ?? 1,
+        ),
+      ),
+    ),
+  );
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);

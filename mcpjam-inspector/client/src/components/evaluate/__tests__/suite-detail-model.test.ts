@@ -168,6 +168,32 @@ describe("runPlatformLabel", () => {
       ),
     ).toBe("GitHub #4188");
   });
+
+  it("prefers a declared launcher over the stamp, like the badge does", () => {
+    // This label read the stamp directly, so it could only ever say "API" for
+    // a CLI run, an Actions job or an MCP agent — the three things `source`
+    // cannot tell apart. It reads the shared resolver now, so a run cannot
+    // badge one way in the table and another way here.
+    expect(
+      runPlatformLabel(
+        makeRun({ _id: "r3", source: "api", launcher: { kind: "cli" } }),
+      ),
+    ).toBe("CLI");
+    expect(
+      runPlatformLabel(
+        makeRun({
+          _id: "r4",
+          source: "api",
+          launcher: { kind: "github_action" },
+          ciMetadata: { pipelineId: "77.1" },
+        }),
+      ),
+    ).toBe("GitHub #77.1");
+  });
+
+  it("still answers for a run from a backend with no provenance fields", () => {
+    expect(runPlatformLabel(makeRun({ _id: "r5", source: "api" }))).toBe("API");
+  });
 });
 
 describe("buildSuiteRunHistoryRows", () => {

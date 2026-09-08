@@ -59,6 +59,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -77,6 +78,7 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SuitesOverview } from "./evaluate/suites-overview";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
@@ -106,6 +108,10 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
+import {
+  CI_OWNED_REASON_COPY,
+  isCiOwnedSuite,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -185,6 +191,7 @@ function EvaluateTabContent({
   // is off by default, so a flag-off render issues zero summary requests even
   // though those components are shared with `/evals`.
   const decisionSummaryEnabled = useEvaluateEnabled();
+  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -328,12 +335,23 @@ function EvaluateTabContent({
     return false;
   }, [evalIterationQuota, evalRunsDisabledReason, organizationId]);
 
+  const [judgeRunIds, setJudgeRunIds] = useState<string[]>([]);
   const handleRerunWithQuota = useCallback(
-    (...args: Parameters<typeof handlers.handleRerun>) => {
+    async (...args: Parameters<typeof handlers.handleRerun>) => {
       if (!guardEvalIterationQuota()) {
         return;
       }
-      return handlers.handleRerun(...args);
+      const launch = await handlers.handleRerun(...args);
+      if (
+        args[1]?.caseIds?.length &&
+        !args[1]?.skipJudge &&
+        launch?.runIds.length
+      ) {
+        setJudgeRunIds((current) => [
+          ...new Set([...current, ...launch.runIds]),
+        ]);
+      }
+      return launch;
     },
     [guardEvalIterationQuota, handlers],
   );
@@ -659,12 +677,13 @@ function EvaluateTabContent({
     return registerEvalSuite(
       { projectId, suiteId: selectedSuite._id, suiteName: selectedSuite.name },
       {
-        read: () => evalChatSuiteContext(
-          selectedSuite,
-          suiteDetails?.testCases ?? [],
-          runsForSelectedSuite,
-          suiteDetails?.iterations ?? [],
-        ),
+        read: () =>
+          evalChatSuiteContext(
+            selectedSuite,
+            suiteDetails?.testCases ?? [],
+            runsForSelectedSuite,
+            suiteDetails?.iterations ?? [],
+          ),
         run: async () => {
           if (evalRunsDisabledReason) throw new Error(evalRunsDisabledReason);
           if (
@@ -795,7 +814,22 @@ function EvaluateTabContent({
   // Exact (case-insensitive) matches only against the loaded overview: the
   // suite id, the stored name, or the switcher's display name (timestamp
   // suffix stripped). Unknown or ambiguous → invalid_request, never a guess.
-  const resolveSuiteEntry = (raw: unknown): EvalSuiteOverviewEntry => {
+  //
+  // `intent` IS REQUIRED, deliberately with no default, so a command cannot be
+  // added without deciding. An agent command is a second door into the same
+  // mutations the buttons call, and it passes none of the rendered controls
+  // the CI-owned lock lives in — so a lock that only hides affordances is no
+  // lock at all here. `case.create` (generate) and `suite.delete` are both in
+  // the platform's locked set: an agent pointed at a CI-owned suite gets a
+  // `409`, which is the same offer-then-refuse this whole change removes.
+  //
+  // `"read"` is not "harmless" — it is "writes no configuration". Running and
+  // cancelling stay readable on a CI-owned suite, because running one from the
+  // app is exactly what locking edits rather than the suite exists to keep.
+  const resolveSuiteEntry = (
+    raw: unknown,
+    intent: "read" | "write",
+  ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
@@ -813,7 +847,16 @@ function EvaluateTabContent({
       );
     });
     if (matches.length === 1) {
-      return matches[0];
+      const entry = matches[0];
+      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+        throw createInspectorCommandClientError(
+          "invalid_request",
+          `Suite "${suiteDisplayName(
+            entry.suite,
+          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+        );
+      }
+      return entry;
     }
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
@@ -897,7 +940,7 @@ function EvaluateTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "read");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -950,7 +993,7 @@ function EvaluateTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "write");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -988,7 +1031,7 @@ function EvaluateTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "write");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -1207,7 +1250,10 @@ function EvaluateTabContent({
             })
           }
           onRun={async (input) => {
-            if (!guardEvalIterationQuota()) throw new Error("Eval usage is unavailable. Check your usage limit before retrying.");
+            if (!guardEvalIterationQuota())
+              throw new Error(
+                "Eval usage is unavailable. Check your usage limit before retrying.",
+              );
             const suites = await savePreparedEvalSuites({
               ...input,
               projectId,
@@ -1221,7 +1267,9 @@ function EvaluateTabContent({
                 idempotencyKey: `prepared:${input.reviewKey}:${suite._id}`,
               });
               if (!launch || launch.failedCount > 0) {
-                throw new Error("Some evaluations could not start. Retry to launch the remaining clients.");
+                throw new Error(
+                  "Some evaluations could not start. Retry to launch the remaining clients.",
+                );
               }
             }
             if (suites[0])
@@ -1318,7 +1366,16 @@ function EvaluateTabContent({
             }}
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
-            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
+            /*
+             * Role AND ownership. `suite.delete` is CI-locked, so offering the
+             * trash on a CI-owned suite is offering a `409`. Answered from the
+             * suite ROW rather than capabilities: this is a grid, and asking
+             * the backend per card would be one query per suite for a question
+             * the row already carries in full.
+             */
+            canDeleteSuite={(suite) =>
+              canDeleteArtifact(suite.createdBy) && !isCiOwnedSuite(suite)
+            }
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
@@ -1346,6 +1403,18 @@ function EvaluateTabContent({
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
           aggregate={suiteAggregate}
+          /*
+           * The suite's configuration lives in a repository (a committed suite
+           * file, or SDK ingest), so this surface offers no edits for it.
+           *
+           * Read from the SUITE ROW, which this page already holds. The
+           * backend's own answer (`getSuiteCapabilities.ownership`) is ORed in
+           * inside `SuiteIterationsView`, which is where capabilities are read
+           * — and is absent on a deployment that predates the lock, which is
+           * exactly why this row-derived answer has to exist too.
+           */
+          configLocked={isCiOwnedSuite(selectedSuite)}
+          onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
             playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {
@@ -1388,6 +1457,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateObserveFirst={observeFirstEnabled}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1476,6 +1546,9 @@ function EvaluateTabContent({
         projectId={projectId ?? null}
         organizationId={organizationId ?? null}
       >
+        {judgeRunIds.map((runId) => (
+          <LaunchedCaseJudge key={runId} runId={runId} />
+        ))}
         {route.type === "create" ? (
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <CreateSuitePage
@@ -1493,25 +1566,27 @@ function EvaluateTabContent({
           </div>
         )}
 
-        {route.type === "list" && runReviewSuiteId && (() => {
-          const suite = visibleSuites.find(
-            (entry) => entry.suite._id === runReviewSuiteId,
-          )?.suite;
-          return suite ? (
-            <SuiteListRunReview
-              key={suite._id}
-              projectId={projectId}
-              suite={suite}
-              onClose={() => setRunReviewSuiteId(null)}
-              onStart={handleRerunWithQuota}
-              onEditSettings={() => {
-                setRunReviewSuiteId(null);
-                playgroundNavigation.toSuiteEdit(suite._id);
-              }}
-              disabledReason={evalRunsDisabledReason}
-            />
-          ) : null;
-        })()}
+        {route.type === "list" &&
+          runReviewSuiteId &&
+          (() => {
+            const suite = visibleSuites.find(
+              (entry) => entry.suite._id === runReviewSuiteId,
+            )?.suite;
+            return suite ? (
+              <SuiteListRunReview
+                key={suite._id}
+                projectId={projectId}
+                suite={suite}
+                onClose={() => setRunReviewSuiteId(null)}
+                onStart={handleRerunWithQuota}
+                onEditSettings={() => {
+                  setRunReviewSuiteId(null);
+                  playgroundNavigation.toSuiteEdit(suite._id);
+                }}
+                disabledReason={evalRunsDisabledReason}
+              />
+            ) : null;
+          })()}
 
         <ConfirmationDialogs
           suiteToDelete={handlers.suiteToDelete}

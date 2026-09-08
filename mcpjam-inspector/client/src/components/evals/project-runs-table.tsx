@@ -66,6 +66,12 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDuration, formatRunId, formatTime } from "./helpers";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import {
+  apiKeyTail,
+  originsForFilters,
+  runAgentName,
+  RUN_ORIGIN_FILTERS,
+} from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
   RunDecisionVerdictBadge,
@@ -108,6 +114,14 @@ export interface ProjectRunRow {
     passRate: number;
   } | null;
   source: EvalSuiteRun["source"] | null;
+  /**
+   * The DECLARED launcher and the VERIFIED attribution. Both `| null` AND
+   * optional: a backend that predates run provenance sends neither key, so a
+   * reader that assumed the field existed would crash the whole table against
+   * an older deployment.
+   */
+  launcher?: EvalSuiteRun["launcher"] | null;
+  attribution?: EvalSuiteRun["attribution"] | null;
   ciMetadata: EvalSuiteRun["ciMetadata"] | null;
   createdBy: string;
   createdByName: string | null;
@@ -116,17 +130,6 @@ export interface ProjectRunRow {
   completedAt: number | null;
   durationMs: number | null;
 }
-
-const SOURCE_FILTERS: Array<{
-  value: NonNullable<EvalSuiteRun["source"]>;
-  label: string;
-}> = [
-  { value: "sdk", label: "SDK" },
-  { value: "ui", label: "UI" },
-  { value: "api", label: "API" },
-  { value: "schedule", label: "Scheduled" },
-  { value: "github_check", label: "GitHub" },
-];
 
 const ALL_SUITES = "__all__";
 
@@ -227,9 +230,27 @@ export function ProjectRunsTable({
   const [branchFilter, setBranchFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [commitFilter, setCommitFilter] = useState("");
 
+  /**
+   * The chip selection, as the backend's `origins` argument.
+   *
+   * SENT TO THE QUERY, not applied to the rows it returns. Filtering the
+   * loaded page was a false negative with real consequences: a suite whose only
+   * GitHub runs were older than the first 50 rows answered "No runs match these
+   * filters", which reads as "we never ran this from CI" rather than "they are
+   * further down". An empty selection sends no argument at all, so an older
+   * backend that does not know it is unaffected.
+   */
+  const origins = useMemo(
+    () => originsForFilters([...sourceFilter]),
+    [sourceFilter],
+  );
+
   const { results, status, loadMore } = usePaginatedQuery(
     "testSuites:listProjectRuns" as any,
-    { projectId } as any,
+    {
+      projectId,
+      ...(origins.length > 0 ? { origins } : {}),
+    } as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
 
@@ -247,14 +268,13 @@ export function ProjectRunsTable({
 
   const sourceAndSuiteRows = useMemo(
     () =>
-      rows.filter((row) => {
-        if (suiteFilter !== ALL_SUITES && row.suiteId !== suiteFilter) {
-          return false;
-        }
-        if (sourceFilter.size === 0) return true;
-        return sourceFilter.has(row.source ?? row.suiteSource ?? "ui");
-      }),
-    [rows, sourceFilter, suiteFilter],
+      // Suite only. Origin is decided by the query above, so a row that got
+      // here already matches the chips — re-checking it client-side would be a
+      // second predicate free to disagree with the one that chose the page.
+      rows.filter(
+        (row) => suiteFilter === ALL_SUITES || row.suiteId === suiteFilter,
+      ),
+    [rows, suiteFilter],
   );
 
   // Hydrate loaded history before display filters: options and comparison baselines
@@ -265,172 +285,231 @@ export function ProjectRunsTable({
     isAuthenticated: historyMetricsEnabled,
     projectId,
   });
-  const hostNamesById = new Map(hosts.map((host) => [host.hostId, host.name]));
-  const historyRuns = [...history.details.values()].map((detail) => detail.run);
-  const historyIterations = [...history.details.values()].flatMap(
-    (detail) => detail.iterations,
-  );
-  const historyRows = new Map(
-    buildSuiteRunHistoryRows(
-      historyRuns,
-      historyIterations,
-      {},
-      hostNamesById,
-      projectEnvironmentsEnabled,
-    ).map((row) => {
-      const iterations = history.details.get(row.runId)?.iterations ?? [];
-      return [
-        row.runId,
-        iterations.length
-          ? {
-              ...row,
-              passRate: Math.round(
-                (resultCounts(iterations).passed / iterations.length) * 100,
-              ),
-            }
-          : row,
-      ];
-    }),
-  );
-  const runServers = new Map(
-    [...history.details].map(([id, detail]) => [
-      id,
-      detail.run.configSnapshot?.environment?.servers ?? [],
-    ]),
-  );
-  const clientOptions = [
-    ...new Set(
-      [...historyRows.values()].flatMap((row) =>
-        row.client ? [row.client] : [],
-      ),
-    ),
-  ].sort();
-  const serverOptions = [...new Set([...runServers.values()].flat())].sort();
-  const gitByRunId = new Map(
-    rows.map((row) => [row._id, readRunGitMetadata(row.ciMetadata)]),
-  );
-  const repositoryOptions = [
-    ...new Set(
-      [...gitByRunId.values()].flatMap((git) =>
-        git.repository ? [git.repository] : [],
-      ),
-    ),
-  ].sort();
-  const branchOptions = [
-    ...new Set(
-      [...gitByRunId.values()].flatMap((git) =>
-        git.branch ? [git.branch] : [],
-      ),
-    ),
-  ].sort();
-  const hasGitFilter =
-    repositoryFilter !== ALL_EVAL_FILTER_VALUES ||
-    branchFilter !== ALL_EVAL_FILTER_VALUES ||
-    Boolean(commitFilter.trim());
-  const showGitContext =
-    sourceFilter.has("github_check") ||
-    hasGitFilter ||
-    rows.some((row) => row.source === "github_check" || row.ciMetadata != null);
-  const matching = sourceAndSuiteRows.filter(
-    (row) =>
-      (clientFilter === ALL_EVAL_FILTER_VALUES ||
-        historyRows.get(row._id)?.client === clientFilter) &&
-      (serverFilter === ALL_EVAL_FILTER_VALUES ||
-        runServers.get(row._id)?.includes(serverFilter)) &&
-      (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
-        gitByRunId.get(row._id)?.repository === repositoryFilter) &&
-      (branchFilter === ALL_EVAL_FILTER_VALUES ||
-        gitByRunId.get(row._id)?.branch === branchFilter) &&
-      (!commitFilter.trim() ||
-        gitByRunId
-          .get(row._id)
-          ?.commitSha?.toLowerCase()
-          .startsWith(commitFilter.trim().toLowerCase())),
-  );
-  const matchingIds = new Set(matching.map((row) => row._id));
-  const allSuiteGroups = groupProjectRuns(rows, history.details);
-  // Filters select complete runs, never an individual execution within one.
-  const filtered = historyMetricsEnabled
-    ? allSuiteGroups.flatMap((suite) =>
-        suite.launches
-          .filter((launch) =>
-            launch.runs.some((row) => matchingIds.has(row._id)),
-          )
-          .flatMap((launch) => launch.runs),
-      )
-    : matching;
-  const suiteGroups = groupProjectRuns(filtered, history.details);
-  const launches = suiteGroups
-    .flatMap((suite) => suite.launches)
-    .sort((a, b) => a.runs[0].createdAt - b.runs[0].createdAt);
-  const measuredLaunches = launches.flatMap((launch) => {
-    if (launch.runs.some((row) => !history.details.has(row._id))) return [];
-    const runs = launch.runs.map((row) => history.details.get(row._id)!.run);
-    const data =
-      runs.length === 1
-        ? buildSuiteMetricStripData(runs, historyIterations)
-        : buildAggregateMetricStripData(runs, historyIterations);
-    const measured = runs.flatMap(
-      (run) => history.details.get(run._id)?.iterations ?? [],
+  // Derived once per data/filter change, not per render. The chain below
+  // groups every loaded run and builds a metric point per launch; re-running
+  // it on each keystroke in the commit filter, and on the 15-second refresh
+  // of active runs, also handed the child rows fresh Map identities that
+  // defeated their own memoization.
+  const {
+    historyRows,
+    clientOptions,
+    serverOptions,
+    repositoryOptions,
+    branchOptions,
+    hasGitFilter,
+    showGitContext,
+    filtered,
+    suiteGroups,
+    launches,
+    metricData,
+    passRateChanges,
+    loadedRunCount,
+  } = useMemo(() => {
+    const hostNamesById = new Map(
+      hosts.map((host) => [host.hostId, host.name]),
     );
-    const counts = resultCounts(measured);
-    return data
-      ? [
-          {
-            point: measured.length
-              ? {
-                  ...data.latest,
-                  passed: counts.passed,
-                  failed: counts.failed,
-                  total: measured.length,
-                  passRate: Math.round((counts.passed / measured.length) * 100),
-                }
-              : data.latest,
-            label: `${
-              launch.runs[0].suiteName ?? "Deleted suite"
-            } · Run #${Math.min(...runs.map((run) => run.runNumber))}`,
-          },
-        ]
-      : [];
-  });
-  const series = measuredLaunches.map((launch) => launch.point);
-  const metricData: MetricStripData | null = series.length
-    ? {
-        latest: series[series.length - 1],
-        series,
-        delta:
-          series.length > 1
-            ? series[series.length - 1].passRate -
-              series[series.length - 2].passRate
-            : null,
-        showTrend: series.length > 1,
-        runLabels: measuredLaunches.map((launch) => launch.label),
-      }
-    : null;
-  const comparisonRows = new Map(historyRows);
-  const completeRuns = allSuiteGroups.flatMap((suite) =>
-    suite.launches.map((launch) => {
-      const representative = [...launch.runs].sort(
-        (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
-      )[0];
-      const metrics = projectRunRollup(launch.runs, history.details);
-      const historyRow = historyRows.get(representative._id);
-      if (historyRow)
-        comparisonRows.set(representative._id, {
-          ...historyRow,
-          passRate: metrics?.passRate ?? null,
-        });
-      return representative;
-    }),
-  );
-  const passRateChanges = buildRunPassRateChanges(
-    historyMetricsEnabled ? completeRuns : rows,
-    comparisonRows,
-  );
-  const loadedRunCount = allSuiteGroups.reduce(
-    (sum, suite) => sum + suite.launches.length,
-    0,
-  );
+    const historyRuns = [...history.details.values()].map(
+      (detail) => detail.run,
+    );
+    const historyIterations = [...history.details.values()].flatMap(
+      (detail) => detail.iterations,
+    );
+    const historyRows = new Map(
+      buildSuiteRunHistoryRows(
+        historyRuns,
+        historyIterations,
+        {},
+        hostNamesById,
+        projectEnvironmentsEnabled,
+      ).map((row) => {
+        const iterations = history.details.get(row.runId)?.iterations ?? [];
+        return [
+          row.runId,
+          iterations.length
+            ? {
+                ...row,
+                passRate: Math.round(
+                  (resultCounts(iterations).passed / iterations.length) * 100,
+                ),
+              }
+            : row,
+        ];
+      }),
+    );
+    const runServers = new Map(
+      [...history.details].map(([id, detail]) => [
+        id,
+        detail.run.configSnapshot?.environment?.servers ?? [],
+      ]),
+    );
+    const clientOptions = [
+      ...new Set(
+        [...historyRows.values()].flatMap((row) =>
+          row.client ? [row.client] : [],
+        ),
+      ),
+    ].sort();
+    const serverOptions = [...new Set([...runServers.values()].flat())].sort();
+    const gitByRunId = new Map(
+      rows.map((row) => [row._id, readRunGitMetadata(row.ciMetadata)]),
+    );
+    const repositoryOptions = [
+      ...new Set(
+        [...gitByRunId.values()].flatMap((git) =>
+          git.repository ? [git.repository] : [],
+        ),
+      ),
+    ].sort();
+    const branchOptions = [
+      ...new Set(
+        [...gitByRunId.values()].flatMap((git) =>
+          git.branch ? [git.branch] : [],
+        ),
+      ),
+    ].sort();
+    const hasGitFilter =
+      repositoryFilter !== ALL_EVAL_FILTER_VALUES ||
+      branchFilter !== ALL_EVAL_FILTER_VALUES ||
+      Boolean(commitFilter.trim());
+    const showGitContext =
+      sourceFilter.has("github") ||
+      hasGitFilter ||
+      rows.some(
+        (row) => row.source === "github_check" || row.ciMetadata != null,
+      );
+    const matching = sourceAndSuiteRows.filter(
+      (row) =>
+        (clientFilter === ALL_EVAL_FILTER_VALUES ||
+          historyRows.get(row._id)?.client === clientFilter) &&
+        (serverFilter === ALL_EVAL_FILTER_VALUES ||
+          runServers.get(row._id)?.includes(serverFilter)) &&
+        (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
+          gitByRunId.get(row._id)?.repository === repositoryFilter) &&
+        (branchFilter === ALL_EVAL_FILTER_VALUES ||
+          gitByRunId.get(row._id)?.branch === branchFilter) &&
+        (!commitFilter.trim() ||
+          gitByRunId
+            .get(row._id)
+            ?.commitSha?.toLowerCase()
+            .startsWith(commitFilter.trim().toLowerCase())),
+    );
+    const matchingIds = new Set(matching.map((row) => row._id));
+    const allSuiteGroups = groupProjectRuns(rows, history.details);
+    // Filters select complete runs, never an individual execution within one.
+    const filtered = historyMetricsEnabled
+      ? allSuiteGroups.flatMap((suite) =>
+          suite.launches
+            .filter((launch) =>
+              launch.runs.some((row) => matchingIds.has(row._id)),
+            )
+            .flatMap((launch) => launch.runs),
+        )
+      : matching;
+    const suiteGroups = groupProjectRuns(filtered, history.details);
+    const launches = suiteGroups
+      .flatMap((suite) => suite.launches)
+      .sort((a, b) => a.runs[0].createdAt - b.runs[0].createdAt);
+    const measuredLaunches = launches.flatMap((launch) => {
+      if (launch.runs.some((row) => !history.details.has(row._id))) return [];
+      const runs = launch.runs.map((row) => history.details.get(row._id)!.run);
+      const measured = runs.flatMap(
+        (run) => history.details.get(run._id)?.iterations ?? [],
+      );
+      // Only this launch's iterations: both builders filter by run id, so
+      // handing them the whole history made every launch rescan everything.
+      const data =
+        runs.length === 1
+          ? buildSuiteMetricStripData(runs, measured)
+          : buildAggregateMetricStripData(runs, measured);
+      const counts = resultCounts(measured);
+      return data
+        ? [
+            {
+              point: measured.length
+                ? {
+                    ...data.latest,
+                    passed: counts.passed,
+                    failed: counts.failed,
+                    total: measured.length,
+                    passRate: Math.round(
+                      (counts.passed / measured.length) * 100,
+                    ),
+                  }
+                : data.latest,
+              label: `${
+                launch.runs[0].suiteName ?? "Deleted suite"
+              } · Run #${Math.min(...runs.map((run) => run.runNumber))}`,
+            },
+          ]
+        : [];
+    });
+    const series = measuredLaunches.map((launch) => launch.point);
+    const metricData: MetricStripData | null = series.length
+      ? {
+          latest: series[series.length - 1],
+          series,
+          delta:
+            series.length > 1
+              ? series[series.length - 1].passRate -
+                series[series.length - 2].passRate
+              : null,
+          showTrend: series.length > 1,
+          runLabels: measuredLaunches.map((launch) => launch.label),
+        }
+      : null;
+    const comparisonRows = new Map(historyRows);
+    const completeRuns = allSuiteGroups.flatMap((suite) =>
+      suite.launches.map((launch) => {
+        const representative = [...launch.runs].sort(
+          (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
+        )[0];
+        const metrics = projectRunRollup(launch.runs, history.details);
+        const historyRow = historyRows.get(representative._id);
+        if (historyRow)
+          comparisonRows.set(representative._id, {
+            ...historyRow,
+            passRate: metrics?.passRate ?? null,
+          });
+        return representative;
+      }),
+    );
+    const passRateChanges = buildRunPassRateChanges(
+      historyMetricsEnabled ? completeRuns : rows,
+      comparisonRows,
+    );
+    const loadedRunCount = allSuiteGroups.reduce(
+      (sum, suite) => sum + suite.launches.length,
+      0,
+    );
+    return {
+      historyRows,
+      clientOptions,
+      serverOptions,
+      repositoryOptions,
+      branchOptions,
+      hasGitFilter,
+      showGitContext,
+      filtered,
+      suiteGroups,
+      launches,
+      metricData,
+      passRateChanges,
+      loadedRunCount,
+    };
+  }, [
+    rows,
+    sourceAndSuiteRows,
+    history.details,
+    hosts,
+    projectEnvironmentsEnabled,
+    historyMetricsEnabled,
+    sourceFilter,
+    clientFilter,
+    serverFilter,
+    repositoryFilter,
+    branchFilter,
+    commitFilter,
+  ]);
   const isSuiteExpanded = (suiteId: string) =>
     suiteExpansion.get(suiteId) ?? true;
   const allSuitesExpanded = suiteGroups.every((group) =>
@@ -460,6 +539,11 @@ export function ProjectRunsTable({
     clientFilter !== ALL_EVAL_FILTER_VALUES ||
     serverFilter !== ALL_EVAL_FILTER_VALUES ||
     hasGitFilter;
+  const hasClientSideFilter =
+    suiteFilter !== ALL_SUITES ||
+    clientFilter !== ALL_EVAL_FILTER_VALUES ||
+    serverFilter !== ALL_EVAL_FILTER_VALUES ||
+    hasGitFilter;
 
   const toggleSource = (value: string) => {
     setSourceFilter((prev) => {
@@ -485,7 +569,7 @@ export function ProjectRunsTable({
     );
   }
 
-  if (rows.length === 0 && !isLoadingFirstPage) {
+  if (rows.length === 0 && !isLoadingFirstPage && !isFiltering) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="mx-auto max-w-md p-6 text-center">
@@ -562,7 +646,7 @@ export function ProjectRunsTable({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {SOURCE_FILTERS.map((filter) => (
+                {RUN_ORIGIN_FILTERS.map((filter) => (
                   <DropdownMenuCheckboxItem
                     key={filter.value}
                     checked={sourceFilter.has(filter.value)}
@@ -583,8 +667,8 @@ export function ProjectRunsTable({
                 <span className="truncate">
                   {suiteFilter === ALL_SUITES
                     ? "Suite"
-                    : (suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
-                      "Suite")}
+                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite"}
                 </span>
               </SelectTrigger>
               <SelectContent>
@@ -691,8 +775,8 @@ export function ProjectRunsTable({
               {history.loading || isLoadingFirstPage
                 ? "Loading run metrics…"
                 : metricData
-                  ? `Latest measured run · trends across ${metricData.series.length} filtered runs`
-                  : "No measured iterations in these runs."}
+                ? `Latest measured run · trends across ${metricData.series.length} filtered runs`
+                : "No measured iterations in these runs."}
             </p>
             {history.errorCount > 0 && (
               <p className="px-5 py-2 text-xs text-muted-foreground">
@@ -730,11 +814,16 @@ export function ProjectRunsTable({
             )}
           </div>
         )}
-        {isFiltering && canLoadMore && (
+        {/*
+          Only for the filters that run over the loaded page. The platform
+          chips are a query argument, so on their own an empty result really
+          does mean the project has no such runs, and this caveat would
+          suggest the opposite.
+        */}
+        {hasClientSideFilter && canLoadMore && (
           <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
             Filtering the {historyMetricsEnabled ? loadedRunCount : rows.length}{" "}
-            most recent runs loaded so far — load more below to widen the
-            search.
+            most recent runs loaded so far. Load more below to widen the search.
           </p>
         )}
         <div className="overflow-x-auto">
@@ -835,7 +924,11 @@ export function ProjectRunsTable({
               ? history.loading || isLoadingFirstPage
                 ? "Loading run history…"
                 : "Run history incomplete"
-              : `${historyMetricsEnabled ? launches.length : filtered.length} of ${historyMetricsEnabled ? loadedRunCount : rows.length} loaded runs`}
+              : `${
+                  historyMetricsEnabled ? launches.length : filtered.length
+                } of ${
+                  historyMetricsEnabled ? loadedRunCount : rows.length
+                } loaded runs`}
             {status !== "Exhausted" ? " · more available" : ""}
           </span>
           {canLoadMore ? (
@@ -874,6 +967,37 @@ export function ProjectRunsTable({
  * always showed — this never invents an aggregate for a row it could not read,
  * including the fan-out rows whose stored numbers describe one leg.
  */
+/**
+ * WHO started this run — the person, and the credential they used.
+ *
+ * The name alone was ambiguous in the one case that matters: a run made with an
+ * API key is attributed to the key's owner, so an automated launch and that
+ * person clicking Run read identically. `attribution.apiKeyId` is minted by the
+ * backend from the credential the request authenticated with — a fact, not a
+ * claim — so the second line can say which key without guessing.
+ *
+ * An MCP run names the calling agent instead, which is the more useful answer
+ * there: "claude-code" tells you what to look at; "via API key ····3f9a" tells
+ * you which key to rotate.
+ */
+function RunByCell({ row }: { row: ProjectRunRow }) {
+  const name = row.createdByName ?? "—";
+  const agent = runAgentName(row);
+  const keyTail = agent ? null : apiKeyTail(row.attribution?.apiKeyId);
+  return (
+    <span className="flex flex-col leading-tight">
+      <span className="truncate">{name}</span>
+      {agent ? (
+        <span className="truncate text-[10px] opacity-70" title={agent}>
+          via {agent}
+        </span>
+      ) : keyTail ? (
+        <span className="text-[10px] opacity-70">via API key {keyTail}</span>
+      ) : null}
+    </span>
+  );
+}
+
 function ProjectRunTableRow({
   row,
   grouped = false,
@@ -959,14 +1083,14 @@ function ProjectRunTableRow({
           <span className="block truncate font-medium">
             {grouped
               ? `Run #${row.runNumber}`
-              : (row.suiteName ?? (
+              : row.suiteName ?? (
                   <span
                     className="text-muted-foreground"
                     title="This run's suite no longer exists, so its detail view can't be opened."
                   >
                     Deleted suite
                   </span>
-                ))}
+                )}
           </span>
           <span className="text-[10px] text-muted-foreground" title={row._id}>
             {grouped
@@ -992,10 +1116,7 @@ function ProjectRunTableRow({
       ) : (
         <TableCell>
           <div className="flex flex-col items-start gap-1">
-            <RunPlatformBadge
-              source={row.source ?? row.suiteSource ?? undefined}
-              metadata={row.ciMetadata}
-            />
+            <RunPlatformBadge run={row} metadata={row.ciMetadata} />
             {row.ciMetadata && !showGitContext && (
               <CiMetadataDisplay
                 ciMetadata={row.ciMetadata}
@@ -1051,16 +1172,16 @@ function ProjectRunTableRow({
                 passRateChange.points > 0
                   ? "text-success"
                   : passRateChange.points < 0
-                    ? "text-destructive"
-                    : "text-muted-foreground",
+                  ? "text-destructive"
+                  : "text-muted-foreground",
               )}
               title={`Compared with run #${passRateChange.previousRunNumber} in this suite (loaded history)`}
               aria-label={`${
                 passRateChange.points > 0
                   ? "Up"
                   : passRateChange.points < 0
-                    ? "Down"
-                    : "Unchanged"
+                  ? "Down"
+                  : "Unchanged"
               } ${Math.abs(
                 passRateChange.points,
               )} percentage points versus run #${
@@ -1070,8 +1191,8 @@ function ProjectRunTableRow({
               {passRateChange.points > 0
                 ? "↑"
                 : passRateChange.points < 0
-                  ? "↓"
-                  : "→"}
+                ? "↓"
+                : "→"}
               {Math.abs(passRateChange.points)} pp
             </span>
           )}
@@ -1121,10 +1242,7 @@ function ProjectRunTableRow({
         <>
           <TableCell>
             <div className="flex flex-col items-start gap-1">
-              <RunPlatformBadge
-                source={row.source ?? row.suiteSource ?? undefined}
-                metadata={row.ciMetadata}
-              />
+              <RunPlatformBadge run={row} metadata={row.ciMetadata} />
               {row.ciMetadata && !showGitContext && (
                 <CiMetadataDisplay
                   ciMetadata={row.ciMetadata}
@@ -1169,8 +1287,8 @@ function ProjectRunTableRow({
           <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
             {row.durationMs != null ? formatDuration(row.durationMs) : "—"}
           </TableCell>
-          <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
-            {row.createdByName ?? "—"}
+          <TableCell className="max-w-[140px] text-xs text-muted-foreground">
+            <RunByCell row={row} />
           </TableCell>
         </>
       )}

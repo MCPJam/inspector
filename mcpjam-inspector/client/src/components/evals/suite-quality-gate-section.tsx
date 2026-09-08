@@ -195,6 +195,17 @@ export function SuiteQualityGateSection({
   const disabled = disabledReason !== undefined;
   const allowPrevious = capabilities?.qualityGate?.previousRunBaseline === true;
   const comparativeEnabled = !disabled && hasCompleteBaseline(policy);
+  // Conditions the simplified sheet does not show but "None" would clear.
+  // Named next to the select so the discard is a choice, not a surprise.
+  const hiddenComparativeConditions = simplified
+    ? [
+        policy?.maximumPassRateDrop != null ? "pass-rate drop" : null,
+        policy?.noDeterministicRegressions ? "deterministic regressions" : null,
+        policy?.maximumP95LatencyIncreaseMs != null
+          ? "p95 latency increase"
+          : null,
+      ].filter((label): label is string => label !== null)
+    : [];
   const [pendingKind, setPendingKind] = useState<"run" | "commit_sha" | null>(
     null,
   );
@@ -327,7 +338,9 @@ export function SuiteQualityGateSection({
         <div className={simplified ? "w-40 space-y-1" : "space-y-1"}>
           <select
             id={baselineId}
-            className={`h-8 ${simplified ? "w-full" : ""} rounded-md border border-input bg-background px-2 text-xs text-foreground`}
+            className={`h-8 ${
+              simplified ? "w-full" : ""
+            } rounded-md border border-input bg-background px-2 text-xs text-foreground`}
             value={choice}
             disabled={disabled}
             aria-label="Quality gate baseline"
@@ -345,6 +358,17 @@ export function SuiteQualityGateSection({
           <p className="break-all text-right text-[11px] text-muted-foreground/60">
             {baselineResolvedLabel}
           </p>
+          {hiddenComparativeConditions.length > 0 && choice !== "none" ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="quality-gate-none-clears"
+            >
+              Choosing None also clears the{" "}
+              {hiddenComparativeConditions.join(", ")} condition
+              {hiddenComparativeConditions.length > 1 ? "s" : ""} set on this
+              suite, which cannot run without a baseline.
+            </p>
+          ) : null}
         </div>
       </GateRow>
 
@@ -356,7 +380,9 @@ export function SuiteQualityGateSection({
           <span>Run id</span>
           <input
             id={runIdInputId}
-            className={`h-8 ${simplified ? "w-40" : "w-48"} rounded-md border border-input bg-background px-2 text-xs text-foreground`}
+            className={`h-8 ${
+              simplified ? "w-40" : "w-48"
+            } rounded-md border border-input bg-background px-2 text-xs text-foreground`}
             value={runIdText}
             disabled={disabled}
             aria-label="Baseline run id"
@@ -385,7 +411,9 @@ export function SuiteQualityGateSection({
           <span>Commit</span>
           <input
             id={commitInputId}
-            className={`h-8 ${simplified ? "w-40" : "w-48"} rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground`}
+            className={`h-8 ${
+              simplified ? "w-40" : "w-48"
+            } rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground`}
             value={commitText}
             disabled={disabled}
             aria-label="Baseline commit SHA"

@@ -9,6 +9,7 @@
  * clears only inspect; typing touches neither; run start clears both.
  */
 
+import { promptTurnsToSteps } from "@/shared/steps";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type {
   CompareRunRecord,
@@ -142,10 +143,15 @@ export function trialSnapshotFields(trial: SelectedTrial): CaseSnapshotFields {
   }
   const snapshot = trial.iteration.testCaseSnapshot;
   return {
-    steps: snapshot?.steps,
+    steps:
+      snapshot?.steps ??
+      (snapshot?.promptTurns
+        ? promptTurnsToSteps(snapshot.promptTurns)
+        : undefined),
     predicates: snapshot?.predicates,
     matchOptions: snapshot?.matchOptions,
     expectedOutput: snapshot?.expectedOutput,
+    isNegativeTest: snapshot?.isNegativeTest,
   };
 }
 

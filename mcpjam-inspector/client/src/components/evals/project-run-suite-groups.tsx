@@ -249,8 +249,8 @@ export function GroupSummaryRow({
         suite
           ? "[&_td]:bg-accent [&_td]:border-y [&_td]:border-border"
           : onOpen
-            ? "cursor-pointer"
-            : undefined
+          ? "cursor-pointer"
+          : undefined
       }
       {...(onOpen
         ? {
@@ -313,10 +313,10 @@ export function GroupSummaryRow({
         {!rollup
           ? "—"
           : active
-            ? "In progress"
-            : suite
-              ? `${runCount} finished`
-              : "Finished"}
+          ? "In progress"
+          : suite
+          ? `${runCount} finished`
+          : "Finished"}
       </TableCell>
       <TableCell className="text-right tabular-nums">
         <span className="font-semibold">
@@ -333,7 +333,7 @@ export function GroupSummaryRow({
           {sources.map((source) => (
             <RunPlatformBadge
               key={source}
-              source={source}
+              run={{ source }}
               metadata={
                 suite
                   ? undefined

@@ -52,6 +52,14 @@ export type RunRawDataBundle = {
 const ALL_FILTERS = { preset: "all", chips: [] };
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
+/**
+ * How many sessions get their per-session detail queries and blob fetches.
+ * The swarm path can page in up to MAX_PAGES × PAGE_SIZE rows per run, and
+ * each detailed session costs several queries, so an uncapped wave turned
+ * one click into tens of thousands of browser-issued queries and an
+ * unbounded bundle. The scenario path is already capped at 100 by its query.
+ */
+const MAX_SESSION_DETAILS = 250;
 const SESSION_CONCURRENCY = 4;
 
 function errorMessage(error: unknown): string {
@@ -63,7 +71,7 @@ async function captureQuery(
   captures: QueryCapture[],
   label: string,
   query: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Promise<unknown> {
   try {
     const data = await client.query(query as never, args as never);
@@ -103,7 +111,7 @@ async function capturePaginatedQuery(
   captures: QueryCapture[],
   label: string,
   query: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
 ): Promise<unknown[]> {
   const rows: unknown[] = [];
   let cursor: string | null = null;
@@ -157,7 +165,7 @@ async function capturePaginatedQuery(
 async function captureJsonBlob(
   captures: BlobCapture[],
   label: string,
-  url: string
+  url: string,
 ): Promise<void> {
   try {
     const response = await fetch(url);
@@ -183,7 +191,7 @@ async function captureJsonBlob(
 async function mapWithConcurrency<T>(
   values: readonly T[],
   concurrency: number,
-  task: (value: T, index: number) => Promise<void>
+  task: (value: T, index: number) => Promise<void>,
 ): Promise<void> {
   let nextIndex = 0;
   const workers = Array.from(
@@ -194,7 +202,7 @@ async function mapWithConcurrency<T>(
         nextIndex += 1;
         await task(values[index]!, index);
       }
-    }
+    },
   );
   await Promise.all(workers);
 }
@@ -231,53 +239,59 @@ async function captureSessionDetails(args: {
         args.queries,
         `session:${sessionId}:detail`,
         "chatSessions:getSession",
-        { sessionId }
+        { sessionId },
       );
-      const [snapshots, traces, artifacts, scores, checkRuns, historicalConfig] =
-        await Promise.all([
-          captureQuery(
-            args.client,
-            args.queries,
-            `session:${sessionId}:widgetSnapshots`,
-            "chatSessions:getWidgetSnapshots",
-            { sessionId }
-          ),
-          captureQuery(
-            args.client,
-            args.queries,
-            `session:${sessionId}:turnTraces`,
-            "chatSessions:getSessionTurnTraces",
-            { sessionId }
-          ),
-          captureQuery(
-            args.client,
-            args.queries,
-            `session:${sessionId}:browserArtifacts`,
-            "chatSessions:getBrowserArtifacts",
-            { sessionId }
-          ),
-          captureQuery(
-            args.client,
-            args.queries,
-            `session:${sessionId}:scores`,
-            "sessionScores:listBySession",
-            { sessionId }
-          ),
-          captureQuery(
-            args.client,
-            args.queries,
-            `session:${sessionId}:checkRuns`,
-            "chatSessionChecks:getCheckRunsForSession",
-            { chatSessionId: sessionId }
-          ),
-          captureQuery(
-            args.client,
-            args.queries,
-            `session:${sessionId}:historicalHostConfig`,
-            "chatSessions:getSessionHistoricalHostConfig",
-            { sessionId }
-          ),
-        ]);
+      const [
+        snapshots,
+        traces,
+        artifacts,
+        scores,
+        checkRuns,
+        historicalConfig,
+      ] = await Promise.all([
+        captureQuery(
+          args.client,
+          args.queries,
+          `session:${sessionId}:widgetSnapshots`,
+          "chatSessions:getWidgetSnapshots",
+          { sessionId },
+        ),
+        captureQuery(
+          args.client,
+          args.queries,
+          `session:${sessionId}:turnTraces`,
+          "chatSessions:getSessionTurnTraces",
+          { sessionId },
+        ),
+        captureQuery(
+          args.client,
+          args.queries,
+          `session:${sessionId}:browserArtifacts`,
+          "chatSessions:getBrowserArtifacts",
+          { sessionId },
+        ),
+        captureQuery(
+          args.client,
+          args.queries,
+          `session:${sessionId}:scores`,
+          "sessionScores:listBySession",
+          { sessionId },
+        ),
+        captureQuery(
+          args.client,
+          args.queries,
+          `session:${sessionId}:checkRuns`,
+          "chatSessionChecks:getCheckRunsForSession",
+          { chatSessionId: sessionId },
+        ),
+        captureQuery(
+          args.client,
+          args.queries,
+          `session:${sessionId}:historicalHostConfig`,
+          "chatSessions:getSessionHistoricalHostConfig",
+          { sessionId },
+        ),
+      ]);
 
       // Keep these referenced in the capture even when a backend returns an
       // unusual non-array shape; captureQuery already preserved the raw value.
@@ -292,7 +306,7 @@ async function captureSessionDetails(args: {
         await captureJsonBlob(
           args.blobs,
           `session:${sessionId}:messages`,
-          messagesBlobUrl
+          messagesBlobUrl,
         );
       }
 
@@ -304,23 +318,23 @@ async function captureSessionDetails(args: {
                 captureJsonBlob(
                   args.blobs,
                   `session:${sessionId}:turn:${traceIndex}:spans`,
-                  spansBlobUrl
+                  spansBlobUrl,
                 ),
               ]
             : [];
-        })
+        }),
       );
 
       completed += 1;
       args.onProgress?.(completed, args.sessions.length);
-    }
+    },
   );
 }
 
 export async function collectRunRawData(
   client: QueryClient,
   scope: RawDataScope,
-  onProgress?: (completed: number, total: number) => void
+  onProgress?: (completed: number, total: number) => void,
 ): Promise<RunRawDataBundle> {
   const queries: QueryCapture[] = [];
   const blobs: BlobCapture[] = [];
@@ -340,14 +354,14 @@ export async function collectRunRawData(
             queries,
             `run:${runId}`,
             "journeyRuns:getJourneyRun",
-            { runId }
+            { runId },
           ),
           captureQuery(
             client,
             queries,
             `run:${runId}:scorecard`,
             "journeyRuns:getRunScorecard",
-            { runId }
+            { runId },
           ),
         ]);
         return capturePaginatedQuery(
@@ -355,9 +369,9 @@ export async function collectRunRawData(
           queries,
           `run:${runId}:sessions`,
           "journeyRuns:listSessionsByJourneyRun",
-          { journeyRunId: runId }
+          { journeyRunId: runId },
         );
-      })
+      }),
     );
     sessions = perRunSessions.flat();
 
@@ -367,7 +381,7 @@ export async function collectRunRawData(
         queries,
         "swarm:sessionMetrics:projectScope",
         "journeyRuns:getSwarmSessionMetrics",
-        { projectId: scope.projectId }
+        { projectId: scope.projectId },
       ),
       captureQuery(
         client,
@@ -378,21 +392,21 @@ export async function collectRunRawData(
           projectId: scope.projectId,
           journeyRunIds: scope.runIds,
           filters: ALL_FILTERS,
-        }
+        },
       ),
       captureQuery(
         client,
         queries,
         "swarm:topicMap",
         "chatSessions:getSwarmTopicMapSnapshot",
-        { projectId: scope.projectId }
+        { projectId: scope.projectId },
       ),
       captureQuery(
         client,
         queries,
         "swarm:findings:projectScope",
         "swarmWaveInsights:listSwarmFindings",
-        { projectId: scope.projectId }
+        { projectId: scope.projectId },
       ),
       scope.runIds[0]
         ? captureQuery(
@@ -400,7 +414,7 @@ export async function collectRunRawData(
             queries,
             "swarm:actionableInsights",
             "swarmWaveInsights:getJourneyRunInsightsEnvelope",
-            { projectId: scope.projectId, runId: scope.runIds[0] }
+            { projectId: scope.projectId, runId: scope.runIds[0] },
           )
         : Promise.resolve(undefined),
       scope.swarmRunGroupId
@@ -412,7 +426,7 @@ export async function collectRunRawData(
             {
               projectId: scope.projectId,
               swarmRunGroupId: scope.swarmRunGroupId,
-            }
+            },
           )
         : Promise.resolve(undefined),
       scope.swarmRunGroupId
@@ -424,7 +438,7 @@ export async function collectRunRawData(
             {
               projectId: scope.projectId,
               swarmRunGroupId: scope.swarmRunGroupId,
-            }
+            },
           )
         : Promise.resolve(undefined),
     ]);
@@ -432,14 +446,14 @@ export async function collectRunRawData(
     const topicMap = topLevel[2];
     const topicMapBlobUrl = stringField(
       objectField(topicMap, "snapshot"),
-      "topicMapBlobUrl"
+      "topicMapBlobUrl",
     );
     if (topicMapBlobUrl) {
       await captureJsonBlob(blobs, "swarm:topicMapSnapshot", topicMapBlobUrl);
     }
     if (!scope.swarmRunGroupId) {
       notes.push(
-        "This legacy swarm has no swarmRunGroupId, so wave signals and generated wave insights cannot be addressed."
+        "This legacy swarm has no swarmRunGroupId, so wave signals and generated wave insights cannot be addressed.",
       );
     }
   } else {
@@ -450,7 +464,7 @@ export async function collectRunRawData(
           queries,
           "scenario:settings",
           "scenarios:getScenario",
-          { scenarioId: scope.scenarioId }
+          { scenarioId: scope.scenarioId },
         ),
         captureQuery(
           client,
@@ -462,49 +476,49 @@ export async function collectRunRawData(
             limit: 100,
             includeInternal: true,
             filters: ALL_FILTERS,
-          }
+          },
         ),
         captureQuery(
           client,
           queries,
           "scenario:sessionMetrics",
           "chatSessions:getScenarioSessionMetrics",
-          { scenarioId: scope.scenarioId }
+          { scenarioId: scope.scenarioId },
         ),
         captureQuery(
           client,
           queries,
           "scenario:usageBreakdown",
           "chatSessions:getUsageBreakdown",
-          { scenarioId: scope.scenarioId, filters: ALL_FILTERS }
+          { scenarioId: scope.scenarioId, filters: ALL_FILTERS },
         ),
         captureQuery(
           client,
           queries,
           "scenario:topicMap",
           "chatSessions:getTopicMapSnapshot",
-          { scenarioId: scope.scenarioId }
+          { scenarioId: scope.scenarioId },
         ),
         captureQuery(
           client,
           queries,
           "scenario:windowSignals",
           "scenarioWindowInsights:getWindowSignals",
-          { scenarioId: scope.scenarioId }
+          { scenarioId: scope.scenarioId },
         ),
         captureQuery(
           client,
           queries,
           "scenario:findings",
           "scenarioWindowInsights:listScenarioFindings",
-          { scenarioId: scope.scenarioId }
+          { scenarioId: scope.scenarioId },
         ),
         captureQuery(
           client,
           queries,
           "scenario:actionableInsights",
           "scenarioWindowInsights:getScenarioInsightsEnvelope",
-          { scenarioId: scope.scenarioId }
+          { scenarioId: scope.scenarioId },
         ),
       ]);
     void scenario;
@@ -519,35 +533,41 @@ export async function collectRunRawData(
         queries,
         "scenario:windowInsights",
         "scenarioWindowInsights:getWindowInsights",
-        { scenarioId: scope.scenarioId, windowGroupId: latestGroupId }
+        { scenarioId: scope.scenarioId, windowGroupId: latestGroupId },
       );
     } else {
       notes.push(
-        "No latest window group exists, so generated User Testing window insights cannot be addressed yet."
+        "No latest window group exists, so generated User Testing window insights cannot be addressed yet.",
       );
     }
 
     const topicMapBlobUrl = stringField(
       objectField(topicMap, "snapshot"),
-      "topicMapBlobUrl"
+      "topicMapBlobUrl",
     );
     if (topicMapBlobUrl) {
       await captureJsonBlob(
         blobs,
         "scenario:topicMapSnapshot",
-        topicMapBlobUrl
+        topicMapBlobUrl,
       );
     }
     if (sessions.length >= 100) {
       notes.push(
-        "The User Testing session query is capped at 100 rows by its current public contract; the bundle may omit older sessions."
+        "The User Testing session query is capped at 100 rows by its current public contract; the bundle may omit older sessions.",
       );
     }
   }
 
+  const detailSessions = sessions.slice(0, MAX_SESSION_DETAILS);
+  if (sessions.length > detailSessions.length) {
+    notes.push(
+      `Per-session details were captured for the first ${detailSessions.length} of ${sessions.length} sessions; the session list itself is complete.`,
+    );
+  }
   await captureSessionDetails({
     client,
-    sessions,
+    sessions: detailSessions,
     queries,
     blobs,
     onProgress,
@@ -602,7 +622,7 @@ export function RunRawDataPanel({ scope }: { scope: RawDataScope }) {
           if (requestId === requestIdRef.current) {
             setProgress({ completed, total });
           }
-        }
+        },
       );
       if (requestId === requestIdRef.current) setBundle(next);
     } catch (loadError) {

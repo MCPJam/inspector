@@ -65,6 +65,23 @@ export const v2Suite: EvalSuite = {
   verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
 };
 
+/**
+ * A suite whose configuration lives in a repository.
+ *
+ * A THIRD suite rather than a flag, matching `v2Suite`'s reasoning: the sheet
+ * renders a genuinely different thing for it (rows disabled, with a reason that
+ * outranks every permission and feature answer), and a harness that could only
+ * produce editable suites would let that path rot.
+ *
+ * `declaredSuiteId` rather than `source: 'sdk'` because it is the half that
+ * arrived later and is therefore the half a reader is most likely to forget —
+ * both are covered by `isCiOwnedSuite`'s own unit tests.
+ */
+export const ciOwnedSuite: EvalSuite = {
+  ...baseSuite,
+  declaredSuiteId: "s_from_file",
+};
+
 export type SettingsSheetOverrides = Partial<
   React.ComponentProps<typeof SuiteIterationsView>
 >;

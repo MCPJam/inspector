@@ -1,5 +1,6 @@
 import type { EvalSuiteRun } from "./types";
 import { RunSourceBadge } from "./run-source-badge";
+import type { RunOriginInput } from "@/lib/evals/run-origin";
 
 export function readRunPullRequest(
   metadata: EvalSuiteRun["ciMetadata"] | null,
@@ -26,16 +27,17 @@ export function readRunPullRequest(
 }
 
 export function RunPlatformBadge({
-  source,
+  run,
   metadata,
 }: {
-  source: EvalSuiteRun["source"];
+  /** The run row (or a `{ source }` stand-in). See `RunSourceBadge`. */
+  run: RunOriginInput;
   metadata: EvalSuiteRun["ciMetadata"] | null;
 }) {
   const pr = readRunPullRequest(metadata);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <RunSourceBadge source={source} />
+      <RunSourceBadge run={run} />
       {pr && (
         <a
           href={pr.url}

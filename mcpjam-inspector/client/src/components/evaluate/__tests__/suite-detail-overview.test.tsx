@@ -799,3 +799,101 @@ it("shows generated drafts and explains why they cannot run yet", async () => {
     "1 generated draft is waiting to be added",
   );
 });
+
+/**
+ * A suite whose configuration lives in a repository.
+ *
+ * The lock's shape: the app stops OFFERING edits it knows the backend will
+ * refuse, says why, and points at the one way forward. Running it is untouched
+ * — running a CI-owned suite from the app is the point, and a lock that took
+ * Run away would make the suite look broken rather than managed.
+ */
+describe("SuiteDetailOverview — a CI-managed suite", () => {
+  function renderLocked(overrides: Partial<EvalSuite> = {}) {
+    const onEditSuite = vi.fn();
+    const onDuplicateSuite = vi.fn();
+    const onRerun = vi.fn();
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite(overrides)}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[makeRun({ _id: "run-1" })]}
+        runsLoading={false}
+        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        hostNamesById={hostNamesById}
+        onRerun={onRerun}
+        onEditSuite={onEditSuite}
+        onDuplicateSuite={onDuplicateSuite}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        configLocked
+      />,
+    );
+    return { onEditSuite, onDuplicateSuite, onRerun };
+  }
+
+  it("replaces Edit with the reason and a way forward", () => {
+    renderLocked({ declaredSuiteId: "s_from_file" });
+
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    // The reason and the remedy TOGETHER. A disabled Edit with a tooltip would
+    // make the way out discoverable only by hovering the thing that does not
+    // work.
+    expect(screen.getByTestId("suite-detail-ci-owned")).toHaveTextContent(
+      /Managed by CI/i,
+    );
+    expect(
+      screen.getByTestId("suite-detail-duplicate-to-edit"),
+    ).toBeTruthy();
+  });
+
+  it("takes an editable copy when Duplicate is used", async () => {
+    const user = userEvent.setup();
+    const { onDuplicateSuite } = renderLocked({
+      declaredSuiteId: "s_from_file",
+    });
+
+    await user.click(screen.getByTestId("suite-detail-duplicate-to-edit"));
+    // `duplicateTestSuite` stamps the copy `source: 'ui'` and drops the
+    // declared id, so the copy really is editable.
+    expect(onDuplicateSuite).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the case list readable but offers no case authoring", () => {
+    renderLocked({ declaredSuiteId: "s_from_file" });
+
+    // The cases are the point of looking at the suite; only writing them is
+    // refused.
+    expect(screen.getByTestId("suite-detail-test-cases")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Add case/i })).toBeNull();
+  });
+
+  it("locks an SDK-created suite the same way", () => {
+    renderLocked({ source: "sdk" });
+    expect(screen.getByTestId("suite-detail-ci-owned")).toBeTruthy();
+  });
+
+  it("leaves an app-authored suite alone", () => {
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[makeRun({ _id: "run-1" })]}
+        runsLoading={false}
+        allIterations={[makeIteration({ _id: "i1", suiteRunId: "run-1" })]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onDuplicateSuite={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.queryByTestId("suite-detail-ci-owned")).toBeNull();
+    // …and the escape hatch is not offered where there is nothing to escape.
+    expect(screen.queryByTestId("suite-detail-duplicate-to-edit")).toBeNull();
+  });
+});

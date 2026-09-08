@@ -116,7 +116,6 @@ export function EvaluateRunPage({
   /** Used to recover the model when the list projection omitted effectiveModelId. */
   iterations?: readonly EvalIteration[];
   launchReview?: Omit<SuiteRunReviewProps, "onClose">;
-  onSelectRun?: (runId: string) => void;
   children: ReactNode;
 }) {
   const [comparing, setComparing] = useState(false);
@@ -162,10 +161,10 @@ export function EvaluateRunPage({
                     headerVerdict.tone === "passed"
                       ? "border-success/30 bg-success/10"
                       : headerVerdict.tone === "failed"
-                        ? "border-destructive/30 bg-destructive/10"
-                        : headerVerdict.tone === "caution"
-                          ? "border-warning/30 bg-warning/10"
-                          : "border-border bg-muted/40",
+                      ? "border-destructive/30 bg-destructive/10"
+                      : headerVerdict.tone === "caution"
+                      ? "border-warning/30 bg-warning/10"
+                      : "border-border bg-muted/40",
                   )}
                 >
                   {headerVerdict.word}
@@ -307,8 +306,8 @@ function RunOutcomeBadge({ run }: { run: EvalSuiteRun }) {
   const outcome = ["pending", "running", "grading"].includes(run.status)
     ? run.status
     : run.result && run.result !== "pending"
-      ? run.result
-      : run.status;
+    ? run.result
+    : run.status;
   const labels: Record<string, string> = {
     passed: "Passed",
     failed: "Failed",
@@ -325,8 +324,8 @@ function RunOutcomeBadge({ run }: { run: EvalSuiteRun }) {
     outcome === "passed"
       ? "bg-success/10 text-success"
       : outcome === "failed"
-        ? "bg-destructive/10 text-destructive"
-        : "bg-muted text-muted-foreground";
+      ? "bg-destructive/10 text-destructive"
+      : "bg-muted text-muted-foreground";
   return (
     <span
       className={cn(

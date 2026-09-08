@@ -26,6 +26,12 @@ interface EvalServerCaseEditPageProps {
   caseId: string;
   onBack: () => void;
   onDraftChange?: (draft: EvalServerPreviewDraft) => void;
+  /**
+   * The parent's copy of the review. Session storage is only a buffer; when
+   * it is unavailable (private mode, quota) every edit still has to reach
+   * `onDraftChange`, which is what actually saves.
+   */
+  fallbackDraft?: EvalServerPreviewDraft | null;
 }
 
 export function previewCaseTitleFromDraft(
@@ -44,12 +50,18 @@ export function EvalServerCaseEditPage({
   caseId,
   onBack,
   onDraftChange,
+  fallbackDraft = null,
 }: EvalServerCaseEditPageProps) {
   const initial = useMemo(
-    () => loadPreviewCase(server.id, suiteId, caseId),
-    [server.id, suiteId, caseId],
+    () => loadPreviewCase(server.id, suiteId, caseId, fallbackDraft),
+    [server.id, suiteId, caseId, fallbackDraft],
   );
   const [title, setTitle] = useState(initial?.title ?? "Test case");
+  // What the draft currently holds, so Escape returns to the last SAVED name
+  // rather than the one the page mounted with.
+  const [committedTitle, setCommittedTitle] = useState(
+    initial?.title ?? "Test case",
+  );
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [steps, setSteps] = useState<TestStep[]>(initial?.steps ?? []);
   const [matchOptions, setMatchOptions] = useState<
@@ -63,7 +75,7 @@ export function EvalServerCaseEditPage({
   );
 
   const persist = (patch: Partial<PreviewCase>) => {
-    const draft = readEvalServerPreviewDraft(server.id);
+    const draft = readEvalServerPreviewDraft(server.id) ?? fallbackDraft;
     if (!draft) return;
     const next = {
       ...draft,
@@ -100,6 +112,7 @@ export function EvalServerCaseEditPage({
     setIsEditingTitle(false);
     const nextTitle = title.trim() || "New case";
     if (nextTitle !== title) setTitle(nextTitle);
+    setCommittedTitle(nextTitle);
     persist({ title: nextTitle });
   };
 
@@ -108,7 +121,7 @@ export function EvalServerCaseEditPage({
       event.currentTarget.blur();
     }
     if (event.key === "Escape") {
-      setTitle(initial.title);
+      setTitle(committedTitle);
       setIsEditingTitle(false);
     }
   };
@@ -176,7 +189,6 @@ export function EvalServerCaseEditPage({
               setPredicates(next);
               persist({ predicates: next });
             }}
-            onOpenDeepEditor={() => undefined}
             autoFocusPrompt
           />
         </div>
@@ -189,8 +201,9 @@ function loadPreviewCase(
   serverId: string,
   suiteId: string,
   caseId: string,
+  fallbackDraft: EvalServerPreviewDraft | null,
 ): PreviewCase | null {
-  const draft = readEvalServerPreviewDraft(serverId);
+  const draft = readEvalServerPreviewDraft(serverId) ?? fallbackDraft;
   if (!draft) return null;
   const previewCase = findPreviewCase(draft.suites, suiteId, caseId);
   return previewCase ? hydratePreviewCase(previewCase) : null;

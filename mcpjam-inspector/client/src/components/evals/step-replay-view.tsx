@@ -18,16 +18,26 @@ import {
   isPromptStep,
   isToolCallStep,
   isWidgetAssertion,
+  WIDGET_ASSERTION_LABELS,
   type AssertStep,
   type InteractStep,
   type TestStep,
 } from "@/shared/steps";
+import { checkRole } from "@/shared/eval-matching";
+import {
+  formatCriterion,
+  INLINE_ASSERT_LABELS,
+  PREDICATE_KIND_LABELS,
+  type PredicateKind,
+} from "@/shared/predicate-kinds";
+import type { EvalStepReplay } from "@/shared/eval-step-replay";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { RenderObservationCard } from "./browser-artifacts-view";
+import { EVAL_WARN_BADGE_STRONG_CLASS } from "./constants";
 
 /** Settled (or in-flight) iteration verdict shown atop the step list. */
 export type StepVerdict = "passed" | "failed" | "pending" | "cancelled";
@@ -111,12 +121,26 @@ function statusTone(status: EvalStepStatus | undefined): StatusTone {
   return "unknown";
 }
 
+/** How this mount names its checks. See `describeAssert`. */
+export type StepPresentation = "legacy" | "scorecard";
+
+/**
+ * A check whose miss the runner records but does not act on.
+ *
+ * Widget assertions carry no policy field at all, so they are never advisory.
+ */
+function isAdvisoryAssert(step: TestStep): boolean {
+  if (!isAssertStep(step)) return false;
+  if (isWidgetAssertion(step.assertion)) return false;
+  return checkRole(step.assertion) === "advisory";
+}
+
 /** One-line human summary of the step's intent for the row header. */
-function stepSummary(step: TestStep): string {
+function stepSummary(step: TestStep, presentation: StepPresentation): string {
   if (isPromptStep(step)) return step.prompt;
   if (isToolCallStep(step)) return `call ${step.toolName}`;
   if (isInteractStep(step)) return describeInteract(step);
-  if (isAssertStep(step)) return describeAssert(step);
+  if (isAssertStep(step)) return describeAssert(step, presentation);
   return "";
 }
 
@@ -149,9 +173,38 @@ function describeTarget(t: {
   return "element";
 }
 
-function describeAssert(step: AssertStep): string {
+/**
+ * The row's one-line name.
+ *
+ * `"legacy"` prints the wire discriminator (`toolCalledAtLeastOnce: get_me`),
+ * which is what every Steps tab has shown to date and what the rest of the
+ * product stopped saying some time ago — the authoring form, the checks list
+ * and the scorecard all speak `formatCriterion` / `labelForInlineAssert`.
+ *
+ * `"scorecard"` uses those same helpers, and it says WHERE the check runs: a
+ * step's `noToolErrors` sees the transcript up to its own position, so it reads
+ * "No tool errors so far" while the whole-run one reads "No tool errors". Same
+ * predicate, different claim, and the label is the only place a reader learns
+ * that.
+ *
+ * The mode exists because this component is also every `/evals` Steps tab; the
+ * default keeps that surface byte-identical.
+ */
+function describeAssert(
+  step: AssertStep,
+  presentation: StepPresentation,
+): string {
   const a = step.assertion;
-  if (isWidgetAssertion(a)) return a.kind;
+  if (isWidgetAssertion(a)) {
+    if (presentation === "legacy") return a.kind;
+    return WIDGET_ASSERTION_LABELS[a.kind] ?? a.kind;
+  }
+  if (presentation === "scorecard") {
+    const kind = a.type as PredicateKind;
+    if (Object.prototype.hasOwnProperty.call(PREDICATE_KIND_LABELS, kind)) {
+      return INLINE_ASSERT_LABELS[kind] ?? formatCriterion({ predicate: a });
+    }
+  }
   // Transcript predicate — `type` plus its most identifying field.
   const p = a as { type: string; toolName?: string };
   return p.toolName ? `${p.type}: ${p.toolName}` : p.type;
@@ -168,6 +221,9 @@ export function StepReplayView({
   onHoverStep,
   onSelectStep,
   className,
+  presentation = "legacy",
+  stepResults,
+  verdictWord,
 }: {
   steps: TestStep[];
   renderObservations?: EvalTraceWidgetRenderObservationView[];
@@ -183,19 +239,56 @@ export function StepReplayView({
   onHoverStep?: (stepId: string | null) => void;
   onSelectStep?: (stepId: string | null) => void;
   className?: string;
+  /** `"legacy"` keeps every existing mount byte-identical. */
+  presentation?: StepPresentation;
+  /**
+   * Per-step verdicts WITH their reasons. `stepStatusById` deliberately drops
+   * `reason`, so a failed row is a red mark and nothing else; supplying this
+   * is what lets the row say why.
+   */
+  stepResults?: ReadonlyArray<EvalStepReplay>;
+  /**
+   * The trial's verdict word, as the page already computes it. Supplying it
+   * stops this header deriving a SECOND one: it reads raw `iteration.result`
+   * while the trial header runs `computeIterationResult`, and the two can
+   * disagree on the same screen.
+   */
+  verdictWord?: string;
 }) {
   const obsByStep = bucketBy(renderObservations);
+  const reasonByStep = new Map(
+    (stepResults ?? [])
+      .filter((row) => row.reason)
+      .map((row) => [row.stepId, row.reason as string]),
+  );
   const intsByStep = bucketBy(interactionSteps);
 
   // Tally the authored assertions (the "checks") and how many passed, derived
   // from the same per-step status the rows below render — so the header and the
   // rows can never disagree.
-  const checkStatuses = steps
-    .filter(isAssertStep)
-    .map((s) => resolveStatus(s, intsByStep.get(s.id), stepStatusById));
+  //
+  // In `"scorecard"` mode advisory checks are excluded from the tally: an
+  // advisory miss does not fail the trial, so counting it here would report a
+  // failure the verdict does not agree with. They are counted separately and
+  // named as warnings.
+  const assertSteps = steps.filter(isAssertStep);
+  const gatingSteps =
+    presentation === "scorecard"
+      ? assertSteps.filter((step) => !isAdvisoryAssert(step))
+      : assertSteps;
+  const checkStatuses = gatingSteps.map((s) =>
+    resolveStatus(s, intsByStep.get(s.id), stepStatusById),
+  );
   const checkTotal = checkStatuses.length;
   const checksPassed = checkStatuses.filter((s) => s === "ok").length;
   const checksFailed = checkStatuses.filter((s) => s === "fail").length;
+  const warned =
+    presentation === "scorecard"
+      ? assertSteps
+          .filter(isAdvisoryAssert)
+          .map((s) => resolveStatus(s, intsByStep.get(s.id), stepStatusById))
+          .filter((status) => status === "fail").length
+      : 0;
 
   // The full screen recording lives on the App tab ("REPLAY"); Steps shows the
   // per-step artifacts inline, so it doesn't repeat the video here.
@@ -208,9 +301,11 @@ export function StepReplayView({
       {verdict ? (
         <StepsVerdictHeader
           verdict={verdict}
+          verdictWord={verdictWord}
           checkTotal={checkTotal}
           checksPassed={checksPassed}
           checksFailed={checksFailed}
+          warned={warned}
         />
       ) : null}
       {steps.map((step, i) => {
@@ -249,7 +344,7 @@ export function StepReplayView({
                 {meta.label}
               </span>
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {stepSummary(step)}
+                {stepSummary(step, presentation)}
               </span>
               {tone !== "unknown" ? (
                 <span
@@ -265,6 +360,36 @@ export function StepReplayView({
                 <CircleDot className="h-3 w-3 shrink-0 text-muted-foreground/30" />
               )}
             </div>
+
+            {presentation === "scorecard" && isAdvisoryAssert(step) ? (
+              <div className="px-3 pb-1 pl-9">
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                    EVAL_WARN_BADGE_STRONG_CLASS,
+                  )}
+                >
+                  Warn
+                </span>
+              </div>
+            ) : null}
+
+            {/*
+              Why a failed step said nothing until now: `parseStepStatusById`
+              keeps only `{stepId → status}` and drops the runner's own reason,
+              so a red mark was the whole message. `assembleStepResults` has
+              carried it all along.
+            */}
+            {presentation === "scorecard" &&
+            (tone === "fail" || tone === "skipped") &&
+            reasonByStep.get(step.id) ? (
+              <p
+                data-testid="step-replay-reason"
+                className="px-3 pb-2 pl-9 text-[11px] text-muted-foreground"
+              >
+                {reasonByStep.get(step.id)}
+              </p>
+            ) : null}
 
             {(obs.length > 0 || ints.length > 0) && (
               <div className="flex flex-col gap-2 px-3 pb-3">
@@ -332,16 +457,21 @@ function verdictMeta(verdict: StepVerdict | null): {
  */
 function StepsVerdictHeader({
   verdict,
+  verdictWord,
   checkTotal,
   checksPassed,
   checksFailed,
+  warned,
 }: {
   verdict: StepVerdict;
+  verdictWord?: string;
   checkTotal: number;
   checksPassed: number;
   checksFailed: number;
+  warned: number;
 }) {
-  const meta = verdictMeta(verdict);
+  const derived = verdictMeta(verdict);
+  const meta = verdictWord ? { ...derived, label: verdictWord } : derived;
   return (
     <div
       data-testid="steps-verdict-header"
@@ -363,6 +493,12 @@ function StepsVerdictHeader({
               · {checksFailed} failed
             </span>
           ) : null}
+        </span>
+      ) : null}
+      {warned > 0 ? (
+        <span className={cn("text-xs", EVAL_WARN_BADGE_STRONG_CLASS)}>
+          {checkTotal > 0 ? " · " : ""}
+          {warned} warn
         </span>
       ) : null}
     </div>

@@ -47,7 +47,8 @@ describe("suite run review", () => {
         onClose={close}
       />,
     );
-    expect(screen.getByRole("spinbutton")).toHaveValue(3);
+    // Seeded from the suite floor (minIterations 5), not the flat default.
+    expect(screen.getByRole("spinbutton")).toHaveValue(5);
     expect(screen.getByText("80%")).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Claude · sonnet" }));
     await user.clear(screen.getByRole("spinbutton"));

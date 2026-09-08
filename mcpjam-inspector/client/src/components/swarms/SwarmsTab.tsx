@@ -93,6 +93,7 @@ import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
+import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
 import {
   RunSessionsProvider,
   useRunSessionsContext,
@@ -1600,6 +1601,7 @@ function RunSessionsView({
   }
 
   const {
+    run,
     runId,
     runStatus,
     sessionsStatus,
@@ -1610,6 +1612,12 @@ function RunSessionsView({
     fallbackTrace,
     autoFollowing,
   } = runSessions;
+  // The pane resolves its own outcome and needs the execution-plane row to do
+  // it: a session the provider refused can still read `completed` on its
+  // `chatSessions` lifecycle.
+  const selectedAttempt = matrixSelection
+    ? findAttemptForSelection(run.attempts, matrixSelection)
+    : null;
 
   useEffect(() => {
     setDetailSession(null);
@@ -1645,6 +1653,7 @@ function RunSessionsView({
           selection={matrixSelection}
           stream={stream}
           convexSession={selectedConvex}
+          attempt={selectedAttempt}
           fallbackTrace={fallbackTrace}
           runStatus={String(runStatus)}
           onOpenCompleted={(session) => setDetailSession(session)}

@@ -39,6 +39,10 @@ export function EvalsEmptyHero({
   // first-run preview, not that form. Loading withholds the row so it
   // does not reflow when servers arrive.
   const showCtas = !serversLoading;
+  // Without `onEvalServer` the card can only open the blank suite form, so it
+  // must say so: a card that reads "Eval my server" and opens Create suite
+  // promises a preview it cannot start.
+  const cardAction = onEvalServer ? "Eval my server" : "Create suite";
 
   return (
     <div
@@ -67,7 +71,7 @@ export function EvalsEmptyHero({
               <button
                 key={server.id}
                 type="button"
-                aria-label={`Eval my server: ${server.name}`}
+                aria-label={`${cardAction}: ${server.name}`}
                 onClick={() =>
                   onEvalServer ? onEvalServer(server) : onCreateSuite()
                 }
@@ -77,7 +81,7 @@ export function EvalsEmptyHero({
                   {server.name}
                 </span>
                 <span className="shrink-0 text-sm font-medium text-primary">
-                  Eval my server
+                  {cardAction}
                 </span>
               </button>
             ))}

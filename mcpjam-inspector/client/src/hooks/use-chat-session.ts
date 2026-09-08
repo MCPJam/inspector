@@ -78,7 +78,10 @@ import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+import {
+  withBuiltInToolDefinitions,
+  type SerializedModelRequestTool,
+} from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
 import {
@@ -96,7 +99,10 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
-import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
+import {
+  prepareLocalHarnessSendRequest,
+  type ChatSendRequestOptions,
+} from "@/lib/chat-send-request";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import {
   preserveHydratedMessageIds,
@@ -419,6 +425,19 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Definitions for those built-in tools, as the model is shown them — used by
+   * the RAW view of a reopened session and nowhere else.
+   *
+   * A live turn streams a `request_payload` carrying the real advertised set,
+   * so this is never consulted then. A rehydrated session replays no such
+   * event, so Raw synthesizes one from the currently-resolved tool schemas —
+   * and those come from connected MCP servers only. A host whose whole
+   * capability is the browser therefore rendered `"tools": {}` next to a
+   * conversation in which the model had just driven one. These are merged into
+   * the synthesized entry so it says what would actually be sent next.
+   */
+  builtInToolDefinitions?: SerializedModelRequestTool[];
   /**
    * Offer this turn the WebMCP tools of the page the inspector currently has
    * open. Off unless the caller opts in: a chat that silently gained tools from
@@ -1639,22 +1658,6 @@ function isAuthDeniedError(error: unknown): boolean {
   if (withStatus.status === 401 || withStatus.status === 403) return true;
   if (typeof withStatus.message !== "string") return false;
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
-}
-
-/**
- * `HeadersInit` as a plain record.
- *
- * The SDK hands `prepareSendMessagesRequest` whatever the transport resolved,
- * which is a `Headers`, an entry array, or a record depending on where it came
- * from. Spreading one of the first two into an object literal silently
- * produces `{}` — and the consent capability would be the header that went
- * missing.
- */
-function normalizeSendHeaders(headers: HeadersInit | undefined): Record<string, string> {
-  if (headers === undefined) return {};
-  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
-  if (Array.isArray(headers)) return Object.fromEntries(headers);
-  return { ...headers };
 }
 
 export function useChatSession(
@@ -3160,27 +3163,28 @@ export function useChatSession(
        * hosted. A user who deliberately scoped work to their machine got a
        * cloud sandbox and no indication of it. Failing loudly is the point.
        */
-      prepareSendMessagesRequest: ({ body, headers }) => {
-        if (!localHarnessRequested) return { body: body ?? {}, headers };
-        const snapshot = localHarnessExecution?.resolveSendTarget() ?? null;
-        if (snapshot === null) {
-          throw new Error("Local execution is not authorized for this turn");
-        }
-        return {
-          body: {
-            ...(body ?? {}),
-            // Opaque ids only. Every one of them is re-derived server-side
-            // before anything spawns.
-            harnessTarget: snapshot.target,
-          },
-          headers: {
-            ...normalizeSendHeaders(headers),
-            // The capability, in a HEADER. Never in the body, which is
-            // persisted into a transcript.
-            [LOCAL_HARNESS_GRANT_HEADER]: snapshot.token,
-          },
-        };
-      },
+      //
+      // Installed ONLY on a local-harness turn. The SDK adds `messages` (and
+      // `id`/`trigger`/`messageId`) to the request itself, but only when no
+      // `prepareSendMessagesRequest` returns a body — any returned body replaces
+      // the SDK's wholesale. A hook that ran on every turn and handed back the
+      // custom fields it was given sent every chat turn out with no `messages`
+      // (400 "messages are required", both routes). Not installing it on the
+      // ordinary path leaves the SDK's own composition in charge there, and
+      // `prepareLocalHarnessSendRequest` re-adds the SDK fields on the path
+      // that does rewrite the body — `lib/chat-send-request.ts` owns that
+      // contract and pins it against the real transport.
+      ...(localHarnessRequested
+        ? {
+            prepareSendMessagesRequest: (
+              options: ChatSendRequestOptions<UIMessage>,
+            ) =>
+              prepareLocalHarnessSendRequest(
+                options,
+                localHarnessExecution?.resolveSendTarget() ?? null,
+              ),
+          }
+        : {}),
     });
   }, [
     selectedModel,
@@ -3834,6 +3838,14 @@ export function useChatSession(
     if (!traceTranscriptFromUi || traceTranscriptFromUi.length === 0) {
       return live;
     }
+    // Host-executed built-ins (today: the six `browser_*` tools) are advertised
+    // by the SERVER from the host's config, so they never appear in the
+    // client's server-derived schemas. See `withBuiltInToolDefinitions` for why
+    // an MCP tool of the same name still wins here.
+    const tools = withBuiltInToolDefinitions(
+      serializedTools,
+      options.builtInToolDefinitions,
+    );
     return [
       {
         turnId: "rehydrated",
@@ -3841,7 +3853,7 @@ export function useChatSession(
         stepIndex: 0,
         payload: {
           system: systemPrompt ?? "",
-          tools: serializedTools,
+          tools,
           messages: traceTranscriptFromUi,
         },
       },
@@ -3851,6 +3863,7 @@ export function useChatSession(
     traceTranscriptFromUi,
     systemPrompt,
     serializedTools,
+    options.builtInToolDefinitions,
   ]);
 
   // useLayoutEffect (not useEffect) so the trace state is swapped out

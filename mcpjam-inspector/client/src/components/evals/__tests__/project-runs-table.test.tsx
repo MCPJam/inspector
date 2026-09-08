@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
       loadMore: vi.fn(),
     },
   },
+  /** The args the table asked the backend for, newest last. */
+  queryArgs: [] as Array<Record<string, unknown>>,
+  /** Whether the fake backend honours `origins`; off by default so tests
+   *  about the loaded page see it unfiltered. */
+  backendFiltersOrigins: false,
 }));
 
 const convexClient = { query: mocks.query };
@@ -26,9 +31,28 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  usePaginatedQuery: () => mocks.paginated.current,
+  usePaginatedQuery: (_fn: unknown, args: Record<string, unknown>) => {
+    mocks.queryArgs.push(args);
+    // The platform chips are a QUERY argument, so the fake backend answers
+    // them the way the real one does: by run origin, falling back to the
+    // suite's provenance for a row that predates `testSuiteRun.source`.
+    const origins = args.origins as string[] | undefined;
+    const page = mocks.paginated.current;
+    if (!mocks.backendFiltersOrigins || !origins?.length) return page;
+    return {
+      ...page,
+      results: page.results.filter((row: ProjectRunRow) =>
+        origins.includes(row.source ?? row.suiteSource ?? "ui"),
+      ),
+    };
+  },
   useConvex: () => convexClient,
 }));
+
+/** The most recent query args — what the table is asking for right now. */
+function latestQueryArgs(): Record<string, unknown> {
+  return mocks.queryArgs[mocks.queryArgs.length - 1] ?? {};
+}
 
 import {
   ProjectRunsTable,
@@ -78,11 +102,14 @@ function inTable() {
 beforeEach(() => {
   setRows([]);
   mocks.query.mockReset();
+  mocks.queryArgs.length = 0;
+  mocks.backendFiltersOrigins = false;
 });
 
 describe("ProjectRunsTable", () => {
   it("filters embedded history and keeps pagination available for more matches", async () => {
     const user = userEvent.setup();
+    mocks.backendFiltersOrigins = true;
     setRows(
       [makeRow({ source: "sdk" }), makeRow({ _id: "run_ui", source: "ui" })],
       "CanLoadMore",
@@ -101,11 +128,12 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
-    expect(screen.getByText(/1 of 2 loaded runs/)).toBeInTheDocument();
+    // Sent to the query, not applied to the loaded page: the backend answers
+    // with the SDK runs alone, so there is no "of the loaded runs" caveat.
+    expect(latestQueryArgs().origins).toEqual(["sdk"]);
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeInTheDocument();
     expect(inTable().queryByText("UI")).toBeNull();
-    expect(
-      screen.getByText(/Filtering the 2 most recent runs/),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Filtering the .* most recent runs/)).toBeNull();
     await user.click(screen.getByRole("button", { name: /Load more/ }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
       PROJECT_RUNS_PAGE_SIZE,
@@ -169,7 +197,7 @@ describe("ProjectRunsTable", () => {
     expect(table.queryByText("Accuracy")).not.toBeNull();
   });
 
-  it("filters by source", async () => {
+  it("filters by origin THROUGH THE QUERY, not over the loaded page", async () => {
     const user = userEvent.setup();
     setRows([
       makeRow({ _id: "run_sdk1", source: "sdk", suiteName: "CI suite" }),
@@ -181,7 +209,9 @@ describe("ProjectRunsTable", () => {
     ]);
 
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
-    expect(inTable().getByText("Playground suite")).toBeTruthy();
+    // Nothing selected: no argument at all, so a backend that predates the
+    // filter is unaffected.
+    expect(latestQueryArgs()).not.toHaveProperty("origins");
 
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
@@ -190,9 +220,58 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "SDK", exact: true }),
     );
     await user.keyboard("{Escape}");
+    expect(latestQueryArgs().origins).toEqual(["sdk"]);
 
+    // …and the rows the query returned are rendered as they came. A second,
+    // client-side predicate would be free to disagree with the one that chose
+    // the page — which is exactly how "No runs match these filters" came to be
+    // shown for a suite whose GitHub runs were simply further down.
     expect(inTable().getByText("CI suite")).toBeTruthy();
-    expect(inTable().queryByText("Playground suite")).toBeNull();
+    expect(inTable().getByText("Playground suite")).toBeTruthy();
+  });
+
+  it("maps the GitHub chip onto both stored GitHub origins", async () => {
+    const user = userEvent.setup();
+    setRows([makeRow({ source: "github_check" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "GitHub" }));
+    // A PR check and an Actions job are the same thing to the person
+    // filtering, and were never distinguishable in the badge either.
+    expect(latestQueryArgs().origins).toEqual([
+      "github_check",
+      "github_action",
+    ]);
+  });
+
+  it("keeps the chips reachable when a filter matches nothing", async () => {
+    const user = userEvent.setup();
+    mocks.backendFiltersOrigins = true;
+    setRows([makeRow({ source: "sdk" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "CLI" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "MCP" }));
+    await user.keyboard("{Escape}");
+
+    // The full-page "No runs yet" would both lie about the project and take
+    // away the control needed to undo the filter.
+    expect(latestQueryArgs().origins).toEqual([
+      "cli",
+      "mcp",
+      "slack",
+      "discord",
+    ]);
+    expect(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    ).toBeTruthy();
+    expect(screen.getByText("No runs match these filters.")).toBeTruthy();
   });
 
   it("uses legacy suite provenance consistently and clears combined filters", async () => {
@@ -212,7 +291,26 @@ describe("ProjectRunsTable", () => {
         suiteName: "Beta",
       }),
     ]);
+    mocks.backendFiltersOrigins = true;
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    // Suite first: that filter runs over the loaded page.
+    await user.click(screen.getByLabelText("Filter by suite"));
+    await user.click(screen.getByRole("option", { name: "Beta" }));
+    expect(inTable().queryByText("Alpha")).toBeNull();
+    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
+    // Then the platform: that one is a query argument, and the backend now
+    // answers with the legacy row alone, which the suite filter hides.
+    await user.click(
+      screen.getByRole("button", { name: "Filter by platform" }),
+    );
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "SDK" }));
+    await user.keyboard("{Escape}");
+    expect(inTable().getByText("No runs match these filters.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(inTable().getByText("Alpha")).toBeVisible();
+    expect(inTable().getByText("Beta")).toBeVisible();
+    // The legacy row carries no `source`; the backend resolves it from the
+    // suite's provenance, so it survives the SDK filter on its own.
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
@@ -220,13 +318,7 @@ describe("ProjectRunsTable", () => {
     await user.keyboard("{Escape}");
     expect(inTable().getByText("SDK")).toBeVisible();
     expect(inTable().queryByText("Beta")).toBeNull();
-    expect(screen.getByText("1 of 2 loaded runs")).toBeVisible();
-    await user.click(screen.getByLabelText("Filter by suite"));
-    await user.click(screen.getByRole("option", { name: "Beta" }));
-    expect(inTable().getByText("No runs match these filters.")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(inTable().getByText("Alpha")).toBeVisible();
-    expect(inTable().getByText("Beta")).toBeVisible();
+    expect(screen.getByText("1 of 1 loaded runs")).toBeVisible();
   });
 
   it("filters by suite", async () => {
@@ -259,7 +351,7 @@ describe("ProjectRunsTable", () => {
     });
   });
 
-  it("loads more pages and says what the filters actually cover", async () => {
+  it("loads more pages, and no longer hedges about what the filter covered", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "sdk" })], "CanLoadMore");
 
@@ -268,8 +360,9 @@ describe("ProjectRunsTable", () => {
     // Unfiltered: no caveat needed.
     expect(document.body.textContent).not.toContain("loaded so far");
 
-    // Filtered with pages outstanding: "no UI runs" would otherwise read as
-    // a fact about the project rather than about the loaded rows.
+    // Filtered by platform with pages outstanding: the chips are a query
+    // argument, so an empty answer is a fact about the project, and the
+    // "loaded so far" hedge must not appear for them.
     await user.click(
       screen.getByRole("button", { name: "Filter by platform" }),
     );
@@ -277,7 +370,7 @@ describe("ProjectRunsTable", () => {
       screen.getByRole("menuitemcheckbox", { name: "UI", exact: true }),
     );
     await user.keyboard("{Escape}");
-    expect(document.body.textContent).toContain("loaded so far");
+    expect(document.body.textContent).not.toContain("loaded so far");
 
     await user.click(screen.getByRole("button", { name: /Load more/ }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
@@ -476,6 +569,7 @@ describe("project run history metrics", () => {
 
   it("recalculates chart history and table rows when the source filter changes", async () => {
     arrangeHistory();
+    mocks.backendFiltersOrigins = true;
     const user = userEvent.setup();
     render(
       <ProjectRunsTable
@@ -496,7 +590,7 @@ describe("project run history metrics", () => {
     const metrics = screen.getByTestId("project-run-history-metrics");
     expect(within(metrics).getByText("2/2 passed")).toBeVisible();
     expect(inTable().queryByText("UI suite")).toBeNull();
-    expect(screen.getByText(/1 of 2 loaded runs/)).toBeVisible();
+    expect(screen.getByText(/1 of 1 loaded runs/)).toBeVisible();
   });
 
   it("keeps unavailable metrics absent and lets the user retry", async () => {
@@ -874,5 +968,84 @@ describe("GitHub run context", () => {
     expect(
       screen.getByRole("textbox", { name: "Filter by commit" }),
     ).toHaveValue("");
+  });
+});
+
+/**
+ * "Run by" names a person, and the person is not always the whole answer.
+ *
+ * A run made with an API key is attributed to the key's OWNER, so an automated
+ * launch and that person clicking Run rendered identically. The key id is
+ * minted by the backend from the credential the request authenticated with — a
+ * fact, not a claim — so the cell can say which without guessing.
+ */
+describe("ProjectRunsTable — who ran it, and with what", () => {
+  it("names the API key behind an automated run", () => {
+    setRows([
+      makeRow({
+        source: "api",
+        createdByName: "Ada",
+        attribution: { surface: "rest", apiKeyId: "key_abcd3f9a" },
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    expect(inTable().getByText("Ada")).toBeTruthy();
+    // The last four of the KEY ID. The secret is what the audit sanitizer
+    // redacts, and the platform stores only the id here for that reason.
+    expect(inTable().getByText("via API key ····3f9a")).toBeTruthy();
+  });
+
+  it("names the calling agent on an MCP run instead", () => {
+    setRows([
+      makeRow({
+        source: "api",
+        createdByName: "Ada",
+        launcher: { kind: "mcp", client: "claude-code/1.2.3" },
+        attribution: { surface: "mcp", apiKeyId: "key_abcd3f9a" },
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // "claude-code" tells you what to look at; "via API key ····3f9a" tells you
+    // which key to rotate. On an agent run the first is the more useful one.
+    expect(inTable().getByText("via claude-code/1.2.3")).toBeTruthy();
+    expect(inTable().queryByText(/via API key/)).toBeNull();
+  });
+
+  it("names the agent on a Slack-attributed MCP run too", () => {
+    setRows([
+      makeRow({
+        source: "api",
+        createdByName: "Ada",
+        launcher: { kind: "mcp", client: "mcpjam-slack/2.0.0" },
+        attribution: { surface: "slack", apiKeyId: "key_abcd3f9a" },
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // `resolveRunOrigin` answers `slack` here — verified attribution outranks
+    // the declared launcher, on purpose — so asking the ORIGIN whether this is
+    // "an MCP run" said no, and hid the agent name for exactly the runs that
+    // have one. The name lives on `launcher.client` either way.
+    expect(inTable().getByText("via mcpjam-slack/2.0.0")).toBeTruthy();
+    expect(inTable().queryByText(/via API key/)).toBeNull();
+  });
+
+  it("says nothing extra for a run someone started in the app", () => {
+    setRows([makeRow({ source: "ui", createdByName: "Ada" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    expect(inTable().getByText("Ada")).toBeTruthy();
+    expect(inTable().queryByText(/^via /)).toBeNull();
+  });
+
+  it("renders a row from a backend that sends neither provenance field", () => {
+    // The whole table must survive an older deployment: both keys absent, not
+    // merely null.
+    setRows([makeRow({ source: "api", createdByName: "Ada" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    expect(inTable().getByText("Ada")).toBeTruthy();
+    expect(inTable().getByText("API")).toBeTruthy();
   });
 });

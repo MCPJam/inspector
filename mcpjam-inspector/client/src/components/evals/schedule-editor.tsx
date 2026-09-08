@@ -1,6 +1,8 @@
 /**
- * Suite schedule editor (synthetic monitors) — rendered as a section of the
- * suite settings sheet, behind the `synthetic-monitors` PostHog flag.
+ * Suite schedule editor — rendered as a section of the suite settings sheet,
+ * behind the `scheduled-evals-enabled` PostHog flag (its own, split out of
+ * `synthetic-monitors` so Schedule can stay dark while the monitor scorers
+ * ship).
  *
  * Scheduled runs execute the WHOLE suite on a fixed interval under the
  * enabling user's identity (org-scoped delegated token; LLM cases bill the

@@ -91,7 +91,6 @@ describe("EvaluateRunPage", () => {
 
   it("uses a stable run title and removes individual client report switching", async () => {
     const user = userEvent.setup();
-    const select = vi.fn();
     render(
       <EvaluateRunPage
         run={makeRun({
@@ -114,7 +113,6 @@ describe("EvaluateRunPage", () => {
         ]}
         defaultCompareRunId={null}
         onCompareWithRun={vi.fn()}
-        onSelectRun={select}
       >
         body
       </EvaluateRunPage>,
@@ -129,7 +127,6 @@ describe("EvaluateRunPage", () => {
     expect(screen.getByText("sonnet")).toBeVisible();
     expect(screen.getByText("opus")).toBeVisible();
     expect(screen.queryByText("other")).toBeNull();
-    expect(select).not.toHaveBeenCalled();
   });
 
   it("keeps launch metadata in run details instead of the header", async () => {

@@ -43,12 +43,17 @@ import {
 import {
   ensureLocalBrowserSession,
   findLocalBrowserSession,
+  findLocalBrowserSessionForProject,
   listLocalBrowserSessions,
   LocalBrowserUnavailableError,
   resolveLocalBrowserRuntime,
   resolveLocalBrowserSurface,
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
+import {
+  pageToolsFromCommandResponse,
+  webmcpToolsObserveCommand,
+} from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 import {
   BROWSER_INPUT_BATCH_LIMIT,
@@ -474,6 +479,65 @@ computers.post("/local-browser/input", async (c) => {
   }
   touchLocalBrowserSession(session.handle);
   return c.json({ ok: true });
+});
+
+/**
+ * The WebMCP tools of the page THIS MACHINE'S browser is on — the local half of
+ * the hosted panel's `GET /page-tools`, feeding the same Tools pane.
+ *
+ * READS, NEVER STARTS. `ensureLocalBrowserSession` would launch a Chromium, and
+ * a tool list appearing in a side panel must not be what opens a browser window
+ * on somebody's desk — so a project with nothing running answers
+ * `no_browser_session` and the pane says so.
+ *
+ * POST rather than GET because every local-browser route is: the project id
+ * travels in the body alongside the consent capability, and the shared `post`
+ * helper on the client is what attaches that header.
+ */
+computers.post("/local-browser/page-tools", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    tabId?: unknown;
+    holder?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const tabId = typeof body?.tabId === "string" ? body.tabId : undefined;
+  const holder = typeof body?.holder === "string" ? body.holder : undefined;
+  let session: ReturnType<typeof findLocalBrowserSessionForProject>;
+  try {
+    session = findLocalBrowserSessionForProject(projectId);
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+  if (!session) {
+    return c.json({ ok: false, error: "no_browser_session" }, 409);
+  }
+  const observe = (source: "inspector" | "manual", actingAs?: string) =>
+    session!.client.sendCommand(
+      webmcpToolsObserveCommand({
+        source,
+        ...(actingAs ? { holder: actingAs } : {}),
+        ...(tabId ? { tabId } : {}),
+      }),
+      session!.handle.bootId,
+    );
+  try {
+    let response = await observe("inspector");
+    // The pane holding the lease is still allowed to look. Re-sent as this
+    // holder's own `manual` command, which the daemon checks against the live
+    // lease — an unauthenticated `manual` is refused there, so a body that
+    // merely claims a holder buys nothing.
+    if (response.status === "lease_blocked" && holder) {
+      response = await observe("manual", holder);
+    }
+    const mapped = pageToolsFromCommandResponse(response);
+    return c.json(mapped.body, mapped.status);
+  } catch {
+    return c.json({ ok: false, error: "unreachable" }, 502);
+  }
 });
 
 export default computers;

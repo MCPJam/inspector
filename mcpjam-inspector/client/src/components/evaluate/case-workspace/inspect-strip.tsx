@@ -64,7 +64,7 @@ export function InspectStrip({
           Viewing run
         </span>
         <span className="truncate">
-          Iter #{iteration.iterationNumber}
+          Trial #{iteration.iterationNumber}
           <span aria-hidden> · </span>
           {formatTimeAgo(ranAt)}
         </span>

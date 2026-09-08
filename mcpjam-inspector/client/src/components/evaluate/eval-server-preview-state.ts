@@ -138,8 +138,48 @@ function isPreviewSuite(value: unknown): value is PreviewSuite {
 function isPreviewCase(value: unknown): value is PreviewCase {
   if (!value || typeof value !== "object") return false;
   const previewCase = value as PreviewCase;
+  if (
+    typeof previewCase.id !== "string" ||
+    typeof previewCase.title !== "string"
+  ) {
+    return false;
+  }
+  // The optional fields feed the case editor directly, so a stale or
+  // hand-edited draft with the wrong shape would crash it on open. Reject the
+  // whole draft instead; the page then rebuilds from the saved preparation.
   return (
-    typeof previewCase.id === "string" && typeof previewCase.title === "string"
+    isOptional(previewCase.prompt, "string") &&
+    isOptional(previewCase.expectedOutput, "string") &&
+    isOptional(previewCase.requiresSetup, "boolean") &&
+    isOptional(previewCase.selected, "boolean") &&
+    (previewCase.steps === undefined ||
+      (Array.isArray(previewCase.steps) &&
+        previewCase.steps.every(isStepLike))) &&
+    isOptionalObject(previewCase.matchOptions) &&
+    isOptionalObject(previewCase.predicates)
+  );
+}
+
+function isOptional(
+  value: unknown,
+  type: "string" | "boolean" | "number",
+): boolean {
+  return value === undefined || typeof value === type;
+}
+
+function isOptionalObject(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "object" && value !== null && !Array.isArray(value))
+  );
+}
+
+/** A step is an object with a string `kind`; the editor narrows the rest. */
+function isStepLike(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { kind?: unknown }).kind === "string"
   );
 }
 

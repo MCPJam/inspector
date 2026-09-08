@@ -214,8 +214,13 @@ export function PreparedEvalServerPage({
           {error}
         </p>
         <EvalServerCaseEditPage
+          // Keyed by the case: the editor seeds its fields from `initial`
+          // once, so moving between cases without a remount would keep the
+          // previous case's text and write it under the new id.
+          key={`${editTarget.suiteId}:${editTarget.caseId}`}
           server={server}
           {...editTarget}
+          fallbackDraft={initial}
           onDraftChange={persist}
           onBack={() => void afterSave(onBack)}
         />
@@ -404,7 +409,7 @@ export function PreparedEvalServerPage({
           className="contents"
         >
           <EvalServerPreviewPage
-            key={initial.generationHash ?? "saved"}
+            key={`${server.id}:${initial.generationHash ?? "saved"}`}
             server={server}
             initialDraft={initial}
             availableClients={availableClients}

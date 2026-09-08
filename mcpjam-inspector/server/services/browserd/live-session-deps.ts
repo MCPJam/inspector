@@ -44,7 +44,9 @@ import {
 import {
   ensureBrowserSession,
   type BrowserSessionDeps,
+  type ComputerHostedBrowserSessionHandle,
   type HostedBrowserSessionHandle,
+  type SandboxHostedBrowserSessionHandle,
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
@@ -393,8 +395,31 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
  * local handle that cannot arrive — and cost the WebMCP inspector, which needs
  * the hosted fields, the type that says so.
  */
+// OVERLOADED, so the three computer callers (the WebMCP inspector route, the
+// Browser Panel, the hosted session resolver) keep the COMPUTER type and stay
+// unedited: they read `computerId` and `streamUrl` straight off the handle,
+// and none of them should have to narrow a union to say "yes, the member's own
+// machine is the member's own machine".
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & { target?: { kind: "computer" } },
+): Promise<ComputerHostedBrowserSessionHandle>;
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & {
+    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+  },
+): Promise<SandboxHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs,
 ): Promise<HostedBrowserSessionHandle> {
-  return ensureBrowserSession(liveBrowserSessionDeps(), args);
+  // Dispatched rather than cast: the two overloads above are the checked
+  // surface, and narrowing here is what makes the implementation satisfy both
+  // without an `as` that a later edit could quietly widen.
+  const { target, ...rest } = args;
+  if (target?.kind === "sandbox") {
+    return ensureBrowserSession(liveBrowserSessionDeps(), { ...rest, target });
+  }
+  return ensureBrowserSession(liveBrowserSessionDeps(), {
+    ...rest,
+    ...(target ? { target } : {}),
+  });
 }

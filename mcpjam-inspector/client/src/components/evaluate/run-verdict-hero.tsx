@@ -15,6 +15,7 @@ import { useRunHeaderVerdict } from "./evaluate-run-page";
 import { remedyForDiagnostic } from "./stage-remedy";
 import { ArrowUpRight } from "lucide-react";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { measurementUnitLabel } from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 
@@ -68,34 +69,47 @@ function Stat({
   );
 }
 
+/**
+ * The unit is `measurementUnitLabel`'s word, never a literal.
+ *
+ * A 3-case suite fanned out over 2 models has 6 CASE VARIANTS, so "6 of 6
+ * cases" beside a Cases list showing 3 is a number contradicting the page it
+ * sits on. And a legacy run's counts are TRIALS — the one thing this hero must
+ * never call cases. The contract owns both spellings; this only renders them.
+ */
 function caseStatText(view: RunVerdictHeroView): {
   value: string;
   detail: string;
 } {
   const { cases, iterations } = view.stats;
   if (cases.kind === "cases") {
+    const unit = measurementUnitLabel("caseVariant", cases.total);
     return {
       value: `${cases.passed} of ${cases.total}`,
       detail:
         cases.inconclusive > 0
-          ? `cases · ${cases.inconclusive} inconclusive`
-          : "cases",
+          ? `${unit} · ${cases.inconclusive} inconclusive`
+          : unit,
     };
   }
   if (cases.kind === "trials") {
     if (cases.passed === null || cases.total === null) {
       // Absent stays absent. A run that recorded no total has not recorded a
-      // total of zero, and "0 of 0" would be a claim it never made.
-      return { value: "not recorded", detail: "iterations" };
+      // total of zero, and "0 of 0" would be a claim it never made. Plural,
+      // because there is no count to agree with.
+      return {
+        value: "not recorded",
+        detail: measurementUnitLabel("trial", 0),
+      };
     }
     return {
       value: `${cases.passed} of ${cases.total}`,
-      detail: "iterations, not cases",
+      detail: `${measurementUnitLabel("trial", cases.total)}, not ${measurementUnitLabel("caseVariant", 0)}`,
     };
   }
   return {
     value: `${iterations.passed} of ${iterations.total}`,
-    detail: "iterations on this page",
+    detail: `${measurementUnitLabel("trial", iterations.total)} on this page`,
   };
 }
 

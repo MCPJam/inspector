@@ -99,7 +99,9 @@ describe("EvalsEmptyHero", () => {
       id: `srv-${i}`,
       name: `server-${i}`,
     }));
-    render(<EvalsEmptyHero {...defaultProps} servers={servers} />);
+    render(
+      <EvalsEmptyHero {...defaultProps} servers={servers} onEvalServer={vi.fn()} />,
+    );
 
     expect(
       screen.getByRole("button", { name: "Eval my server: server-0" }),

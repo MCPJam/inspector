@@ -181,9 +181,9 @@ export const STAGE_REASON_LABELS = Object.freeze({
   impliedByLaterEvidence: "a later stage's success implies it",
   // "LLM judge", not "judge". These five are the only reasons in the
   // vocabulary decided by a model rather than by a deterministic rule, and a
-  // reader who cannot tell the two apart cannot weigh the row: an assertion
-  // that failed and an advisory verdict that came in low are different kinds
-  // of claim. The provenance belongs in the label because these strings are
+  // reader who cannot tell the two apart cannot weigh the row: a check that
+  // failed and an advisory verdict that came in low are different kinds of
+  // claim. The provenance belongs in the label because these strings are
   // the ONE place all four renderers read from.
   judgeObserved: "the LLM judge scored at or above the threshold",
   // "AT or above the floor": the band is `>= partialFloor` and `< threshold`
@@ -204,7 +204,7 @@ export const STAGE_REASON_LABELS = Object.freeze({
  * it answers at the coarse bucket, seven categories with one action each, and
  * a category can only ever name a system to go and look at. A stage reason is
  * the finest thing the contract records about where the chain stopped, so a
- * remedy keyed on it can name the actual assertion, schema or recipe field to
+ * remedy keyed on it can name the actual check, schema or recipe field to
  * open — which is a narrower promise than the category map makes, and the only
  * reason to keep a second map at all.
  *
@@ -226,7 +226,7 @@ export const STAGE_REASON_LABELS = Object.freeze({
  */
 export const STAGE_REASON_REMEDIES = Object.freeze({
   missingToolCall:
-    "if this pull request intentionally renamed or removed the expected tool, update this case's expected tool call in MCPJam so the assertion matches the server; if the tool should still be chosen for this prompt, review its name and description in the tool catalog, then push again",
+    "if this pull request intentionally renamed or removed the expected tool, update this case's expected tool call in MCPJam so the check matches the server; if the tool should still be chosen for this prompt, review its name and description in the tool catalog, then push again",
   unexpectedToolCall:
     "decide which side is right: if the extra call is correct behaviour, widen this case's expected tool calls or its match options in MCPJam; if it is not, review the names and descriptions that made the extra tool look applicable",
   argumentMismatch:
@@ -252,7 +252,7 @@ export const STAGE_REASON_REMEDIES = Object.freeze({
   lifecycleStopped:
     "the run was stopped mid-flight, so this case reached no verdict: re-run the check",
   notAuthored:
-    "this case asserts nothing this stage could decide: add an assertion in MCPJam if this stage should be measured",
+    "this case asserts nothing this stage could decide: add a check in MCPJam if this stage should be measured",
   judgeFailed:
     "read the judge's rationale on the run: either the response stopped satisfying the case's goal, or the goal needs rewording to match what the server now returns",
   judgePartial:

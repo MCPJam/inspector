@@ -158,7 +158,7 @@ export function EvalServerPreviewPage({
   const activeIndex = step === "confirm" ? 1 : 0;
 
   const addSuite = () => {
-    const draft = createDraftPreviewSuite(suites.length + 1);
+    const draft = createDraftPreviewSuite();
     const nextSuites = [...suites, draft];
     const nextOpen = openSuiteIds.includes(draft.id)
       ? openSuiteIds

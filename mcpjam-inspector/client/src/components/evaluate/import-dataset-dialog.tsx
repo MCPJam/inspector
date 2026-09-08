@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { File, FileJson, Upload, X } from "lucide-react";
+import { File as FileIcon, FileJson, Upload, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -63,7 +63,9 @@ export function ImportDatasetDialog({
     }
     if (candidate.size > MAX_FILE_SIZE_BYTES) {
       setError(
-        `File is too large (${formatFileSize(candidate.size)}). Max size is ${formatFileSize(MAX_FILE_SIZE_BYTES)}.`,
+        `File is too large (${formatFileSize(
+          candidate.size,
+        )}). Max size is ${formatFileSize(MAX_FILE_SIZE_BYTES)}.`,
       );
       return;
     }
@@ -113,8 +115,8 @@ export function ImportDatasetDialog({
         <DialogHeader>
           <DialogTitle>Upload dataset</DialogTitle>
           <DialogDescription className="sr-only">
-            Upload a CSV, JSON, or Markdown file to populate this suite's
-            test cases.
+            Upload a CSV, JSON, or Markdown file to populate this suite's test
+            cases.
           </DialogDescription>
         </DialogHeader>
 
@@ -172,7 +174,7 @@ export function ImportDatasetDialog({
             <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-4">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <File className="h-5 w-5 text-primary" />
+                  <FileIcon className="h-5 w-5 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p
@@ -212,11 +214,7 @@ export function ImportDatasetDialog({
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              onClick={handleImportClick}
-              disabled={!file}
-            >
+            <Button type="button" onClick={handleImportClick} disabled={!file}>
               <Upload className="mr-2 h-4 w-4" />
               Import
             </Button>

@@ -18,6 +18,7 @@ export type CaseSnapshotFields = {
   predicates?: CasePredicates | Predicate[] | null;
   matchOptions?: EvalMatchOptions | null;
   expectedOutput?: string | null;
+  isNegativeTest?: boolean;
 };
 
 function stripStepIds(steps: TestStep[]): unknown[] {
@@ -38,6 +39,7 @@ export function caseSnapshotSignature(input: CaseSnapshotFields): string {
     predicates: resolvedPredicates(input.predicates),
     matchOptions: input.matchOptions ?? null,
     expectedOutput: input.expectedOutput ?? "",
+    isNegativeTest: input.isNegativeTest === true,
   });
 }
 

@@ -24,9 +24,9 @@ describe("buildEvalServerPreview", () => {
     expect(preview.suites).toHaveLength(3);
     expect(previewCaseCount(preview)).toBe(15);
     expect(preview.findings.length).toBeGreaterThan(0);
-    expect(preview.findings.some((finding) => finding.source === "discovery")).toBe(
-      true,
-    );
+    expect(
+      preview.findings.some((finding) => finding.source === "discovery"),
+    ).toBe(true);
     expect(
       preview.findings.some((finding) => finding.source === "connection"),
     ).toBe(true);
@@ -59,7 +59,9 @@ describe("buildEvalServerPreview", () => {
 
     const withoutSuite = removePreviewSuite(withoutCase, suiteId);
     expect(withoutSuite.find((suite) => suite.id === suiteId)).toBeUndefined();
-    expect(createDraftPreviewSuite(4).draft).toBe(true);
+    expect(createDraftPreviewSuite().draft).toBe(true);
+    // Ids stay unique after a middle suite is deleted and another is added.
+    expect(createDraftPreviewSuite().id).not.toBe(createDraftPreviewSuite().id);
 
     const hydrated = hydratePreviewCase({
       id: "case-1",

@@ -28,13 +28,13 @@ import {
   type GroundednessRunEvidence,
 } from "./suite-judge-card";
 import {
-  ROLE_LEGEND,
   buildScorerTable,
   withGoalCompletionRole,
   withPredicateRole,
   type ScorerTableRow,
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
+import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
 import { groupGradersByStage } from "./suite-grading-model";
 import type { EvalJudgeConfig } from "./types";
 
@@ -570,22 +570,13 @@ function RoleCell({
       : ["gate", "report"];
     return (
       <div className="space-y-1">
-        <div
-          role="group"
-          aria-label="Judge role"
-          className="inline-flex rounded-md border border-border/60"
-        >
-          {roles.map((role) => (
-            <RoleSegment
-              key={role}
-              pressed={row.role === role}
-              disabled={role === "gate" && !gateEnabled}
-              onClick={() => onJudgeRoleChange(role)}
-            >
-              {ROLE_LEGEND[role].label}
-            </RoleSegment>
-          ))}
-        </div>
+        <RoleSegmentGroup
+          value={row.role}
+          roles={roles}
+          disabledRoles={gateEnabled ? undefined : ["gate"]}
+          ariaLabel="Judge role"
+          onChange={onJudgeRoleChange}
+        />
         {judgeDisabledReason ? (
           <p
             className="text-[11px] text-muted-foreground"
@@ -599,73 +590,23 @@ function RoleCell({
   }
   if (row.kind === "predicate" && predicate && row.predicateIndex !== undefined) {
     if (!checkPolicy) {
-      return <RoleChip role="gate" />;
+      // Read-only, but honest: an SDK- or CLI-authored advisory check still
+      // reads Warn/Report here rather than being relabelled Gate.
+      return <RoleChip role={row.role} />;
     }
     return (
-      <div
-        role="group"
-        aria-label="Check role"
-        className="inline-flex rounded-md border border-border/60"
-      >
-        {(["gate", "warn", "report"] as const).map((role) => (
-          <RoleSegment
-            key={role}
-            pressed={row.role === role}
-            onClick={() =>
-              onPredicateChange(
-                row.predicateIndex!,
-                withPredicateRole(predicate, role),
-              )
-            }
-          >
-            {ROLE_LEGEND[role].label}
-          </RoleSegment>
-        ))}
-      </div>
+      <RoleSegmentGroup
+        value={row.role}
+        ariaLabel="Check role"
+        onChange={(role) =>
+          onPredicateChange(
+            row.predicateIndex!,
+            withPredicateRole(predicate, role),
+          )
+        }
+      />
     );
   }
   return <RoleChip role={row.role} />;
 }
 
-function RoleChip({ role }: { role: ScorerUiRole }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-sm border border-border/60 px-1.5 py-px text-[10px] uppercase tracking-[0.06em]",
-        role === "gate" ? "text-foreground" : STAGE_CHIP_TONE_CLASS.unmeasured,
-      )}
-    >
-      {ROLE_LEGEND[role].label}
-    </span>
-  );
-}
-
-function RoleSegment({
-  pressed,
-  disabled,
-  onClick,
-  children,
-}: {
-  pressed: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "px-2 py-1 text-[10px] uppercase tracking-[0.06em] first:rounded-l-[5px] last:rounded-r-[5px]",
-        pressed
-          ? "bg-muted text-foreground"
-          : "text-muted-foreground hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-50",
-      )}
-    >
-      {children}
-    </button>
-  );
-}

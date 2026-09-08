@@ -12,17 +12,15 @@ import {
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import { RUN_ORIGIN_META, resolveRunOrigin } from "@/lib/evals/run-origin";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
-
-const SOURCE_LABEL: Record<NonNullable<EvalSuiteRun["source"]>, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  api: "API",
-  schedule: "Scheduled",
-  github_check: "GitHub",
-};
 
 export type SuiteIdentityCounts = {
   caseCount: number;
@@ -123,7 +121,13 @@ export type SuiteRunHistoryFilterOptions = {
   models: string[];
 };
 
-function runTimestamp(run: EvalSuiteRun): number {
+/**
+ * When a run happened, for ordering and display. `createdAt` is typed as
+ * required, but rows from older deployments have reached this through
+ * `_creationTime` alone, so every reader goes through this fallback chain
+ * rather than subtracting a possibly-absent field.
+ */
+export function runTimestamp(run: EvalSuiteRun): number {
   return run.createdAt ?? run._creationTime ?? run.completedAt ?? 0;
 }
 
@@ -189,10 +193,14 @@ export function resolveRunHistoryVerdict(
 }
 
 export function runPlatformLabel(run: EvalSuiteRun): string {
-  const source = run.source ?? "ui";
-  const sourceLabel = SOURCE_LABEL[source] ?? SOURCE_LABEL.ui;
+  // The same resolution and the same table the badge and the filter chips use.
+  // This was a fourth hand-copied label list, and it could only ever say `API`
+  // for a CLI run, a GitHub Actions job or an MCP agent — the three things
+  // `source` cannot tell apart.
+  const origin = resolveRunOrigin(run);
+  const meta = RUN_ORIGIN_META[origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
   const ciId = run.ciMetadata?.pipelineId ?? run.ciMetadata?.jobId;
-  return ciId ? `${sourceLabel} #${ciId}` : sourceLabel;
+  return ciId ? `${meta.label} #${ciId}` : meta.label;
 }
 
 function runClientLabel(
@@ -245,7 +253,11 @@ export function buildSuiteRunHistoryRows(
   }
 
   return [...runs]
-    .sort((a, b) => runTimestamp(b) - runTimestamp(a) || (b.runNumber ?? 0) - (a.runNumber ?? 0))
+    .sort(
+      (a, b) =>
+        runTimestamp(b) - runTimestamp(a) ||
+        (b.runNumber ?? 0) - (a.runNumber ?? 0),
+    )
     .map((run) => {
       const iterations = iterationsByRun.get(run._id) ?? [];
       const stats = computeRunEffectiveStats(run, iterations);
@@ -271,7 +283,9 @@ export function buildSuiteRunHistoryRows(
         platform: runPlatformLabel(run),
         source: run.source ?? "ui",
         client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
-        models: run.effectiveModelId ? [run.effectiveModelId] : runModels(iterations),
+        models: run.effectiveModelId
+          ? [run.effectiveModelId]
+          : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
         tokens: tokens > 0 ? tokens : null,
         toolCalls: toolCalls > 0 ? toolCalls : null,
@@ -296,7 +310,8 @@ export function buildSuiteRunHistoryAggregates(
     totalTokens: totalTokens > 0 ? totalTokens : null,
     latencyP50: iterationLatencyP50(iterations),
     latencyP95: iterationLatencyP95(iterations),
-    tokensPerRun: runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
+    tokensPerRun:
+      runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
     toolCallsPerRun:
       runCount > 0 && totalToolCalls > 0 ? totalToolCalls / runCount : null,
   };
@@ -313,9 +328,9 @@ export function runHistoryFilterOptions(
         .filter((client): client is string => Boolean(client)),
     ),
   ].sort((a, b) => a.localeCompare(b));
-  const models = [
-    ...new Set(rows.flatMap((row) => row.models)),
-  ].sort((a, b) => a.localeCompare(b));
+  const models = [...new Set(rows.flatMap((row) => row.models))].sort((a, b) =>
+    a.localeCompare(b),
+  );
   return { verdicts, clients, models };
 }
 
@@ -422,7 +437,9 @@ export function suiteRunBlockedReason({
   }
   if (caseCount === 0) {
     return draftCount > 0
-      ? `${draftCount} generated ${draftCount === 1 ? "draft is" : "drafts are"} waiting to be added. Use “Add all to suite” on the suite page before running.`
+      ? `${draftCount} generated ${
+          draftCount === 1 ? "draft is" : "drafts are"
+        } waiting to be added. Use “Add all to suite” on the suite page before running.`
       : "Add a test case first.";
   }
   if (isRerunning || isReplaying) {

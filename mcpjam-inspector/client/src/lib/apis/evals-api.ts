@@ -77,6 +77,17 @@ type RunEvalsRequest = EvalRequestWithServers & {
    */
   suiteRerun?: boolean;
   /**
+   * Narrow the run to these cases. The server filters the snapshot and the
+   * cap-math to them, so a one-case run of a large suite is not rejected by
+   * the suite's total cap.
+   *
+   * This is what "Run test" on one case uses. A quick run cannot be judged —
+   * every judge surface is keyed by `suiteRunId`, which a quick run has none
+   * of — so the only way to ask "did it accomplish the goal?" is to run the
+   * case as a suite run narrowed to it.
+   */
+  caseIds?: string[];
+  /**
    * Transient per-run iteration count (1-10). Server overlays `runs` on
    * every test case in the run snapshot; persisted `EvalCase.runs`
    * default is not mutated.

@@ -19,6 +19,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
   USER_VALUE_STAGE_LABELS,
+  measurementUnitLabel,
   type EvalRunDecisionDiagnostic,
   type EvalRunRouteFacts,
   type EvalRunRouteFactsCase,
@@ -36,11 +37,13 @@ import { variantLabel } from "./route-facts-model";
 import { RouteFactsSection } from "./route-facts-section";
 
 function groupHeading(group: CaseFailureGroup, count: number): string {
-  const iterations = count === 1 ? "1 iteration" : `${count} iterations`;
+  // The unit is the contract's word for it. These rows count TRIALS, and this
+  // pane's own control is labelled Trials.
+  const trials = `${count} ${measurementUnitLabel("trial", count)}`;
   if (group.stage) {
-    return `${iterations} broke at ${USER_VALUE_STAGE_LABELS[group.stage]}`;
+    return `${trials} broke at ${USER_VALUE_STAGE_LABELS[group.stage]}`;
   }
-  return `${iterations} did not complete, and no stage was established`;
+  return `${trials} did not complete, and no stage was established`;
 }
 
 async function copyPrompt(text: string) {

@@ -64,9 +64,11 @@ export type FirstRunClient = {
   name: string;
 };
 
-export function createDraftPreviewSuite(index: number): PreviewSuite {
+export function createDraftPreviewSuite(): PreviewSuite {
+  // Opaque, not the current count: deleting a middle suite and adding another
+  // would otherwise mint an id a surviving row already carries.
   return {
-    id: `draft:suite-${index}`,
+    id: `draft:suite-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: "New suite",
     description: "Add cases to this suite.",
     cases: [],
@@ -188,7 +190,10 @@ export function buildEvalServerPreview(server: {
           { id: "case-assign", title: "Assign the task to a teammate" },
           { id: "case-due-date", title: "Set a due date on the new task" },
           { id: "case-comment", title: "Leave a comment on the task" },
-          { id: "case-full-path", title: "Create, assign, date, and comment in one pass" },
+          {
+            id: "case-full-path",
+            title: "Create, assign, date, and comment in one pass",
+          },
           { id: "case-empty-title", title: "Refuse a task with no title" },
         ],
       },
@@ -200,7 +205,10 @@ export function buildEvalServerPreview(server: {
         cases: [
           { id: "case-guest-assign", title: "Guest cannot assign work" },
           { id: "case-private", title: "Private project stays private" },
-          { id: "case-workspace-switch", title: "Workspace switch does not leak" },
+          {
+            id: "case-workspace-switch",
+            title: "Workspace switch does not leak",
+          },
           { id: "case-role-change", title: "Revoked role loses write access" },
         ],
       },
@@ -213,7 +221,10 @@ export function buildEvalServerPreview(server: {
           { id: "case-find-title", title: "Find a task by title" },
           { id: "case-open", title: "Open the matched task" },
           { id: "case-read-comments", title: "Read comments on the task" },
-          { id: "case-ranking", title: "Best match ranks first in a large workspace" },
+          {
+            id: "case-ranking",
+            title: "Best match ranks first in a large workspace",
+          },
           { id: "case-missing", title: "Missing title returns a clear miss" },
         ],
       },

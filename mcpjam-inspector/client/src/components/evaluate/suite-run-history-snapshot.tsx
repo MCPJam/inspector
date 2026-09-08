@@ -7,6 +7,7 @@ import {
 import type { MetricStripData } from "../evals/metric-strip-data";
 import { MetricStrip } from "../evals/metric-strip";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
+import { runTimestamp } from "./suite-detail-model";
 
 /** Latest run metrics and run-history trends, sharing the original metric strip. */
 export function SuiteRunHistorySnapshot({
@@ -19,7 +20,7 @@ export function SuiteRunHistorySnapshot({
   const data = useMemo(() => {
     const seen = new Set<string>();
     const points = [...runs]
-      .sort((a, b) => a.createdAt - b.createdAt)
+      .sort((a, b) => runTimestamp(a) - runTimestamp(b))
       .flatMap((run) => {
         if (seen.has(run._id)) return [];
         const members = launchRuns(run, runs);

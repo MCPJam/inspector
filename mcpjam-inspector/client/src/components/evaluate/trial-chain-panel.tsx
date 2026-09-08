@@ -29,6 +29,8 @@ import {
 export function TrialChainPanel({
   chain,
   nextAction,
+  detailByStage,
+  stageFooter,
   /** Resets the reader's selection when the pane swaps to another trial. */
   resetKey,
   heading,
@@ -36,6 +38,20 @@ export function TrialChainPanel({
 }: {
   chain: EvalRunDecisionChain | null | undefined;
   nextAction?: string;
+  /**
+   * A line under each card saying what GRADES that link on this case — "2
+   * gates · 1 warn", "Observed by the runner", or, when a gap has something
+   * that would fill it, "Nothing checks this · N suggested".
+   *
+   * Merged on top of the card views rather than computed inside
+   * `toTrialCardViews`, which has no idea what the case authors and is pinned
+   * by its own test to never set `detail`.
+   */
+  detailByStage?: Partial<
+    Record<UserValueStage, { label: string; toneClass: string }>
+  >;
+  /** Rendered inside the selected stage's detail card. */
+  stageFooter?: (stage: UserValueStage) => ReactNode;
   resetKey?: string;
   heading?: ReactNode;
   layout?: "cards" | "report";
@@ -73,7 +89,10 @@ export function TrialChainPanel({
     );
   }
 
-  const cards = toTrialCardViews(chain.stages);
+  const cards = toTrialCardViews(chain.stages).map((card) => {
+    const detail = detailByStage?.[card.stage];
+    return detail ? { ...card, detail } : card;
+  });
   const selectedStage =
     chosenStage === undefined ? defaultSelectedTrialStage(chain) : chosenStage;
   const selectedRow =
@@ -140,12 +159,15 @@ export function TrialChainPanel({
         }
       />
       {selectedRow ? (
-        <TrialStageDetailCard
-          row={selectedRow}
-          {...(nextAction && selectedRow.stage === chain.firstFailedStage
-            ? { nextAction }
-            : {})}
-        />
+        <>
+          <TrialStageDetailCard
+            row={selectedRow}
+            {...(nextAction && selectedRow.stage === chain.firstFailedStage
+              ? { nextAction }
+              : {})}
+          />
+          {stageFooter?.(selectedRow.stage)}
+        </>
       ) : null}
     </div>
   );
