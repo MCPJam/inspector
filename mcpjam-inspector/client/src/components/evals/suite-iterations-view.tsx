@@ -527,6 +527,7 @@ export function SuiteIterationsView({
       opts?: {
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
+        caseIds?: string[];
       },
     ) =>
       (
@@ -535,10 +536,26 @@ export function SuiteIterationsView({
           opts?: {
             matchOptionsOverride?: EvalMatchOptions;
             iterationOverride?: number;
+            caseIds?: string[];
           },
         ) => void
       )(s, opts),
     [onRerun],
+  );
+
+  /**
+   * "Run test" on one case: a SUITE run narrowed to it.
+   *
+   * Not a quick run, and the difference is the whole point. Every judge
+   * surface is keyed by `suiteRunId` — the request mutation, the `autoRun`
+   * trigger, the verdict store and the client reader — and a quick run has
+   * none, so a quick run can never answer "did it accomplish the goal?".
+   */
+  const onRunCase = useCallback(
+    (caseId: string, opts?: { iterationOverride?: number }) => {
+      onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
+    },
+    [onRerunWithOverride, suite],
   );
 
   const onRunTestCaseWithOverride = useMemo<
@@ -1699,6 +1716,7 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
+                  onRunCase={onRunCase}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}

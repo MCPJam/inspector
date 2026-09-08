@@ -676,6 +676,13 @@ export function useEvalHandlers({
          * existing suites.
          */
         refreshSnapshot?: boolean;
+        /**
+         * Run only these cases. Used by "Run test" on the case page, which
+         * needs a SUITE run (not a quick run) because the judge is keyed by
+         * `suiteRunId`. The plans, cap payload and snapshot handling are
+         * otherwise identical to a full rerun.
+         */
+        caseIds?: string[];
       }
     ) => {
       if (rerunningSuiteId) return;
@@ -821,6 +828,22 @@ export function useEvalHandlers({
           testCaseId: (test as { testCaseId?: string }).testCaseId,
         }));
 
+        // Narrow to the requested cases before anything launches. The server
+        // filters its own snapshot by `caseIds` too; sending the whole list
+        // would make the run's own payload disagree with what it executes.
+        const wantedCaseIds = options?.caseIds;
+        const narrowedTests = wantedCaseIds?.length
+          ? testsPayload.filter(
+              (test) =>
+                test.testCaseId && wantedCaseIds.includes(test.testCaseId),
+            )
+          : testsPayload;
+        if (wantedCaseIds?.length && narrowedTests.length === 0) {
+          setRerunningSuiteId(null);
+          toast.error("That case is not in this suite.");
+          return;
+        }
+
         // Partial-failure tolerant: a failure on one host shouldn't cancel
         // runs already started against other hosts. We collect failures
         // and toast a summary at the end.
@@ -831,7 +854,7 @@ export function useEvalHandlers({
               suiteId: suite._id,
               suiteName: suite.name,
               suiteDescription: suite.description,
-              tests: testsPayload,
+              tests: narrowedTests,
               serverIds: plan.serverIds,
               modelApiKeys:
                 Object.keys(executionContext.modelApiKeys).length > 0
@@ -841,6 +864,7 @@ export function useEvalHandlers({
               passCriteria: { minimumPassRate },
               notes: criteriaNote,
               suiteRerun: true,
+              ...(wantedCaseIds?.length ? { caseIds: wantedCaseIds } : {}),
               iterationOverride: options?.iterationOverride,
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,

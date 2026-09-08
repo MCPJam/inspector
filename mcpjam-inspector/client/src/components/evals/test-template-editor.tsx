@@ -225,6 +225,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
+import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
 import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
   caseHasOwnAssertion,
@@ -332,6 +333,14 @@ interface TestTemplateEditorProps {
    * without a flag mock.
    */
   observeFirst?: boolean;
+  /**
+   * Launch a run of THIS case only, as a suite run.
+   *
+   * "Run test" needs a suite run because the judge is keyed by `suiteRunId`
+   * end to end; a quick run cannot be graded. Absent on a surface that cannot
+   * launch one, and Run test then does not render.
+   */
+  onRunCase?: (caseId: string, opts?: { iterationOverride?: number }) => void;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   /** Route-driven tab switch. Editor reflects {@link openCompareFromRoute} after the URL changes. */
@@ -928,6 +937,7 @@ export function TestTemplateEditor({
   trialChainEnabled = false,
   simpleCaseEditor = false,
   observeFirst = false,
+  onRunCase,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -1426,7 +1436,33 @@ export function TestTemplateEditor({
     const showRollup = !!rollup && rollup.total > 1;
     const showRecordAdopt =
       !!rollup && draftKind === "record" && !!iteration && rollup.total >= 1;
-    if (!chain && !showRollup && !showRecordAdopt) return null;
+
+    /**
+     * The judge's answer, above the chain, because on the observe-first flow it
+     * IS the result the author came for: they described what a good answer
+     * accomplishes, and this says whether it did.
+     */
+    const judgeAnswer =
+      useSpine && iteration ? (
+        <CaseJudgeAnswer
+          run={
+            iteration.suiteRunId
+              ? (suiteRuns.find((r) => r._id === iteration.suiteRunId) ?? null)
+              : null
+          }
+          iteration={iteration}
+          isQuickRun={!iteration.suiteRunId}
+          skippedForCase={
+            editForm?.judgeConfigOverride?.goalCompletion?.enabled === false
+          }
+          shouldRequest={judgeIntentRunIds.current.has(
+            currentTestCase?._id ?? "",
+          )}
+          onOpenSuiteSettings={onOpenSuiteSettings}
+        />
+      ) : null;
+
+    if (!chain && !showRollup && !showRecordAdopt && !judgeAnswer) return null;
 
     const resolvedMatch = resolveMatchOptions(
       suite?.defaultMatchOptions,
@@ -1440,6 +1476,7 @@ export function TestTemplateEditor({
 
     return (
       <div className="space-y-2">
+        {judgeAnswer}
         {chain}
         {rollup && (showRollup || showRecordAdopt) ? (
           <RouteRollupCard
@@ -1702,6 +1739,7 @@ export function TestTemplateEditor({
    */
   const useSpine = useWorkspace && observeFirst;
 
+
   /**
    * Whether this deployment accepts a role on a check.
    *
@@ -1824,6 +1862,40 @@ export function TestTemplateEditor({
     currentTestCase,
     useWorkspace,
     workspaceIsNegative,
+  ]);
+  /**
+   * "Run test": save, then run THIS case as a suite run.
+   *
+   * A suite run and not a quick run, because the judge is keyed by
+   * `suiteRunId` at every surface — the request mutation, the `autoRun`
+   * trigger, the verdict store and the client reader — so a quick run can
+   * never answer "did it accomplish the goal?", which is the first thing this
+   * flow promises. The run executes the PERSISTED case, so an unsaved draft is
+   * saved first; a case that has never been saved has no id to run and the
+   * button says so instead of silently running something else.
+   */
+  const judgeIntentRunIds = useRef<Set<string>>(new Set());
+  const [runTestPending, setRunTestPending] = useState(false);
+  const runTest = useCallback(async () => {
+    const caseId = currentTestCase?._id;
+    if (!onRunCase || !caseId || isDraft) return;
+    setRunTestPending(true);
+    try {
+      if (hasUnsavedChanges) await handleSave();
+      judgeIntentRunIds.current.add(caseId);
+      onRunCase(caseId, { iterationOverride });
+    } finally {
+      setRunTestPending(false);
+    }
+    // `handleSave` is redefined every render; the values it closes over are
+    // covered by the deps that matter here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    onRunCase,
+    currentTestCase?._id,
+    isDraft,
+    hasUnsavedChanges,
+    iterationOverride,
   ]);
 
   const arePromptTurnsValid = useMemo(() => {
@@ -4088,6 +4160,32 @@ export function TestTemplateEditor({
                           setMissingAppEvidenceStepId(null);
                         }
                       }}
+                      runControl={
+                        onRunCase ? (
+                          <div className="space-y-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8"
+                              data-testid="case-run-test"
+                              disabled={
+                                isDraft ||
+                                runTestPending ||
+                                Boolean(simpleToolsBlock)
+                              }
+                              onClick={() => void runTest()}
+                            >
+                              <Play className="size-3.5 fill-current" />
+                              Run test
+                            </Button>
+                            <p className="text-[11px] text-muted-foreground">
+                              {isDraft
+                                ? "Save this case to run it."
+                                : "Runs the prompt once and asks whether the answer accomplished this. One model call."}
+                            </p>
+                          </div>
+                        ) : null
+                      }
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
