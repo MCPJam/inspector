@@ -442,6 +442,63 @@ describe("electron page — the keyboard", () => {
     expect(keyEvents(dbg)).toHaveLength(0);
   });
 
+  it("calls a vanished field NOT FOUND, so the model looks again", async () => {
+    // Error prose is load-bearing: `chromium-driver` reads
+    // /timeout|not found|no element|strict mode/ as `target_not_found`, which
+    // the model can act on, and everything else as `act_failed`, a daemon
+    // fault it should give up on. A field removed by a re-render between the
+    // resolve and the write is the first of those, not the second.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    let removed = false;
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      // The node went away between `pointFor` and the write: focus rejects,
+      // and so does any later question about the node. (Tracked with a flag,
+      // not `dbg.calls` — a throw here never reaches the recorder.)
+      if (method === "DOM.focus") {
+        removed = true;
+        throw new Error("Could not find node with given id");
+      }
+      if (method === "DOM.describeNode" && removed) {
+        throw new Error("Could not find node with given id");
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#name", "Ada")).rejects.toThrow(
+      /not found/,
+    );
+  });
+
+  it("keeps an unfocusable field OFF the retry path", async () => {
+    // The other half of the same fork. A disabled input is still in the
+    // document, and it will still be disabled next turn — saying `not found`
+    // would send the model round the loop for nothing.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "DOM.focus") throw new Error("Element is not focusable");
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    const refusal = await page
+      .fillSelector("#name", "Ada")
+      .then(() => null, (error: Error) => error.message);
+
+    expect(refusal).toMatch(/could not be focused/);
+    expect(refusal).not.toMatch(/not found|no element/);
+  });
+
   it("asks the protocol what has focus, not the page", async () => {
     // A page can redefine `Document.prototype.activeElement` and lie to page
     // JS about focus. It cannot change what `:focus` matches, because

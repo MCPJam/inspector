@@ -449,6 +449,33 @@ export function createElectronPage(
   }
 
   /**
+   * Is this node still one the protocol can resolve?
+   *
+   * Asked when something else has already failed, to decide WHICH failure the
+   * model is looking at — and the two answers pull opposite ways. A node that
+   * vanished between the resolve and the write is `not found`, which sends
+   * the model back to observe and try again, and re-observing is exactly
+   * right, because the page has moved on without it. A node that is still
+   * there but will not take focus is a stable fact about the page — a
+   * disabled input stays disabled — and telling the model to retry only loops
+   * it.
+   *
+   * ASKED, NOT PARSED. The obvious way to tell these apart is to match the
+   * CDP failure text for "could not find node", but that is protocol prose
+   * that shifts between Chromium versions, and a regex that silently stops
+   * matching would put every stale target back on the wrong side of the
+   * classification. Whether the node still resolves is a question the
+   * protocol answers directly.
+   */
+  async function nodeIsGone(nodeId: number): Promise<boolean> {
+    const cdp = await needCdp();
+    return cdp.send("DOM.describeNode", { nodeId }).then(
+      () => false,
+      () => true,
+    );
+  }
+
+  /**
    * What KIND of thing is this node, asked of CDP rather than of the page.
    *
    * The classification used to run as page JS through `document.querySelector`,
@@ -772,9 +799,16 @@ export function createElectronPage(
           // select-all and insert: focus would still be wherever it already
           // was, and the text would land in an element this call never looked
           // at — the same wrong-target write by a longer route.
-          await cdp.send("DOM.focus", { nodeId }).catch(() => {
+          await cdp.send("DOM.focus", { nodeId }).catch(async () => {
+            // ERROR PROSE IS LOAD-BEARING here, as this file's header says:
+            // an element that left the document has to say `not found`, or
+            // the driver reports a re-render as a daemon fault and the model
+            // stops instead of looking again.
             throw new Error(
-              `${selector}: element could not be focused to fill it`,
+              (await nodeIsGone(nodeId))
+                ? `not found: ${selector} left the document before it could ` +
+                  `be filled`
+                : `${selector}: element could not be focused to fill it`,
             );
           });
           // AND THEN CHECK THAT THE FOCUS STAYED PUT.
@@ -799,8 +833,16 @@ export function createElectronPage(
             })
             .catch(() => undefined)) as { nodeId?: number } | undefined;
           if (focused?.nodeId !== nodeId) {
+            // Same fork, one line later: a page that removed the field during
+            // its own focus handler reaches here rather than the branch
+            // above, and it is still a re-render the model should re-observe
+            // rather than a fault it should give up on.
             throw new Error(
-              `${selector}: focus left the element before it could be filled`,
+              (await nodeIsGone(nodeId))
+                ? `not found: ${selector} left the document before it could ` +
+                  `be filled`
+                : `${selector}: focus left the element before it could be ` +
+                  `filled`,
             );
           }
           await pressKey(
