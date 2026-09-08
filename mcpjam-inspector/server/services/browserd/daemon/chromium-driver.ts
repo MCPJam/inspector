@@ -18,6 +18,7 @@ import {
   BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   formatBrowserdError,
+  type WebMcpToolsRevision,
   isPointInViewport,
   wantsFor,
   type BrowserAction,
@@ -53,7 +54,15 @@ import {
   type RefMap,
 } from "./a11y-refs";
 import { renderA11yTree } from "./a11y-render";
-import { WebMcpBridgeError } from "./webmcp-bridge";
+import {
+  WebMcpBridgeError,
+  type WebMcpBridge,
+  type WebMcpToolDescriptor,
+} from "./webmcp-bridge";
+import {
+  declaredToolsFromWebmcp,
+  declaredToolsHash,
+} from "../../../../shared/declared-tools";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
 import {
@@ -135,7 +144,88 @@ interface TabEntry {
   /** Bumps on every navigation so back/forward to the same URL yield distinct
    * tokens (L3). */
   navCounter: number;
+  /** What this tab's page currently offers over WebMCP. */
+  webmcp: TabWebmcpState;
 }
+
+/**
+ * A tab's WebMCP tool set, kept current by a PUSH subscription on the bridge.
+ *
+ * The point of caching it is that "did the page's tools change?" becomes a
+ * question the server can ask before every model step for free. The alternative
+ * — an `observe {mode:"webmcp_tools"}` per step — reaches into the page, settles
+ * it, and costs a round trip to usually learn nothing; run on a loop it would
+ * also be an observation with side effects on the thing it observes.
+ */
+interface TabWebmcpState {
+  /**
+   * Bumps on every change the bridge reports (added, removed, navigated,
+   * detached) AND on every navigation this driver performs.
+   *
+   * Both, because they are different events that can occur without each other:
+   * a page can register a tool with no navigation, and a navigation to a page
+   * with no tools at all produces an empty set that is nonetheless a NEW
+   * generation, against which every existing binding is void.
+   */
+  revision: number;
+  /**
+   * The content hash of `tools` at the current generation, stamped whenever
+   * `revision` moves.
+   *
+   * STORED, NOT DERIVED ON READ. It folds in `navCounter`, so it has to be
+   * recomputed on the navigation path the bridge never reports — which is why
+   * every bump goes through `bumpWebmcpRevision`. Computing it on every read
+   * instead put a hash of the full declared set on a heartbeat that beats
+   * several times a second, and on every model step's revision check, for a
+   * value that changes only when the revision does.
+   */
+  hash: string;
+  supported: boolean;
+  tools: WebMcpToolDescriptor[];
+  /** Detaches the bridge subscription when the tab goes away. */
+  unsubscribe?: () => void;
+  /** The in-flight (or completed) eager attach, so it happens once. */
+  attaching?: Promise<void>;
+}
+
+function webmcpHashFor(
+  tools: readonly WebMcpToolDescriptor[],
+  navCounter: number,
+): string {
+  return declaredToolsHash(declaredToolsFromWebmcp(tools), { navCounter });
+}
+
+function emptyWebmcpState(): TabWebmcpState {
+  return {
+    revision: 0,
+    hash: webmcpHashFor([], 0),
+    supported: false,
+    tools: [],
+  };
+}
+
+/**
+ * How many `commandId -> invocationId` pairs to remember.
+ *
+ * Bounded but generous, and entries are NOT dropped when an invocation
+ * settles: a cancel that races a completion must be able to answer "that
+ * already finished" rather than "I have never heard of that command", which is
+ * what a caller reads as "the cancel did not work".
+ */
+const MAX_TRACKED_INVOCATIONS = 256;
+
+/**
+ * How many cancelled-before-it-ran intents to hold, and for how long.
+ *
+ * A Stop can land while its invoke is still QUEUED behind another command on
+ * the same tab, when there is nothing in flight to latch onto. The intent has
+ * to wait somewhere for the command to be dequeued, and a cancel for a command
+ * that never arrives (it failed upstream, or never existed) must not wait
+ * forever — so both a ceiling and a TTL, and eviction never takes a latch that
+ * guards a running invocation.
+ */
+const MAX_PENDING_CANCELS = 64;
+const PENDING_CANCEL_TTL_MS = 60_000;
 
 /**
  * A tab's URL + DOM signal read together. Both are part of the L3 state token,
@@ -318,7 +408,42 @@ export class ChromiumDriver implements BrowserDriver {
    * was added to prevent, moved one step later.
    */
   private closing = false;
-
+  /**
+   * `commandId -> invocationId`, recorded the instant the browser accepts an
+   * invocation.
+   *
+   * The whole cancellation path hangs off this. `webmcp_invoke` is synchronous
+   * — it does not return an invocation id until the page's tool has SETTLED —
+   * so a caller wanting to stop a running tool has never known what to name.
+   * Its own `commandId` is the one id it holds before the call, so that is the
+   * handle `webmcp_cancel` takes.
+   */
+  private readonly invocationsByCommand = new Map<
+    string,
+    { tabId: string; invocationId: string }
+  >();
+  /**
+   * Commands whose cancellation arrived before their invocation could act on
+   * it, mapped to when that intent expires.
+   *
+   * Three moments a cancel BY ID cannot reach: while the invoke is still
+   * queued behind another command on its tab, while it is dequeued but the
+   * browser has not yet named the invocation, and the gap between. All three
+   * latch here; `webmcpInvoke` consults the latch on entry, so a command
+   * cancelled before it ran never touches the page, and `rememberInvocation`
+   * consults it when the id arrives. Bounded by `MAX_PENDING_CANCELS` and
+   * `PENDING_CANCEL_TTL_MS` (see `latchCancel`); a latch guarding a running
+   * invocation is never evicted and never expires.
+   */
+  private readonly pendingCancels = new Map<string, number>();
+  /**
+   * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
+   *
+   * Registered at dequeue, cleared in the `finally`. This is what protects a
+   * latch in `pendingCancels` from eviction and expiry: an intent for a
+   * running command is live for as long as the command is.
+   */
+  private readonly activeInvocations = new Set<string>();
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -412,7 +537,7 @@ export class ChromiumDriver implements BrowserDriver {
       case "act":
         return this.act(tabId, action, permit);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action, permit);
+        return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
         return this.webmcpCancel(tabId, action, permit);
     }
@@ -786,12 +911,57 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     action: Extract<BrowserAction, { kind: "webmcp_invoke" }>,
     permit: () => boolean,
+    commandId: string,
+  ): Promise<BrowserCommandResult> {
+    // REGISTERED FIRST, before anything that can await.
+    //
+    // This set answers "is this command in flight", and the honest answer from
+    // the moment it is dequeued is yes. Registering it later — after the bridge
+    // resolve and the probe settle, as a first attempt did — left a window in
+    // which a Stop found nothing to latch onto, was dropped, and the invoke
+    // then proceeded under a cancellation that had already arrived. Every exit
+    // below is inside the `finally`, so an early return clears it too.
+    this.activeInvocations.add(commandId);
+    try {
+      // CANCELLED BEFORE IT RAN. A Stop that landed while this command was
+      // still queued behind another on its tab found nothing in flight to
+      // attach to, and waited in the latch. Honouring it here — before the
+      // bridge is even resolved — is what makes "Stop stops it" true for a
+      // queued call and not only for a running one.
+      if (this.consumeCancel(commandId)) {
+        return {
+          ok: false,
+          error:
+            "webmcp_cancelled: the call was cancelled before it reached the page; nothing ran",
+        };
+      }
+      return await this.runWebmcpInvoke(tabId, action, permit, commandId);
+    } finally {
+      // THE COMMAND IS OVER, so any cancellation still waiting on it is moot,
+      // and nothing may latch a new one against it from here.
+      this.activeInvocations.delete(commandId);
+      this.pendingCancels.delete(commandId);
+    }
+  }
+
+  /** The body of `webmcpInvoke`, run inside its in-flight registration. */
+  private async runWebmcpInvoke(
+    tabId: string,
+    action: Extract<BrowserAction, { kind: "webmcp_invoke" }>,
+    permit: () => boolean,
+    commandId: string,
   ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
     }
     const bridge = await entry.page.webmcp();
+    // SETTLED FIRST, exactly as the tool-list read does. Support is decided by
+    // a page-API probe that a navigation re-runs, and it is not a synchronous
+    // event — so on the first invocation after a navigate `isSupported()` can
+    // still be answering for the document the model has already left, and a
+    // page that genuinely offers tools would be refused as unsupported.
+    await bridge?.probeSettled();
     if (!bridge || !bridge.isSupported()) {
       return {
         ok: false,
@@ -808,6 +978,25 @@ export class ChromiumDriver implements BrowserDriver {
         "a person took control of this browser before the page's tool could be called; nothing was run",
       );
     }
+    // THE BINDING IS CHECKED HERE, immediately before the page is touched,
+    // and not one layer earlier. Everything between a caller deciding to
+    // invoke and this line is time in which the page can navigate, the frame
+    // can detach and the tool can be re-registered — and the failure that
+    // produces is silent: a same-named tool on the page that REPLACED the one
+    // the user approved, invoked under that approval.
+    const binding = action.expectedBinding;
+    if (binding) {
+      const stale = this.bindingRefusal(tabId, entry, bridge, action.toolKey, binding);
+      if (stale) {
+        return {
+          ok: false,
+          error: formatBrowserdError("stale_binding", stale),
+          // The fresh revision rides along so the caller re-reads the page's
+          // tools instead of retrying the binding it already holds.
+          ...this.webmcpEnvelope(tabId, entry),
+        };
+      }
+    }
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -815,8 +1004,34 @@ export class ChromiumDriver implements BrowserDriver {
         // in the main frame. `invoke` falls back to name resolution when it is
         // absent or when the frame no longer offers the tool, so an older
         // caller that sends no frame still works.
-        ...(action.frameId ? { frameId: action.frameId } : {}),
+        ...(binding
+          ? {
+              frameId: binding.frameId,
+              strictFrame: true,
+              // Re-checked inside `invoke`, against the same value
+              // `bindingRefusal` just accepted. The gap between the two is a
+              // real one — an abort check and a CDP round trip — and it is
+              // exactly long enough for a page to swap the tool.
+              expectedRegistrationSeq: binding.registrationSeq,
+            }
+          : {}),
+        ...(!binding && action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
+        // Recorded BEFORE the tool settles, which is the only window in which
+        // a cancel can still reach the page.
+        onStarted: (id) => {
+          if (!this.rememberInvocation(commandId, id, tabId)) return;
+          // THE SAME GATE THE NAMED-ID PATH ASKS. Cancelling reaches into the
+          // page, and this delivery can span the whole accept window — longer
+          // than the await that made the other path re-ask. A handoff landing
+          // in it would otherwise let this touch a browser somebody else now
+          // has their hands on.
+          if (!permit()) return;
+          // Fire-and-forget: awaiting here would hold the invocation open on
+          // the very thing meant to end it, and a failure to cancel is not the
+          // invocation's failure.
+          void bridge.cancel(id).catch(() => undefined);
+        },
       });
       const { output: capped, omitted } = capToolOutput(
         output,
@@ -849,9 +1064,59 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "webmcp_cancel" }>,
     permit: () => boolean,
   ): Promise<BrowserCommandResult> {
-    const entry = this.tabs.get(tabId);
+    // A caller may name the invocation directly (it listed one) or name the
+    // COMMAND whose invocation it wants stopped. The second is the case that
+    // matters: a server aborting a tool call it issued has no invocation id,
+    // because `webmcp_invoke` only reports one once the tool has settled.
+    const started = action.commandId
+      ? this.invocationsByCommand.get(action.commandId)
+      : undefined;
+    const invocationId = action.invocationId ?? started?.invocationId;
+    if (!invocationId) {
+      // NOT an error, and NOT forgotten either.
+      //
+      // The interesting case is a Stop pressed while `WebMCP.invokeTool` is
+      // still in flight: the browser has the call, has not yet returned an id,
+      // and there is nothing to name. Answering "nothing to stop" and dropping
+      // it there let the invocation start a moment later and run to completion
+      // under a cancellation the user had already made — which is the exact
+      // failure this whole path exists to prevent, just moved earlier.
+      //
+      // So the intent is remembered against the COMMAND, and the id, when it
+      // arrives, is cancelled on sight.
+      //
+      // WHETHER OR NOT IT IS RUNNING YET. The invoke may still be QUEUED behind
+      // another command on its tab — the ordinary case when a model issues a
+      // page tool beside an observe and the user presses Stop during the
+      // observe. Nothing is in flight to attach to, so the intent waits in the
+      // latch and `webmcpInvoke` honours it at dequeue, before the bridge is
+      // resolved. A cancel for a command that already failed early, or never
+      // existed, is what the latch's ceiling and TTL are for; a latch for a
+      // live invocation is never the one evicted.
+      //
+      // AND NO TAB IS RESOLVED FIRST. The latch is keyed by COMMAND, not by
+      // page, so it needs no live tab — and the command it names may be queued
+      // behind a `navigate {newTab: true}` whose tab does not exist yet.
+      // Resolving one here answered `unknown_tab` and dropped the Stop on the
+      // floor, and the page tool then ran a moment later under a cancellation
+      // the user had already made. A tab is required only to reach a BRIDGE,
+      // which is required only when there is an id to hand it — below.
+      if (action.commandId) this.latchCancel(action.commandId);
+      return { ok: true, output: { cancelled: false, known: false } };
+    }
+    // THE TAB THE INVOCATION RAN ON, not the tab the cancellation names.
+    //
+    // An invocation id is meaningful only to the bridge that issued it, and
+    // these two tabs need not agree: `webmcp_cancel {commandId}` is a valid
+    // shape with no tab at all, which resolves to the default one. Resolving
+    // the bridge from the CANCEL's tab and then handing it an id minted by
+    // another sends a stop to a page that never started the thing — the
+    // invocation runs on, and an id that happened to collide would stop
+    // something unrelated.
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
     if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${tabId}` };
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {
@@ -865,8 +1130,107 @@ export class ChromiumDriver implements BrowserDriver {
         "a person took control of this browser before the cancellation could be delivered",
       );
     }
-    const known = await bridge.cancel(action.invocationId);
-    return { ok: true, output: { cancelled: known } };
+    const known = await bridge.cancel(invocationId);
+    return { ok: true, output: { cancelled: known, known: true, invocationId } };
+  }
+
+  /**
+   * Why this binding does not describe the tool that is here now, or undefined
+   * when it does.
+   *
+   * `bootId` is deliberately NOT checked here: the transport already refuses a
+   * command whose `expectedBootId` does not match (`command_unknown_boot`), so
+   * a binding from a previous boot cannot reach this method at all. Checking it
+   * again would need the driver to know the daemon's boot identity, which is
+   * the control plane's business.
+   */
+  private bindingRefusal(
+    tabId: string,
+    entry: TabEntry,
+    bridge: WebMcpBridge,
+    toolKey: string,
+    binding: NonNullable<
+      Extract<BrowserAction, { kind: "webmcp_invoke" }>["expectedBinding"]
+    >,
+  ): string | undefined {
+    if (binding.tabId !== tabId) {
+      return `this tool was listed on tab "${binding.tabId}", not "${tabId}"`;
+    }
+    if (binding.navCounter !== entry.navCounter) {
+      // The one the main frame's stable id cannot catch on its own.
+      return "the page navigated after this tool was listed, so the tool it named is gone";
+    }
+    const live = bridge.registrationSeqFor(binding.frameId, toolKey);
+    if (live === undefined) {
+      return `the frame that offered "${toolKey}" no longer offers it`;
+    }
+    if (live !== binding.registrationSeq) {
+      return `"${toolKey}" was re-registered by the page after it was listed`;
+    }
+    return undefined;
+  }
+
+  /** Remember which invocation a command started, evicting oldest-first. */
+  private rememberInvocation(
+    commandId: string,
+    invocationId: string,
+    tabId: string,
+  ): boolean {
+    // A CANCELLATION THAT ARRIVED FIRST. It had no id to name at the time, so
+    // it left its intent here; this is the moment the id exists. Reported back
+    // rather than acted on, because the caller holds the bridge.
+    const cancelWanted = this.consumeCancel(commandId);
+    if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
+      const oldest = this.invocationsByCommand.keys().next().value;
+      if (oldest !== undefined) this.invocationsByCommand.delete(oldest);
+    }
+    this.invocationsByCommand.set(commandId, { tabId, invocationId });
+    return cancelWanted;
+  }
+
+  /**
+   * Remember that `commandId` was cancelled, whether or not it has started.
+   *
+   * Expired latches for commands that are not running are swept first. At the
+   * ceiling, the oldest latch that guards NO running invocation is evicted; if
+   * every slot guards one, this intent is dropped rather than a live one — a
+   * lost cancellation for a command that may never arrive is the cheaper
+   * mistake.
+   */
+  private latchCancel(commandId: string): void {
+    const now = Date.now();
+    for (const [id, expiresAt] of this.pendingCancels) {
+      if (expiresAt <= now && !this.activeInvocations.has(id)) {
+        this.pendingCancels.delete(id);
+      }
+    }
+    if (
+      this.pendingCancels.size >= MAX_PENDING_CANCELS &&
+      !this.pendingCancels.has(commandId)
+    ) {
+      for (const id of this.pendingCancels.keys()) {
+        if (!this.activeInvocations.has(id)) {
+          this.pendingCancels.delete(id);
+          break;
+        }
+      }
+      if (this.pendingCancels.size >= MAX_PENDING_CANCELS) return;
+    }
+    this.pendingCancels.set(commandId, now + PENDING_CANCEL_TTL_MS);
+  }
+
+  /**
+   * Take the latch for `commandId`, if one is still live.
+   *
+   * A latch for a RUNNING command is live regardless of its timestamp — the
+   * TTL exists for commands that never arrive, not for ones taking their time
+   * inside the bridge.
+   */
+  private consumeCancel(commandId: string): boolean {
+    const expiresAt = this.pendingCancels.get(commandId);
+    if (expiresAt === undefined) return false;
+    this.pendingCancels.delete(commandId);
+    return this.activeInvocations.has(commandId) || expiresAt > Date.now();
   }
 
   /**
@@ -882,8 +1246,22 @@ export class ChromiumDriver implements BrowserDriver {
     permit: () => boolean,
     observe?: ActObserve,
   ): Promise<BrowserCommandResult> {
+    // BEFORE THE PAGE STARTS LOADING, not after.
+    //
+    // The attach is fire-and-forget at tab creation so opening a tab is not
+    // slowed by a CDP round trip, and every READ awaits it. That is not enough
+    // on its own: `toolsAdded` is an event, not a query, so a page that
+    // registers before `WebMCP.enable` and the listeners are wired loses those
+    // registrations permanently — awaiting the attach afterwards asks a bridge
+    // that was not listening when it mattered. Memoized, so this costs one
+    // await on the first navigation and nothing on any later one.
+    await this.attachWebmcp(tabId, entry).catch(() => undefined);
     await navigate(entry.page);
     entry.navCounter += 1;
+    // A NEW GENERATION, whether or not the bridge has anything to say about it.
+    // Every binding minted against the previous document is void from here, and
+    // a page with no tools at all still replaced a page that may have had some.
+    this.bumpWebmcpRevision(entry);
     const settled = await this.settle(entry.page);
     const blockedDetail =
       "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back";
@@ -982,8 +1360,26 @@ export class ChromiumDriver implements BrowserDriver {
           permit,
         );
       }
+      case "webmcp_revision": {
+        // TOUCHES NO PAGE. No screenshot, no settle, no DOM read — this is a
+        // read of the cache the bridge subscription keeps current, and it is
+        // what makes "did the page's tools change?" affordable before every
+        // model step. It carries no state token for the same reason: nothing
+        // here observed a rendered state, so there is none to pin an act to.
+        await this.attachWebmcp(tabId, entry);
+        return {
+          ok: true,
+          output: { url: safeUrl(entry.page) },
+          ...this.webmcpEnvelope(tabId, entry),
+        };
+      }
       case "webmcp_tools": {
         const bridge = await entry.page.webmcp();
+        // The support probe is a round trip into the page and navigation is a
+        // synchronous event, so right after a navigate `isSupported()` can
+        // still be answering for the page we LEFT — which reads as "this page
+        // offers no tools" about a page whose whole point is its tools.
+        await bridge?.probeSettled();
         const frame = await this.snapshot(entry.page);
         if (!bridge || !bridge.isSupported()) {
           // NOT an error: "this page offers no WebMCP tools" is a legitimate
@@ -1349,6 +1745,11 @@ export class ChromiumDriver implements BrowserDriver {
     const cursors = entry.page.consoleCursor?.();
     return {
       ok: true,
+      // ON EVERY OBSERVATION, at the funnel, so no mode can forget it. A change
+      // the model's OWN action caused — a navigation, a click that mounted a
+      // component that registers a tool — is then visible in the result the
+      // model already paid for, and costs no extra round trip.
+      ...this.webmcpEnvelope(tabId, entry),
       // Beside `stateToken`, never inside `output`: `output` is the payload
       // that goes to the model through the untrusted-content fence, and our own
       // ring accounting has no business in there. The ledger lifts them out.
@@ -1476,8 +1877,20 @@ export class ChromiumDriver implements BrowserDriver {
         await page.close().catch(() => {});
         return null;
       }
-      const entry: TabEntry = { page, navCounter: 0 };
+      const entry: TabEntry = {
+        page,
+        navCounter: 0,
+        webmcp: emptyWebmcpState(),
+      };
       this.tabs.set(tabId, entry);
+      // EAGERLY, reversing the bridge's original lazy attach. Lazy was right
+      // when the only consumer was `webmcp_invoke` — a tab that never called a
+      // page tool should not pay for a CDP session. It is wrong now: the tool
+      // set is a thing the server READS between model steps, and a bridge that
+      // attaches on first use has no idea what the page registered before it
+      // existed. Fire-and-forget so tab creation is not slowed by it; every
+      // reader awaits `attachWebmcp` itself.
+      void this.attachWebmcp(tabId, entry);
       // A new tab is the one Chromium shows, which is what the human pane's
       // video will be grabbing a moment later.
       this.activeTabId = tabId;
@@ -1930,8 +2343,89 @@ export class ChromiumDriver implements BrowserDriver {
     );
   }
 
+  /**
+   * Attach this tab's WebMCP bridge and start tracking its tool set.
+   *
+   * Idempotent and memoized on the entry: several readers can call it at once
+   * (an observation, a revision read, an invoke) and exactly one attach
+   * happens. Failures are swallowed into "this tab has no WebMCP", which is the
+   * ordinary case — most pages offer nothing and a browser build without the
+   * domain offers nothing anywhere.
+   */
+  private attachWebmcp(tabId: string, entry: TabEntry): Promise<void> {
+    entry.webmcp.attaching ??= (async () => {
+      const bridge = await entry.page.webmcp().catch(() => null);
+      // The tab can be replaced inside that await (a close, a re-create under
+      // the same name). Subscribing then would wire a dead page's bridge to a
+      // live entry.
+      if (!bridge || this.tabs.get(tabId) !== entry) return;
+      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+        entry.webmcp.tools = tools;
+        entry.webmcp.supported = bridge.isSupported();
+        this.bumpWebmcpRevision(entry);
+      });
+    })().catch(() => {});
+    return entry.webmcp.attaching;
+  }
+
+  /**
+   * The ONE way a tab's tool generation moves.
+   *
+   * Two callers: the bridge's change events, and `navigateVerb` — which bumps
+   * `navCounter` on a path the bridge never reports (`Page.frameNavigated` has
+   * already fired by then). The hash folds `navCounter` in, so it is re-stamped
+   * here, on every bump, rather than at announce time (which would describe the
+   * previous generation) or on every read (which cost a full hash per
+   * heartbeat).
+   */
+  private bumpWebmcpRevision(entry: TabEntry): void {
+    entry.webmcp.revision += 1;
+    entry.webmcp.hash = webmcpHashFor(entry.webmcp.tools, entry.navCounter);
+  }
+
+  /**
+   * A tab's tool set as `{revision, hash, count}`, read from the cache.
+   *
+   * TOUCHES NO PAGE and computes nothing: both fields are stamped when the
+   * generation moves. That is what lets this ride a heartbeat several times a
+   * second and be asked before every model step.
+   */
+  webmcpToolsSnapshot(tabId?: string): WebMcpToolsRevision | undefined {
+    const id = tabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry) return undefined;
+    return this.webmcpRevisionFor(entry);
+  }
+
+  private webmcpRevisionFor(entry: TabEntry): WebMcpToolsRevision {
+    return {
+      revision: entry.webmcp.revision,
+      hash: entry.webmcp.hash,
+      count: entry.webmcp.tools.length,
+      supported: entry.webmcp.supported,
+      // BOUNDED, like the tab list's URL. This rides an 8 KiB heartbeat record
+      // beside up to sixteen tabs' URLs, and a page can make its URL as long
+      // as it likes.
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX),
+    };
+  }
+
+  /** The `webmcpTools` half of a result envelope. */
+  private webmcpEnvelope(
+    tabId: string,
+    entry: TabEntry,
+  ): Pick<BrowserCommandResult, "webmcpTools"> {
+    void tabId;
+    return { webmcpTools: this.webmcpRevisionFor(entry) };
+  }
+
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
+    const going = this.tabs.get(tabId);
+    // The subscription holds a closure over THIS entry; left attached to a
+    // bridge whose page is being replaced, it would keep bumping a revision
+    // nothing reads and keep the entry alive with it.
+    going?.webmcp.unsubscribe?.();
     this.tabs.delete(tabId);
     if (this.activeTabId === tabId) {
       // Chromium shows SOMETHING after a close, and the most recently

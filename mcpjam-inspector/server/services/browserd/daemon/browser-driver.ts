@@ -11,6 +11,7 @@ import {
   BrowserCommand,
   BrowserCommandResult,
   ObservationStateToken,
+  WebMcpToolsRevision,
   formatBrowserdError,
   wantsFor,
 } from "../protocol";
@@ -82,6 +83,18 @@ export interface BrowserDriver {
    * could not say so, and the picture would simply become a different page.
    */
   tabsSnapshot?(): { active?: string; list: Array<{ id: string; url: string }> };
+  /**
+   * A tab's page-tool set as `{revision, hash, count}`, read from the driver's
+   * own cache.
+   *
+   * Optional, like `viewport` and `tabsSnapshot`: a driver with no WebMCP is
+   * still a perfectly good driver, and every caller treats `undefined` as
+   * "this engine cannot tell you" rather than as "no tools".
+   *
+   * TOUCHES NO PAGE, which is the property that lets it ride a heartbeat and
+   * be asked before every model step.
+   */
+  webmcpToolsSnapshot?(tabId?: string): WebMcpToolsRevision | undefined;
   /**
    * Look at a tab WITHOUT acting on it, for a refusal that owes the caller a
    * fresh page (L3's `stale_observation`).

@@ -8,6 +8,10 @@ import { randomUUID } from "node:crypto";
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
 var BROWSERD_PROTOCOL_VERSION = 2;
+var BROWSERD_WEBMCP_FEATURES = [
+  "webmcp-eager",
+  "webmcp-binding"
+];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -70,6 +74,12 @@ var BROWSERD_ERROR_CODES = [
   "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
+  /**
+   * The tool the caller named is not the tool it bound to: the tab navigated,
+   * the frame is gone, or the page re-registered under the same name. Nothing
+   * was invoked. Recoverable — the caller re-reads the page's tools.
+   */
+  "stale_binding",
   /** A dialog is open and waiting for the person who holds the lease. */
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */
@@ -99,6 +109,9 @@ function parseBrowserdErrorCode(error) {
 }
 
 // server/services/browserd/daemon/command-queue.ts
+function isOutOfBand(command) {
+  return command.action.kind === "webmcp_cancel";
+}
 function queueKeyFor(command) {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
 }
@@ -159,6 +172,7 @@ var CommandQueue = class {
     }
   }
   async submit(command) {
+    if (isOutOfBand(command)) return this.runOutOfBand(command);
     if (isReplayable(command)) return this.runUntracked(command);
     const existing = this.lookup(command.commandId);
     if (existing) {
@@ -215,6 +229,23 @@ var CommandQueue = class {
       this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
       if (this.tails.get(key) === raw) this.tails.delete(key);
     }
+  }
+  /**
+   * Run a command NOW, off the tab's FIFO entirely.
+   *
+   * Not depth-capped either, and deliberately: the depth cap exists to stop a
+   * caller stampeding the browser with work, and this lane carries only
+   * cancellations — refusing one because the tab is busy would refuse it in
+   * exactly the situation it is for. Untracked, like a read: a cancellation is
+   * idempotent, so a retry replaying it costs nothing and a tombstone would buy
+   * nothing.
+   */
+  async runOutOfBand(command) {
+    const result = await this.executor(command).then(
+      (value) => value,
+      normalizeError
+    );
+    return { status: "ok", result, bootId: this.bootId };
   }
   /** Current retained-result count. Exposed for tests. */
   get retainedCount() {
@@ -1145,7 +1176,9 @@ var BrowserdRequestHandler = class {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
-    this.features = deps.features ?? [];
+    this.features = [
+      .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
+    ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
@@ -1162,6 +1195,17 @@ var BrowserdRequestHandler = class {
    */
   tabsSnapshot() {
     return this.driver.tabsSnapshot?.();
+  }
+  /**
+   * The driven tab's page-tool set as a CHANGE SIGNAL, for a heartbeat.
+   *
+   * A cache read: it touches no page, which is the property that makes it safe
+   * on a beat that fires several times a second. `undefined` from a driver with
+   * no WebMCP, which the pane reads as "this engine cannot tell you" rather
+   * than as "no tools".
+   */
+  webmcpSnapshot(tabId) {
+    return this.driver.webmcpToolsSnapshot?.(tabId);
   }
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */
   attachFrameCounters(watchers) {
@@ -1566,6 +1610,20 @@ var BrowserdRequestHandler = class {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId }
       };
+    }
+    const action = parsed.command.action;
+    if (action.kind === "webmcp_invoke" && action.expectedBinding !== void 0 && action.expectedBinding.bootId !== this.bootId) {
+      return this.mapOutcome({
+        status: "ok",
+        bootId: this.bootId,
+        result: {
+          ok: false,
+          error: formatBrowserdError(
+            "stale_binding",
+            "this tool was listed on a previous run of this browser; re-read the page's tools"
+          )
+        }
+      });
     }
     const outcome = await this.queue.submit(parsed.command);
     const response = this.mapOutcome(outcome);
@@ -2065,6 +2123,14 @@ var WRITE_STALL_MS = 15e3;
 var MAX_CONCURRENT_STREAMS = 4;
 var PROBE_BEATS = 3;
 var PROBE_INTERVAL_MS = 1e3;
+function statsWebmcp(revision) {
+  return {
+    revision: revision.revision,
+    hash: revision.hash,
+    count: revision.count,
+    ...revision.url ? { url: revision.url } : {}
+  };
+}
 function createFrameStreamHost(handler, options = {}) {
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const stallMs = options.stallMs ?? WRITE_STALL_MS;
@@ -2218,6 +2284,7 @@ function createFrameStreamHost(handler, options = {}) {
     const beat = () => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;
@@ -2231,6 +2298,7 @@ function createFrameStreamHost(handler, options = {}) {
             // under them — and kiosk hides Chromium's own tab strip, so nothing
             // else here would say so.
             ...tabs ? { tabs } : {},
+            ...webmcp ? { webmcp: statsWebmcp(webmcp) } : {},
             // `mpdecimate` means an idle page produces NO frames at all, so
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
@@ -2408,7 +2476,12 @@ function createFrameStreamHost(handler, options = {}) {
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            return tabs ? { ...stats, tabs } : stats;
+            const webmcp = handler.webmcpSnapshot?.(tabId);
+            return {
+              ...stats,
+              ...tabs ? { tabs } : {},
+              ...webmcp ? { webmcp: statsWebmcp(webmcp) } : {}
+            };
           })()
         })
       );
@@ -3506,8 +3579,17 @@ var WebMcpBridge = class {
     this.onChange = options.onChange;
     this.onExternalInvocation = options.onExternalInvocation;
   }
-  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
+  /**
+   * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
+   * each carrying the registration sequence minted when it arrived.
+   */
   tools = /* @__PURE__ */ new Map();
+  /**
+   * The next registration sequence to hand out. Bumped ONCE per `toolsAdded`
+   * event, so tools registered together share a sequence and a
+   * re-registration (reload, unregister/register) always gets a fresh one.
+   */
+  nextRegistrationSeq = 1;
   /** frameId → last known URL, for origin labelling. */
   frames = /* @__PURE__ */ new Map();
   pending = /* @__PURE__ */ new Map();
@@ -3519,6 +3601,35 @@ var WebMcpBridge = class {
   invocationTimeoutMs;
   cancelSettleGraceMs;
   supported = false;
+  /**
+   * The domain half of `supported`, remembered so a RE-probe can recombine
+   * without re-enabling anything: `WebMCP.enable` is per session, not per
+   * document, so a navigation cannot take the domain away — only the page's
+   * `document.modelContext` can change.
+   */
+  domainEnabled = false;
+  /**
+   * The page-side probe, kept so main-frame navigation can re-run it.
+   *
+   * WHY THE CACHED PROBE WAS A BUG. `start()` set `supported` once and nothing
+   * ever revisited it, so a tab that opened on a page without WebMCP reported
+   * "this browser has no WebMCP" for the rest of its life — including after
+   * navigating to a page whose whole point is the tools it registers. The
+   * probe is a page question and has to be re-asked of each page.
+   */
+  probe;
+  /**
+   * The in-flight re-probe, so a reader arriving between a navigation and its
+   * answer can wait for the truth instead of reading the previous page's.
+   */
+  probing = null;
+  /**
+   * Which re-probe is current. A slow probe for the page we LEFT must not
+   * overwrite the answer for the page we are on, and navigations can outrun a
+   * `Runtime.evaluate`.
+   */
+  probeGeneration = 0;
+  subscribers = /* @__PURE__ */ new Set();
   disposed = false;
   onChange;
   onExternalInvocation;
@@ -3531,11 +3642,40 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
-    if (!this.onChange) return;
+    if (!this.onChange && this.subscribers.size === 0) return;
+    const tools = this.list();
+    for (const listener of [this.onChange, ...this.subscribers]) {
+      if (!listener) continue;
+      try {
+        listener(tools);
+      } catch {
+      }
+    }
+  }
+  /**
+   * Watch the tool set, alongside the constructor's `onChange`.
+   *
+   * A second channel because the two consumers arrive at different times: the
+   * bridge is constructed by the page adapter (which knows how to probe the
+   * page) while the DRIVER — the one that has to keep a per-tab revision — only
+   * meets the bridge once it has resolved one. Handing the adapter the driver's
+   * callback would make the adapter know about tab bookkeeping; this way each
+   * side subscribes to what it needs.
+   *
+   * The listener is called with the CURRENT set immediately, so a subscriber
+   * that attached after the page had already registered its tools does not
+   * have to wait for the next change to learn about them — the exact gap that
+   * makes an eagerly-attached bridge worth having.
+   */
+  subscribe(listener) {
+    this.subscribers.add(listener);
     try {
-      this.onChange(this.list());
+      listener(this.list());
     } catch {
     }
+    return () => {
+      this.subscribers.delete(listener);
+    };
   }
   /**
    * Enable the domains and wire the events. `probeSupported` is the page-side
@@ -3551,17 +3691,63 @@ var WebMcpBridge = class {
     await this.cdp.send("WebMCP.enable").catch(() => {
       domainEnabled = false;
     });
+    this.domainEnabled = domainEnabled;
     const probed = await probeSupported().catch(() => false);
     this.supported = domainEnabled && probed;
   }
   isSupported() {
     return this.supported;
   }
+  /**
+   * Re-ask this probe of every page the main frame goes to.
+   *
+   * Separate from `start()`'s argument because support is a property of the
+   * PAGE, not of the session: `start()` answers it for the document that
+   * happened to be open, and a bridge that stopped there tells a caller "this
+   * browser has no WebMCP" about a page that registered five tools a moment
+   * ago. Opt-in so a consumer that cannot cheaply re-probe (a test fake) is
+   * unchanged.
+   */
+  resupport(probe) {
+    this.probe = probe;
+  }
+  /**
+   * Resolve once no re-probe is outstanding.
+   *
+   * `Page.frameNavigated` is a synchronous event and the probe is a round trip
+   * into the page, so there is a window in which `isSupported()` still answers
+   * for the page we LEFT. A reader that has just navigated (the driver, about
+   * to list tools) waits here rather than reporting the previous page's answer
+   * as this page's.
+   */
+  async probeSettled() {
+    await this.probing;
+  }
+  /** Re-run the page probe for the document the main frame just committed. */
+  reprobe() {
+    const probe = this.probe;
+    if (!probe || this.disposed) return;
+    const generation = ++this.probeGeneration;
+    this.probing = (async () => {
+      const probed = await probe().catch(() => false);
+      if (generation !== this.probeGeneration || this.disposed) return;
+      const next = this.domainEnabled && probed;
+      if (next === this.supported) return;
+      this.supported = next;
+      this.announce();
+    })().finally(() => {
+      if (generation === this.probeGeneration) this.probing = null;
+    });
+  }
   wire() {
     this.cdp.on("WebMCP.toolsAdded", (payload) => {
       const { tools } = payload ?? {};
+      const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
-        this.tools.set(this.key(tool.frameId, tool.name), tool);
+        this.tools.set(this.key(tool.frameId, tool.name), {
+          tool,
+          registrationSeq
+        });
       }
       this.announce();
     });
@@ -3600,7 +3786,10 @@ var WebMcpBridge = class {
       if (!frame) return;
       this.frames.set(frame.id, frame.url);
       this.dropFrame(frame.id);
-      if (!frame.parentId) this.mainFrameId = frame.id;
+      if (!frame.parentId) {
+        this.mainFrameId = frame.id;
+        this.reprobe();
+      }
       this.announce();
     });
     this.cdp.on("Page.frameDetached", (payload) => {
@@ -3651,7 +3840,7 @@ var WebMcpBridge = class {
   }
   /** The tools currently on offer, as the model should see them. */
   list() {
-    return [...this.tools.values()].map((tool) => ({
+    return [...this.tools.values()].map(({ tool, registrationSeq }) => ({
       frameId: tool.frameId,
       name: tool.name,
       description: tool.description ?? "",
@@ -3659,6 +3848,7 @@ var WebMcpBridge = class {
       ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
       origin: originOf(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
+      registrationSeq,
       registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
     }));
   }
@@ -3668,12 +3858,12 @@ var WebMcpBridge = class {
    * time rather than being carried around as identity.
    */
   resolveFrame(toolName) {
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName && tool.frameId === this.mainFrameId) {
         return tool.frameId;
       }
     }
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName) return tool.frameId;
     }
     throw new WebMcpBridgeError(
@@ -3688,9 +3878,19 @@ var WebMcpBridge = class {
    * the subframe detached), so an id that no longer matches falls back to
    * resolution rather than being sent to the browser to fail obscurely.
    */
-  frameFor(frameId, toolName) {
+  frameFor(frameId, toolName, strict = false) {
     if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    if (strict) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" no longer offers it.`
+      );
+    }
     return this.resolveFrame(toolName);
+  }
+  /** The registration sequence for one (frame, name), or undefined if gone. */
+  registrationSeqFor(frameId, toolName) {
+    return this.tools.get(this.key(frameId, toolName))?.registrationSeq;
   }
   /**
    * Invoke a page tool and wait for the page's own response.
@@ -3726,7 +3926,20 @@ var WebMcpBridge = class {
         reason
       );
     }
-    const frameId = this.frameFor(args.frameId, args.toolName);
+    const frameId = this.frameFor(
+      args.frameId,
+      args.toolName,
+      args.strictFrame === true
+    );
+    if (args.expectedRegistrationSeq !== void 0) {
+      const live = this.registrationSeqFor(frameId, args.toolName);
+      if (live !== args.expectedRegistrationSeq) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `"${args.toolName}" was re-registered by the page after it was listed.`
+        );
+      }
+    }
     let invocationId;
     try {
       this.outstandingSends += 1;
@@ -3747,6 +3960,10 @@ var WebMcpBridge = class {
         );
       }
       invocationId = result.invocationId;
+      try {
+        args.onStarted?.(invocationId);
+      } catch {
+      }
     } catch (error) {
       if (error instanceof WebMcpBridgeError) throw error;
       const message = error instanceof Error ? error.message : String(error);
@@ -3825,6 +4042,8 @@ var WebMcpBridge = class {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.subscribers.clear();
+    this.probe = void 0;
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
@@ -3839,6 +4058,101 @@ var WebMcpBridge = class {
     }
   }
 };
+
+// shared/declared-tools.ts
+var WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8192;
+var WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH = 12;
+var CONTROL_CHARS = new RegExp(
+  "[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]",
+  "g"
+);
+var BIDI_AND_INVISIBLE = new RegExp(
+  "[\\u200B-\\u200F\\u061C\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]",
+  "g"
+);
+var SEP = "\0";
+function fnv1a(input, seed) {
+  let hash = seed;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    hash >>>= 0;
+  }
+  return hash >>> 0;
+}
+function declaredToolHex8(input) {
+  const high = fnv1a(input, 2166136261);
+  const low = fnv1a(input, 16777619);
+  return high.toString(16).padStart(8, "0").slice(0, 4) + low.toString(16).padStart(8, "0").slice(0, 4);
+}
+function canonicalJson(value, depth = 0, budget = { left: CANONICAL_JSON_BUDGET_CHARS }) {
+  if (depth > WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH * 2) return '"[deep]"';
+  if (budget.left <= 0) return '"[budget]"';
+  if (value === null || typeof value !== "object") {
+    const scalar2 = typeof value === "string" && value.length > budget.left ? `${value.slice(0, budget.left)}\u2026` : value;
+    const out = JSON.stringify(scalar2) ?? "null";
+    budget.left -= out.length;
+    return out;
+  }
+  if (Array.isArray(value)) {
+    const parts2 = [];
+    for (const item of value) {
+      if (budget.left <= 0) {
+        parts2.push('"[budget]"');
+        break;
+      }
+      parts2.push(canonicalJson(item, depth + 1, budget));
+    }
+    budget.left -= parts2.length + 1;
+    return `[${parts2.join(",")}]`;
+  }
+  const record = value;
+  const parts = [];
+  for (const key of Object.keys(record).sort()) {
+    if (budget.left <= 0) {
+      parts.push('"[budget]":0');
+      break;
+    }
+    const encodedKey = JSON.stringify(
+      key.length > budget.left ? `${key.slice(0, budget.left)}\u2026` : key
+    );
+    budget.left -= encodedKey.length + 1;
+    parts.push(`${encodedKey}:${canonicalJson(record[key], depth + 1, budget)}`);
+  }
+  budget.left -= parts.length + 1;
+  return `{${parts.join(",")}}`;
+}
+var CANONICAL_JSON_BUDGET_CHARS = WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES * 4;
+function declaredSchemaHash(schema) {
+  return declaredToolHex8(schema === void 0 ? "" : canonicalJson(schema));
+}
+function declaredToolsHash(descriptors, context) {
+  const rows = descriptors.map(
+    (descriptor) => [
+      descriptor.frameId ?? "",
+      String(descriptor.registrationSeq ?? 0),
+      descriptor.rawName,
+      descriptor.description ?? "",
+      declaredSchemaHash(descriptor.inputSchema)
+    ].join(SEP)
+  ).sort();
+  return declaredToolHex8(
+    [String(context?.navCounter ?? 0), String(rows.length), ...rows].join(SEP)
+  );
+}
+function declaredToolsFromWebmcp(tools) {
+  return tools.map((tool) => ({
+    rawName: tool.name,
+    description: tool.description ?? "",
+    ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
+    ...tool.origin !== void 0 ? { origin: tool.origin } : {},
+    ...tool.frameId !== void 0 ? { frameId: tool.frameId } : {},
+    isMainFrame: tool.isMainFrame === true,
+    ...tool.registrationSeq !== void 0 ? { registrationSeq: tool.registrationSeq } : {},
+    registrationKind: tool.registrationKind ?? "unknown",
+    ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {}
+  }));
+}
 
 // server/services/webmcp-inspector/frame-throttle.ts
 function createFrameThrottle(options) {
@@ -4227,6 +4541,20 @@ function withoutRefIndex(fields) {
 function isNotAnInputRefusal(message) {
   return /not an <input>/i.test(message) && !/<select>/i.test(message);
 }
+function webmcpHashFor(tools, navCounter) {
+  return declaredToolsHash(declaredToolsFromWebmcp(tools), { navCounter });
+}
+function emptyWebmcpState() {
+  return {
+    revision: 0,
+    hash: webmcpHashFor([], 0),
+    supported: false,
+    tools: []
+  };
+}
+var MAX_TRACKED_INVOCATIONS = 256;
+var MAX_PENDING_CANCELS = 64;
+var PENDING_CANCEL_TTL_MS = 6e4;
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -4308,6 +4636,39 @@ var ChromiumDriver = class {
    * was added to prevent, moved one step later.
    */
   closing = false;
+  /**
+   * `commandId -> invocationId`, recorded the instant the browser accepts an
+   * invocation.
+   *
+   * The whole cancellation path hangs off this. `webmcp_invoke` is synchronous
+   * — it does not return an invocation id until the page's tool has SETTLED —
+   * so a caller wanting to stop a running tool has never known what to name.
+   * Its own `commandId` is the one id it holds before the call, so that is the
+   * handle `webmcp_cancel` takes.
+   */
+  invocationsByCommand = /* @__PURE__ */ new Map();
+  /**
+   * Commands whose cancellation arrived before their invocation could act on
+   * it, mapped to when that intent expires.
+   *
+   * Three moments a cancel BY ID cannot reach: while the invoke is still
+   * queued behind another command on its tab, while it is dequeued but the
+   * browser has not yet named the invocation, and the gap between. All three
+   * latch here; `webmcpInvoke` consults the latch on entry, so a command
+   * cancelled before it ran never touches the page, and `rememberInvocation`
+   * consults it when the id arrives. Bounded by `MAX_PENDING_CANCELS` and
+   * `PENDING_CANCEL_TTL_MS` (see `latchCancel`); a latch guarding a running
+   * invocation is never evicted and never expires.
+   */
+  pendingCancels = /* @__PURE__ */ new Map();
+  /**
+   * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
+   *
+   * Registered at dequeue, cleared in the `finally`. This is what protects a
+   * latch in `pendingCancels` from eviction and expiry: an intent for a
+   * running command is live for as long as the command is.
+   */
+  activeInvocations = /* @__PURE__ */ new Set();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -4381,7 +4742,7 @@ var ChromiumDriver = class {
       case "act":
         return this.act(tabId, action, permit);
       case "webmcp_invoke":
-        return this.webmcpInvoke(tabId, action, permit);
+        return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
         return this.webmcpCancel(tabId, action, permit);
     }
@@ -4619,12 +4980,29 @@ var ChromiumDriver = class {
       }
     }
   }
-  async webmcpInvoke(tabId, action, permit) {
+  async webmcpInvoke(tabId, action, permit, commandId) {
+    this.activeInvocations.add(commandId);
+    try {
+      if (this.consumeCancel(commandId)) {
+        return {
+          ok: false,
+          error: "webmcp_cancelled: the call was cancelled before it reached the page; nothing ran"
+        };
+      }
+      return await this.runWebmcpInvoke(tabId, action, permit, commandId);
+    } finally {
+      this.activeInvocations.delete(commandId);
+      this.pendingCancels.delete(commandId);
+    }
+  }
+  /** The body of `webmcpInvoke`, run inside its in-flight registration. */
+  async runWebmcpInvoke(tabId, action, permit, commandId) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
     }
     const bridge = await entry.page.webmcp();
+    await bridge?.probeSettled();
     if (!bridge || !bridge.isSupported()) {
       return {
         ok: false,
@@ -4636,6 +5014,19 @@ var ChromiumDriver = class {
         "a person took control of this browser before the page's tool could be called; nothing was run"
       );
     }
+    const binding = action.expectedBinding;
+    if (binding) {
+      const stale = this.bindingRefusal(tabId, entry, bridge, action.toolKey, binding);
+      if (stale) {
+        return {
+          ok: false,
+          error: formatBrowserdError("stale_binding", stale),
+          // The fresh revision rides along so the caller re-reads the page's
+          // tools instead of retrying the binding it already holds.
+          ...this.webmcpEnvelope(tabId, entry)
+        };
+      }
+    }
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -4643,8 +5034,24 @@ var ChromiumDriver = class {
         // in the main frame. `invoke` falls back to name resolution when it is
         // absent or when the frame no longer offers the tool, so an older
         // caller that sends no frame still works.
-        ...action.frameId ? { frameId: action.frameId } : {},
-        input: action.input
+        ...binding ? {
+          frameId: binding.frameId,
+          strictFrame: true,
+          // Re-checked inside `invoke`, against the same value
+          // `bindingRefusal` just accepted. The gap between the two is a
+          // real one — an abort check and a CDP round trip — and it is
+          // exactly long enough for a page to swap the tool.
+          expectedRegistrationSeq: binding.registrationSeq
+        } : {},
+        ...!binding && action.frameId ? { frameId: action.frameId } : {},
+        input: action.input,
+        // Recorded BEFORE the tool settles, which is the only window in which
+        // a cancel can still reach the page.
+        onStarted: (id) => {
+          if (!this.rememberInvocation(commandId, id, tabId)) return;
+          if (!permit()) return;
+          void bridge.cancel(id).catch(() => void 0);
+        }
       });
       const { output: capped, omitted } = capToolOutput(
         output,
@@ -4669,9 +5076,16 @@ var ChromiumDriver = class {
     }
   }
   async webmcpCancel(tabId, action, permit) {
-    const entry = this.tabs.get(tabId);
+    const started = action.commandId ? this.invocationsByCommand.get(action.commandId) : void 0;
+    const invocationId = action.invocationId ?? started?.invocationId;
+    if (!invocationId) {
+      if (action.commandId) this.latchCancel(action.commandId);
+      return { ok: true, output: { cancelled: false, known: false } };
+    }
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
     if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${tabId}` };
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {
@@ -4682,8 +5096,84 @@ var ChromiumDriver = class {
         "a person took control of this browser before the cancellation could be delivered"
       );
     }
-    const known = await bridge.cancel(action.invocationId);
-    return { ok: true, output: { cancelled: known } };
+    const known = await bridge.cancel(invocationId);
+    return { ok: true, output: { cancelled: known, known: true, invocationId } };
+  }
+  /**
+   * Why this binding does not describe the tool that is here now, or undefined
+   * when it does.
+   *
+   * `bootId` is deliberately NOT checked here: the transport already refuses a
+   * command whose `expectedBootId` does not match (`command_unknown_boot`), so
+   * a binding from a previous boot cannot reach this method at all. Checking it
+   * again would need the driver to know the daemon's boot identity, which is
+   * the control plane's business.
+   */
+  bindingRefusal(tabId, entry, bridge, toolKey, binding) {
+    if (binding.tabId !== tabId) {
+      return `this tool was listed on tab "${binding.tabId}", not "${tabId}"`;
+    }
+    if (binding.navCounter !== entry.navCounter) {
+      return "the page navigated after this tool was listed, so the tool it named is gone";
+    }
+    const live = bridge.registrationSeqFor(binding.frameId, toolKey);
+    if (live === void 0) {
+      return `the frame that offered "${toolKey}" no longer offers it`;
+    }
+    if (live !== binding.registrationSeq) {
+      return `"${toolKey}" was re-registered by the page after it was listed`;
+    }
+    return void 0;
+  }
+  /** Remember which invocation a command started, evicting oldest-first. */
+  rememberInvocation(commandId, invocationId, tabId) {
+    const cancelWanted = this.consumeCancel(commandId);
+    if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
+      const oldest = this.invocationsByCommand.keys().next().value;
+      if (oldest !== void 0) this.invocationsByCommand.delete(oldest);
+    }
+    this.invocationsByCommand.set(commandId, { tabId, invocationId });
+    return cancelWanted;
+  }
+  /**
+   * Remember that `commandId` was cancelled, whether or not it has started.
+   *
+   * Expired latches for commands that are not running are swept first. At the
+   * ceiling, the oldest latch that guards NO running invocation is evicted; if
+   * every slot guards one, this intent is dropped rather than a live one — a
+   * lost cancellation for a command that may never arrive is the cheaper
+   * mistake.
+   */
+  latchCancel(commandId) {
+    const now = Date.now();
+    for (const [id, expiresAt] of this.pendingCancels) {
+      if (expiresAt <= now && !this.activeInvocations.has(id)) {
+        this.pendingCancels.delete(id);
+      }
+    }
+    if (this.pendingCancels.size >= MAX_PENDING_CANCELS && !this.pendingCancels.has(commandId)) {
+      for (const id of this.pendingCancels.keys()) {
+        if (!this.activeInvocations.has(id)) {
+          this.pendingCancels.delete(id);
+          break;
+        }
+      }
+      if (this.pendingCancels.size >= MAX_PENDING_CANCELS) return;
+    }
+    this.pendingCancels.set(commandId, now + PENDING_CANCEL_TTL_MS);
+  }
+  /**
+   * Take the latch for `commandId`, if one is still live.
+   *
+   * A latch for a RUNNING command is live regardless of its timestamp — the
+   * TTL exists for commands that never arrive, not for ones taking their time
+   * inside the bridge.
+   */
+  consumeCancel(commandId) {
+    const expiresAt = this.pendingCancels.get(commandId);
+    if (expiresAt === void 0) return false;
+    this.pendingCancels.delete(commandId);
+    return this.activeInvocations.has(commandId) || expiresAt > Date.now();
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle
@@ -4692,8 +5182,10 @@ var ChromiumDriver = class {
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
   async navigateVerb(tabId, entry, navigate, permit, observe) {
+    await this.attachWebmcp(tabId, entry).catch(() => void 0);
     await navigate(entry.page);
     entry.navCounter += 1;
+    this.bumpWebmcpRevision(entry);
     const settled = await this.settle(entry.page);
     const blockedDetail = "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back";
     const observed = await this.afterAct(
@@ -4770,8 +5262,17 @@ var ChromiumDriver = class {
           permit
         );
       }
+      case "webmcp_revision": {
+        await this.attachWebmcp(tabId, entry);
+        return {
+          ok: true,
+          output: { url: safeUrl(entry.page) },
+          ...this.webmcpEnvelope(tabId, entry)
+        };
+      }
       case "webmcp_tools": {
         const bridge = await entry.page.webmcp();
+        await bridge?.probeSettled();
         const frame = await this.snapshot(entry.page);
         if (!bridge || !bridge.isSupported()) {
           return this.observation(
@@ -5019,6 +5520,11 @@ var ChromiumDriver = class {
     const cursors = entry.page.consoleCursor?.();
     return {
       ok: true,
+      // ON EVERY OBSERVATION, at the funnel, so no mode can forget it. A change
+      // the model's OWN action caused — a navigation, a click that mounted a
+      // component that registers a tool — is then visible in the result the
+      // model already paid for, and costs no extra round trip.
+      ...this.webmcpEnvelope(tabId, entry),
       // Beside `stateToken`, never inside `output`: `output` is the payload
       // that goes to the model through the untrusted-content fence, and our own
       // ring accounting has no business in there. The ledger lifts them out.
@@ -5131,8 +5637,13 @@ var ChromiumDriver = class {
         });
         return null;
       }
-      const entry = { page, navCounter: 0 };
+      const entry = {
+        page,
+        navCounter: 0,
+        webmcp: emptyWebmcpState()
+      };
       this.tabs.set(tabId, entry);
+      void this.attachWebmcp(tabId, entry);
       this.activeTabId = tabId;
       return entry;
     })();
@@ -5407,8 +5918,76 @@ var ChromiumDriver = class {
     if (!minted) return false;
     return minted.tabId === tabId && minted.navCounter === entry.navCounter && minted.urlHash === shortHash(entry.page.url());
   }
+  /**
+   * Attach this tab's WebMCP bridge and start tracking its tool set.
+   *
+   * Idempotent and memoized on the entry: several readers can call it at once
+   * (an observation, a revision read, an invoke) and exactly one attach
+   * happens. Failures are swallowed into "this tab has no WebMCP", which is the
+   * ordinary case — most pages offer nothing and a browser build without the
+   * domain offers nothing anywhere.
+   */
+  attachWebmcp(tabId, entry) {
+    entry.webmcp.attaching ??= (async () => {
+      const bridge = await entry.page.webmcp().catch(() => null);
+      if (!bridge || this.tabs.get(tabId) !== entry) return;
+      entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
+        entry.webmcp.tools = tools;
+        entry.webmcp.supported = bridge.isSupported();
+        this.bumpWebmcpRevision(entry);
+      });
+    })().catch(() => {
+    });
+    return entry.webmcp.attaching;
+  }
+  /**
+   * The ONE way a tab's tool generation moves.
+   *
+   * Two callers: the bridge's change events, and `navigateVerb` — which bumps
+   * `navCounter` on a path the bridge never reports (`Page.frameNavigated` has
+   * already fired by then). The hash folds `navCounter` in, so it is re-stamped
+   * here, on every bump, rather than at announce time (which would describe the
+   * previous generation) or on every read (which cost a full hash per
+   * heartbeat).
+   */
+  bumpWebmcpRevision(entry) {
+    entry.webmcp.revision += 1;
+    entry.webmcp.hash = webmcpHashFor(entry.webmcp.tools, entry.navCounter);
+  }
+  /**
+   * A tab's tool set as `{revision, hash, count}`, read from the cache.
+   *
+   * TOUCHES NO PAGE and computes nothing: both fields are stamped when the
+   * generation moves. That is what lets this ride a heartbeat several times a
+   * second and be asked before every model step.
+   */
+  webmcpToolsSnapshot(tabId) {
+    const id = tabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(id);
+    if (!entry) return void 0;
+    return this.webmcpRevisionFor(entry);
+  }
+  webmcpRevisionFor(entry) {
+    return {
+      revision: entry.webmcp.revision,
+      hash: entry.webmcp.hash,
+      count: entry.webmcp.tools.length,
+      supported: entry.webmcp.supported,
+      // BOUNDED, like the tab list's URL. This rides an 8 KiB heartbeat record
+      // beside up to sixteen tabs' URLs, and a page can make its URL as long
+      // as it likes.
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
+    };
+  }
+  /** The `webmcpTools` half of a result envelope. */
+  webmcpEnvelope(tabId, entry) {
+    void tabId;
+    return { webmcpTools: this.webmcpRevisionFor(entry) };
+  }
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {
+    const going = this.tabs.get(tabId);
+    going?.webmcp.unsubscribe?.();
     this.tabs.delete(tabId);
     if (this.activeTabId === tabId) {
       const remaining = [...this.tabs.keys()];
@@ -5776,11 +6355,13 @@ function wrapPage(page) {
 }
 async function attachWebMcp(page, session) {
   try {
-    const bridge = new WebMcpBridge(session);
-    await bridge.start(async () => {
+    const probe = async () => {
       const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
       return supported === true;
-    });
+    };
+    const bridge = new WebMcpBridge(session);
+    bridge.resupport(probe);
+    await bridge.start(probe);
     return bridge;
   } catch {
     return null;

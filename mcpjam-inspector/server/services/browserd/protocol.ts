@@ -81,6 +81,30 @@ export const DEFAULT_QUEUE_KEY = "@session";
 export const BROWSERD_PROTOCOL_VERSION = 2;
 
 /**
+ * Capabilities every build of this daemon has, announced on `/v1/status`.
+ *
+ * A FEATURE FLAG RATHER THAN A PROTOCOL BUMP, because both additions are
+ * strictly additive on the wire: an older daemon ignores `expectedBinding` and
+ * `webmcp_cancel.commandId`, and answers `webmcp_revision` as an unknown observe
+ * mode. Bumping `BROWSERD_PROTOCOL_VERSION` would instead have killed every live
+ * hosted browser on deploy — a session someone was signing into included — to
+ * gain a capability the server can simply ask about.
+ *
+ *   - `webmcp-eager`: the bridge attaches on tab creation and keeps a per-tab
+ *     `{revision, hash}`, so `observe {mode:"webmcp_revision"}` is answerable
+ *     and every result carries `webmcpTools`. A server talking to a daemon
+ *     WITHOUT this must fall back to a full `webmcp_tools` observation.
+ *   - `webmcp-binding`: `webmcp_invoke` validates `expectedBinding` and refuses
+ *     `stale_binding`, and `webmcp_cancel` accepts a `commandId`. A server
+ *     talking to a daemon without this must not assume its bindings are
+ *     checked — the invocation would run against whatever carries that name now.
+ */
+export const BROWSERD_WEBMCP_FEATURES = [
+  "webmcp-eager",
+  "webmcp-binding",
+] as const;
+
+/**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
  * CONTRACT rather than a launch detail — which is why it lives here and not
  * beside the Chromium switches that happen to configure it.
@@ -161,6 +185,59 @@ export interface ObservationStateToken {
   navCounter: number;
   urlHash: string;
   domHash: string;
+}
+
+/**
+ * WHICH REGISTRATION of a page tool a caller means, as a value it can carry
+ * across a round trip and hand back.
+ *
+ * Every field is load-bearing, and the set is what it is because each weaker
+ * key was tried and let a real mistake through:
+ *
+ *   - `bootId` — the daemon restarted, so every frame id it minted is a
+ *     coincidence now.
+ *   - `tabId` — a binding is for one tab; the same page in two tabs is two
+ *     documents with their own state.
+ *   - `navCounter` — the tab navigated. THE MAIN FRAME KEEPS ITS ID across
+ *     navigation (see `webmcp-bridge.ts`), so this is the only thing that
+ *     separates a page from the page that replaced it at the same URL.
+ *   - `frameId` — which frame. Two same-origin iframes of the same document
+ *     each register their own copy of a tool, and they are not
+ *     interchangeable: one is the left panel, one is the right.
+ *   - `registrationSeq` — which registration WITHIN a document generation. A
+ *     page that unregisters and re-registers a tool (a SPA re-mounting a
+ *     component) has a new handler behind an unchanged name, frame and
+ *     navCounter.
+ *
+ * Compared by the daemon immediately before it invokes, so an approval granted
+ * against one document cannot be spent on another.
+ */
+export interface WebMcpToolBinding {
+  bootId: BootId;
+  tabId: string;
+  navCounter: number;
+  frameId: string;
+  registrationSeq: number;
+}
+
+/**
+ * A tab's WebMCP tool set, described WITHOUT touching the page.
+ *
+ * Read from the daemon's own cache, which the bridge keeps current by push. It
+ * is what makes "has anything changed?" a cheap question the server can ask
+ * before EVERY model step: a page-touching `observe` per step would be a
+ * screenshot's worth of work to usually learn nothing, and would also settle
+ * the page — an observation with side effects on a loop.
+ */
+export interface WebMcpToolsRevision {
+  /** Bumps on every bridge change: add, remove, navigate, detach. */
+  revision: number;
+  /** Over name + description + schema + frame + generation. See `declaredToolsHash`. */
+  hash: string;
+  count: number;
+  /** Whether this page (and this browser) speaks WebMCP at all. */
+  supported: boolean;
+  url?: string;
 }
 
 /**
@@ -269,7 +346,16 @@ export type BrowserAction =
         | "a11y"
         | "console"
         | "url"
-        | "webmcp_tools";
+        | "webmcp_tools"
+        /**
+         * The cached `{revision, hash, count}` for this tab and NOTHING else.
+         *
+         * Touches no page: no screenshot, no settle, no DOM read. That is the
+         * whole point — the server asks it before every model step, and a mode
+         * that reached into the page would make discovery cost a page load per
+         * step and would itself change what it was measuring.
+         */
+        | "webmcp_revision";
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
@@ -318,9 +404,40 @@ export type BrowserAction =
        * caller against a new one.
        */
       frameId?: string;
+      /**
+       * The registration the CALLER means, validated immediately before the
+       * page is touched (`stale_binding` on any mismatch).
+       *
+       * Optional and additive: an older daemon ignores it and resolves by name
+       * exactly as before, and a caller that has no binding (the legacy
+       * `browser_webmcp_invoke`) sends none. A caller that DOES send one is
+       * also refused a frame fallback — the whole point is that this
+       * invocation reaches the tool that was listed and approved, or none.
+       */
+      expectedBinding?: WebMcpToolBinding;
       input: unknown;
     }
-  | { kind: "webmcp_cancel"; invocationId: string };
+  | {
+      kind: "webmcp_cancel";
+      /**
+       * The invocation to stop, when the caller knows its id.
+       *
+       * Optional now: a server aborting a tool call it issued does NOT know
+       * the invocation id — `webmcp_invoke` is synchronous and only reports one
+       * when it settles, which on a hung tool is never. See `commandId`.
+       */
+      invocationId?: string;
+      /**
+       * Stop whatever THIS command started.
+       *
+       * The daemon records `commandId → invocationId` the moment the browser
+       * accepts an invocation, so a caller can name the thing it wants stopped
+       * using the only id it had before the call: its own. Without this an
+       * aborted request left the page's tool running to completion — the user
+       * pressed Stop and the form still submitted.
+       */
+      commandId?: string;
+    };
 
 /**
  * One command envelope. `commandId` is the idempotency key: the daemon executes
@@ -438,6 +555,17 @@ export interface BrowserCommandResult {
    * one refusal whichever side of the queue it happened on.
    */
   leaseBlocked?: boolean;
+  /**
+   * The tab's WebMCP tool set at the moment this command finished, as a cheap
+   * `{revision, hash, count}` (never the definitions).
+   *
+   * ON THE ENVELOPE, beside `stateToken`, and deliberately NOT inside `output`:
+   * it is the daemon's bookkeeping rather than anything the model should read,
+   * and `output` is what gets presented. Riding along on every result is what
+   * lets a change the model's OWN action caused — a navigation, a click that
+   * mounted a component — be noticed without a second round trip.
+   */
+  webmcpTools?: WebMcpToolsRevision;
   /**
    * Where the page's console and page-error rings stood AFTER this command.
    *
@@ -572,6 +700,12 @@ export const BROWSERD_ERROR_CODES = [
   "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
+  /**
+   * The tool the caller named is not the tool it bound to: the tab navigated,
+   * the frame is gone, or the page re-registered under the same name. Nothing
+   * was invoked. Recoverable — the caller re-reads the page's tools.
+   */
+  "stale_binding",
   /** A dialog is open and waiting for the person who holds the lease. */
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */

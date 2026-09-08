@@ -67,9 +67,15 @@ import { buildSandboxBashTool } from "./sandbox-bash.js";
 import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 import {
   buildBrowserTools,
+  type BrowserPageToolsSnapshot,
+  type BrowserToolsResult,
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
+import type {
+  DeclaredToolProvider,
+  MintedDeclaredTool,
+} from "@/shared/declared-tools";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -241,6 +247,57 @@ export interface BuiltInToolContext {
    * ephemeral one, keyed per run, with only the tools that policy permits.
    */
   browserApprovalDelivery?: BrowserApprovalDelivery;
+  /**
+   * The page tools this turn STARTS with, read before the turn began by
+   * `peekPageTools`.
+   *
+   * Read-only and pre-resolved on purpose: this resolver is synchronous, and a
+   * browser read inside it would put a daemon round trip on the critical path
+   * of every turn that merely MENTIONS the browser capability. The route does
+   * the read (and decides whether to do it at all) and hands the answer down.
+   */
+  browserPageTools?: BrowserPageToolsSnapshot;
+  /**
+   * This turn's engine can grow its tool set between model steps. Decides
+   * whether a mid-turn refresher is built and how observations describe the
+   * page's tools.
+   */
+  browserDynamicPageTools?: boolean;
+  /**
+   * Whether to retire `browser_webmcp_invoke` here.
+   *
+   * Split from the flag above for callers that cannot yet say which engine
+   * will run the turn — see `BrowserToolsOptions.retireInvokeVerb`. Absent ⇒
+   * follow `browserDynamicPageTools`.
+   */
+  browserRetireInvokeVerb?: boolean;
+  /** Which provider's tool-schema subset page schemas are reported against. */
+  browserProvider?: DeclaredToolProvider;
+  /**
+   * What the browser capability actually advertised from the page, so the turn
+   * can PERSIST it. Deriving it later from the live browser would attribute a
+   * reopened conversation's cards to whatever page the browser is on now.
+   */
+  onBrowserPageTools?: (info: {
+    minted: MintedDeclaredTool[];
+    notices: Array<{ rawName: string; reason: string }>;
+  }) => void;
+  /**
+   * Receives the mid-turn page-tool refresher, when this turn built one.
+   *
+   * The route hands it to the engine's `refreshTools` hook. It exists here
+   * rather than being returned because the browser is one built-in among
+   * several and this resolver's return value is a plain `ToolSet` — the same
+   * reason `onBrowserPageTools` is a callback.
+   */
+  onBrowserToolsRefresh?: (refresh: {
+    refreshPageTools: NonNullable<BrowserToolsResult["refreshPageTools"]>;
+    currentPageTools: NonNullable<BrowserToolsResult["currentPageTools"]>;
+    /** The generation those tools are bound to; moves with them. */
+    currentPageToolsBinding: NonNullable<
+      BrowserToolsResult["currentPageToolsBinding"]
+    >;
+  }) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
    * drive the SAME computer as the same uid, so a shell can read the driven
@@ -731,8 +788,37 @@ export function resolveHostTools(
               },
             }
           : {}),
+        // ABSENT ⇒ no `webmcp_*` tools, whatever the flag says. A turn only
+        // gets them when its route decided to read the page and got an answer.
+        ...(ctx.browserPageTools ? { pageTools: ctx.browserPageTools } : {}),
+        ...(ctx.browserDynamicPageTools
+          ? { dynamicPageTools: true as const }
+          : {}),
+        ...(ctx.browserRetireInvokeVerb !== undefined
+          ? { retireInvokeVerb: ctx.browserRetireInvokeVerb }
+          : {}),
+        ...(ctx.browserProvider ? { provider: ctx.browserProvider } : {}),
       });
-      if (browser) Object.assign(out, browser.tools);
+      if (browser) {
+        Object.assign(out, browser.tools);
+        if (browser.pageTools || browser.pageToolNotices) {
+          ctx.onBrowserPageTools?.({
+            minted: browser.pageTools ?? [],
+            notices: browser.pageToolNotices ?? [],
+          });
+        }
+        if (
+          browser.refreshPageTools &&
+          browser.currentPageTools &&
+          browser.currentPageToolsBinding
+        ) {
+          ctx.onBrowserToolsRefresh?.({
+            refreshPageTools: browser.refreshPageTools,
+            currentPageTools: browser.currentPageTools,
+            currentPageToolsBinding: browser.currentPageToolsBinding,
+          });
+        }
+      }
       continue;
     }
     if (isMcpjamToolId(id)) {

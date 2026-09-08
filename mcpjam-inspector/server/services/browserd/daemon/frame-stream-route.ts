@@ -95,10 +95,37 @@ export interface FrameStreamOptions {
   timers?: Timers;
 }
 
+/**
+ * The page-tool signal, reduced to what a heartbeat can carry.
+ *
+ * A CHANGE SIGNAL, not a list: the definitions are big (a declarative
+ * `<select>` becomes an `anyOf` branch per option) and this rides an 8 KiB
+ * record several times a second. `supported` is dropped for the same reason —
+ * a pane that sees a revision at all is on an engine that has WebMCP, and
+ * `count` already says whether the page offers anything.
+ */
+function statsWebmcp(revision: {
+  revision: number;
+  hash: string;
+  count: number;
+  url?: string;
+}): { revision: number; hash: string; count: number; url?: string } {
+  return {
+    revision: revision.revision,
+    hash: revision.hash,
+    count: revision.count,
+    ...(revision.url ? { url: revision.url } : {}),
+  };
+}
+
 export function createFrameStreamHost(
   handler: Pick<
     BrowserdRequestHandler,
-    "authorize" | "subscribeFrames" | "watchLease" | "tabsSnapshot"
+    | "authorize"
+    | "subscribeFrames"
+    | "watchLease"
+    | "tabsSnapshot"
+    | "webmcpSnapshot"
   >,
   options: FrameStreamOptions = {},
 ): FrameStreamHost {
@@ -323,6 +350,14 @@ export function createFrameStreamHost(
     const beat = (): void => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      // THE ACTIVE TAB, named explicitly. This is the video stream, which grabs
+      // the X display and therefore always shows whichever tab is active — but
+      // an unargued `webmcpSnapshot()` answers for `DEFAULT_TAB`, and after an
+      // `activate_tab` those are two different pages. Reporting one tab's tool
+      // revision beside a picture of another is the mismatch the JPEG path
+      // threads its own tabId to avoid; this is the same bug wearing the
+      // opposite mistake.
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;
@@ -336,6 +371,7 @@ export function createFrameStreamHost(
             // under them — and kiosk hides Chromium's own tab strip, so nothing
             // else here would say so.
             ...(tabs ? { tabs } : {}),
+            ...(webmcp ? { webmcp: statsWebmcp(webmcp) } : {}),
             // `mpdecimate` means an idle page produces NO frames at all, so
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
@@ -600,7 +636,17 @@ export function createFrameStreamHost(
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            return tabs ? { ...stats, tabs } : stats;
+            // THE TAB THIS STREAM WATCHES, not the default one. A JPEG
+            // subscriber names its tab, and reporting the default tab's
+            // revision to a watcher of another page would make the Tools pane
+            // miss that page's changes and then read definitions for a
+            // document nobody is looking at.
+            const webmcp = handler.webmcpSnapshot?.(tabId);
+            return {
+              ...stats,
+              ...(tabs ? { tabs } : {}),
+              ...(webmcp ? { webmcp: statsWebmcp(webmcp) } : {}),
+            };
           })(),
         }),
       );

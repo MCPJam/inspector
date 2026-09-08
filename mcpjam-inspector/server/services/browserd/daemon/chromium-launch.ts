@@ -161,10 +161,17 @@ export function wrapPage(page: AnyPage): DriverPage {
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
 
-  // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
-  // page tool should not pay for a CDP session. It reuses the memoized session
-  // below rather than attaching its own — a page serving both a tool call and
-  // the pane would otherwise hold two.
+  // The WebMCP bridge is attached ONCE and memoized here. It USED to be
+  // attached lazily, on the first `webmcp_*` action, on the reasoning that a
+  // tab which never calls a page tool should not pay for a CDP session. The
+  // driver now attaches it eagerly on tab creation instead (see
+  // `ChromiumDriver.getOrCreateTab`), because the tool set became something
+  // READ between model steps: a bridge that attaches on first use knows
+  // nothing about what the page registered before it existed, so a tool
+  // registered during page load would be invisible until something else
+  // happened to touch WebMCP. It still reuses the memoized session below
+  // rather than attaching its own — a page serving both a tool call and the
+  // pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
   // The CDP session itself is memoized separately and shared: the WebMCP
   // bridge and the viewport both want one, and attaching twice to the same
@@ -319,15 +326,22 @@ async function attachWebMcp(
   session: CdpLike,
 ): Promise<WebMcpBridge | null> {
   try {
-    const bridge = new WebMcpBridge(session);
-    await bridge.start(async () => {
+    // ONE probe closure, used for the initial `start()` AND re-run on every
+    // main-frame navigation. `document.modelContext` is a property of the
+    // DOCUMENT, not of the session: a bridge that probed once reported "this
+    // browser has no WebMCP" forever after opening on a page that had none,
+    // including on the WebMCP page the model navigated to next.
+    const probe = async () => {
       // `WebMCP.enable` resolves even where the feature is off — the page API
       // is the only honest probe (same reasoning as the local inspector's).
       const supported = await page
         .evaluate<boolean>(`(() => ${PAGE_API_PROBE})()`)
         .catch(() => false);
       return supported === true;
-    });
+    };
+    const bridge = new WebMcpBridge(session);
+    bridge.resupport(probe);
+    await bridge.start(probe);
     return bridge;
   } catch {
     return null;

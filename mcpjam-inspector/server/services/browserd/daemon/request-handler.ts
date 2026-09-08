@@ -19,6 +19,9 @@
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
+  BROWSERD_WEBMCP_FEATURES,
+  type WebMcpToolsRevision,
+  formatBrowserdError,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
@@ -135,7 +138,11 @@ export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
   driver: Pick<
     BrowserDriver,
-    "health" | "viewport" | "viewportIfWatched" | "tabsSnapshot"
+    | "health"
+    | "viewport"
+    | "viewportIfWatched"
+    | "tabsSnapshot"
+    | "webmcpToolsSnapshot"
   >;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
@@ -232,7 +239,11 @@ export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
   private readonly driver: Pick<
     BrowserDriver,
-    "health" | "viewport" | "viewportIfWatched" | "tabsSnapshot"
+    | "health"
+    | "viewport"
+    | "viewportIfWatched"
+    | "tabsSnapshot"
+    | "webmcpToolsSnapshot"
   >;
   private readonly bootId: string;
   private readonly token: string;
@@ -271,7 +282,15 @@ export class BrowserdRequestHandler {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
-    this.features = deps.features ?? [];
+    // MERGED HERE, not at a call site. These describe what this daemon's CODE
+    // can do, which is not something an assembler should be able to forget to
+    // announce: the hosted `main.ts`, the local in-process session and a test
+    // stack all construct this handler, and a capability missing from one of
+    // them reads to the server as "fall back to the old path" on an engine
+    // that supports the new one.
+    this.features = [
+      ...new Set([...(deps.features ?? []), ...BROWSERD_WEBMCP_FEATURES]),
+    ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
@@ -290,6 +309,18 @@ export class BrowserdRequestHandler {
   tabsSnapshot():
     { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
     return this.driver.tabsSnapshot?.();
+  }
+
+  /**
+   * The driven tab's page-tool set as a CHANGE SIGNAL, for a heartbeat.
+   *
+   * A cache read: it touches no page, which is the property that makes it safe
+   * on a beat that fires several times a second. `undefined` from a driver with
+   * no WebMCP, which the pane reads as "this engine cannot tell you" rather
+   * than as "no tools".
+   */
+  webmcpSnapshot(tabId?: string): WebMcpToolsRevision | undefined {
+    return this.driver.webmcpToolsSnapshot?.(tabId);
   }
 
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */
@@ -875,6 +906,36 @@ export class BrowserdRequestHandler {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId },
       };
+    }
+
+    // A BINDING FROM ANOTHER BOOT is a stale binding, whatever its other
+    // fields say. `expectedBootId` above is the CALLER's idea of the daemon it
+    // is talking to and is refreshed whenever it re-acquires a handle; the
+    // binding's `bootId` is the daemon the tool was LISTED on. After a relaunch
+    // the two differ, and the driver — which checks tab, generation, frame and
+    // registration but does not know its own boot — would compare a fresh
+    // daemon's `navCounter: 0` and `registrationSeq` against a previous life's
+    // and could let a stale binding through. Checked here, where the boot is
+    // known, as a command RESULT rather than a transport refusal: it is the
+    // same `stale_binding` the driver answers, and the caller handles it the
+    // same way (re-read the page's tools).
+    const action = parsed.command.action;
+    if (
+      action.kind === "webmcp_invoke" &&
+      action.expectedBinding !== undefined &&
+      action.expectedBinding.bootId !== this.bootId
+    ) {
+      return this.mapOutcome({
+        status: "ok",
+        bootId: this.bootId,
+        result: {
+          ok: false,
+          error: formatBrowserdError(
+            "stale_binding",
+            "this tool was listed on a previous run of this browser; re-read the page's tools",
+          ),
+        },
+      });
     }
 
     const outcome = await this.queue.submit(parsed.command);
