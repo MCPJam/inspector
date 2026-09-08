@@ -228,29 +228,78 @@ describe("electron page — the keyboard", () => {
     expect(mouseEvents(dbg)).toHaveLength(0);
   });
 
-  it("fills an inherited-contenteditable element, and releases the handle", async () => {
-    // The one case that genuinely needs the page: `contenteditable` inherits,
-    // so a span inside an editable div carries no attribute of its own.
-    const contents = new FakeBrowserWebContents();
+  /**
+   * A span inside a `contenteditable` div, wired the way real CDP answers it.
+   *
+   * Measured against real Chromium: `DOM.focus` on such a span REJECTS with
+   * "Element is not focusable" — focus belongs to the editing host, and the
+   * descendant never receives it. So the classifier walks to the host and
+   * hands back ITS node id, and everything downstream focuses and verifies
+   * that one.
+   */
+  function inheritedEditable(
+    contents: FakeBrowserWebContents,
+    hostAttributes: string[] = ["contenteditable", ""],
+  ) {
     for (const [method, reply] of elementAt(5, 5, 10, { nodeName: "SPAN" })) {
       contents.debugger.replies.set(method, reply);
     }
-    contents.debugger.replies.set("DOM.resolveNode", {
-      object: { objectId: "obj-1" },
-    });
-    contents.debugger.replies.set("Runtime.callFunctionOn", {
-      result: { value: true },
-    });
-    const { page, dbg } = makePage(contents);
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "DOM.resolveNode") return { object: { objectId: "span-1" } };
+      if (method === "Runtime.callFunctionOn") return { result: { objectId: "host-1" } };
+      if (method === "DOM.requestNode") return { nodeId: 7 };
+      // The host, asked of the protocol — a different node than the span.
+      if (method === "DOM.describeNode" && params?.nodeId === 7) {
+        return { node: { nodeName: "DIV", attributes: hostAttributes } };
+      }
+      if (method === "DOM.querySelector" && params?.selector === ":focus") {
+        await send(method, params);
+        return { nodeId: 7 };
+      }
+      return send(method, params);
+    };
+    return dbg;
+  }
+
+  it("focuses the editing HOST, not the inherited-editable node", async () => {
+    // The span is not a focus target — `DOM.focus` on it rejects in a real
+    // browser — so classifying it as fillable and then focusing it would
+    // refuse every inherited-contenteditable fill.
+    const contents = new FakeBrowserWebContents();
+    const dbg = inheritedEditable(contents);
+    const { page } = makePage(contents);
 
     await page.fillSelector("#editor", "hello");
 
+    expect(dbg.calls.find((c) => c.method === "DOM.focus")?.params).toMatchObject(
+      { nodeId: 7 },
+    );
     expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(true);
-    // A resolved node pins the JS object; a tab that fills all day would hold
-    // one handle per fill.
-    expect(
-      dbg.calls.find((c) => c.method === "Runtime.releaseObject")?.params,
-    ).toMatchObject({ objectId: "obj-1" });
+    // Both handles released: the span's and the host's.
+    const released = dbg.calls
+      .filter((c) => c.method === "Runtime.releaseObject")
+      .map((c) => (c.params as Record<string, unknown>)?.objectId);
+    expect(released).toEqual(expect.arrayContaining(["span-1", "host-1"]));
+  });
+
+  it("will not take the page's word for which element is the host", async () => {
+    // The old probe returned a boolean, and the worst a lie could buy was a
+    // click on the element already named. A HOST is an element of the page's
+    // choosing, and we are about to focus it and type into it — so a page
+    // that points at, say, a password field elsewhere would be handed the
+    // text. A real editing host carries the attribute that makes it one, and
+    // that reading comes from CDP.
+    const contents = new FakeBrowserWebContents();
+    const dbg = inheritedEditable(contents, ["type", "password"]);
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#editor", "hunter2")).rejects.toThrow(
+      /<select>/,
+    );
+    expect(dbg.calls.some((c) => c.method === "DOM.focus")).toBe(false);
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
   });
 
   it("takes the contenteditable ATTRIBUTE from CDP without asking the page", async () => {

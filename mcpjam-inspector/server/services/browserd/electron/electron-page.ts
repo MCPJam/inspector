@@ -508,7 +508,26 @@ export function createElectronPage(
    */
   async function classifyFillTarget(
     nodeId: number,
-  ): Promise<"FILLABLE" | "SELECT" | "OTHER" | `TYPE:${string}`> {
+  ): Promise<{
+    kind: "FILLABLE" | "SELECT" | "OTHER" | `TYPE:${string}`;
+    /**
+     * The node to FOCUS, which is not always the node classified.
+     *
+     * For everything that is itself an editing host or a form control they
+     * are the same. For a node that is editable only by INHERITANCE — a span
+     * inside a `contenteditable` div — they differ, and measuring says the
+     * difference is fatal rather than cosmetic: `DOM.focus` on that span
+     * rejects outright with "Element is not focusable". Focus belongs to the
+     * editing host; the descendant never receives it.
+     */
+    focusNodeId: number;
+  }> {
+    const here = (
+      kind: "FILLABLE" | "SELECT" | "OTHER" | `TYPE:${string}`,
+    ): { kind: typeof kind; focusNodeId: number } => ({
+      kind,
+      focusNodeId: nodeId,
+    });
     const cdp = await needCdp();
     const described = (await cdp
       .send("DOM.describeNode", { nodeId })
@@ -516,20 +535,20 @@ export function createElectronPage(
       | { node?: { nodeName?: string; attributes?: string[] } }
       | undefined;
     const tag = described?.node?.nodeName?.toUpperCase();
-    if (tag === "TEXTAREA") return "FILLABLE";
-    if (tag === "SELECT") return "SELECT";
+    if (tag === "TEXTAREA") return here("FILLABLE");
+    if (tag === "SELECT") return here("SELECT");
     if (tag === "INPUT") {
       const type = (
         attributeOf(described?.node?.attributes, "type") ?? "text"
       ).toLowerCase();
       return (UNFILLABLE_INPUT_TYPES as readonly string[]).includes(type)
-        ? (`TYPE:${type}` as const)
-        : "FILLABLE";
+        ? here(`TYPE:${type}` as const)
+        : here("FILLABLE");
     }
     // A tag whose click activates something is refused here, before anything
     // the page controls is consulted.
     if (tag && (INTERACTIVE_TAGS as readonly string[]).includes(tag)) {
-      return "OTHER";
+      return here("OTHER");
     }
     // The attribute, from the protocol, answers the common case without
     // asking the page anything — but ONLY for the values the spec defines.
@@ -551,12 +570,14 @@ export function createElectronPage(
       "contenteditable",
     )?.toLowerCase();
     if (own === "" || own === "true" || own === "plaintext-only") {
-      return "FILLABLE";
+      // Its own host, so it takes focus itself — measured: `DOM.focus` on a
+      // `contenteditable` div succeeds and `:focus` matches it.
+      return here("FILLABLE");
     }
     // The false state does not inherit its way back to editable, so this is
     // the whole answer and the probe below would only spend a round trip
     // arriving at it.
-    if (own === "false") return "OTHER";
+    if (own === "false") return here("OTHER");
     // Only INHERITED editability is left, and only the page can compute it.
     // Resolved BY NODE so the lookup cannot be re-pointed, and anything short
     // of a definite `true` refuses.
@@ -564,21 +585,71 @@ export function createElectronPage(
       .send("DOM.resolveNode", { nodeId })
       .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
     const objectId = resolved?.object?.objectId;
-    if (!objectId) return "OTHER";
+    if (!objectId) return here("OTHER");
+    let hostObjectId: string | undefined;
     try {
-      const editable = (await cdp
+      // ASKS FOR THE HOST, not merely "are you editable". The old boolean was
+      // enough while the fill worked by clicking, because a click on a
+      // descendant puts the caret in the host by itself. Focusing cannot: the
+      // span is not a focus target at all, and `DOM.focus` on it rejects.
+      const host = (await cdp
         .send("Runtime.callFunctionOn", {
           objectId,
-          functionDeclaration:
-            "function () { return this.isContentEditable === true; }",
-          returnByValue: true,
+          functionDeclaration: `function () {
+            let e = this;
+            while (e && e.isContentEditable) {
+              const p = e.parentElement;
+              if (!p || !p.isContentEditable) return e;
+              e = p;
+            }
+            return null;
+          }`,
         })
-        .catch(() => undefined)) as { result?: { value?: unknown } } | undefined;
-      return editable?.result?.value === true ? "FILLABLE" : "OTHER";
+        .catch(() => undefined)) as
+        | { result?: { objectId?: string } }
+        | undefined;
+      hostObjectId = host?.result?.objectId;
+      if (!hostObjectId) return here("OTHER");
+      const requested = (await cdp
+        .send("DOM.requestNode", { objectId: hostObjectId })
+        .catch(() => undefined)) as { nodeId?: number } | undefined;
+      const hostNodeId = requested?.nodeId;
+      if (!hostNodeId) return here("OTHER");
+      // AND THEN CHECKS THE PAGE'S ANSWER, because this one is worth more to
+      // lie about than the boolean was. The boolean could only ever buy a
+      // click on the element already named; a HOST is an element of the
+      // page's choosing, and we are about to focus it and type into it — so
+      // an unchecked answer would hand any page a redirect for the text.
+      //
+      // A real editing host carries the attribute that makes it one, and that
+      // reading comes from CDP. An element the page merely points at — a
+      // password field elsewhere on the form — does not.
+      const hostAttr = (await cdp
+        .send("DOM.describeNode", { nodeId: hostNodeId })
+        .catch(() => undefined)) as
+        | { node?: { attributes?: string[] } }
+        | undefined;
+      const hostOwn = attributeOf(
+        hostAttr?.node?.attributes,
+        "contenteditable",
+      )?.toLowerCase();
+      if (
+        hostOwn !== "" &&
+        hostOwn !== "true" &&
+        hostOwn !== "plaintext-only"
+      ) {
+        return here("OTHER");
+      }
+      return { kind: "FILLABLE", focusNodeId: hostNodeId };
     } finally {
       // A resolved node PINS the JS object until it is released, so a tab
       // that fills all day would hold one handle per fill.
       await cdp.send("Runtime.releaseObject", { objectId }).catch(() => {});
+      if (hostObjectId) {
+        await cdp
+          .send("Runtime.releaseObject", { objectId: hostObjectId })
+          .catch(() => {});
+      }
     }
   }
 
@@ -758,7 +829,7 @@ export function createElectronPage(
           // thing: on a checkbox a click IS the toggle, on a submit it IS the
           // submission.
           const { nodeId, rootNodeId } = await pointFor(selector);
-          const kind = await classifyFillTarget(nodeId);
+          const { kind, focusNodeId } = await classifyFillTarget(nodeId);
           if (kind === "SELECT") {
             throw new Error(
               `${selector}: Element is not an <input>, <textarea> or ` +
@@ -799,13 +870,13 @@ export function createElectronPage(
           // select-all and insert: focus would still be wherever it already
           // was, and the text would land in an element this call never looked
           // at — the same wrong-target write by a longer route.
-          await cdp.send("DOM.focus", { nodeId }).catch(async () => {
+          await cdp.send("DOM.focus", { nodeId: focusNodeId }).catch(async () => {
             // ERROR PROSE IS LOAD-BEARING here, as this file's header says:
             // an element that left the document has to say `not found`, or
             // the driver reports a re-render as a daemon fault and the model
             // stops instead of looking again.
             throw new Error(
-              (await nodeIsGone(nodeId))
+              (await nodeIsGone(focusNodeId))
                 ? `not found: ${selector} left the document before it could ` +
                   `be filled`
                 : `${selector}: element could not be focused to fill it`,
@@ -826,6 +897,10 @@ export function createElectronPage(
           // `Document.prototype.activeElement` and lie about focus to page
           // JS, but it cannot change what `:focus` matches. Against the root
           // `pointFor` already read, so the ids are from one numbering.
+          //
+          // Compared against `focusNodeId`, which for an inherited-editable
+          // target is the editing HOST rather than the node the selector
+          // named — because the host is what focus actually lands on.
           const focusHeld = async (): Promise<void> => {
             const focused = (await cdp
               .send("DOM.querySelector", {
@@ -833,13 +908,13 @@ export function createElectronPage(
                 selector: ":focus",
               })
               .catch(() => undefined)) as { nodeId?: number } | undefined;
-            if (focused?.nodeId === nodeId) return;
+            if (focused?.nodeId === focusNodeId) return;
             // Same fork as the focus rejection: a page that removed the field
             // during its own handler reaches here instead, and it is still a
             // re-render the model should re-observe rather than a fault it
             // should give up on.
             throw new Error(
-              (await nodeIsGone(nodeId))
+              (await nodeIsGone(focusNodeId))
                 ? `not found: ${selector} left the document before it could ` +
                   `be filled`
                 : `${selector}: focus left the element before it could be ` +
