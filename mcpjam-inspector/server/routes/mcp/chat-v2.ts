@@ -1,3 +1,4 @@
+import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
@@ -1368,7 +1369,7 @@ chatV2.post("/", async (c) => {
                     reservedAgainstPageTools,
                   )
                 : advertisedPageTools,
-              pageToolsSnapshot,
+              advertisedPageToolsBinding ?? pageToolsSnapshot,
             ),
           }
         : trace;
@@ -1377,6 +1378,8 @@ chatV2.post("/", async (c) => {
     // the engines' single `uiToolApprovals` slot below.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    // The generation those tools belong to; moves with them on each refresh.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
     // The mid-turn refresher, when the browser capability built one. Kept in a
     // mutable slot because `resolveHostTools` is synchronous and fills it by
     // callback, exactly as it does the approval classification.
@@ -1386,6 +1389,7 @@ chatV2.post("/", async (c) => {
             signal?: AbortSignal;
           }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot;
         }
       | undefined;
     const builtInTools = resolveHostTools(
@@ -1682,6 +1686,7 @@ chatV2.post("/", async (c) => {
         pageToolRefresh!.currentPageTools(),
         reservedAgainstPageTools,
       );
+      advertisedPageToolsBinding = pageToolRefresh!.currentPageToolsBinding();
       return refresh
         ? (guardPageToolRefresh(refresh, reservedAgainstPageTools) as never)
         : undefined;

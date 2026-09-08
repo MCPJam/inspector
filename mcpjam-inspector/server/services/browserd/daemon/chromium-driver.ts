@@ -319,6 +319,14 @@ export class ChromiumDriver implements BrowserDriver {
    * handle `webmcp_cancel` takes.
    */
   private readonly invocationsByCommand = new Map<string, string>();
+  /**
+   * Commands whose cancellation arrived before their invocation had an id.
+   *
+   * Bounded by the same ceiling as the map beside it: these are dropped on
+   * insert once full, which loses a cancellation rather than the memory — and
+   * a daemon holding 256 in-flight invocations has a different problem.
+   */
+  private readonly pendingCancels = new Set<string>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -674,7 +682,14 @@ export class ChromiumDriver implements BrowserDriver {
         input: action.input,
         // Recorded BEFORE the tool settles, which is the only window in which
         // a cancel can still reach the page.
-        onStarted: (id) => this.rememberInvocation(commandId, id),
+        onStarted: (id) => {
+          // Fire-and-forget when a cancellation was already waiting: awaiting
+          // it here would hold the invocation open on the very thing meant to
+          // end it, and a failure to cancel is not the invocation's failure.
+          if (this.rememberInvocation(commandId, id)) {
+            void bridge.cancel(id).catch(() => undefined);
+          }
+        },
       });
       const { output: capped, omitted } = capToolOutput(
         output,
@@ -718,10 +733,23 @@ export class ChromiumDriver implements BrowserDriver {
     const invocationId =
       action.invocationId ?? this.invocationsByCommand.get(action.commandId ?? "");
     if (!invocationId) {
-      // NOT an error. A cancel that arrives before the browser accepted the
-      // invocation, or for a command that never started one, has nothing to
-      // stop and nothing went wrong — reporting a failure here would make an
-      // ordinary race look like a broken cancel path.
+      // NOT an error, and NOT forgotten either.
+      //
+      // The interesting case is a Stop pressed while `WebMCP.invokeTool` is
+      // still in flight: the browser has the call, has not yet returned an id,
+      // and there is nothing to name. Answering "nothing to stop" and dropping
+      // it there let the invocation start a moment later and run to completion
+      // under a cancellation the user had already made — which is the exact
+      // failure this whole path exists to prevent, just moved earlier.
+      //
+      // So the intent is remembered against the COMMAND, and the id, when it
+      // arrives, is cancelled on sight.
+      if (
+        action.commandId &&
+        this.pendingCancels.size < MAX_TRACKED_INVOCATIONS
+      ) {
+        this.pendingCancels.add(action.commandId);
+      }
       return { ok: true, output: { cancelled: false, known: false } };
     }
     const bridge = await entry.page.webmcp();
@@ -777,12 +805,17 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   /** Remember which invocation a command started, evicting oldest-first. */
-  private rememberInvocation(commandId: string, invocationId: string): void {
+  private rememberInvocation(commandId: string, invocationId: string): boolean {
+    // A CANCELLATION THAT ARRIVED FIRST. It had no id to name at the time, so
+    // it left its intent here; this is the moment the id exists. Reported back
+    // rather than acted on, because the caller holds the bridge.
+    const cancelWanted = this.pendingCancels.delete(commandId);
     if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== undefined) this.invocationsByCommand.delete(oldest);
     }
     this.invocationsByCommand.set(commandId, invocationId);
+    return cancelWanted;
   }
 
   /**

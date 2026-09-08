@@ -2122,6 +2122,64 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     expect(res).toMatchObject({ ok: true, output: { cancelled: false, known: false } });
   });
 
+  it("REMEMBERS a cancel that beat the invocation's id", async () => {
+    // The narrow window this closes: Stop pressed while `WebMCP.invokeTool` is
+    // in flight. The browser has the call, no id exists yet, so there is
+    // nothing to name — and answering "nothing to stop" and forgetting let the
+    // invocation start a moment later and run to completion under a
+    // cancellation the user had already made.
+    const cancelled: string[] = [];
+    let startInvocation: (() => void) | undefined;
+    let releaseInvoke: (() => void) | undefined;
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        // The browser has not answered yet: no id to report.
+        await new Promise<void>((resolve) => {
+          startInvocation = resolve;
+        });
+        (args.onStarted as ((id: string) => void) | undefined)?.("inv-late");
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+        return { invocationId: "inv-late", output: { ok: true } };
+      },
+      cancel: async (invocationId: string) => {
+        cancelled.push(invocationId);
+        return true;
+      },
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const invoking = driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-race",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Stop, while the invocation is still nameless.
+    const cancel = await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "cmd-race" }),
+    );
+    expect(cancel).toMatchObject({ output: { known: false } });
+    expect(cancelled).toEqual([]);
+
+    // The browser answers. The intent recorded above is delivered on sight.
+    startInvocation?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelled).toEqual(["inv-late"]);
+
+    releaseInvoke?.();
+    await invoking;
+  });
+
   it("still cancels by invocationId for a caller that knows one", async () => {
     const cancelled: string[] = [];
     const bridge = {

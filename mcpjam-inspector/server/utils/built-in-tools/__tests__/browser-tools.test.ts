@@ -1989,6 +1989,44 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     expect(built.currentPageTools!()[0].registrationSeq).toBe(11);
   });
 
+  it("moves the BINDING with the tools, not just the tools", async () => {
+    // The record a turn persists pairs each tool's frame and registration with
+    // the tab and generation it was bound to. Refreshing the first while
+    // keeping the turn-start second describes an identity that never existed —
+    // and the whole reason to write it down is that it is the one the model
+    // was actually given.
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    expect(built.currentPageToolsBinding!()).toMatchObject({ navCounter: 1 });
+
+    fake.state.revision = 7;
+    fake.state.hash = "h7";
+    fake.state.navCounter = 12;
+    await built.refreshPageTools!({});
+
+    expect(built.currentPageToolsBinding!()).toMatchObject({ navCounter: 12 });
+  });
+
+  it("keeps the binding it last READ when a refresh is refused", async () => {
+    // A refused read changes nothing, including this: reporting the generation
+    // of a read that did not happen would be worse than reporting a stale one.
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const realSend = fake.send;
+    const built = build({
+      ...fake,
+      send: async (command: any) =>
+        command.action?.kind === "observe" &&
+        command.action.mode === "webmcp_tools"
+          ? ({ status: "lease_blocked" } as SendResult)
+          : realSend(command),
+    } as never);
+    fake.state.revision = 7;
+    fake.state.hash = "h7";
+    fake.state.navCounter = 12;
+    await built.refreshPageTools!({});
+    expect(built.currentPageToolsBinding!()).toMatchObject({ navCounter: 1 });
+  });
+
   it("PAUSES rather than retiring when a person takes the browser", async () => {
     const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
     const realSend = fake.send;

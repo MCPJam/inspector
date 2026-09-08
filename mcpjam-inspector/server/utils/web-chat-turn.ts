@@ -786,6 +786,27 @@ export async function streamWebChatTurn(
   // agree — the refresher itself only reserves the browser's own verbs, and
   // knows nothing of the MCP, app, UI and skill names beside them.
   prepare.onPageToolNamesReserved?.(reservedAgainstPageTools);
+
+  /**
+   * The tool set an engine that RE-ADVERTISES gets: without the generic
+   * `browser_webmcp_invoke`.
+   *
+   * Decided here rather than in the route, because only here is the engine
+   * known. Which engine runs depends on `resolveOrgRuntime`, a Convex-backed
+   * lookup that happens below — so a caller assembling browser tools cannot
+   * say whether this turn's loop will consume `refreshTools`, and a flag it
+   * guessed retired the verb for local BYOK too, which does not refresh. The
+   * model then had no way to reach a page it navigated to.
+   *
+   * Applied ONLY on the two paths that pass `refreshTools` below. Everywhere
+   * else the verb stays, which is the safe direction: an extra tool costs a
+   * line in the list, and a missing one costs the page.
+   */
+  const refreshingEngineTools = (): ToolSet => {
+    if (!refreshTools) return allTools as ToolSet;
+    const { browser_webmcp_invoke: _retired, ...rest } = allTools as ToolSet;
+    return rest as ToolSet;
+  };
   const refreshTools: MCPJamHandlerOptions["refreshTools"] | undefined =
     prepare.refreshTools
       ? async (ctx) => {
@@ -1303,7 +1324,7 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
-      tools: allTools as ToolSet,
+      tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
@@ -1391,7 +1412,7 @@ export async function streamWebChatTurn(
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
-    tools: allTools as ToolSet,
+    tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,

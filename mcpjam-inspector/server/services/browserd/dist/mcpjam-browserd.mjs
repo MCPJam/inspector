@@ -3647,6 +3647,14 @@ var ChromiumDriver = class {
    * handle `webmcp_cancel` takes.
    */
   invocationsByCommand = /* @__PURE__ */ new Map();
+  /**
+   * Commands whose cancellation arrived before their invocation had an id.
+   *
+   * Bounded by the same ceiling as the map beside it: these are dropped on
+   * insert once full, which loses a cancellation rather than the memory — and
+   * a daemon holding 256 in-flight invocations has a different problem.
+   */
+  pendingCancels = /* @__PURE__ */ new Set();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -3904,7 +3912,11 @@ var ChromiumDriver = class {
         input: action.input,
         // Recorded BEFORE the tool settles, which is the only window in which
         // a cancel can still reach the page.
-        onStarted: (id) => this.rememberInvocation(commandId, id)
+        onStarted: (id) => {
+          if (this.rememberInvocation(commandId, id)) {
+            void bridge.cancel(id).catch(() => void 0);
+          }
+        }
       });
       const { output: capped, omitted } = capToolOutput(
         output,
@@ -3935,6 +3947,9 @@ var ChromiumDriver = class {
     }
     const invocationId = action.invocationId ?? this.invocationsByCommand.get(action.commandId ?? "");
     if (!invocationId) {
+      if (action.commandId && this.pendingCancels.size < MAX_TRACKED_INVOCATIONS) {
+        this.pendingCancels.add(action.commandId);
+      }
       return { ok: true, output: { cancelled: false, known: false } };
     }
     const bridge = await entry.page.webmcp();
@@ -3977,11 +3992,13 @@ var ChromiumDriver = class {
   }
   /** Remember which invocation a command started, evicting oldest-first. */
   rememberInvocation(commandId, invocationId) {
+    const cancelWanted = this.pendingCancels.delete(commandId);
     if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== void 0) this.invocationsByCommand.delete(oldest);
     }
     this.invocationsByCommand.set(commandId, invocationId);
+    return cancelWanted;
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle

@@ -1,3 +1,4 @@
+import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
@@ -1682,6 +1683,10 @@ chatV2.post("/", async (c) => {
     // are spoken for. Only the persisted record reads it — the model's own set
     // is filtered inside the turn, where the decision is made.
     let reservedAgainstPageTools: ReadonlySet<string> | undefined;
+    // The generation `advertisedPageTools` belongs to. Starts as the turn's own
+    // peek and moves with each refresh: pairing refreshed tools with the
+    // turn-start tab and navCounter would persist an identity that never was.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
     // The mid-turn refresher, when the browser capability built one. Kept in a
     // mutable slot because `resolveHostTools` is synchronous and fills it by
     // callback, exactly as it does the approval classification.
@@ -1691,6 +1696,7 @@ chatV2.post("/", async (c) => {
             signal?: AbortSignal;
           }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot;
         }
       | undefined;
     const builtInTools = resolveHostTools(
@@ -1746,6 +1752,12 @@ chatV2.post("/", async (c) => {
               // constructor argument and never re-reads it, so claiming it here
               // would withdraw the fallback and put nothing in its place.
               browserDynamicPageTools: !resolvedExecution.harness,
+              // KEPT HERE, dropped later. Which engine runs this turn depends
+              // on a Convex-backed runtime resolution that has not happened
+              // yet, and one of them — local BYOK — does not consume refreshes;
+              // retiring the verb from here took the page away from it.
+              // `runWebChatTurn` drops it on the paths that do refresh.
+              browserRetireInvokeVerb: false as const,
             }
           : {}),
         onBrowserPageTools: ({ minted }) => {
@@ -1939,6 +1951,8 @@ chatV2.post("/", async (c) => {
                 refreshTools: async (ctx: { signal?: AbortSignal }) => {
                   const refresh = await pageToolRefresh!.refreshPageTools(ctx);
                   advertisedPageTools = pageToolRefresh!.currentPageTools();
+                  advertisedPageToolsBinding =
+                    pageToolRefresh!.currentPageToolsBinding();
                   return refresh as never;
                 },
               }
@@ -2012,7 +2026,7 @@ chatV2.post("/", async (c) => {
                           reservedAgainstPageTools,
                         )
                       : advertisedPageTools,
-                    pageToolsSnapshot,
+                    advertisedPageToolsBinding ?? pageToolsSnapshot,
                   ),
               }
             : {}),

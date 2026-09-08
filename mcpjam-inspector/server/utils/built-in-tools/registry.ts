@@ -262,9 +262,18 @@ export interface BuiltInToolContext {
   browserPageTools?: BrowserPageToolsSnapshot;
   /**
    * This turn's engine can grow its tool set between model steps. Decides
-   * whether the legacy `browser_webmcp_*` verbs are retired for it.
+   * whether a mid-turn refresher is built and how observations describe the
+   * page's tools.
    */
   browserDynamicPageTools?: boolean;
+  /**
+   * Whether to retire `browser_webmcp_invoke` here.
+   *
+   * Split from the flag above for callers that cannot yet say which engine
+   * will run the turn — see `BrowserToolsOptions.retireInvokeVerb`. Absent ⇒
+   * follow `browserDynamicPageTools`.
+   */
+  browserRetireInvokeVerb?: boolean;
   /** Which provider's tool-schema subset page schemas are reported against. */
   browserProvider?: DeclaredToolProvider;
   /**
@@ -287,6 +296,10 @@ export interface BuiltInToolContext {
   onBrowserToolsRefresh?: (refresh: {
     refreshPageTools: NonNullable<BrowserToolsResult["refreshPageTools"]>;
     currentPageTools: NonNullable<BrowserToolsResult["currentPageTools"]>;
+    /** The generation those tools are bound to; moves with them. */
+    currentPageToolsBinding: NonNullable<
+      BrowserToolsResult["currentPageToolsBinding"]
+    >;
   }) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
@@ -783,6 +796,9 @@ export function resolveHostTools(
         ...(ctx.browserDynamicPageTools
           ? { dynamicPageTools: true as const }
           : {}),
+        ...(ctx.browserRetireInvokeVerb !== undefined
+          ? { retireInvokeVerb: ctx.browserRetireInvokeVerb }
+          : {}),
         ...(ctx.browserProvider ? { provider: ctx.browserProvider } : {}),
       });
       if (browser) {
@@ -794,10 +810,15 @@ export function resolveHostTools(
             notices: browser.pageToolNotices ?? [],
           });
         }
-        if (browser.refreshPageTools && browser.currentPageTools) {
+        if (
+          browser.refreshPageTools &&
+          browser.currentPageTools &&
+          browser.currentPageToolsBinding
+        ) {
           ctx.onBrowserToolsRefresh?.({
             refreshPageTools: browser.refreshPageTools,
             currentPageTools: browser.currentPageTools,
+            currentPageToolsBinding: browser.currentPageToolsBinding,
           });
         }
       }

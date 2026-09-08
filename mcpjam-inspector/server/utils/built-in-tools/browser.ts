@@ -185,6 +185,18 @@ export interface BrowserToolsOptions {
    * started — otherwise turning this on would REMOVE a capability.
    */
   dynamicPageTools?: boolean;
+  /**
+   * Whether to build `browser_webmcp_invoke` at all.
+   *
+   * SEPARATE FROM `dynamicPageTools`, because the two are known at different
+   * times. Whether this turn's page tools may grow is the caller's intent and
+   * it knows that now; whether the ENGINE that runs the turn re-advertises can
+   * depend on a lookup that has not happened yet — the web route's local-BYOK
+   * path is chosen after a Convex-backed runtime resolution, and it does not
+   * refresh. A caller that cannot answer passes `false` and drops the verb
+   * later, where the engine is known. Absent ⇒ follow `dynamicPageTools`.
+   */
+  retireInvokeVerb?: boolean;
   /** Which provider's tool-schema subset to report page schemas against. */
   provider?: DeclaredToolProvider;
 }
@@ -278,6 +290,8 @@ export interface BrowserToolsResult {
   }) => Promise<BrowserPageToolsRefresh | undefined>;
   /** The live minted set, re-read after each refresh, for the turn record. */
   currentPageTools?: () => MintedDeclaredTool[];
+  /** The generation that set is bound to — see `currentBinding`. */
+  currentPageToolsBinding?: () => BrowserPageToolsSnapshot;
 }
 
 /** What one mid-turn re-read of the page changed. */
@@ -660,7 +674,9 @@ export function buildBrowserTools(
   // to reach one.
   const canBindPageTools = opts.pageTools?.canBind !== false;
   const retireLegacyWebmcpVerbs =
-    firstClassPageTools && opts.dynamicPageTools === true && canBindPageTools;
+    firstClassPageTools &&
+    canBindPageTools &&
+    (opts.retireInvokeVerb ?? opts.dynamicPageTools === true) === true;
   const retireListVerb = firstClassPageTools && canBindPageTools;
   // A read-only run gets ONLY the tools that look. Refusing to build the rest
   // is stronger than gating them: with nobody to ask, an ungated interactive
@@ -1172,6 +1188,7 @@ export function buildBrowserTools(
       ? {
           refreshPageTools: refresher.refresh,
           currentPageTools: refresher.current,
+          currentPageToolsBinding: refresher.currentBinding,
         }
       : {}),
   };
@@ -1218,11 +1235,22 @@ function createPageToolRefresher(args: {
     signal?: AbortSignal;
   }) => Promise<BrowserPageToolsRefresh | undefined>;
   current: () => MintedDeclaredTool[];
+  /**
+   * The generation `current()`'s tools are bound to.
+   *
+   * Travels WITH them, because the two are one fact. A record that paired the
+   * refreshed tools' frame and registration ids with the turn-START tab and
+   * navCounter would describe an identity that never existed — and the whole
+   * point of persisting it is that it is the identity the model was given.
+   */
+  currentBinding: () => BrowserPageToolsSnapshot;
 } {
   let lastRevision = args.initial.snapshot.revision;
   let lastHash = args.initial.snapshot.hash;
   /** The tab the last successful read was of. See `movedTab` below. */
   let lastTabId = args.initial.snapshot.tabId;
+  /** The generation the currently advertised set belongs to. */
+  let binding: BrowserPageToolsSnapshot = args.initial.snapshot;
   let advertised = new Map(
     args.initial.minted.map((tool) => [tool.name, tool] as const),
   );
@@ -1244,6 +1272,7 @@ function createPageToolRefresher(args: {
 
   return {
     current: () => [...advertised.values()],
+    currentBinding: () => binding,
     refresh: async ({ signal }) => {
       const tabId = args.currentTabId();
       // A MOVE IS A CHANGE, whatever the revisions say. Two tabs keep separate
@@ -1286,23 +1315,27 @@ function createPageToolRefresher(args: {
         return undefined;
       }
       const page = pageToolsFromObservation(observation.output);
+      const rebuiltSnapshot: BrowserPageToolsSnapshot = {
+        tools: page.tools,
+        bootId: args.initial.snapshot.bootId,
+        tabId,
+        // THE GENERATION THESE WERE READ AT. Reusing the turn-start
+        // navCounter here would mint bindings for a document that is gone,
+        // and every one of them would be refused as `stale_binding`.
+        navCounter:
+          observation.stateToken?.navCounter ??
+          args.initial.snapshot.navCounter,
+        ...(args.initial.snapshot.canBind !== undefined
+          ? { canBind: args.initial.snapshot.canBind }
+          : {}),
+      };
       const rebuilt = buildPageToolsFor({
         opts: args.opts,
         unattended: args.unattended,
         needsApproval: args.needsApproval,
         send: args.send,
         reservedNames: args.reservedNames,
-        snapshot: {
-          tools: page.tools,
-          bootId: args.initial.snapshot.bootId,
-          tabId,
-          // THE GENERATION THESE WERE READ AT. Reusing the turn-start
-          // navCounter here would mint bindings for a document that is gone,
-          // and every one of them would be refused as `stale_binding`.
-          navCounter:
-            observation.stateToken?.navCounter ??
-            args.initial.snapshot.navCounter,
-        },
+        snapshot: rebuiltSnapshot,
       });
 
       const next = new Map(
@@ -1327,6 +1360,7 @@ function createPageToolRefresher(args: {
         args.install(name, tombstones[name]!);
       }
       advertised = next;
+      binding = rebuiltSnapshot;
       // COMMITTED HERE, once the read succeeded and the rebuild landed. From
       // this point a refresh that sees the same revision is genuinely looking
       // at the set we already advertise.
