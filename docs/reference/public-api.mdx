@@ -665,6 +665,74 @@ client-credentials flows) and push the result to
 `POST .../oauth/import-tokens` once. Subsequent calls inject the stored token
 and refresh it server-side.
 
+## Inline test fields
+
+Both `POST /eval-suites` `tests[]` and `POST /eval-runs` `tests[]` accept the same public field names the API returns on a read. The item is a **closed object**: an unknown key is a `VALIDATION_ERROR`, never silently dropped.
+
+### Accepted fields
+
+| Field | Alias for | Notes |
+|-------|-----------|-------|
+| `title` | — | Required |
+| `steps` | — | Required. Ordered `steps` array |
+| `model` | — | Required on `POST /eval-runs` items; falls back to suite default on `POST /eval-suites` items |
+| `provider` | — | Required on `POST /eval-runs` items |
+| `runs` | — | Trial count. Required on `POST /eval-runs` items (no suite default to inherit); optional on `POST /eval-suites` items |
+| `iterations` | `runs` | Public alias. Send `runs` or `iterations`, never both |
+| `isNegativeTest` | — | Marks the case as a negative test (passes when no tool is called) |
+| `isNegative` | `isNegativeTest` | Public alias. Send one or the other, never both |
+| `predicates` | — | Per-case check gate |
+| `checks` | `predicates` | Public alias. Send one or the other, never both |
+| `intent` | — | Optional analytics grouping label (1–64 chars) |
+| `matchOptions` | — | Per-case tool-call matching override |
+| `scenario` | — | Optional scenario label |
+
+Sending both spellings of one field (e.g. `runs` and `iterations` together) is a `VALIDATION_ERROR` rather than a silent precedence rule.
+
+### Fields not accepted here
+
+`repetitions`, `passThreshold`, and `kind` are per-case verdict-policy fields that must be set through `POST /projects/{projectId}/eval-suites/{suiteId}/cases`. Sending them on an inline test item is a `VALIDATION_ERROR` that names the route.
+
+<Note>
+`isNegative` is the field that matters most here. It is what makes a case pass when a tool is **not** called. Before this fix, it was silently dropped — a 201 response for a suite that stored the opposite of what was sent. If you authored negative cases through the API before this change, verify them.
+</Note>
+
+## Pass criteria
+
+`passCriteria` (on `POST /eval-suites`, `POST /eval-runs`, and replay routes) is a **percent in [0, 100]** — `80` means 80%.
+
+### Field names
+
+| Field | Status | Notes |
+|-------|--------|-------|
+| `minimumPassRatePercent` | Canonical | The unit is in the name. The full range [0, 100] is accepted, including sub-1% values |
+| `minimumPassRate` | Deprecated alias | Same unit. A value in (0, 1) is **rejected** — it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor |
+
+Send exactly one. Sending both is a `VALIDATION_ERROR`. Sending neither when `passCriteria` is present is also a `VALIDATION_ERROR`.
+
+```json
+// Correct — canonical spelling
+{ "passCriteria": { "minimumPassRatePercent": 80 } }
+
+// Correct — deprecated alias, same unit
+{ "passCriteria": { "minimumPassRate": 80 } }
+
+// VALIDATION_ERROR — 0.8 reads as a fraction, not 80%
+{ "passCriteria": { "minimumPassRate": 0.8 } }
+```
+
+<Warning>
+If you were sending `minimumPassRate: 0.8` to mean 80%, that value was accepted before this change and set a 0.8% floor — a gate that could never fail. Send `minimumPassRate: 80` or `minimumPassRatePercent: 80` instead.
+</Warning>
+
+A per-case `passThreshold` (set through the case-authoring routes) **is** a fraction in [0, 1]. The suite/run floor is not.
+
+### Per-case policy fields on legacy suites
+
+`repetitions` and `passThreshold` on case create and PATCH routes (`POST .../cases`, `POST .../cases/batch`, `PATCH .../cases/{caseId}`) now return `400` when the suite is not on verdict policy v2. On a legacy suite these fields were accepted, stored, and echoed back by a `GET`, but the backend never read them — the trial count came from `runs` and `minimumIterations` instead. The error message names the policy and the upgrade path.
+
+On a verdict-policy-v2 suite, both fields are accepted and forwarded. `repetitions` is capped at 10 (the same hosted ceiling as `iterations`).
+
 ## Not in the API yet
 
 To set expectations while in preview, these are **not** available over the API
