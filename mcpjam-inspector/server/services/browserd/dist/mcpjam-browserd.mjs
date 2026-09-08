@@ -312,7 +312,8 @@ function recorderArgs(options) {
     "-i",
     options.display,
     "-vf",
-    "mpdecimate",
+    // `max`: the most consecutive frames mpdecimate may drop. See the header.
+    `mpdecimate=max=${options.fps * 10}`,
     "-fps_mode",
     "vfr",
     "-c:v",
@@ -331,6 +332,10 @@ function recorderArgs(options) {
     String(options.fps * 4),
     "-sc_threshold",
     "0",
+    // Wall clock, not frame count — the only one of the two that survives
+    // decimation. `t` is the frame's presentation time in seconds.
+    "-force_key_frames",
+    "expr:gte(t,n_forced*4)",
     "-crf",
     "28",
     "-maxrate",

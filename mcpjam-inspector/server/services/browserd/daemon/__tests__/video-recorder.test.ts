@@ -122,14 +122,33 @@ describe("the ffmpeg arguments", () => {
     expect(line).toContain("-pix_fmt yuv420p");
   });
 
-  it("holds an idle page for free and keeps the duration honest", () => {
+  it("holds an idle page for almost free", () => {
     // The decimator drops frames identical to the last; variable frame rate
     // keeps their WALL-CLOCK timestamps, so an eight-second think costs
-    // nothing, the player holds the last frame across it, and the file's
-    // duration still matches the run's. This is what replaces a jitter buffer
-    // and a backfill cap.
-    expect(line).toContain("-vf mpdecimate");
+    // almost nothing and the player holds the last frame across it. This is
+    // what replaces a jitter buffer and a backfill cap.
     expect(line).toContain("-fps_mode vfr");
+    expect(line).toContain("mpdecimate");
+  });
+
+  it("keeps a frame even when nothing changes, so the file spans the run", () => {
+    // `max` is the floor: the most consecutive frames mpdecimate may drop.
+    // WITHOUT it the file ends at the last frame that happened to differ, so a
+    // run going quiet for its last five minutes yields a video five minutes
+    // shorter than the take — under a header reporting the take's length,
+    // which is a reader misled by the evidence. Asserted as the exact filter
+    // string, because a bare `mpdecimate` substring matches either form.
+    expect(line).toContain("-vf mpdecimate=max=150");
+    const at30 = recorderArgs({
+      display: ":0",
+      width: 1024,
+      height: 768,
+      fps: 30,
+      maxBytes: 1,
+      outputPath: "/rec/x.mp4",
+    });
+    // Ten seconds' worth at any rate, not a fixed frame count.
+    expect(at30.join(" ")).toContain("-vf mpdecimate=max=300");
   });
 
   it("stops ITSELF at the size cap rather than filling the disk", () => {
@@ -159,8 +178,18 @@ describe("the ffmpeg arguments", () => {
     expect(line).toContain("-progress pipe:2");
   });
 
-  it("puts a keyframe — and so a fragment — every four seconds", () => {
+  it("puts a fragment every four seconds OF WALL CLOCK, not of frames", () => {
+    // THE LOAD-BEARING ONE. `-g` counts ENCODED frames, and decimation makes
+    // those arbitrarily far apart in wall-clock terms — sixty of them can
+    // span minutes of a quiet page, so `-g` alone would write a fragment that
+    // rarely and a killed box would lose everything since the last one.
+    // `-force_key_frames` is on presentation time, which IS the wall clock
+    // here because `-fps_mode vfr` preserves it.
+    expect(line).toContain("-force_key_frames expr:gte(t,n_forced*4)");
+    // `-g` stays as the ceiling for a busy page, where 60 frames is four
+    // seconds, and `-sc_threshold 0` stops the cadence drifting on content.
     expect(args[args.indexOf("-g") + 1]).toBe("60");
+    expect(line).toContain("-sc_threshold 0");
     const at30 = recorderArgs({
       display: ":0",
       width: 1024,
@@ -170,6 +199,8 @@ describe("the ffmpeg arguments", () => {
       outputPath: "/rec/x.mp4",
     });
     expect(at30[at30.indexOf("-g") + 1]).toBe("120");
+    // The forced cadence is in SECONDS, so it does not move with the rate.
+    expect(at30.join(" ")).toContain("-force_key_frames expr:gte(t,n_forced*4)");
   });
 });
 

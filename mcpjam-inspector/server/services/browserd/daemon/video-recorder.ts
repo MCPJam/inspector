@@ -167,16 +167,28 @@ export const DEFAULT_FINALIZE_GRACE_MS = 2_000;
  *                       writing into a closed pipe, and ffmpeg exits on the
  *                       EPIPE instead of filling the disk with a recording
  *                       nobody will ever read.
- *   `-vf mpdecimate`    with `-fps_mode vfr`: an idle page emits NOTHING while
- *                       timestamps stay on the wall clock, so the player holds
- *                       the last frame across the gap and the duration still
- *                       matches the run.
+ *   `mpdecimate=max=`   with `-fps_mode vfr`: an idle page emits almost
+ *                       nothing while timestamps stay on the wall clock, so
+ *                       the player holds the last frame across the gap.
+ *                       `max` is the floor — at most that many consecutive
+ *                       frames may be dropped, so a keeper lands every ~10s
+ *                       however still the screen is. Without it the file ENDS
+ *                       at the last frame that happened to differ: a run that
+ *                       goes quiet for its last five minutes would produce a
+ *                       video five minutes shorter than the take, under a
+ *                       header reporting the take's length. The floor costs
+ *                       six near-identical frames a minute, which compress to
+ *                       almost nothing.
  *   `-threads 1`        the same rule the live encoder follows: one thread at
  *                       or below 30fps, so the encoder never starves the
  *                       capture loop feeding it on a 2 vCPU box.
- *   `-g 4*fps`          a keyframe every four seconds. With
- *                       `+frag_keyframe` that is also the fragment interval,
- *                       so a killed box loses at most four seconds.
+ *   `-force_key_frames` a keyframe every four seconds OF PRESENTATION TIME,
+ *                       which with `+frag_keyframe` is the fragment interval,
+ *                       so a killed box loses at most four seconds. `-g`
+ *                       cannot do this job alone: it counts ENCODED frames,
+ *                       and decimation makes those arbitrarily far apart in
+ *                       wall-clock terms — sixty of them can span minutes of
+ *                       a quiet page. It stays as the ceiling for a busy one.
  *   `-crf 28 -maxrate`  evidence, not cinema: legible at 60 MiB for a run of
  *                       real length.
  *   `-fs <maxBytes>`    ffmpeg stops ITSELF at the cap. The alternative is
@@ -207,7 +219,8 @@ export function recorderArgs(options: {
     "-i",
     options.display,
     "-vf",
-    "mpdecimate",
+    // `max`: the most consecutive frames mpdecimate may drop. See the header.
+    `mpdecimate=max=${options.fps * 10}`,
     "-fps_mode",
     "vfr",
     "-c:v",
@@ -226,6 +239,10 @@ export function recorderArgs(options: {
     String(options.fps * 4),
     "-sc_threshold",
     "0",
+    // Wall clock, not frame count — the only one of the two that survives
+    // decimation. `t` is the frame's presentation time in seconds.
+    "-force_key_frames",
+    "expr:gte(t,n_forced*4)",
     "-crf",
     "28",
     "-maxrate",
@@ -492,6 +509,11 @@ export function createVideoRecorder(
       }
     }
     await entry.exited;
+    // THE TAKE'S WALL-CLOCK SPAN, not the container's. The two can differ:
+    // the file ends at its last frame, and only the `mpdecimate` floor keeps
+    // that within ~10s of the stop. Wall clock is the honest number for a
+    // reader asking how long the run was, and it is the only one the daemon
+    // knows without probing the file it just wrote.
     const durationMs = Math.max(0, now() - entry.startedAtMs);
     let bytes = 0;
     try {
