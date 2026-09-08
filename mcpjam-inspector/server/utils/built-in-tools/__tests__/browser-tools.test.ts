@@ -18,6 +18,7 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
 } from "../browser";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools";
+import { buildResolvedModelRequestPayload } from "../../model-request-payload";
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
 
 type SendResult = {
@@ -143,10 +144,12 @@ describe("buildBrowserTools — fail-closed advertisement", () => {
     ]);
     // Everything gates by default: a page is third-party code and the browser
     // is signed into things, so there is nothing trustworthy to relax on.
-    expect([...result!.approvals.requiredNames].sort()).toEqual(
-      Object.keys(result!.tools).sort(),
-    );
-    expect(result!.approvals.freeNames.size).toBe(0);
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(true);
+    }
   });
 
   it("boots NOTHING until a tool is actually called", async () => {
@@ -174,19 +177,58 @@ describe("buildBrowserTools — unattended policy", () => {
     ]);
     // Refusing to BUILD the interactive tools is stronger than gating them:
     // with nobody to ask, a gated tool in an unattended run would just run.
-    expect([...result!.approvals.freeNames].sort()).toEqual([
-      "browser_observe",
-      "browser_webmcp_tools",
-    ]);
-    expect(result!.approvals.requiredNames.size).toBe(0);
+    // What IS built declares `never` — there is nobody to ask, and the policy
+    // already said this run only looks.
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(false);
+    }
   });
 
-  it("allow_all keeps every tool, still classified as required", () => {
+  it("allow_all keeps every tool", () => {
     const { result } = build({
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
     });
     expect(Object.keys(result!.tools)).toHaveLength(6);
-    expect(result!.approvals.requiredNames.size).toBe(6);
+    // The `build` helper runs unattended cases on the LOCAL engine, where the
+    // floor is `always` whoever is watching — a browser on someone's own
+    // machine is not something a policy can wave through.
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(true);
+    }
+  });
+
+  it("frees every tool on a HOSTED unattended run — the policy is the gate", () => {
+    // Nobody to ask, on a disposable per-run box the caller provisioned. The
+    // declared `toolPolicy` is what decides, and it is enforced at execute
+    // time (origin and tool allowlists), not by a pill nobody would see.
+    //
+    // The `build` helper puts unattended cases on the LOCAL engine, where the
+    // floor is `always` whoever is watching; this one names the hosted engine
+    // and its own sandbox explicitly, which is the shape an eval or swarm run
+    // actually has.
+    const fake = fakeSession(async () => OK);
+    const result = buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      engine: "hosted",
+      runKey: "iteration-3",
+      sandboxTarget: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      ensureSession: fake.ensureSession,
+    });
+    expect(Object.keys(result!.tools)).toHaveLength(6);
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(false);
+    }
   });
 
   it("an allowlist policy builds only the named tools", () => {
@@ -1840,25 +1882,53 @@ describe("the toolset's context footprint is pinned", () => {
  * the tools can never drive a browser.
  */
 describe("describeBrowserTools", () => {
-  it("describes every tool the model is given", () => {
-    const described = describeBrowserTools("hosted");
-    expect(described.map((tool) => tool.name).sort()).toEqual(
+  /**
+   * The model's payload, serialized the way the provider receives it.
+   *
+   * Built independently of the description path so the two can be compared at
+   * all: `describeBrowserTools` serializes its own build, and asserting its
+   * output against `BROWSER_TOOL_NAMES` alone measures only the half of the
+   * round trip that maps that list.
+   */
+  function modelPayload() {
+    const { result } = build({ engine: "hosted" });
+    return buildResolvedModelRequestPayload({
+      systemPrompt: "",
+      tools: result!.tools,
+      messages: [],
+    }).tools;
+  }
+
+  it("describes every tool the model is given, and that is the whole list", () => {
+    // Three-way, because either pair alone leaves a real regression uncovered.
+    //
+    // `add` drops any name absent from `names` (itself a filter over
+    // `BROWSER_TOOL_NAMES`), so the built keys can never EXCEED the list. The
+    // direction that actually bites is a verb going MISSING — a lost `add`
+    // call, a `names` filter that over-matches — and pane-against-toolset
+    // alone would let both shrink together and still agree.
+    const built = Object.keys(modelPayload()).sort();
+    const described = describeBrowserTools("hosted")
+      .map((tool) => tool.name)
+      .sort();
+    expect(built, "the builder no longer advertises the whole list").toEqual(
       [...BROWSER_TOOL_NAMES].sort(),
     );
+    expect(described, "the pane and the model disagree").toEqual(built);
   });
 
   it("carries the same wording and schemas the model is sent", () => {
     // The point of deriving rather than copying: a pane showing different text
-    // from the model's is a debugging surface that lies about the run.
-    const { result } = build();
-    const described = describeBrowserTools("hosted");
-    for (const tool of described) {
-      const live = (result!.tools as Record<string, { description?: string }>)[
-        tool.name
-      ];
+    // — or a different schema — from the model's is a debugging surface that
+    // lies about the run. Whole schemas, not just their root type: `filter` and
+    // `rootRef` going missing from the pane's copy of an observation is exactly
+    // the drift this describe block exists to catch.
+    const sent = modelPayload();
+    for (const tool of describeBrowserTools("hosted")) {
+      const live = sent[tool.name];
       expect(live, `${tool.name} is not in the built toolset`).toBeDefined();
       expect(tool.description).toBe(live.description);
-      expect(tool.inputSchema).toMatchObject({ type: "object" });
+      expect(tool.inputSchema).toEqual(live.inputSchema);
     }
   });
 

@@ -335,7 +335,19 @@ Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other comm
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
 
 **Tool Approval**
-When on, pauses the model before each tool call so you can approve or deny it manually.
+When on, pauses the model before tool calls so you can approve or deny each one.
+
+The switch **raises** the bar and never lowers it, so it is not the whole story in either direction.
+
+Some actions pause whether it is on or off:
+
+- anything driving a browser or a third-party web page in a chat you are watching (`browser_*` tools, WebMCP page tools);
+- anything running on your own machine (local `bash`, a local browser);
+- destructive UI actions.
+
+Others never pause even when it is on: web search, read-only lookups of your own project, the progressive-discovery meta-tools, read-only UI actions, and tools an MCP App provided. Everything in between follows the switch.
+
+Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
 
 **Voice input**
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
@@ -377,7 +389,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one. Read-only listing and polling tools never require approval. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers or spend credits. Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
 
 <Note>
   These tools are only available when you are signed in as a project member. They are not shown to guests or in scenario sessions.

@@ -3,11 +3,8 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  classifyUiToolApprovals,
-} from "@/shared/client-fulfilled-tools";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
@@ -1637,10 +1634,12 @@ describe("mcpjam-stream-handler", () => {
     } as any;
 
     it("treats a real tool named like a meta-tool as approval-required when progressive mode is off", async () => {
-      // Regression guard: `isMetaToolName` was name-only, so a real MCP
-      // server exposing a tool literally named `search_mcp_tools` would
-      // bypass approval whenever progressive mode wasn't active. With
-      // `progressivePlan` undefined the exemption MUST NOT apply.
+      // Regression guard: the meta-tool exemption was name-only, so a real MCP
+      // server exposing a tool literally named `search_mcp_tools` would bypass
+      // approval whenever progressive mode wasn't active. Approval now comes
+      // from the tool's own declaration — this one is a REAL tool built for a
+      // switch-on turn, so it asks — and the name-plus-plan check survives only
+      // as the pre-pause DRAIN filter, which must still reject it.
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
 
       await handleMCPJamFreeChatModel({
@@ -1660,7 +1659,9 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { search_mcp_tools: { _serverId: "evil" } } as any,
+        tools: {
+          search_mcp_tools: { _serverId: "evil", needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
@@ -1715,8 +1716,11 @@ describe("mcpjam-stream-handler", () => {
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
         tools: {
-          search_mcp_tools: {},
-          list_servers: { _serverId: "ops" },
+          // What `createProgressiveMetaTools` and `mcpToolOptionsFor` produce
+          // for a switch-on progressive turn: the meta-tool declares `never`,
+          // the real tool follows the switch.
+          search_mcp_tools: { needsApproval: false },
+          list_servers: { _serverId: "ops", needsApproval: true },
         } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
@@ -1764,27 +1768,16 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "observe then navigate" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        // Both are no-execute client-fulfilled entries.
-        tools: { ui_snapshot_app: {}, ui_navigate: {} } as any,
+        // Both are no-execute client-fulfilled entries carrying the
+        // declaration `buildUiTools` computed for a switch-on turn.
+        tools: {
+          ui_snapshot_app: { needsApproval: false },
+          ui_navigate: { needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_snapshot_app",
-              readOnly: true,
-              annotations: { readOnlyHint: true, destructiveHint: false },
-            },
-            {
-              name: "ui_navigate",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: false },
-            },
-          ],
-          true
-        ),
       });
 
       await lastExecution;
@@ -1826,26 +1819,16 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "run it" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_execute_tool: {}, ui_navigate: {} } as any,
+        // The `always` floor is what a destructive entry carries; `ui_navigate`
+        // is `setting`, and the switch is off.
+        tools: {
+          ui_execute_tool: { needsApproval: true },
+          ui_navigate: { needsApproval: false },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-            {
-              name: "ui_navigate",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: false },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
@@ -1858,8 +1841,9 @@ describe("mcpjam-stream-handler", () => {
     });
 
     it("does not emit approval requests for real MCP tools when the flag is OFF", async () => {
-      // The UI classification must not leak into real-tool policy: unknown
-      // names still follow `requireToolApproval`.
+      // A real MCP tool carries the declaration `mcpToolOptionsFor` produced
+      // for this turn — with the switch off, no approval — and a destructive
+      // `ui_*` tool advertised alongside it does not change that answer.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1876,21 +1860,14 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "go" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { some_mcp_tool: {} } as any,
+        tools: {
+          some_mcp_tool: { needsApproval: false },
+          ui_execute_tool: { needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
@@ -1923,21 +1900,11 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_snapshot_app: {} } as any,
+        tools: { ui_snapshot_app: { needsApproval: false } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_snapshot_app",
-              readOnly: true,
-              annotations: { readOnlyHint: true, destructiveHint: false },
-            },
-          ],
-          true
-        ),
       });
 
       await lastExecution;
@@ -1953,10 +1920,10 @@ describe("mcpjam-stream-handler", () => {
       }
     });
 
-    it("emits an approval request for a page_* tool with the flag OFF (via classifyPageToolApprovals)", async () => {
-      // Page tools always gate. With their classification threaded in, the
-      // hosted gate emits a pill even though requireToolApproval is off (the
-      // default on the WebMCP Inspector surface).
+    it("emits an approval request for a page_* tool with the flag OFF", async () => {
+      // Page tools always gate — the `always` floor `buildPageTools` bakes in
+      // — so the hosted gate emits a pill even though requireToolApproval is
+      // off (the default on the WebMCP Inspector surface).
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1973,12 +1940,11 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "use the page tool" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { page_ab12cd34: {} } as any,
+        tools: { page_ab12cd34: { needsApproval: true } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyPageToolApprovals(["page_ab12cd34"]),
       });
 
       await lastExecution;
@@ -1990,11 +1956,13 @@ describe("mcpjam-stream-handler", () => {
       expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-page-1" });
     });
 
-    it("STRANDS a page_* call when no classification is threaded (the bug this fix closes)", async () => {
-      // Regression guard for the pre-fix chat-v2 behavior: with no
-      // uiToolApprovals and the flag off, the hosted gate emitted no pill while
-      // the client had already deferred the call awaiting one — a turn that
-      // waits forever. This asserts the broken shape so a revert fails here.
+    it("gates a page_* call from the BUILT tool alone — no threading, nothing to forget", async () => {
+      // The turn that used to strand. A route that handed the engine its page
+      // tools but forgot to thread their name classification got no pill,
+      // while the client had already deferred the call awaiting one — a turn
+      // that waits forever. There is nothing to thread now: the tool
+      // `buildPageTools` produces carries the answer, and this drives the
+      // engine with exactly that tool and nothing else.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -2011,12 +1979,20 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "use the page tool" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { page_ab12cd34: {} } as any,
+        tools: buildPageTools([
+          {
+            alias: "page_ab12cd34",
+            sessionId: "sess_1",
+            toolKey: "https://shop.test::checkout",
+            rawName: "checkout",
+            origin: "https://shop.test",
+            description: "Check out",
+          },
+        ] as never) as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        // uiToolApprovals deliberately omitted — the pre-fix chat-v2 shape.
       });
 
       await lastExecution;
@@ -2024,7 +2000,10 @@ describe("mcpjam-stream-handler", () => {
       const approvalRequests = writtenChunks.filter(
         (chunk: any) => chunk.type === "tool-approval-request"
       );
-      expect(approvalRequests).toHaveLength(0);
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({
+        toolCallId: "call-page-strand",
+      });
     });
 
     it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {
@@ -2098,9 +2077,11 @@ describe("mcpjam-stream-handler", () => {
     it("processes a DENIAL of a destructive ui_* tool when the approval flag is OFF", async () => {
       // The stranding case. Approving a ui_* call is resolved by the browser
       // shipping a tool-result, but DENYING it sends an approval response
-      // back here. If pending-approval handling stayed gated on
-      // `requireToolApproval`, that denial would never be processed with the
-      // flag off — the tool call stays unresolved and the turn hangs forever.
+      // back here. Pending-approval handling used to run only when the switch
+      // was on (or a name set said so), so with the flag off that denial was
+      // never processed — the tool call stayed unresolved and the turn hung
+      // forever. It is unconditional now: a history carrying an approval
+      // request is the only fact that decides.
       vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
 
       await handleMCPJamFreeChatModel({
@@ -2134,21 +2115,11 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_execute_tool: {} } as any,
+        tools: { ui_execute_tool: { needsApproval: true } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;

@@ -1856,17 +1856,39 @@ export function ChatInput({
                       </button>
 
                       {onRequireToolApprovalChange && (
-                        <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                          <div className="flex items-center gap-2 text-sm">
-                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                            Tool Approval
+                        <div className="rounded-md px-2 py-2 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm">
+                              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                              Tool Approval
+                            </div>
+                            <Switch
+                              checked={requireToolApproval}
+                              onCheckedChange={(checked) =>
+                                onRequireToolApprovalChange(checked)
+                              }
+                              aria-describedby="tool-approval-floor-note"
+                            />
                           </div>
-                          <Switch
-                            checked={requireToolApproval}
-                            onCheckedChange={(checked) =>
-                              onRequireToolApprovalChange(checked)
-                            }
-                          />
+                          {/* A caption rather than a tooltip: the row contains
+                              the switch itself, so a tooltip trigger wrapped
+                              around it would open over the control the user is
+                              reaching for, and a non-focusable trigger div
+                              would never open for a keyboard user at all.
+                              Both halves of the rule are surprising — the
+                              switch RAISES a floor and never lowers it, so
+                              some things pause without it and some never
+                              pause with it — and neither should be behind a
+                              hover. */}
+                          <p
+                            id="tool-approval-floor-note"
+                            className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
+                          >
+                            Pause before tool calls. Browser, page,
+                            local-machine and destructive UI actions always
+                            pause; built-in searches and read-only lookups
+                            never do.
+                          </p>
                         </div>
                       )}
 

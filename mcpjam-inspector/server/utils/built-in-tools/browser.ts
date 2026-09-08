@@ -5,21 +5,22 @@
  * SERVER-EXECUTED, like `bash` and unlike the `page_*`/`ui_*` namespaces: the
  * model calls a tool, this server sends a command to the daemon and returns
  * the result. Nothing here is client-fulfilled, so no new namespace enters
- * `isClientFulfilledToolName`; the approval classification rides the existing
- * name-keyed `uiToolApprovals` slot purely as policy.
+ * `isClientFulfilledToolName`; each tool carries its own `needsApproval`, like
+ * every other family.
  *
  * TWO THINGS ARE STRUCTURAL, not conventions to remember:
  *
  *   1. FAIL-CLOSED ADVERTISEMENT. `buildBrowserTools` returns nothing unless
- *      the caller ATTESTS how approval reaches the user. Approval on the
- *      hosted engines is classified by NAME from `uiToolApprovals`, and five
- *      `prepareChatV2` call sites (Slack agent, chat-session-turn, the
- *      session-simulation runner, and evals-runner twice) plus the
- *      `runAssistantTurn` eval path thread NOTHING — a browser tool reaching
- *      them would classify as FREE and drive a real browser with no gate. So
- *      the attestation is a parameter, not a lint rule: a surface that has not
- *      thought about approval gets no browser tools, and no edit to those five
- *      call sites is required for them to be safe.
+ *      the caller ATTESTS how approval reaches the user. Not because anything
+ *      has to be threaded back any more — the tools declare their own floors,
+ *      and an unthreaded surface would now gate correctly — but because
+ *      `approvalDelivery` is the one thing this file cannot work out for
+ *      itself: whether A PERSON IS WATCHING. That answer decides the browser's
+ *      context mode (a persistent, signed-in profile or a blank ephemeral
+ *      one), the owner key, and whether an unattended run's policy is
+ *      mandatory. A surface that has not said which kind of run it is has not
+ *      chosen any of those, and defaulting them is how an eval comes to run
+ *      against whatever profile the last playground session left signed in.
  *
  *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
  *      implementation result carries the capture as base64 in an ordinary
@@ -43,11 +44,11 @@ import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   BROWSER_BUILT_IN_TOOL_ID,
+  BROWSER_OBSERVATION_TOOL_NAMES,
   BROWSER_TOOL_NAMES,
-  classifyBrowserToolApprovals,
   type BrowserUnattendedPolicy,
-  type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
+import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
@@ -83,8 +84,8 @@ const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
  * How approval reaches the user for this turn — the thing a surface must
  * attest before it gets interactive browser tools.
  *
- * `attested`: the caller threads the returned classification into the
- * engine's `uiToolApprovals`, so a gated call actually pauses and asks.
+ * `attested`: a person is there. Gated calls actually pause and ask, so the
+ * turn keeps a persistent (signed-in) browser and every tool asks first.
  *
  * `unattended`: nobody is watching (eval, swarm, journey), so there is no
  * approval at all — and therefore a DECLARED policy is mandatory. The policy
@@ -165,12 +166,6 @@ export type BrowserEngine = "hosted" | "local";
 
 export interface BrowserToolsResult {
   tools: ToolSet;
-  /**
-   * The approval classification for the names actually built. The caller
-   * MERGES this into the engine's single `uiToolApprovals` slot — see
-   * `mergeUiToolApprovalClassifications`.
-   */
-  approvals: UiToolApprovalClassification;
 }
 
 /** What a daemon reply means once both layers have been read. */
@@ -617,8 +612,9 @@ export function buildBrowserTools(
     opts.onToolSuppressed?.({
       id: BROWSER_BUILT_IN_TOOL_ID,
       reason:
-        "browser tools need an approval path: an interactive surface must thread the " +
-        "approval classification, and an unattended run must declare a toolPolicy.",
+        "browser tools need to know whether a person is watching: an " +
+        "interactive surface must attest that approval reaches someone, and " +
+        "an unattended run must declare a toolPolicy instead.",
     });
     return undefined;
   }
@@ -707,11 +703,24 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  // Local is forced to ask, exactly as `bash` is (bash.ts:131). The browser is
-  // driving a real, signed-in Chromium on someone's own machine, where the
-  // blast radius of an unreviewed click is their accounts rather than a
-  // disposable box.
-  const needsApproval = delivery.kind === "attested" || engine === "local";
+  // Floors, one per shape of run. Local is forced to ask, exactly as `bash` is
+  // — the browser is driving a real, signed-in Chromium on someone's own
+  // machine, where the blast radius of an unreviewed click is their accounts
+  // rather than a disposable box. An attested (interactive) run has someone to
+  // ask, so it always does. What is left is an unattended run on a disposable
+  // box: nobody to ask, so the declared policy is the answer, and the
+  // interactive tools it might have freed were never built (see `names`).
+  //
+  // NOT the switch, on any branch: `requireToolApproval` cannot lower a floor,
+  // and there is no reading of this family where it should.
+  const interactiveFloor: ApprovalFloor =
+    delivery.kind === "attested" || engine === "local" ? "always" : "never";
+  // Observation is the one thing a read-only policy may free, and only there:
+  // a policy cannot make clicking a button on a live logged-in page safe, but
+  // it can say this run only looks.
+  const observationFloor: ApprovalFloor = readOnly ? "never" : interactiveFloor;
+  const needsApproval = needsApprovalFor(interactiveFloor, false);
+  const observationNeedsApproval = needsApprovalFor(observationFloor, false);
   const send = async (
     action: BrowserAction,
     args: {
@@ -791,7 +800,6 @@ export function buildBrowserTools(
   };
 
   const tools: ToolSet = {};
-  const built: string[] = [];
   const add = (name: string, definition: ToolSet[string]) => {
     if (!names.includes(name)) return;
     // Attached HERE, once, rather than on each tool: every one of these
@@ -799,7 +807,6 @@ export function buildBrowserTools(
     // later that forgot the mapping would silently go back to sending the
     // model an unreadable base64 string.
     tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
-    built.push(name);
   };
 
   add(
@@ -1014,7 +1021,7 @@ export function buildBrowserTools(
           .describe('With mode "a11y": zoom into a CSS selector instead.'),
         tabId: z.string().optional(),
       }),
-      needsApproval: needsApproval && !readOnly,
+      needsApproval: observationNeedsApproval,
       execute: async (
         { mode, filter, rootRef, rootSelector, tabId },
         { abortSignal },
@@ -1041,7 +1048,7 @@ export function buildBrowserTools(
         "List the WebMCP tools the current page offers, if any. Pages that expose tools " +
         "let you act through their own API instead of clicking; most pages offer none.",
       inputSchema: z.object({ tabId: z.string().optional() }),
-      needsApproval: needsApproval && !readOnly,
+      needsApproval: observationNeedsApproval,
       execute: async ({ tabId }, { abortSignal }) =>
         present(
           await send(
@@ -1085,10 +1092,7 @@ export function buildBrowserTools(
     }),
   );
 
-  return {
-    tools,
-    approvals: classifyBrowserToolApprovals(built, { readOnly }),
-  };
+  return { tools };
 }
 
 /**
@@ -1236,8 +1240,18 @@ function resultUrl(output: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Which verbs only LOOK at the page.
+ *
+ * Reads the shared set rather than repeating its members. This used to be a
+ * private list, which was harmless only while `classifyBrowserToolApprovals`
+ * kept the shared one honest — that classifier is gone, and two lists of the
+ * same six names drift the moment a seventh verb is added. The one that would
+ * be forgotten is this one, and forgetting it means an unattended read-only
+ * run silently gets an interactive tool.
+ */
 function isObservational(name: string): boolean {
-  return name === "browser_observe" || name === "browser_webmcp_tools";
+  return BROWSER_OBSERVATION_TOOL_NAMES.has(name);
 }
 
 /**
