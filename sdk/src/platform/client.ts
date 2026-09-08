@@ -255,6 +255,38 @@ export const RUN_LAUNCH_HEADERS = {
 } as const;
 
 /**
+ * The API boundary's own caps, mirrored here.
+ *
+ * Not redundant with them. A header this client builds is assembled from
+ * caller-supplied strings — an MCP client's `user-agent`, a CI provider's
+ * branch name — and the request crosses proxies, gateways and CDNs before it
+ * reaches the boundary that would drop an oversized value harmlessly. Those
+ * intermediaries answer an outsized header with 431 or 400, and the launch
+ * fails over a label. Trimming here keeps the failure cosmetic on the one side
+ * we control.
+ */
+const MAX_LAUNCHER_HEADER_BYTES = 512;
+const MAX_CI_HEADER_BYTES = 2048;
+const MAX_LAUNCHER_FIELD_CHARS = 200;
+const MAX_CI_FIELD_CHARS = 512;
+
+function headerByteLength(value: string): number {
+  return typeof TextEncoder === "function"
+    ? new TextEncoder().encode(value).length
+    : // Node without a global TextEncoder: every byte of a header is at worst
+      // 4 for one JS char, and over-counting only drops a header early.
+      value.length * 4;
+}
+
+/** The serialized header, or nothing when it would not fit. */
+function withinHeaderCap(
+  serialized: string,
+  maxBytes: number
+): string | undefined {
+  return headerByteLength(serialized) <= maxBytes ? serialized : undefined;
+}
+
+/**
  * Serialize the declared launch context into its two headers, dropping
  * anything unusable.
  *
@@ -271,13 +303,23 @@ function buildLaunchHeaders(
 
   const kind = options.launcher?.kind;
   if (kind === "cli" || kind === "mcp" || kind === "github_action") {
-    const client = trimmedOrUndefined(options.launcher?.client);
-    const version = trimmedOrUndefined(options.launcher?.version);
-    headers[RUN_LAUNCH_HEADERS.launcher] = JSON.stringify({
-      kind,
-      ...(client ? { client } : {}),
-      ...(version ? { version } : {}),
-    });
+    const client = trimmedOrUndefined(
+      options.launcher?.client,
+      MAX_LAUNCHER_FIELD_CHARS
+    );
+    const version = trimmedOrUndefined(
+      options.launcher?.version,
+      MAX_LAUNCHER_FIELD_CHARS
+    );
+    const serialized = withinHeaderCap(
+      JSON.stringify({
+        kind,
+        ...(client ? { client } : {}),
+        ...(version ? { version } : {}),
+      }),
+      MAX_LAUNCHER_HEADER_BYTES
+    );
+    if (serialized) headers[RUN_LAUNCH_HEADERS.launcher] = serialized;
   }
 
   if (options.ci) {
@@ -299,23 +341,32 @@ function buildLaunchHeaders(
       "pipelineId",
     ] as const) {
       const value = trimmedOrUndefined(
-        (options.ci as Record<string, unknown>)[key]
+        (options.ci as Record<string, unknown>)[key],
+        MAX_CI_FIELD_CHARS
       );
       if (value) ci[key] = value;
     }
     if (Object.keys(ci).length > 0) {
-      headers[RUN_LAUNCH_HEADERS.ci] = JSON.stringify(ci);
+      const serialized = withinHeaderCap(
+        JSON.stringify(ci),
+        MAX_CI_HEADER_BYTES
+      );
+      if (serialized) headers[RUN_LAUNCH_HEADERS.ci] = serialized;
     }
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-function trimmedOrUndefined(value: unknown): string | undefined {
+function trimmedOrUndefined(
+  value: unknown,
+  maxChars?: number
+): string | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  if (trimmed.length === 0) return undefined;
+  return maxChars === undefined ? trimmed : trimmed.slice(0, maxChars);
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -2259,6 +2310,11 @@ export class PlatformApiClient {
             ? { maxTrials: params.maxTrials }
             : {}),
         },
+        // This route LAUNCHES RUNS — one per experiment arm — and reads the
+        // launch headers to stamp both. Without the opt-in, a CLI or MCP
+        // client's experiment produced two runs badged `API` with no commit
+        // metadata, which also costs the commit-keyed baseline lookup.
+        declareLaunch: true,
       },
       options
     );

@@ -30,6 +30,7 @@ function makeClient(): {
   calls: Array<{
     method: string;
     path: string;
+    query: Record<string, string>;
     body?: any;
     headers: Record<string, string>;
   }>;
@@ -37,6 +38,7 @@ function makeClient(): {
   const calls: Array<{
     method: string;
     path: string;
+    query: Record<string, string>;
     body?: any;
     headers: Record<string, string>;
   }> = [];
@@ -51,7 +53,13 @@ function makeClient(): {
     )) {
       headers[key.toLowerCase()] = value;
     }
-    calls.push({ method, path, body, headers });
+    calls.push({
+      method,
+      path,
+      query: Object.fromEntries(url.searchParams),
+      body,
+      headers,
+    });
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
     if (/\/environments$/.test(path))
@@ -582,9 +590,62 @@ describe("declaredSuiteId reaches the wire", () => {
     );
     const write = calls.find((call) => call.method === "DELETE");
     // A DELETE with no body cannot carry a body field; making one route the
-    // exception is a shape callers get wrong.
-    expect(write?.path).toBeDefined();
+    // exception is a shape callers get wrong. So assert the QUERY STRING —
+    // the wire, not just that a request happened.
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
     expect(write?.body).toBeUndefined();
+  });
+
+  it("rides the query string on delete_eval_suite", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalSuiteOperation.execute(
+      { suite: "s1", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+  });
+
+  it("rides the body on set_eval_suite_schedule", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteScheduleOperation.execute(
+      { suite: "s1", enabled: false, declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.body).toMatchObject({
+      enabled: false,
+      declaredSuiteId: "s_from_file",
+    });
+  });
+
+  it("rides the body on create_eval_case", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCaseOperation.execute(
+      {
+        suite: "s1",
+        title: "From the file",
+        query: "list the invoices",
+        declaredSuiteId: "s_from_file",
+      },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "POST");
+    // Single-case sync has to reach the same file-sync exception the batch
+    // form does, or a one-case suite file could not write itself.
+    expect(write?.body).toMatchObject({ declaredSuiteId: "s_from_file" });
+  });
+
+  it("omits the marker entirely on an ordinary edit", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalCaseOperation.execute(
+      { suite: "s1", case: "c2" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    // Not a capability: an app edit sends nothing, and gets the refusal a
+    // CI-owned suite is right to give it.
+    expect(write?.query).not.toHaveProperty("declaredSuiteId");
   });
 
   it("rides the body on set_eval_suite_environments", async () => {

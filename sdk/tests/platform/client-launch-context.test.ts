@@ -161,4 +161,40 @@ describe("declared launch context", () => {
       JSON.parse(headersOf(fetchMock)[RUN_LAUNCH_HEADERS.launcher]!).kind,
     ).toBe("cli");
   });
+
+  it("trims an outsized client label rather than sending it", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    // An MCP caller's `user-agent` reaches this option verbatim.
+    await makeClient(fetchMock, {
+      launcher: { kind: "mcp", client: "x".repeat(4000) },
+    }).createEvalRun({ projectId: "p1", body: { suiteId: "s1" } });
+
+    const header = headersOf(fetchMock)[RUN_LAUNCH_HEADERS.launcher]!;
+    // The API boundary would drop an oversized header harmlessly, but the
+    // request crosses proxies and CDNs first, and those answer one with 431 or
+    // 400 — losing the LAUNCH over a label. The kind survives; the label is
+    // cut to the per-field cap the boundary applies anyway.
+    expect(new TextEncoder().encode(header).length).toBeLessThanOrEqual(512);
+    expect(JSON.parse(header)).toMatchObject({ kind: "mcp" });
+    expect(JSON.parse(header).client.length).toBe(200);
+  });
+
+  it("omits a CI envelope that cannot be made to fit", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    await makeClient(fetchMock, {
+      ci: {
+        provider: "y".repeat(600),
+        branch: "y".repeat(600),
+        commitSha: "y".repeat(600),
+        runUrl: "y".repeat(600),
+        job: "y".repeat(600),
+      },
+    }).createEvalRun({ projectId: "p1", body: { suiteId: "s1" } });
+
+    // Per-field capping is not always enough — five capped fields still
+    // exceed the envelope cap. Dropped whole, because half a CI envelope is
+    // not a smaller truth, and the run still launches.
+    expect(headersOf(fetchMock)).not.toHaveProperty(RUN_LAUNCH_HEADERS.ci);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

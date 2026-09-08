@@ -5046,6 +5046,13 @@ function buildCreateCaseBody(
 ): Record<string, unknown> {
   const body = buildCaseBody(input);
   if (input.id !== undefined) body.id = input.id;
+  // Not a case field — the marker that says this write IS the suite file, the
+  // same one the batch form sends. Without it a CI-owned suite refuses
+  // `case.create`, so single-case file sync could not write what the batch
+  // could.
+  if (input.declaredSuiteId !== undefined) {
+    body.declaredSuiteId = input.declaredSuiteId;
+  }
   return body;
 }
 
@@ -5539,6 +5546,7 @@ const deleteEvalSuiteInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
 });
 export type DeleteEvalSuiteInput = z.infer<typeof deleteEvalSuiteInput>;
 
@@ -5560,7 +5568,13 @@ export const deleteEvalSuiteOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.deleteEvalSuite(
-      { projectId: project.id, suiteId: suite.id },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        ...(input.declaredSuiteId !== undefined
+          ? { declaredSuiteId: input.declaredSuiteId }
+          : {}),
+      },
       { signal }
     );
   },
@@ -5574,6 +5588,7 @@ const setEvalSuiteScheduleInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   enabled: z.boolean().describe("Turn scheduled runs on or off."),
   intervalMinutes: z
     .number()
@@ -5642,6 +5657,11 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
             ? { intervalMinutes: input.intervalMinutes }
             : {}),
           ...(environment ? { environmentId: environment.id } : {}),
+          // Not a schedule field — the marker that says this write IS the
+          // suite file. A CI-owned suite refuses `suite.schedule` without it.
+          ...(input.declaredSuiteId !== undefined
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
         },
       },
       { signal }
@@ -5873,6 +5893,7 @@ const createEvalCaseInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   ...caseFieldsShape,
   title: z.string().trim().min(1).describe("Short case label."),
   id: declaredCaseIdField,

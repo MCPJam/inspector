@@ -1622,8 +1622,14 @@ export interface PlatformEvalSuiteDetail {
    * `declaredSuiteId` on the write, or duplicate the suite for an editable
    * copy. `declaredId` alone is not this answer — a suite created by SDK
    * ingest is CI-owned and has no declared id.
+   *
+   * OPTIONAL because it is additive: this package is versioned independently
+   * of the Inspector deployment it talks to, and one that predates the suite
+   * lock omits the field entirely. `undefined` means "this deployment does not
+   * say", which is not the same as `"app"` — a reader that needs the
+   * distinction should treat it as unknown rather than as editable.
    */
-  managedBy: "ci" | "app";
+  managedBy?: "ci" | "app";
   name: string | null;
   description: string | null;
   projectId: string | null;

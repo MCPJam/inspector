@@ -13676,8 +13676,7 @@
           "environment",
           "hosts",
           "settings",
-          "schedule",
-          "managedBy"
+          "schedule"
         ],
         "description": "One eval suite's full configuration. Distinct from the `EvalSuite` summary returned by the list route, which carries run rollups instead of settings.",
         "properties": {
