@@ -1780,6 +1780,16 @@ describe("first-class page tools in prepareChatV2", () => {
     const result = await prepareChatV2({
       ...base(),
       mcpClientManager: mockManager({}),
+      // A NON-PAGE BUILT-IN, so the negative case is about the `webmcp_` names
+      // rather than about an empty built-in set. Without one this would pass
+      // for a regression that keyed the section on "any built-in is present".
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
     } as any);
     expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
   });

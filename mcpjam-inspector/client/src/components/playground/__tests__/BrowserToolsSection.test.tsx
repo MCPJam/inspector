@@ -28,6 +28,15 @@ const TOOLS: SerializedModelRequestTool[] = [
     description: "List the WebMCP tools the current page offers.",
     inputSchema: { type: "object" },
   },
+  {
+    // PRESENT ON PURPOSE, so the assertion that the page-tool section does not
+    // point at it can actually fail. A name absent from the fixture can never
+    // be rendered, and a `queryByText` for one is a check that passes whatever
+    // the component does.
+    name: "browser_webmcp_invoke",
+    description: "Call a WebMCP tool on the current page by name.",
+    inputSchema: { type: "object" },
+  },
 ];
 
 const PAGE_OK = {
@@ -95,7 +104,17 @@ describe("BrowserToolsSection", () => {
     expect(
       screen.getByText(/Available to the model on its next step, by these names/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/browser_webmcp_invoke/)).toBeNull();
+    // THE INSTRUCTION ITSELF, not the whole pane. `browser_webmcp_invoke` is a
+    // browser verb and belongs in the verb list above; the claim here is that
+    // the sentence introducing the page's tools names THEM rather than routing
+    // the model through the generic verb. A pane-wide `queryByText` cannot
+    // express that — and with the verb absent from the fixture, as it was, it
+    // could not have failed either way.
+    expect(
+      screen.getByText(
+        /Available to the model on its next step, by these names/,
+      ).textContent,
+    ).not.toContain("browser_webmcp_invoke");
   });
 
   it("marks the list live only when the browser is reporting changes", () => {

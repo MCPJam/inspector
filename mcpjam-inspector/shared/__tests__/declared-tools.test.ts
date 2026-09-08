@@ -215,15 +215,39 @@ describe("mintDeclaredToolNames — identity", () => {
   });
 });
 
+/**
+ * A fresh, independently-owned copy of the fixture.
+ *
+ * `{ ...FIXTURE }` is a SHALLOW copy: `properties`, `properties.topping` and
+ * the `oneOf` array underneath are the very same objects the fixture holds. An
+ * implementation that stripped `title` from each branch, or truncated the array
+ * to four, would mutate the fixture along with its input — and every assertion
+ * below would then compare the mutated object against itself and pass.
+ *
+ * The regression this file's header names is exactly that one, so the copy has
+ * to go all the way down.
+ */
+function freshChromeSchema(): Record<string, unknown> {
+  return structuredClone(CHROME_IMPERATIVE_SCHEMA) as Record<string, unknown>;
+}
+
+/** The fixture as it was BEFORE any call, for comparing against. */
+const EXPECTED_CHROME_SCHEMA = structuredClone(
+  CHROME_IMPERATIVE_SCHEMA,
+) as Record<string, unknown>;
+
 describe("schemas are preserved verbatim", () => {
   it("round-trips Chrome's 5-branch oneOf example unchanged", () => {
     const [minted] = mintDeclaredToolNames(WEBMCP_TOOL_NAME_PREFIX, [
-      descriptor({ rawName: "add_topping", inputSchema: { ...CHROME_IMPERATIVE_SCHEMA } }),
+      descriptor({ rawName: "add_topping", inputSchema: freshChromeSchema() }),
     ]);
-    expect(minted.inputSchema).toEqual(CHROME_IMPERATIVE_SCHEMA);
+    expect(minted.inputSchema).toEqual(EXPECTED_CHROME_SCHEMA);
     expect(minted.diagnostics).toEqual([]);
     const [serialized] = toSerializedModelRequestTools([minted]);
-    expect(serialized.inputSchema).toEqual(CHROME_IMPERATIVE_SCHEMA);
+    expect(serialized.inputSchema).toEqual(EXPECTED_CHROME_SCHEMA);
+    // And the fixture itself is untouched, which is the half a comparison
+    // against a shared object can never show.
+    expect(CHROME_IMPERATIVE_SCHEMA).toEqual(EXPECTED_CHROME_SCHEMA);
   });
 
   it("keeps `title` on a declarative anyOf, and keeps $ref", () => {
@@ -473,24 +497,24 @@ describe("toProviderToolSchema", () => {
   it("returns the schema byte-identical for every provider", () => {
     for (const provider of ["anthropic", "openai", "google", "generic"] as const) {
       const { schema } = toProviderToolSchema(
-        { ...CHROME_IMPERATIVE_SCHEMA },
+        freshChromeSchema(),
         provider,
       );
-      expect(schema).toEqual(CHROME_IMPERATIVE_SCHEMA);
+      expect(schema).toEqual(EXPECTED_CHROME_SCHEMA);
     }
   });
 
   it("reports what a provider cannot express instead of rewriting it", () => {
     const { schema, diagnostics } = toProviderToolSchema(
-      { ...CHROME_IMPERATIVE_SCHEMA },
+      freshChromeSchema(),
       "google",
     );
-    expect(schema).toEqual(CHROME_IMPERATIVE_SCHEMA);
+    expect(schema).toEqual(EXPECTED_CHROME_SCHEMA);
     expect(diagnostics.map((d) => d.code)).toEqual(["provider_unsupported"]);
     expect(diagnostics[0].message).toContain("oneOf");
     expect(diagnostics[0].blocking).toBeUndefined();
     // Anthropic takes ordinary JSON Schema, so the same schema is clean there.
-    expect(toProviderToolSchema({ ...CHROME_IMPERATIVE_SCHEMA }, "anthropic").diagnostics)
+    expect(toProviderToolSchema(freshChromeSchema(), "anthropic").diagnostics)
       .toEqual([]);
   });
 

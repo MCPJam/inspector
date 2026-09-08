@@ -2352,6 +2352,12 @@ describe("mcpjam-stream-handler", () => {
 
       // Byte-identical, which is what keeps every provider's prompt cache
       // hitting across the steps of one turn.
+      //
+      // Both sides are pinned as PRESENT first: a handler that stopped sending
+      // `tools` at all would make both stringify to `undefined`, and the
+      // equality below would hold while pinning nothing.
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(bodies[0].tools?.length).toBeGreaterThan(0);
       expect(JSON.stringify(bodies[1]?.tools)).toBe(
         JSON.stringify(bodies[0]?.tools),
       );

@@ -4,6 +4,10 @@ import {
 } from "../browserd/page-tools-peek.js";
 import { webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
@@ -632,6 +636,10 @@ export async function runSyntheticHostSession(
     // Read-only and fail-empty, and skipped entirely unless this session
     // declared a browser policy AND brought a desktop box — a journey session
     // with neither must not pay a daemon round trip to learn it has no browser.
+    // What this run advertised from the page, for the turn trace. A synthetic
+    // session's transcript is read back like any other, and a card in it wants
+    // the same answer: which tool on which page, as it was then.
+    let advertisedPageTools: MintedDeclaredTool[] = [];
     const pageToolsSnapshot = pageToolsSnapshotFrom(
       sandboxBinding?.runtimeKind === "desktop-browser" &&
         browserApprovalDelivery
@@ -671,6 +679,9 @@ export async function runSyntheticHostSession(
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
         ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
+        },
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
@@ -1137,7 +1148,18 @@ export async function runSyntheticHostSession(
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
-        turnTrace,
+        // An EMPTY array is meaningful and is written: "this turn advertised no
+        // page tools" is a different fact from "we do not know", and only the
+        // second is what an absent field means.
+        turnTrace: pageToolsSnapshot
+          ? {
+              ...turnTrace,
+              pageToolsAtTurn: toMintedPageToolRecords(
+                advertisedPageTools,
+                pageToolsSnapshot,
+              ),
+            }
+          : turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
         // §3: ride this turn's harness resume-state commit into /ingest-chat

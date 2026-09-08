@@ -1551,6 +1551,10 @@ describe("buildBrowserTools — first-class page tools", () => {
     const cancel = commands.find(
       (command) => command.action?.kind === "webmcp_cancel",
     );
+    // PINNED SEPARATELY. Comparing ids alone would pass if BOTH were
+    // `undefined` — a world where no cancel was sent at all, which is the
+    // regression this test exists to catch.
+    expect(cancel).toBeDefined();
     // Keyed on the INVOKE's commandId — the only id the server holds before a
     // synchronous invoke settles.
     expect(cancel?.action.commandId).toBe(
@@ -1642,8 +1646,12 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
   }) {
     const state = { ...initial, navCounter: initial.navCounter ?? 1 };
     const seen: string[] = [];
+    // The PAYLOADS, not only the kinds. A binding is the whole point of these
+    // commands, and a test that records `action.kind` alone cannot see one.
+    const commands: any[] = [];
     const send = async (command: any): Promise<SendResult> => {
       const action = command.action;
+      commands.push(command);
       seen.push(
         action.kind === "observe" ? `observe:${action.mode}` : action.kind,
       );
@@ -1697,7 +1705,7 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
         } as never,
       };
     };
-    return { state, seen, send };
+    return { state, seen, commands, send };
   }
 
   function build(fake: ReturnType<typeof daemon>) {
@@ -1964,19 +1972,29 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     await built.refreshPageTools!({});
 
     await (built.tools.webmcp_add_topping as any).execute({}, {});
-    const invoke = fake.seen.filter((entry) => entry === "webmcp_invoke");
-    expect(invoke).toHaveLength(1);
-    // Reusing the turn-start navCounter here would mint a binding for a
-    // document that is gone, and every call would be refused `stale_binding`.
+    const invokes = fake.commands.filter(
+      (command: any) => command.action?.kind === "webmcp_invoke",
+    );
+    expect(invokes).toHaveLength(1);
+    // THE BINDING THE CALL ACTUALLY CARRIED, not the cached descriptor beside
+    // it. Reusing the turn-start navCounter would mint a binding for a document
+    // that is gone and every call would be refused `stale_binding` — and an
+    // implementation that refreshed its own cache to `registrationSeq: 11`
+    // while still minting from `navCounter: 1` would satisfy any assertion
+    // that only read that cache.
+    expect(invokes[0].action.expectedBinding).toMatchObject({
+      navCounter: 9,
+      registrationSeq: 11,
+    });
     expect(built.currentPageTools!()[0].registrationSeq).toBe(11);
   });
 
   it("PAUSES rather than retiring when a person takes the browser", async () => {
     const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
-    const built = build(fake);
-    fake.state.revision = 6;
-    fake.state.hash = "h2";
     const realSend = fake.send;
+    // ONE daemon, not two: `paused` spreads `fake`, so `paused.state` IS
+    // `fake.state`. Building twice and writing the same revision twice read as
+    // two independent browsers and was neither.
     const paused = {
       ...fake,
       send: async (command: any) => {
@@ -1987,16 +2005,16 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
         return realSend(command);
       },
     };
-    const built2 = build(paused as never);
-    paused.state.revision = 6;
-    paused.state.hash = "h2";
-    const refresh = await built2.refreshPageTools!({});
+    const built = build(paused as never);
+    // Moved, so the refresh reaches the definitions read that the lease blocks.
+    fake.state.revision = 6;
+    fake.state.hash = "h2";
+    const refresh = await built.refreshPageTools!({});
     // The tools have not gone anywhere; we simply cannot look. Churning the
     // model's tool set every step while somebody signs in would be worse than
     // holding still.
     expect(refresh).toBeUndefined();
-    expect(built2.tools.webmcp_add_topping).toBeDefined();
-    void built;
+    expect(built.tools.webmcp_add_topping).toBeDefined();
   });
 
   it("is not built for an engine that cannot grow its tool set", () => {
@@ -2028,7 +2046,7 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     );
     // Without this a model that just navigated has no way to know: the tools
     // appear on the NEXT step, and nothing in the result it is reading now
-    // says so — so it reasons with the six verbs and clicks.
+    // says so — so it reasons with the generic verbs and clicks.
     expect(result.pageToolsNote).toContain("`webmcp_*`");
   });
 });

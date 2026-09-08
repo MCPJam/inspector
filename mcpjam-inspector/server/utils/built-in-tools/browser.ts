@@ -63,6 +63,7 @@ import {
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
+import { sanitizeDeclaredText } from "@/shared/declared-tools";
 import type {
   DeclaredToolProvider,
   MintedDeclaredTool,
@@ -746,7 +747,14 @@ export function buildBrowserTools(
     // anyway.
     const disarm =
       action.kind === "webmcp_invoke" && args.signal
-        ? armWebmcpCancel(client, handle, commandId, args.tabId, args.signal)
+        ? armWebmcpCancel(
+            client,
+            handle,
+            commandId,
+            args.tabId,
+            args.signal,
+            command.source,
+          )
         : undefined;
     let response;
     try {
@@ -1445,13 +1453,23 @@ function armWebmcpCancel(
   commandId: string,
   tabId: string | undefined,
   signal: AbortSignal,
+  /**
+   * The same source the invocation carried.
+   *
+   * Every other command here derives this from the run. Hardcoding `"chat"`
+   * filed an unattended run's cancellations as interactive ones — harmless to
+   * the lease gate, which only singles out `"manual"`, but the daemon's command
+   * records are read back to explain what drove a browser, and a stop attributed
+   * to a person nobody can find is the wrong answer to that question.
+   */
+  source: BrowserCommand["source"],
 ): () => void {
   const cancel = () => {
     void client
       .sendCommand(
         {
           commandId: randomUUID(),
-          source: "chat",
+          source,
           ...(tabId ? { tabId } : {}),
           action: { kind: "webmcp_cancel", commandId },
         },
@@ -1948,5 +1966,15 @@ function pageToolNamesFrom(output: unknown): string[] {
         : undefined,
     )
     .filter((name): name is string => typeof name === "string")
+    // BOUNDED PER NAME, not only per list. These are the page's own raw names,
+    // not the sanitized model-facing ones, and 64 of them ride every
+    // observation — so without this a page decides how much of the model's
+    // context its tool list occupies. The fence already stops them posing as
+    // instructions; context is the budget nothing else on this path holds.
+    .map((name) => sanitizeDeclaredText(name, PAGE_TOOL_NAME_MAX_CHARS))
+    .filter((name) => name.length > 0)
     .slice(0, 64);
 }
+
+/** One page-chosen tool name's share of an observation. */
+const PAGE_TOOL_NAME_MAX_CHARS = 128;
