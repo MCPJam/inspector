@@ -380,7 +380,7 @@ export function SuiteIterationsView({
   runDetailSortByOverride,
   onRunDetailSortByChange,
   omitRunIterationList = false,
-  canDeleteSuite,
+  canDeleteSuite: canDeleteSuiteProp,
   canDeleteRuns = true,
   canDeleteRun,
   readOnlyConfig = false,
@@ -446,7 +446,11 @@ export function SuiteIterationsView({
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
   omitRunIterationList?: boolean;
-  /** When true, show suite delete affordances. */
+  /**
+   * Whether this caller's ROLE may delete the suite. Ownership is a separate
+   * question and is answered inside — `suite.delete` is a CI-locked action, so
+   * the affordance is withheld on a CI-owned suite whatever the role says.
+   */
   canDeleteSuite: boolean;
   /** Whether the run selection + batch delete surface is shown at all. */
   canDeleteRuns?: boolean;
@@ -622,6 +626,19 @@ export function SuiteIterationsView({
   //
   // `onDuplicateSuite` is deliberately NOT in here: duplicating is the way out
   // of the lock, and it writes a new suite rather than this one.
+  //
+  // DELETE IS THE SAME KIND OF THING, from a different vocabulary. The prop
+  // answers by ROLE (`canDeleteArtifact` over the suite's author);
+  // `suite.delete` is in the backend's CI-locked set, so on a CI-owned suite
+  // the answer is no regardless of role — an org owner holds the permission
+  // and still gets a `409`. Folded in here rather than at the three call sites
+  // for the reason the callbacks below are: the fourth is the one somebody
+  // forgets.
+  //
+  // `configLocked`, NOT `editingDisabled`: `readOnlyConfig` is about editing
+  // configuration, and the platform refuses delete for ownership, not for
+  // that.
+  const canDeleteSuite = canDeleteSuiteProp && !configLocked;
   const onCreateTestCase = configLocked ? undefined : onCreateTestCaseProp;
   const onRecordTestCase = configLocked ? undefined : onRecordTestCaseProp;
   const onGenerateTestCases = configLocked

@@ -1136,7 +1136,16 @@ function EvaluateTabContent({
             onRerun={handleRerunWithQuota}
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
-            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
+            /*
+             * Role AND ownership. `suite.delete` is CI-locked, so offering the
+             * trash on a CI-owned suite is offering a `409`. Answered from the
+             * suite ROW rather than capabilities: this is a grid, and asking
+             * the backend per card would be one query per suite for a question
+             * the row already carries in full.
+             */
+            canDeleteSuite={(suite) =>
+              canDeleteArtifact(suite.createdBy) && !isCiOwnedSuite(suite)
+            }
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}

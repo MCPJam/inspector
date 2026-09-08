@@ -471,6 +471,60 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       }),
     );
   });
+  /*
+   * `suite.delete` IS in the backend's CI-locked set, so the trash on a
+   * CI-owned suite is a button whose only outcome is a `409` — the exact
+   * failure this change exists to replace, reached by the one verb that is
+   * not spelled "edit".
+   *
+   * The prop answers by ROLE, and role is not the question: an org owner holds
+   * `suite.delete` on a CI-owned suite and still cannot use it.
+   *
+   * Note the pairing with the test above: that one passes `readOnlyConfig` and
+   * still expects `true`. The two are deliberately different — `readOnlyConfig`
+   * is about editing configuration, and the platform refuses delete for
+   * ownership, not for that. Wiring delete to `editingDisabled` would pass this
+   * test and break that one, which is why both are here.
+   */
+  it("withholds suite delete from RunOverview when CI owns the suite", () => {
+    render(
+      withDataRouter(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "runs",
+        }}
+        navigation={noopNav}
+        configLocked
+      />,)
+    );
+
+    expect(mocks.runOverview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canDeleteSuite: false,
+      })
+    );
+  });
 });
 
 describe("SuiteIterationsView cloud-sandbox gate", () => {
