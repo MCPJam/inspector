@@ -118,6 +118,22 @@ describe("the ffmpeg arguments", () => {
     expect(args.join(" ")).toContain("-profile:v baseline");
   });
 
+  it("pins x264 to one thread, exactly once", () => {
+    // `-tune zerolatency` leaves the thread count at `auto` = 1.5x the cores.
+    // On a 2 vCPU box that is three encoder threads against Chromium and the
+    // desktop, and the thing that starves is the capture loop feeding this
+    // very encoder. Once, because a second `-threads` would silently win.
+    expect(args.filter((arg) => arg === "-threads")).toHaveLength(1);
+    expect(args[args.indexOf("-threads") + 1]).toBe("1");
+    for (const tier of ["auto", "sharp", "saver"] as const) {
+      const forTier = ffmpegArgs({ display: ":0", width: 1024, height: 768, tier });
+      expect(forTier.filter((arg) => arg === "-threads")).toHaveLength(1);
+      // Ahead of the output, or ffmpeg reads it as an output option for a
+      // muxer that has no use for it.
+      expect(forTier.indexOf("-threads")).toBeLessThan(forTier.lastIndexOf("-f"));
+    }
+  });
+
   it("never passes two video filters, which would keep only the last", () => {
     const saver = ffmpegArgs({
       display: ":0",

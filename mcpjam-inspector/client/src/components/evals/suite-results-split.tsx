@@ -174,13 +174,13 @@ const runTimestamp = (r: EvalSuiteRun): number =>
   r.completedAt ?? r.createdAt ?? r._creationTime ?? 0;
 
 function toneFor(value: number): string {
-  return value >= 85 ? "bg-success" : value >= 70 ? "bg-amber-500" : "bg-destructive";
+  return value >= 85 ? "bg-success" : value >= 70 ? "bg-warning" : "bg-destructive";
 }
 function textToneFor(value: number): string {
   return value >= 85
     ? "text-success"
     : value >= 70
-      ? "text-amber-600 dark:text-amber-400"
+      ? "text-warning"
       : "text-destructive";
 }
 

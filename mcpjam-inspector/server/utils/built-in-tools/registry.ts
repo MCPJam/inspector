@@ -71,7 +71,6 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
-import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 import type {
   DeclaredToolProvider,
   MintedDeclaredTool,
@@ -235,21 +234,18 @@ export interface BuiltInToolContext {
    */
   mcpjamPlatformClient?: PlatformApiClient;
   /**
-   * How approval reaches the user for `browser_*` tools this turn. ABSENT ⇒
+   * Whether a person is watching this turn, for `browser_*` tools. ABSENT ⇒
    * the browser capability is NOT advertised, whatever the host config says
-   * (see `built-in-tools/browser.ts`): approval on the hosted engines is
-   * classified by name, and a surface that threads nothing would let a model
-   * drive a real browser ungated. Interactive surfaces pass `attested` and
-   * thread the returned classification; unattended runs pass their declared
-   * policy.
+   * (see `built-in-tools/browser.ts`).
+   *
+   * Nothing is threaded back: each tool carries its own build-time
+   * `needsApproval`, and every engine reads that. What this answers is the
+   * question the builder cannot answer for itself — an interactive surface
+   * passes `attested` and gets a persistent, signed-in browser whose every
+   * verb asks first; an unattended run passes its declared policy and gets an
+   * ephemeral one, keyed per run, with only the tools that policy permits.
    */
   browserApprovalDelivery?: BrowserApprovalDelivery;
-  /**
-   * Receives the approval classification for the browser tools that were
-   * built, so the caller can merge it into the engine's single
-   * `uiToolApprovals` slot. Absent on surfaces that do not advertise them.
-   */
-  onBrowserApprovals?: (approvals: UiToolApprovalClassification) => void;
   /**
    * The page tools this turn STARTS with, read before the turn began by
    * `peekPageTools`.
@@ -291,7 +287,7 @@ export interface BuiltInToolContext {
    * The route hands it to the engine's `refreshTools` hook. It exists here
    * rather than being returned because the browser is one built-in among
    * several and this resolver's return value is a plain `ToolSet` — the same
-   * reason `onBrowserApprovals` is a callback.
+   * reason `onBrowserPageTools` is a callback.
    */
   onBrowserToolsRefresh?: (refresh: {
     refreshPageTools: NonNullable<BrowserToolsResult["refreshPageTools"]>;
@@ -803,7 +799,6 @@ export function resolveHostTools(
       });
       if (browser) {
         Object.assign(out, browser.tools);
-        ctx.onBrowserApprovals?.(browser.approvals);
         if (browser.pageTools || browser.pageToolNotices) {
           ctx.onBrowserPageTools?.({
             minted: browser.pageTools ?? [],

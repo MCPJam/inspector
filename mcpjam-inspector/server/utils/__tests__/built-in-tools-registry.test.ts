@@ -600,19 +600,18 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("hands the caller the approval classification to merge", () => {
+  it("hands back tools that carry their own approval declaration", () => {
+    // Nothing is threaded back any more. The registry's whole job here is to
+    // pass the built tools through unchanged, declarations included — a
+    // caller that forgets a step cannot un-gate a browser tool.
     withFlag("1", () => {
-      let approvals: { requiredNames: ReadonlySet<string> } | undefined;
-      resolveHostTools(
+      const tools = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
-        {
-          ...browserCtx,
-          onBrowserApprovals: (value) => {
-            approvals = value;
-          },
-        },
+        browserCtx,
       );
-      expect(approvals?.requiredNames.has("browser_act")).toBe(true);
+      expect(
+        (tools?.browser_act as { needsApproval?: unknown })?.needsApproval,
+      ).toBe(true);
     });
   });
 

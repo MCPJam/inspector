@@ -128,6 +128,14 @@ export function fakePage(init: {
   onWebmcp?: () => void;
   /** Make a targeted act fail, as a missing element would. */
   actError?: Error;
+  /**
+   * Make ONE act entry fail, by the `verb:detail` string the log records.
+   *
+   * `actError` fails every act, which cannot model the case `fill_form` exists
+   * to survive: a form whose third field is a `<select>`, where the fill is
+   * refused and the driver must fall back rather than give up on the form.
+   */
+  actErrorFor?: (entry: string) => Error | undefined;
 
   /** What `observe {mode:"text"}` reads off this page. */
   text?: string;
@@ -179,6 +187,8 @@ export function fakePage(init: {
   const act = (entry: string) => {
     calls.acts.push(entry);
     page.onAct?.();
+    const targeted = init.actErrorFor?.(entry);
+    if (targeted) throw targeted;
     if (init.actError) throw init.actError;
   };
   const page: FakePage = {

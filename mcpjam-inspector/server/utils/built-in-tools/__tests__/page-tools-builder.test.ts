@@ -4,10 +4,10 @@
  *
  * The three things this suite exists to stop regressing:
  *
- *   1. AN UNCLASSIFIED `webmcp_*` NAME RUNS UNGATED. Approval on the hosted
- *      engines is keyed by name, and a miss falls through to
- *      `requireToolApproval` (off by default). `mcpjam-stream-handler.test.ts`
- *      pins that behaviour; this pins that the builder never produces one.
+ *   1. A `webmcp_*` TOOL WITHOUT `needsApproval` RUNS UNGATED. Every engine
+ *      reads the gate off the tool object, and an absent declaration is free.
+ *      `mcpjam-stream-handler.test.ts` pins that behaviour; this pins that the
+ *      builder never produces one.
  *   2. ARGUMENTS ARE CHECKED HERE OR NOWHERE. Chrome does not validate an
  *      invocation against the registered schema, and the hosted chat path has
  *      no SDK-side validation.
@@ -122,14 +122,18 @@ describe("buildWebmcpPageTools — advertisement", () => {
         }),
       ],
     });
-    expect([...built.approvals.requiredNames].sort()).toEqual([
+    expect(Object.keys(built.tools).sort()).toEqual([
       "webmcp_add_topping",
       "webmcp_read_cart",
     ]);
-    expect(built.approvals.freeNames.size).toBe(0);
-    // Nothing advertised may be missing from the classification.
-    for (const name of Object.keys(built.tools)) {
-      expect(built.approvals.requiredNames.has(name)).toBe(true);
+    // The gate rides ON the tool: every engine reads `needsApproval` off the
+    // object and an absent declaration is FREE, so every advertised tool must
+    // carry one — and the page's own annotation never relaxes it.
+    for (const [name, definition] of Object.entries(built.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(true);
     }
   });
 });

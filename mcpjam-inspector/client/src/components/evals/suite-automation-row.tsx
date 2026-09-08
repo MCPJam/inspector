@@ -89,7 +89,7 @@ export function stateChip(schedule: SuiteSchedule | undefined): {
     // The state's own sentence, from the editor's map — one copy, so the chip
     // and the resume banner below cannot tell a reader two different stories.
     detail: PAUSE_COPY[schedule.state],
-    tone: "text-amber-700 dark:text-amber-400",
+    tone: "text-warning",
   };
 }
 
@@ -197,7 +197,7 @@ export function SuiteAutomationRow({
             ) : null}
           </div>
           {chip.detail ? (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            <p className="text-[11px] text-warning">
               {chip.detail}
             </p>
           ) : null}

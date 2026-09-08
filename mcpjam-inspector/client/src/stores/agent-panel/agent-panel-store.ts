@@ -3,8 +3,8 @@
  *
  * Persists `isOpen`, `width`, `activeSessionId`, and `activeSessionProjectId`
  * to localStorage so the panel survives page reloads and stays open across
- * navigation. A `storage` listener mirrors changes from other tabs so opening
- * the agent in one tab is reflected in others (matches `recent-sessions.ts`).
+ * navigation. General chat mirrors changes from other tabs. Eval conversations
+ * keep their open state and session local to each tab's suite/case workspace.
  *
  * The active session id is a uuid minted client-side and also persisted
  * server-side via the existing chat-history flow — this store only owns the
@@ -176,6 +176,12 @@ if (isWindowAvailable()) {
     if (event.key !== AGENT_PANEL_STORAGE_KEY) return;
     const next = loadPersisted();
     const current = useAgentPanelStore.getState();
+    // Eval conversations belong to this tab's suite/case. A background tab
+    // closing its panel must not close the Generate sidebar in this one.
+    if (current.activeSessionId?.startsWith("eval-") || next.activeSessionId?.startsWith("eval-")) {
+      if (current.width !== next.width) useAgentPanelStore.setState({ width: next.width });
+      return;
+    }
     if (
       current.isOpen === next.isOpen &&
       current.width === next.width &&

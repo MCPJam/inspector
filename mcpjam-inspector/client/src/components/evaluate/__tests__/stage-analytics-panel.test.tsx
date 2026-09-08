@@ -156,7 +156,7 @@ describe("stage findings — the evidence behind a stage's failures", () => {
         walkExhausted: false,
         status: "error",
         error: {
-          title: "Couldn't load the trial evidence",
+          title: "Couldn't load the iteration evidence",
           detail: "The read did not complete.",
         },
         runTerminal: true,

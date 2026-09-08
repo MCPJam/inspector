@@ -18,6 +18,7 @@ import {
 } from "../swarm-agent.js";
 import { runSwarmChecks } from "../checks/run-swarm-checks.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
+import { collectHostedRecordingBeforeRelease } from "../browserd/hosted-recording.js";
 import {
   canProvisionSwarmSandboxes,
   provisionAttemptSandbox,
@@ -37,6 +38,7 @@ import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import {
   humanizeSwarmAttemptErrorMessage,
+  isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -80,6 +82,37 @@ import type {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+
+/**
+ * Deadline on the attempt-terminal artifact flush that carries a hosted
+ * recording. Matches the session core's own terminal flush budget.
+ *
+ * `ConvexHttpClient.mutation` has no timeout of its own, and this one sits
+ * inside the `finally` that must reach `releaseAttemptSandbox`: a hung attach
+ * would hold a paid box open for as long as it hangs. Whatever does not land
+ * stays unattached — the screenshots are still the record.
+ */
+const ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve `work`, or give up at the deadline. The abandoned promise keeps
+ * running (nothing here can cancel a Convex mutation) — it just stops holding
+ * the release. Rejections are swallowed for the same reason: this is a
+ * terminal path observing an outcome, never deciding one.
+ */
+async function withArtifactFlushDeadline(work: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 /** Bounded target-worker pool: at most this many execution targets run
  * concurrently. A target is one `snapshot.hosts[]` entry — a legacy host OR a
  * project environment (two environments may share a host and still count as
@@ -296,15 +329,6 @@ function terminalForOutcome(
   };
 }
 
-/** Backend denial codes whose limit belongs to the ACCOUNT, not to one host's
- * provider key. Kept separate from `USER_OWNED_DENIAL_CODES` in
- * `server/utils/mcpjam-stream-handler.ts` — that list answers who is at fault,
- * this one whether another host could escape the limit, and they already
- * disagree on `mcpjam_rate_limit`. A parity test pins the overlap so a code
- * added there is not silently missed here. Exported for that test. */
-export const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included)\b/i;
-
 /**
  * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
  * shared core's `rate_limited` bucket and the `failed` attempts whose message
@@ -313,23 +337,23 @@ export const ACCOUNT_LIMIT_CODE =
  * host's own key is a per-HOST stop. A missing message defaults to the narrower
  * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * The backend's denial code decides it. `runner.ts` concatenates that code into
- * the message ("<sentence> (<code>, HTTP <status>)"), and it is the only
- * reliable signal: no MCPJam limit sentence — "Daily credit limit reached.",
- * "Daily MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ * The backend's denial code decides it, via the shared {@link isAccountLimit}
+ * the run screen also renders from. `runner.ts` concatenates that code into the
+ * message ("<sentence> (<code>, HTTP <status>)"), and it is the only reliable
+ * signal: no MCPJam limit sentence — "Daily credit limit reached.", "Daily
+ * MCPJam model limit reached." — contains spend/cap/quota/budget wording.
  *
  * The prose check is kept as a second signal for a backend that words a cap
  * without a code. `cap`/`quota`/`budget`/`spend` stay word-anchored so
- * "capacity" /
- * "recap" / "escape" — and "su`spend`ed", which is an account SUSPENSION and
- * not a cap — remain a per-host provider rate-limit. `spend_budget_reached`
- * still escalates: ACCOUNT_LIMIT_CODE matches it on the line above.
+ * "capacity" / "recap" / "escape" — and "su`spend`ed", which is an account
+ * SUSPENSION and not a cap — remain a per-host provider rate-limit.
+ * `spend_budget_reached` still escalates: `isAccountLimit` matches its code.
  */
 export function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
   if (!message) return "provider_rate_limit";
-  if (ACCOUNT_LIMIT_CODE.test(message)) return "org_spend_cap";
+  if (isAccountLimit(message)) return "org_spend_cap";
   if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
@@ -1305,7 +1329,7 @@ async function runJourneyFanOut(
           const accountLimitFailure =
             outcome === "failed" &&
             !abortedBySpendCap &&
-            ACCOUNT_LIMIT_CODE.test(errorMessage ?? "");
+            isAccountLimit(errorMessage, errorReason);
           if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage);
             if (cause === "org_spend_cap") {
@@ -1349,6 +1373,58 @@ async function runJourneyFanOut(
           // abort. A leaked box costs money until the GC cron reaps it, so
           // this must not be conditional on how the session ended.
           if (attemptSandbox) {
+            // The recording FIRST: it lives on that box, and after the release
+            // there is nothing left to read. Bounded and total — a daemon that
+            // has gone away, a read that hangs, an SDK that throws all answer
+            // `null` inside the deadline. A no-op (and no network at all) for
+            // an attempt that never touched a browser.
+            //
+            // WRAPPED ANYWAY. Both the collector and the outbox promise never
+            // to throw, and the release must not DEPEND on either promise: a
+            // box that outlives its attempt costs money until the GC cron
+            // reaps it, and no video is ever worth that.
+            try {
+              const recording = await collectHostedRecordingBeforeRelease(
+                attemptSandbox.sandboxRowId,
+              );
+              if (recording) {
+                // Through the SAME outbox the local harness's replay uses:
+                // `stageVideo` uploads and holds the blob id, and the flush
+                // below attaches it — riding an artifact write if one is left,
+                // or going as a video-only write if not.
+                //
+                // PRECEDENCE, and it is the same one evals state explicitly:
+                // the local harness wins. `stageVideo` is first-write-wins and
+                // the session core has already staged its `.webm` by the time
+                // this `finally` runs, so an attempt that produced both keeps
+                // the local recording and this call no-ops. That ordering is
+                // load-bearing rather than incidental — `videoBlobId` is
+                // first-write-wins on the backend too, so two videos racing
+                // would otherwise be decided by network timing.
+                await browserArtifacts.stageVideo(recording.bytes, {
+                  mime: recording.mime,
+                  meta: {
+                    source: "hosted",
+                    fps: recording.fps,
+                    durationMs: recording.durationMs,
+                    distinctFrames: recording.distinctFrames,
+                    truncated: recording.truncated,
+                  },
+                });
+                // BOUNDED, like the session core's own terminal flush.
+                // `ConvexHttpClient.mutation` carries no timeout, and this sits
+                // in the `finally` that must reach `releaseAttemptSandbox` — a
+                // hung attach would hold a paid box open indefinitely, which is
+                // exactly the cost the release exists to avoid.
+                await withArtifactFlushDeadline(browserArtifacts.flush());
+              }
+            } catch (err) {
+              logger.warn("[swarm.runner] hosted recording not collected", {
+                runId,
+                sandboxRowId: attemptSandbox.sandboxRowId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
             await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
           }
         }

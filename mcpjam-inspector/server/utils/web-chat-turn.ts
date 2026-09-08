@@ -92,12 +92,6 @@ import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-help
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
-import {
-  classifyPageToolApprovals,
-  classifyUiToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import {
@@ -393,15 +387,6 @@ export interface WebChatTurnPrepareInputs {
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   /**
-   * Approval classification for the `browser_*` tools this turn advertises,
-   * produced by `resolveHostTools`. Merged with the `ui_*` classification
-   * below: the engines have ONE `uiToolApprovals` slot, and whichever
-   * namespace filled it alone left the other falling through to the
-   * `requireToolApproval` default (off by default) — which strands a turn
-   * whose gated call never gets its approval request.
-   */
-  browserToolApprovals?: UiToolApprovalClassification;
-  /**
    * Re-read the page's tools between model steps, when this turn built page
    * tools on an engine that can grow its set.
    *
@@ -638,36 +623,6 @@ export function stripUiContextModelParts(
 }
 
 /**
- * Per-tool approval policy for this turn's `ui_*` tools, from the VALIDATED
- * snapshot's MCP annotations — never from the raw name, which a third-party
- * server could spoof. Must be fed prepareChatV2's `effectiveUiTools` (the
- * post-collision set), not the raw snapshot: a server-executed `ui_*` tool
- * that won its name collision follows ordinary approval semantics. Consumed
- * by the MCPJam loop's approval gate (see `toolCallNeedsApproval` in
- * mcpjam-stream-handler); the BYOK `streamText` path gets the same policy
- * baked into each tool's `needsApproval` by `buildUiTools`.
- */
-function uiToolApprovalsFrom(
-  uiTools: UiToolEntry[] | undefined,
-  requireToolApproval: boolean | undefined,
-  browserToolApprovals?: UiToolApprovalClassification,
-  pageTools?: PageToolEntry[],
-): UiToolApprovalClassification {
-  // Page tools ALWAYS gate, and the hosted engines classify approval by NAME
-  // rather than reading a tool's own `needsApproval` — so a page tool that is
-  // not named here reaches them approval-less, the client defers the call, and
-  // the turn waits forever on a pill the server never sends. Same reasoning,
-  // and the same single `uiToolApprovals` slot, as `browserToolApprovals`.
-  return mergeUiToolApprovalClassifications(
-    mergeUiToolApprovalClassifications(
-      classifyUiToolApprovals(uiTools, requireToolApproval === true),
-      browserToolApprovals,
-    ),
-    classifyPageToolApprovals((pageTools ?? []).map((entry) => entry.alias)),
-  );
-}
-
-/**
  * Run a single web-chat streaming turn.
  *
  * Returns the streaming Response. Throws WebRouteError / runtime errors;
@@ -773,7 +728,6 @@ export async function streamWebChatTurn(
     scrubMessages,
     progressivePlan,
     discoveryState,
-    effectiveUiTools,
     reservedAgainstPageTools,
   } = prepared;
 
@@ -1335,12 +1289,6 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
-      uiToolApprovals: uiToolApprovalsFrom(
-        effectiveUiTools,
-        persist.requireToolApproval,
-        prepare.browserToolApprovals,
-        prepare.pageTools,
-      ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       // The hosted loop is the ONE engine that can grow its tool set between
       // steps, so it is the one that gets this.
@@ -1428,12 +1376,6 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
-    uiToolApprovals: uiToolApprovalsFrom(
-      effectiveUiTools,
-      persist.requireToolApproval,
-      prepare.browserToolApprovals,
-      prepare.pageTools,
-    ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(refreshTools ? { refreshTools } : {}),
     // Harness engine only: it builds its own MCP tool set (host-executed

@@ -61,6 +61,7 @@ import {
   uiToolCallNeedsApproval,
   type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import {
   WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
   WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES,
@@ -851,6 +852,9 @@ function toNoExecuteAiSdkTool(args: {
       },
     ),
     ...(args.needsApproval ? { needsApproval: true } : {}),
+    // A `false` floor is spelled by ABSENCE, deliberately: the AI SDK treats a
+    // missing `needsApproval` and `false` identically, and every no-execute
+    // turn built before floors existed must stay byte-identical.
     // No execute — client fulfills via onToolCall.
   });
 }
@@ -872,6 +876,10 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
     out[t.alias] = toNoExecuteAiSdkTool({
       description: `[${t.appName}] ${t.description ?? t.rawName}`,
       inputSchema: t.inputSchema,
+      // Floor: never — stated rather than left to silence. The rule this
+      // encodes is the docstring's: server-tool approval stays scoped to
+      // server tools, and an app tool is the iframe's.
+      needsApproval: needsApprovalFor("never", false),
     });
   }
   return out;
@@ -900,6 +908,9 @@ export function buildUiTools(
     out[t.name] = toNoExecuteAiSdkTool({
       description: t.description,
       inputSchema: t.inputSchema,
+      // Floor read off the entry's own annotations; the switch then raises
+      // the `setting` rows. Same function the CLIENT's defer gate calls, which
+      // is what keeps the two sides of the handshake from stranding a turn.
       needsApproval: uiToolCallNeedsApproval({
         readOnly: t.readOnly,
         annotations: t.annotations,
@@ -1055,6 +1066,7 @@ export function buildPageTools(
         entry.description ?? entry.rawName
       }`,
       inputSchema: entry.inputSchema,
+      // Floor: always.
       needsApproval: pageToolCallNeedsApproval(),
     });
   }
@@ -1122,24 +1134,79 @@ export function buildUiToolsSystemPrompt(
 }
 
 /**
- * The approval sentence, told honestly for the snapshot that was actually
- * sent. The destructive-pauses promise only holds when EVERY entry is
- * annotation-aware — a legacy client sends bare `readOnly`, whose predicate
- * with the flag off is `requireToolApproval && !readOnly`, i.e. nothing
- * pauses. Promising a destructive gate there advertises a safety net that
- * isn't there.
+ * The approval sentence for the turn.
+ *
+ * States the FLOOR RULE once, for every family, rather than only for `ui_*`.
+ * The model is choosing between a browser tool, a shell and a UI action in the
+ * same breath; a sentence about one namespace leaves it guessing about the
+ * others — including the ones that pause whatever the settings say, which are
+ * exactly the ones worth knowing about before it commits to a plan.
+ *
+ * Told honestly for the snapshot that was actually sent. The destructive-`ui_*`
+ * half of the promise only holds when EVERY entry is annotation-aware: a legacy
+ * client sends bare `readOnly`, whose floor with the switch off is `setting`,
+ * i.e. nothing pauses. The families above it do not depend on the snapshot and
+ * are stated either way.
  */
 function approvalGuidance(
   uiTools: UiToolEntry[],
   requireToolApproval: boolean,
 ): string {
-  if (requireToolApproval) {
-    return "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call.";
-  }
   const annotationAware = uiTools.every((t) => t.annotations !== undefined);
-  return annotationAware
-    ? "Destructive `ui_*` actions pause for the user's explicit approval before they run; other actions apply immediately. A denial is final — explain what you wanted to do instead of retrying the call."
-    : "Every `ui_*` action applies immediately, so be deliberate about mutating ones — describe what you're about to do when it isn't obviously what the user asked for.";
+  // Only families that pause on EVERY path belong here. Loading a skill an
+  // MCP server provided does not: the live SEP-2640 wrapper delegates to the
+  // base skill tool (`hostWantsApproval`), so with the switch off it can load
+  // without a prompt — what it always does is TAG the origin and bind the
+  // digest, which is not a pause. Promising one here would advertise a gate
+  // the turn may not have.
+  const alwaysPause = [
+    "anything driving a browser or a third-party web page",
+    "anything running on the user's own machine",
+    ...(annotationAware ? ["destructive `ui_*` actions"] : []),
+  ];
+  const always =
+    "Some actions always pause for the user's explicit approval before they " +
+    `run, whatever the settings say: ${alwaysPause
+      .slice(0, -1)
+      .join(", ")}, and ${alwaysPause[alwaysPause.length - 1]}.`;
+  const rest = requireToolApproval
+    ? "Tool approval is ON for this conversation, so most other tool calls pause too. Web search, read-only lookups of the user's own project, the discovery meta-tools and read-only `ui_*` actions still run without asking — they are not covered by the switch in either direction."
+    : "Everything else applies immediately, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for.";
+  return `${always} ${rest} A denial is final — explain what you wanted to do instead of retrying the call.`;
+}
+
+/**
+ * The turn's approval declaration for its SKILL tools.
+ *
+ * Pinned skill tools NEVER require approval — pure reads of frozen content
+ * under an auto-deny eval run, where a prompt is a hang rather than a
+ * question. Every other skill tool follows the host's switch.
+ *
+ * Extracted from `prepareChatV2` as the one addressable declaration site for
+ * this family, so the approval matrix can drive it the way the engines see it.
+ *
+ * Raises only: a tool that already declared its own approval keeps it when the
+ * switch is off, which is what leaves a function-form declaration (the
+ * server-origin skill refs in `effective-skill-tools.ts`) intact.
+ */
+export function applySkillToolApproval(
+  skillTools: Record<string, unknown>,
+  opts: { pinned: boolean; requireToolApproval: boolean },
+): Record<string, unknown> {
+  const raised = needsApprovalFor(
+    opts.pinned ? "never" : "setting",
+    opts.requireToolApproval,
+  );
+  if (!raised) return skillTools;
+  return Object.fromEntries(
+    Object.entries(skillTools).map(([name, tool]) => [
+      name,
+      {
+        ...(tool && typeof tool === "object" ? tool : {}),
+        needsApproval: true,
+      },
+    ]),
+  );
 }
 
 export interface PrepareChatV2Result {
@@ -1216,7 +1283,9 @@ export async function prepareChatV2(
   // `undefined` for every default turn, which is what keeps those turns on the
   // pre-existing no-options overload. See `mcpToolOptionsFor`.
   const toolOptions = mcpToolOptionsFor({
-    needsApproval: requireToolApproval,
+    // Floor: setting. A third party's tool is the ordinary case the switch was
+    // built for — the host says whether this turn pauses before them.
+    needsApproval: needsApprovalFor("setting", requireToolApproval === true),
     includeAppOnly: respectToolVisibility === false,
     modelVisibleMcpToolResults,
     tasks,
@@ -1366,20 +1435,13 @@ export async function prepareChatV2(
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
-  // Pinned skill tools NEVER require approval (pure reads of frozen content; the
-  // eval run is auto-deny). Otherwise the normal approval wrap applies.
-  const approvalWrappedSkillTools: Record<string, unknown> =
-    requireToolApproval && !skillsArePinned
-      ? Object.fromEntries(
-          Object.entries(skillTools).map(([name, tool]) => [
-            name,
-            {
-              ...(tool && typeof tool === "object" ? tool : {}),
-              needsApproval: true,
-            },
-          ]),
-        )
-      : (skillTools as Record<string, unknown>);
+  const approvalWrappedSkillTools = applySkillToolApproval(
+    skillTools as Record<string, unknown>,
+    {
+      pinned: skillsArePinned,
+      requireToolApproval: requireToolApproval === true,
+    },
+  );
 
   // Skills over MCP (SEP-2640), LIVE path. A COMPOSING wrapper, not a fifth
   // arm of the chain above: the chain is an exclusive choice, but a turn can
@@ -1392,8 +1454,11 @@ export async function prepareChatV2(
   //
   // Returns its input UNCHANGED when no selected server declares the
   // extension, which is what keeps every pre-existing turn byte-identical.
-  // The wrapper applies its own always-on approval to server-origin loads —
-  // see `server-skill-tools.ts` — regardless of `requireToolApproval`.
+  // What the wrapper adds unconditionally to a server-origin load is ORIGIN
+  // TAGGING and the manifest digest binding — not a prompt. Its approval
+  // declaration delegates to the base skill tool (`hostWantsApproval` in
+  // `server-skill-tools.ts`), so whether the user is asked follows the switch
+  // like any other tool on the turn.
   // A LIVE turn composes server skills whether or not it also carries an
   // explicit source; a captured or frozen one never does. `skillsSource ===
   // undefined` is the legacy live shape (no caller passes it once every surface
@@ -1793,7 +1858,7 @@ export async function prepareChatV2(
 export function guardPageToolRefresh<
   T extends {
     add?: ToolSet;
-    retire?: string[];
+    retire?: readonly string[];
     tombstones?: ToolSet;
   },
 >(refresh: T, reserved: ReadonlySet<string>): T {

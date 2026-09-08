@@ -28,14 +28,15 @@
  *
  * TWO THINGS ARE STRUCTURAL:
  *
- *   1. EVERY PAGE TOOL IS CLASSIFIED. Approval on the hosted engines is keyed
- *      by NAME from `uiToolApprovals`, and a name that appears in neither set
- *      falls through to `requireToolApproval` — off by default. An
- *      unclassified `webmcp_*` name would therefore run third-party code on a
- *      signed-in browser with no pill at all. The classification is returned
- *      from this builder rather than derived somewhere else so it cannot be
- *      forgotten, and `mcpjam-stream-handler.test.ts` pins the ungated
- *      behaviour that makes it mandatory.
+ *   1. EVERY PAGE TOOL DECLARES `needsApproval`. Every engine reads approval
+ *      off the tool object itself (`shared/tool-approval.ts`), and an absent
+ *      declaration is FREE — so a `webmcp_*` tool built without one would run
+ *      third-party code on a signed-in browser with no pill at all. The value
+ *      is the browser capability's interactive floor for this turn: `always`
+ *      wherever a person can be asked, and the declared policy where nobody
+ *      can (an unattended run, gated at execute time by the tool policy).
+ *      `mcpjam-stream-handler.test.ts` pins the ungated behaviour that makes
+ *      the declaration mandatory.
  *
  *   2. PAGE ANNOTATIONS ARE NEVER READ. A page's `readOnly` is a claim by the
  *      party whose code would run, and Chromium does not carry annotations
@@ -44,11 +45,7 @@
  *      See `pageToolCallNeedsApproval`.
  */
 import { jsonSchema, tool, type ToolSet } from "ai";
-import {
-  pageToolCallNeedsApproval,
-  type BrowserUnattendedPolicy,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
+import { type BrowserUnattendedPolicy } from "@/shared/client-fulfilled-tools";
 import {
   WEBMCP_MAX_PAGE_TOOLS,
   WEBMCP_TOOL_NAME_PREFIX,
@@ -109,8 +106,6 @@ export interface BuildWebmcpPageToolsOptions {
 
 export interface WebmcpPageToolsResult {
   tools: ToolSet;
-  /** For the caller to merge into the engine's single `uiToolApprovals` slot. */
-  approvals: UiToolApprovalClassification;
   /** What was actually advertised, in advertised order. */
   minted: MintedDeclaredTool[];
   /** Model name → the tool it came from, for attribution and the pane. */
@@ -156,7 +151,6 @@ export function buildWebmcpPageTools(
 ): WebmcpPageToolsResult {
   const empty: WebmcpPageToolsResult = {
     tools: {},
-    approvals: { requiredNames: new Set(), freeNames: new Set() },
     minted: [],
     index: new Map(),
   };
@@ -191,7 +185,6 @@ export function buildWebmcpPageTools(
 
   const tools: ToolSet = {};
   const index = new Map<string, MintedDeclaredTool>();
-  const requiredNames = new Set<string>();
   const cap = options.maxTools ?? WEBMCP_MAX_PAGE_TOOLS;
   const advertised: MintedDeclaredTool[] = [];
 
@@ -272,16 +265,13 @@ export function buildWebmcpPageTools(
     const decorated: MintedDeclaredTool = { ...pageTool, diagnostics };
     advertised.push(decorated);
     index.set(pageTool.name, decorated);
-    // EVERY page tool gates. Not `needsApproval && something`: there is
-    // nothing trustworthy to relax on, and this classification is what the
-    // hosted engines read.
-    if (pageToolCallNeedsApproval()) requiredNames.add(pageTool.name);
+    // The gate rides ON the tool (`buildOne` sets `needsApproval`), which is
+    // the one channel every engine reads.
     tools[pageTool.name] = buildOne(decorated, options);
   }
 
   return {
     tools,
-    approvals: { requiredNames, freeNames: new Set<string>() },
     minted: advertised,
     index,
   };
