@@ -356,9 +356,17 @@ describe("GithubChecksRoute availability gate", () => {
     mockRepos.value = [ROW];
     renderRoute();
 
-    expect(screen.getByText("Checks")).toBeInTheDocument();
-    expect(screen.getByText("Conformance")).toBeInTheDocument();
-    expect(screen.getByText("Comments")).toBeInTheDocument();
+    // `toBeVisible`, not `toBeInTheDocument`: the claim is that a sighted user
+    // can READ these. `aria-hidden` does not affect it — that hides them from
+    // the accessibility tree, not from the screen.
+    //
+    // Its reach is narrower than it looks, though, and worth knowing before
+    // trusting it: jsdom loads no stylesheet, so a caption hidden by a utility
+    // class still passes here. It catches an inline `display: none` or the
+    // `hidden` attribute, and nothing a class could do. Verified both ways.
+    expect(screen.getByText("Checks")).toBeVisible();
+    expect(screen.getByText("Conformance")).toBeVisible();
+    expect(screen.getByText("Comments")).toBeVisible();
   });
 
   it("keeps each caption inside its switch's accessible name", () => {
