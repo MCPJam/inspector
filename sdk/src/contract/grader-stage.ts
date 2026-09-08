@@ -23,7 +23,7 @@
  */
 
 import type { UserValueStage } from "./chain.js";
-import { predicateSchema } from "../predicates/types.js";
+import { predicateUnion } from "../predicates/types.js";
 
 /**
  * Every predicate kind the authoring schema admits, derived from the schema
@@ -33,24 +33,30 @@ import { predicateSchema } from "../predicates/types.js";
  * silently misses the next predicate someone adds — and a predicate absent
  * from this map is a grader a settings page cannot place, which renders as a
  * stage that looks unmeasured when it is not.
+ *
+ * Reads `.options` from the underlying discriminated union, not from
+ * `predicateSchema` — that wrapper is a refinement (`severity` requires
+ * `role: "advisory"`) and has no `.options`.
  */
-export const PREDICATE_KINDS = predicateSchema.options.map(
+export const PREDICATE_KINDS = predicateUnion.options.map(
   (option: { shape: { type: { value: string } } }) => option.shape.type.value
 ) as readonly PredicateKind[];
 
 export type PredicateKind =
-  (typeof predicateSchema)["options"][number]["shape"]["type"]["value"];
+  (typeof predicateUnion)["options"][number]["shape"]["type"]["value"];
 
 /**
  * Where each predicate kind's evidence is filed.
  *
- * `toolCalledWith` maps to `selection` and is the one entry that is not a
- * predicate row at runtime: `stepsToPromptTurns` promotes it into
- * `expectedToolCalls`, where the selection MATCHER grades it. It belongs in
- * this map anyway, because an author who wrote it is measuring selection and a
- * settings page must say so — but nothing should read this entry as licence to
- * re-read its raw predicate row, which would let a point-in-time residual
- * contradict the adjudicated matcher verdict.
+ * `toolCalledWith` maps to `selection`. A **gating** `toolCalledWith` is
+ * promoted into `expectedToolCalls` (`stepsToPromptTurns` / corpus
+ * materialization), where the selection MATCHER grades it. An **advisory**
+ * `toolCalledWith` stays a predicate row — promoting it would mint a matcher
+ * expectation that can fail the trial, which Warn/Report must never do. It
+ * belongs in this map anyway, because an author who wrote it is measuring
+ * selection and a settings page must say so — but nothing should read this
+ * entry as licence to re-read a gating residual, which would let a
+ * point-in-time row contradict the adjudicated matcher verdict.
  *
  * FUTURE ANALYZER-BUMP CANDIDATES, named so nobody "fixes" them here alone:
  * `noToolErrors` is arguably `call` or `response` evidence, and the three
@@ -85,6 +91,11 @@ export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
 export const GRADER_STAGE = {
   "toolCalls:match": "selection",
   "judge:goalCompletion": "userValue",
+  /**
+   * Presentation routing only. Groundedness has no score definition until
+   * R2-P2b and cannot author a second chain.
+   */
+  "judge:groundedness": "userValue",
 } as const satisfies Record<string, UserValueStage>;
 
 /**

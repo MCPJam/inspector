@@ -49,6 +49,7 @@ import {
   getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
@@ -271,6 +272,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // stopped; these say how much of the run was measured at all — and until
   // now nothing outside the web app could ask.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,

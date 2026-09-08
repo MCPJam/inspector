@@ -225,6 +225,8 @@ export function IterationDetails({
   judgeCase = null,
   enableJudgeReview = false,
   trialChainSlot,
+  syncedStepId,
+  onSyncStep,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -257,7 +259,24 @@ export function IterationDetails({
    * fetch four of its callers never asked for.
    */
   trialChainSlot?: ReactNode;
+  /**
+   * Step cursor shared with a host that lists the authored steps beside this
+   * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
+   * view untouched; absent for the other hosts.
+   */
+  syncedStepId?: string | null;
+  onSyncStep?: (stepId: string | null) => void;
 }) {
+  // The Scores list prints the same judge number the review panel hides.
+  // Own the flag here so hiding starts on first paint (before the panel's
+  // read lands) and so a trial switch cannot leave the previous trial's
+  // reveal open on this one.
+  const reviewActive = Boolean(enableJudgeReview && iteration.suiteRunId);
+  const [judgeHidden, setJudgeHidden] = useState(reviewActive);
+  useEffect(() => {
+    setJudgeHidden(reviewActive);
+  }, [iteration._id, reviewActive]);
+
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
   ) as unknown as (args: { iterationId: string }) => Promise<any>;
@@ -913,6 +932,7 @@ export function IterationDetails({
           scores={scores ?? []}
           evaluationConfig={parseEvaluationConfig(iteration.metadata)}
           integrity={integrity}
+          hideJudgeRows={reviewActive && judgeHidden}
         />
       </div>
     );
@@ -1022,6 +1042,8 @@ export function IterationDetails({
               stepStatusById={
                 stepStatusById.size > 0 ? stepStatusById : undefined
               }
+              syncedStepId={syncedStepId}
+              onSyncStep={onSyncStep}
               iterationResult={iteration.result}
               expectedToolCalls={expectedToolCalls}
               actualToolCalls={actualToolCalls}
@@ -1067,6 +1089,7 @@ export function IterationDetails({
               key={iteration._id}
               iterationId={iteration._id}
               judgeCase={judgeCase}
+              onVisibilityChange={setJudgeHidden}
             />
           ) : (
             <JudgeVerdictPanel judgeCase={judgeCase} />

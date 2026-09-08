@@ -91,7 +91,7 @@ const SNAPSHOT_KEY_TO_MANIFEST_KEY: Record<string, EvalSuiteSettingKey> = {
  */
 const UNLISTED_FIELD_LABELS: Record<string, string> = {
   description: "Description",
-  verdictPolicyDefaults: "Policy defaults",
+  verdictPolicyDefaults: "Quality gate defaults",
   verdictPolicyRolloutMode: "Policy rollout",
   gradingEngine: "Grading engine",
   environmentFingerprints: "Environment fingerprints",
@@ -108,7 +108,7 @@ export function fieldLabel(key: string): string {
   return MANIFEST_LABELS[manifestKey] ?? UNLISTED_FIELD_LABELS[key] ?? key;
 }
 
-type RevisionRow = {
+export type SuiteRevisionListRow = {
   _id: string;
   revisionNumber: number;
   source: string;
@@ -205,16 +205,6 @@ function RevisionDiff({ revisionId }: { revisionId: string }) {
   );
 }
 
-/**
- * The list itself, mounted only while the panel is OPEN.
- *
- * Split out for that reason alone: `usePaginatedQuery` subscribes for as long
- * as it is mounted, and the panel's host lives on every suite page in edit
- * mode. Keeping the query in the always-mounted wrapper would have every
- * settings visit hold a live subscription to a history nobody asked to see.
- * Radix does not mount `SheetContent` while closed, so rendering the query in
- * here is what makes the subscription follow the panel.
- */
 function RevisionList({
   suiteId,
   onCompareLatestRun,
@@ -228,7 +218,7 @@ function RevisionList({
     { suiteId } as never,
     { initialNumItems: 25 },
   );
-  const rows = results as unknown as RevisionRow[];
+  const rows = results as unknown as SuiteRevisionListRow[];
   const isDone = status === "Exhausted";
   const isLoading = status === "LoadingFirstPage";
 
@@ -334,6 +324,19 @@ function RevisionList({
         </div>
       ) : null}
     </>
+  );
+}
+
+/** Inline history list — mount only while the history sheet is open. */
+export function SuiteRevisionHistoryList({
+  suiteId,
+  onCompareLatestRun,
+}: {
+  suiteId: string;
+  onCompareLatestRun?: () => void;
+}) {
+  return (
+    <RevisionList suiteId={suiteId} onCompareLatestRun={onCompareLatestRun} />
   );
 }
 

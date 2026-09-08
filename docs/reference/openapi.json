@@ -2534,6 +2534,59 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/gate": {
+      "get": {
+        "operationId": "getEvalRunGate",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one run's suite quality-gate report",
+        "description": "ONE run's stored suite quality-gate report (`SuiteGateReportV1`): passed, failed, non_gateable, or not_configured.\n\n`not_configured` is a 200 report — the suite has no active conditions — never a missing route. A 404 means the run is not visible. A deployment that predates the evaluator answers 501 FEATURE_NOT_SUPPORTED; that is a fact about the deployment, not proof the suite has no policy. A run waiver never covers this report.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's suite quality-gate report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "SuiteGateReportV1"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "description": "This deployment does not serve quality-gate evaluation."
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
       "patch": {
         "operationId": "updateEvalSuiteSchedule",
@@ -2704,6 +2757,122 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/organizations/{organizationId}/spend-budget": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/organizationId"
+        }
+      ],
+      "get": {
+        "operationId": "getSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Read the organization's spend budget",
+        "description": "The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.\n\nAny member may read it: a member who cannot raise the ceiling still needs to know it exists, because it is what refused their run. `capUsd: null` means the organization is uncapped, which is the default.\n\nRuns that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance — it is not credits.",
+        "responses": {
+          "200": {
+            "description": "The organization's spend budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "setSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Set the organization's spend budget",
+        "description": "Set or replace the ceiling. **Requires organization owner or admin.**\n\nWhen the budget is reached, new MCPJam-billed work — chat turns, eval runs, computer starts — is refused for the whole organization until the window resets or an owner or admin raises the cap. Work already in flight finishes, and running computers keep going until they hibernate.\n\n`capUsd` is stored as whole credits (1 credit = 1 cent), so it is rounded to the cent; the response reports what was kept. Changing the cap mid-window does not reset the spend counter, and does not re-announce a threshold the organization was already told about.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpendBudgetInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored spend budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Remove the organization's spend budget",
+        "description": "Leave the organization uncapped. **Requires organization owner or admin.**\n\nThe window's spend counter survives: it is a record of spend, not of the budget, and a budget set again later measures against the spend already made this period.",
+        "responses": {
+          "200": {
+            "description": "The spend budget, now uncapped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -12956,6 +13125,31 @@
               "type": "string"
             }
           },
+          "hosts": {
+            "type": "array",
+            "description": "Clients (hosts) to attach the suite to, in attach order. A suite with no attached client reports none wherever it is listed, and a run has no host to select. Same shape as the PATCH `hosts` field.",
+            "items": {
+              "type": "object",
+              "required": [
+                "host"
+              ],
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Host name or id."
+                },
+                "servers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Server names (as bound in the suite's environment) or project-server ids."
+                }
+              }
+            }
+          },
           "model": {
             "type": "string",
             "minLength": 1,
@@ -13050,6 +13244,22 @@
           "servers": {
             "type": "array",
             "description": "The servers attached to the suite. `name` is present when supplied.",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "description": "The clients (hosts) attached to the suite at create time. Empty when none were named.",
             "items": {
               "type": "object",
               "required": ["id"],
@@ -13521,6 +13731,31 @@
                   "threshold": {
                     "type": "number",
                     "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"],
+                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
+                  },
+                  "groundedness": {
+                    "type": "object",
+                    "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": ["advisory"]
+                      },
+                      "model": {
+                        "type": ["string", "null"]
+                      },
+                      "threshold": {
+                        "type": ["number", "null"]
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": ["warn"]
+                      }
+                    }
                   },
                   "rubric": {
                     "type": ["object", "null"],
@@ -14602,6 +14837,29 @@
           }
         }
       },
+      "CostCoverage": {
+        "type": "object",
+        "description": "How many iterations on each side of a comparison actually contributed a cost. Cost is stamped per iteration and is absent whenever the model was not MCPJam-billed (your own API key), the run used a harness (which mixes models within a turn), or the trial reported no tokens. Summing the priced iterations and skipping the rest yields a figure indistinguishable from a complete one — so a drop in `estimatedCostUsd` is only a cost signal when coverage is full on both sides. A CI gate should treat partial coverage as non-gateable rather than as a pass or a fail.",
+        "required": ["base", "compare"],
+        "properties": {
+          "base": { "$ref": "#/components/schemas/CostCoverageSide" },
+          "compare": { "$ref": "#/components/schemas/CostCoverageSide" }
+        }
+      },
+      "CostCoverageSide": {
+        "type": "object",
+        "required": ["costed", "total"],
+        "properties": {
+          "costed": {
+            "type": "integer",
+            "description": "Iterations that contributed a cost."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Iterations on this side."
+          }
+        }
+      },
       "NumericDiff": {
         "description": "A base/compare pair with its delta. Rate-valued instances are FRACTIONS unless the field name ends in `Percent`.",
         "type": "object",
@@ -14824,6 +15082,19 @@
           },
           "compare": {
             "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Per-case cost, with the coverage that produced it. `costCoverage` is absent when the platform does not report coverage; absence means no opinion, never full coverage, and a cost gate refuses to judge on it.",
+            "required": ["estimatedCostUsd"],
+            "properties": {
+              "estimatedCostUsd": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            }
           }
         },
         "required": [
@@ -15070,6 +15341,9 @@
               },
               "estimatedCostUsd": {
                 "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
               }
             },
             "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
@@ -15304,7 +15578,7 @@
           },
           "usage": {
             "type": ["object", "null"],
-            "description": "Structured token usage (input/output/cached/reasoning) when available.",
+            "description": "Structured token usage (input/output/cached/reasoning) when available, plus `estimatedCostUsd` and the `costBasis` it was priced from.\n\n`estimatedCostUsd` ABSENT means no cost was observed — never that the trial was free. `costBasis.reason` says which: `no_pricing` (not an MCPJam-billed model, e.g. your own API key), `harness_mixed_models` (a harness turn mixes models and carries no per-model split, so its cost arrives with billed attribution instead), or `no_tokens`.\n\n`costBasis.source` is `gateway_pricing` when MCPJam priced its own token counts, and `sdk_runner` when the figure came from your runner — real, but neither computed nor verified by MCPJam.",
             "additionalProperties": true
           },
           "actualToolCalls": {
@@ -16254,6 +16528,106 @@
           }
         }
       },
+      "SpendBudget": {
+        "type": "object",
+        "description": "An organization's ceiling on MCPJam-billed spend for the current billing window. Amounts appear in both USD and credits (1 credit = 1 cent); the credit figures are what the ledger actually stores.",
+        "required": [
+          "capUsd",
+          "capCredits",
+          "alertPercents",
+          "spentUsd",
+          "spentCredits",
+          "windowStartAt",
+          "windowEndsAt",
+          "alertedPercents",
+          "capReachedAt",
+          "updatedAt",
+          "minCapUsd",
+          "maxCapUsd",
+          "supported"
+        ],
+        "properties": {
+          "capUsd": {
+            "type": ["number", "null"],
+            "description": "The ceiling in USD. `null` means uncapped."
+          },
+          "capCredits": {
+            "type": ["integer", "null"],
+            "description": "The same ceiling as the ledger stores it."
+          },
+          "alertPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Whole percents of the cap that notify owners and admins. Reaching the cap always notifies, whether or not 100 is listed."
+          },
+          "spentUsd": {
+            "type": "number",
+            "description": "MCPJam-billed spend so far in this window, in USD."
+          },
+          "spentCredits": {
+            "type": "integer",
+            "description": "The same spend as the ledger counted it."
+          },
+          "windowStartAt": {
+            "type": "integer",
+            "description": "Start of the current billing window (epoch ms). Team and enterprise organizations run on their own subscription cycle; everyone else on the UTC month."
+          },
+          "windowEndsAt": {
+            "type": "integer",
+            "description": "When the window resets and the counter returns to zero (epoch ms)."
+          },
+          "alertedPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Thresholds already announced this window. Each fires once per window."
+          },
+          "capReachedAt": {
+            "type": ["integer", "null"],
+            "description": "When the cap was reached this window, or `null`."
+          },
+          "updatedAt": {
+            "type": ["integer", "null"],
+            "description": "When the budget was last changed (epoch ms)."
+          },
+          "minCapUsd": {
+            "type": "number",
+            "description": "The smallest budget the platform accepts."
+          },
+          "maxCapUsd": {
+            "type": "number",
+            "description": "The largest budget the platform accepts."
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "False for a personal organization, which cannot have a budget."
+          }
+        }
+      },
+      "SpendBudgetInput": {
+        "type": "object",
+        "required": ["capUsd"],
+        "additionalProperties": false,
+        "properties": {
+          "capUsd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "The ceiling in USD, rounded to the cent."
+          },
+          "alertPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 99
+            },
+            "description": "Whole percents of the cap to notify at. Defaults to `[80]`. 100 is not accepted: reaching the cap always notifies, so listing it would show the same threshold twice."
+          }
+        }
+      },
       "OrganizationPage": {
         "type": "object",
         "required": ["items"],
@@ -16874,6 +17248,11 @@
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"],
+                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
                   },
                   "rubric": {
                     "type": ["object", "null"],

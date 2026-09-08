@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserdHandle } from "../boot-browserd";
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
+import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
 import type {
   BrowserSessionLookup,
   BrowserSessionRecord,
@@ -144,6 +145,9 @@ function makeFakes(over?: {
     bootId: "boot-new",
     port: BROWSERD_PORT,
     publicOrigin: "https://new.example",
+    // The ready line announces the wire, and the row records it — so a later
+    // lookup can answer "can I talk to it?" without a probe.
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
     stop: vi.fn(async () => {}),
   };
 
@@ -174,6 +178,11 @@ function makeFakes(over?: {
       (async (): Promise<BrowserdStatus> => ({
         kind: "ok",
         bootId: ROW.bootId,
+        // A daemon that cannot prove which wire it speaks is not reusable
+        // (V-4a), so every healthy fake announces the current one. The
+        // `protocolVersion`-less cases have their own tests below.
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
       })),
   );
   const lookup = vi.fn(async () => {
@@ -305,7 +314,12 @@ describe("ensureBrowserSession — relaunch triggers", () => {
   it("relaunches on a bootId mismatch (the row describes a previous boot)", async () => {
     const f = makeFakes({
       lookups: [liveLookup()],
-      status: async () => ({ kind: "ok", bootId: "boot-someone-else" }),
+      status: async () => ({
+          kind: "ok",
+          bootId: "boot-someone-else",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        }),
     });
     await expectRelaunch(f);
   });
@@ -324,7 +338,12 @@ describe("ensureBrowserSession — relaunch triggers", () => {
         // Asleep for the first probe; awake once `connect` has resumed it.
         return probes === 1
           ? { kind: "unhealthy", detail: "box is paused" }
-          : { kind: "ok", bootId: ROW.bootId };
+          : {
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        };
       },
     });
 
@@ -1042,7 +1061,12 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       recordResult: { status: "conflict" },
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+          kind: "ok",
+          bootId: "boot-winner",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        }),
     });
     const handle = await ensureBrowserSession(f.deps, ARGS);
 
@@ -1076,7 +1100,12 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       bootError: new Error("port already in use"),
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+          kind: "ok",
+          bootId: "boot-winner",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        }),
     });
     const handle = await ensureBrowserSession(f.deps, ARGS);
     expect(handle.reused).toBe(true);
@@ -1100,7 +1129,12 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         // The ownership lookup is fresh, and by now the winner is recorded.
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+          kind: "ok",
+          bootId: "boot-winner",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        }),
     });
 
     const handle = await ensureBrowserSession(f.deps, ARGS);
@@ -1123,7 +1157,12 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         { reachable: true, session: null },
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
-      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      status: async () => ({
+          kind: "ok",
+          bootId: "boot-winner",
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        }),
       leaseAction: leaseBackedBy(lease),
     });
 
@@ -1154,11 +1193,21 @@ describe("ensureBrowserSession — per-computer serialization", () => {
         order.push("first-start");
         await new Promise((resolve) => setTimeout(resolve, 30));
         order.push("first-end");
-        return { kind: "ok", bootId: ROW.bootId };
+        return {
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        };
       })
       .mockImplementation(async () => {
         order.push("second-start");
-        return { kind: "ok", bootId: ROW.bootId };
+        return {
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        };
       });
     (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
       () => ({ status: slowStatus, sendCommand: vi.fn() }),
@@ -1199,5 +1248,287 @@ describe("ensureBrowserSession — the caller went away (review follow-up)", () 
     const handle = await ensureBrowserSession(f.deps, ARGS);
     expect(handle.reused).toBe(false);
     expect(f.boot).toHaveBeenCalledOnce();
+  });
+});
+
+
+/**
+ * V-4a. The bundle hash used to be an admission test, and every daemon edit
+ * rotates it — so a deploy carrying a comment change killed every live hosted
+ * browser mid-use, including one somebody was typing a password into. The wire
+ * version is the admission test now; the hash is an upgrade, taken when nobody
+ * is looking.
+ */
+describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
+  const IDLE = {
+    lease: "free" as const,
+    watchers: 0,
+    msSinceActivity: 10 * 60_000,
+  };
+  const BUSY = { lease: "held" as const, watchers: 1, msSinceActivity: 0 };
+
+  it("reuses a daemon whose bytes moved but whose wire did not", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        // A DIFFERENT bundle: this is the deploy that used to kill the session.
+        bundleHash: "hash-from-two-deploys-ago",
+        ...BUSY,
+      }),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.upgradeAvailable).toBe(true);
+    // Nothing touched the sandbox: no kill, no boot, no bootId rotation.
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(handle.bootId).toBe(ROW.bootId);
+  });
+
+  it("takes the upgrade the moment nothing is using the browser", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: "hash-from-two-deploys-ago",
+        ...IDLE,
+      }),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(f.boot).toHaveBeenCalled();
+    expect(handle.reused).toBe(false);
+  });
+
+  it("waits when ANY idle fact is unknown", async () => {
+    // A daemon too old to report `watchers` answers undefined, and reading
+    // undefined as "nobody is watching" would relaunch a browser somebody has
+    // open — the exact behaviour this step removes.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: "hash-from-two-deploys-ago",
+        lease: "free" as const,
+      }),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.upgradeAvailable).toBe(true);
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("relaunches NOW when the wire itself changed", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({
+        kind: "ok",
+        bootId: ROW.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+        bundleHash: HASH,
+        ...BUSY,
+      }),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(f.boot).toHaveBeenCalled();
+    expect(handle.reused).toBe(false);
+  });
+
+  it("relaunches a daemon too old to say which wire it speaks", async () => {
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "ok", bootId: ROW.bootId }),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(f.boot).toHaveBeenCalled();
+    expect(handle.reused).toBe(false);
+  });
+
+  it("asks the control plane about the WIRE, not the bytes", async () => {
+    const f = makeFakes({ lookups: [liveLookup()] });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.lookup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    );
+  });
+
+  it("records the wire version with a freshly booted daemon", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.record).toHaveBeenCalledWith(
+      expect.objectContaining({ protocolVersion: BROWSERD_PROTOCOL_VERSION }),
+    );
+  });
+
+  it("the kill switch restores relaunch-on-hash", async () => {
+    process.env.MCPJAM_BROWSER_LAZY_UPGRADE = "false";
+    try {
+      const f = makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: "hash-from-two-deploys-ago",
+          ...BUSY,
+        }),
+      });
+
+      const handle = await ensureBrowserSession(f.deps, ARGS);
+
+      // Off, the hash is not consulted at all and the row (whose hash the
+      // backend matched) is reused exactly as it was before V-4a.
+      expect(handle.reused).toBe(true);
+      expect(handle.upgradeAvailable).toBeUndefined();
+      expect(f.lookup).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
+        }),
+      );
+    } finally {
+      delete process.env.MCPJAM_BROWSER_LAZY_UPGRADE;
+    }
+  });
+});
+
+
+/**
+ * V-8. The desktop image starts browserd itself, so on a fresh box there is a
+ * healthy daemon listening before any inspector has done anything — and the
+ * whole relaunch (kill, upload, boot Chromium) would replace it with an
+ * identical one several seconds later.
+ *
+ * Every refusal below costs one round trip and saves a relaunch; every one of
+ * them exists because adopting a daemon that cannot prove what it is would be
+ * worse than a cold start.
+ */
+describe("ensureBrowserSession — adopting a daemon the box started", () => {
+  const PRELAUNCHED = {
+    kind: "ok" as const,
+    bootId: "boot-baked",
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    bundleHash: HASH,
+    contextMode: "persistent" as const,
+    startedBy: "prelaunch" as const,
+  };
+
+  function withPrelaunched(over: Record<string, unknown> = {}) {
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      status: async () => ({ ...PRELAUNCHED, ...over }),
+    });
+    f.sandbox.readTextFile = vi.fn(async () => "baked-token");
+    return f;
+  }
+
+  it("adopts one, without killing or booting anything", async () => {
+    const f = withPrelaunched();
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-baked");
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    // And it is RECORDED, or no other replica could ever find it.
+    expect(f.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bootId: "boot-baked",
+        browserdToken: "baked-token",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    );
+  });
+
+  it("refuses a daemon an INSPECTOR booted", async () => {
+    // One an inspector booted has a row of its own; adopting it here would
+    // write a second row for the same process under a token the first does
+    // not know.
+    const f = withPrelaunched({ startedBy: "inspector" });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("refuses one that speaks a different wire", async () => {
+    const f = withPrelaunched({
+      protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+    });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("refuses one running the other profile mode", async () => {
+    // Its browser state is the wrong kind: a persistent profile's cookies for
+    // an eval, or an ephemeral one's blank slate for a signed-in user.
+    const f = withPrelaunched({ contextMode: "ephemeral" });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("boots when there is no token file to read", async () => {
+    // An image that predates prelaunch. Every ensure on it takes this path.
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    f.sandbox.readTextFile = vi.fn(async () => undefined);
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("boots when the token does not open the daemon", async () => {
+    // A stale file next to a daemon that has since restarted.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      status: async () => ({ kind: "unauthorized" as const }),
+    });
+    f.sandbox.readTextFile = vi.fn(async () => "stale-token");
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("marks a baked daemon running old bytes as upgradeable", async () => {
+    // Baked bytes ARE old bytes by design: the image pins a commit. The lazy
+    // upgrade replaces it the first moment nobody is looking, rather than
+    // spending a relaunch on a fresh box that is working perfectly.
+    const f = withPrelaunched({ bundleHash: "hash-from-the-image" });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.upgradeAvailable).toBe(true);
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("the kill switch skips adoption entirely", async () => {
+    process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT = "false";
+    try {
+      const f = withPrelaunched();
+      await ensureBrowserSession(f.deps, ARGS);
+      expect(f.boot).toHaveBeenCalled();
+      expect(f.sandbox.readTextFile).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT;
+    }
+  });
+
+  it("falls through when another replica recorded first", async () => {
+    // Their row describes this same daemon or a newer one; re-reading and
+    // verifying is a better answer than guessing here.
+    const f = withPrelaunched();
+    f.record.mockResolvedValue({ status: "conflict" } as never);
+    await ensureBrowserSession(f.deps, ARGS).catch(() => {});
+    expect(f.boot).toHaveBeenCalled();
   });
 });

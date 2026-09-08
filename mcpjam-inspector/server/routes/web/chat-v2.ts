@@ -18,6 +18,7 @@ import {
   HOSTED_MODE,
   LOCAL_HARNESS_ENABLED,
   WEB_STREAM_TIMEOUT_MS,
+  webmcpInspectorReachable,
 } from "../../config.js";
 import {
   HostedElicitationBridge,
@@ -41,6 +42,9 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
+  validatePageToolEntries,
+  PageToolValidationError,
+  type PageToolEntry,
   AppToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
@@ -1295,6 +1299,24 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    // WebMCP page tools: same boundary treatment as the app-tool snapshot, and
+    // gated on whether a session could exist here at all. Hosted, that means
+    // the hosted-reachability switch as well as the kill switch — a turn must
+    // not advertise the tools of a page this deployment cannot drive, because
+    // the model would call one and the client would have no session to fulfil
+    // it with.
+    let validatedPageTools: PageToolEntry[];
+    try {
+      validatedPageTools = webmcpInspectorReachable()
+        ? validatePageToolEntries(body.pageTools)
+        : [];
+    } catch (error) {
+      if (error instanceof PageToolValidationError) {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+      }
+      throw error;
+    }
+
     // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
     // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
     // cached pre-cutover clients may still send the field. MCP server tools
@@ -1829,6 +1851,7 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
+          pageTools: validatedPageTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           ...(browserToolApprovals ? { browserToolApprovals } : {}),

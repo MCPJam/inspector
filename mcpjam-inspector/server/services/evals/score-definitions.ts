@@ -10,7 +10,7 @@
  *
  *   | scorerId                  | deterministic | role         | threshold |
  *   |---------------------------|---------------|--------------|-----------|
- *   | `predicate:<criterionId>` | true          | gating       | 1         |
+ *   | `predicate:<criterionId>` | true          | check policy | 1         |
  *   | `toolCalls:match`         | true          | gating       | 1         |
  *   | `judge:goalCompletion`    | false         | from the run | resolved  |
  *
@@ -44,7 +44,12 @@ import {
   type ResolvedScoreDefinition,
   type ScoreDefinition,
 } from "@mcpjam/sdk/contract";
-import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  stripCheckPolicy,
+  type Predicate,
+  type PredicateScope,
+} from "@mcpjam/sdk/predicates";
 
 /** Stable id of the hosted tool-call matcher projection. */
 export const HOSTED_TOOL_MATCH_SCORER_ID = "toolCalls:match";
@@ -98,31 +103,33 @@ export function hostedCriterionId(
   predicate: Predicate,
   scope?: PredicateScope
 ): string {
+  const criterion = stripCheckPolicy(predicate);
   const digest = canonicalDigest(
-    scope ? { predicate, scope } : { predicate }
+    scope ? { predicate: criterion, scope } : { predicate: criterion }
   ).slice(0, 12);
   return `${predicate.type}-${digest}`;
 }
 
-/** `predicate:<criterionId>` — deterministic, gating, threshold 1. */
+/** `predicate:<criterionId>` — deterministic; role from the check policy. */
 export function hostedPredicateScoreDefinition(args: {
   predicate: Predicate;
   scope?: PredicateScope;
 }): ScoreDefinition {
   const criterionId = hostedCriterionId(args.predicate, args.scope);
+  const criterion = stripCheckPolicy(args.predicate);
   return {
     scorerId: `predicate:${criterionId}`,
     idSource: "platform",
     scorerVersion: HOSTED_PREDICATE_EVALUATOR_VERSION,
     implementationHash: canonicalDigest({
       evaluatorVersion: HOSTED_PREDICATE_EVALUATOR_VERSION,
-      criterion: args.predicate,
+      criterion,
       ...(args.scope ? { scope: args.scope } : {}),
     }),
     label: args.predicate.type,
     deterministic: true,
     passThreshold: 1,
-    role: "gating",
+    role: checkRole(args.predicate),
     ...(args.scope ? { scope: args.scope } : {}),
   };
 }

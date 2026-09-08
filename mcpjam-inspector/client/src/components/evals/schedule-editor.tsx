@@ -26,7 +26,6 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
 const INTERVAL_OPTIONS: Array<{ minutes: number; label: string }> = [
   { minutes: 5, label: "Every 5 minutes" },
@@ -123,12 +122,11 @@ export function ScheduleEditor({
       attachedEnvironmentIdsKey ? attachedEnvironmentIdsKey.split(",") : [],
     [attachedEnvironmentIdsKey]
   );
-  // Flag-gated: with the kill-switch off, the environment pin control, its
-  // query, and its write are all suppressed even for a suite that already has
-  // ≥2 attached environments.
-  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
-  const requiresEnvironmentPin =
-    projectEnvironmentsEnabled && attachedEnvironmentIds.length >= 2;
+  // NOT flag-gated. A suite that fans out over ≥2 cells has to say which one a
+  // scheduled run uses, whatever minted them — and a client × model matrix is
+  // exactly that suite. Suppressing the pin on the named-environments flag left
+  // such a suite scheduling silently against its first cell.
+  const requiresEnvironmentPin = attachedEnvironmentIds.length >= 2;
   const persistedEnvironmentId = schedule?.environmentId;
   const [draftEnvironmentId, setDraftEnvironmentId] = useState<
     string | undefined
@@ -243,7 +241,7 @@ export function ScheduleEditor({
             }
           }}
         >
-          <SelectTrigger className="h-8 w-44 text-xs">
+          <SelectTrigger className="h-8 w-44 text-xs" aria-label="Schedule interval">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

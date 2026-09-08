@@ -191,6 +191,15 @@ export function buildBrowserdStack(
     token: string;
     bootId?: string;
     lease?: HandoffLease;
+    /** Announced on `/v1/status`; never assumed by a caller. */
+    features?: readonly string[];
+    /** The display encoder, when this box has one. See the frame-stream host. */
+    video?: import("./video-encoder").VideoEncoder;
+    displaySize?: { width: number; height: number };
+    /** Observability and the lazy-upgrade decision, never admission. */
+    bundleHash?: string;
+    contextMode?: "persistent" | "ephemeral";
+    startedBy?: "prelaunch" | "inspector";
   } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
@@ -214,11 +223,27 @@ export function buildBrowserdStack(
     bootId,
     token: config.token,
     lease,
+    ...(config.features ? { features: config.features } : {}),
+    ...(config.bundleHash ? { bundleHash: config.bundleHash } : {}),
+    ...(config.contextMode ? { contextMode: config.contextMode } : {}),
+    ...(config.startedBy ? { startedBy: config.startedBy } : {}),
+    ...(config.video
+      ? { setVideoTier: (tier) => config.video?.setTier(tier) }
+      : {}),
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
-    ...(config.frames ? { frames: config.frames } : {}),
+    frames: {
+      ...(config.frames ?? {}),
+      ...(config.video ? { video: config.video } : {}),
+      ...(config.displaySize ? { displaySize: config.displaySize } : {}),
+    },
   });
+  // AFTER, because the stream host is built FROM the handler. Until this runs
+  // `/v1/status` omits `watchers` entirely, which reads as "unknown" rather
+  // than as zero — an upgrade decision must not conclude "nobody is watching"
+  // from a wire that was never connected.
+  handler.attachFrameCounters(() => frames.count());
   return {
     server,
     handler,

@@ -31,6 +31,10 @@ import {
 } from "../lib/scenario-session";
 import { writeAppSignInReturnPath } from "../lib/app-signin-return-path";
 
+/** Convex-shaped project ids for the cross-organization switch cases. */
+const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
+const ORG_B_PROJECT_ID = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";
+
 const existingConvexUser = {
   _id: "user-1",
   externalId: "workos-user-1",
@@ -435,7 +439,8 @@ vi.mock("../components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  useSidebar: () => ({ isMobile: false }),
+  // `setOpen` is what `SidebarAutoCollapse` drives the open state through.
+  useSidebar: () => ({ isMobile: false, setOpen: () => {} }),
 }));
 vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
@@ -1225,6 +1230,9 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   it("preserves the newly selected org when navigating away immediately", async () => {
+    // The switch is carried by the URL, not by hidden state set before it:
+    // navigating to Servers in the same tick inherits the project the switch
+    // just put in the pathname, so it stays a project in the new org.
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a");
@@ -1265,6 +1273,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1290,7 +1311,8 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      // Servers, still scoped to the project the switch landed on.
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
   });
 
@@ -1331,7 +1353,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#settings");
   });
 
-  it("lands on servers when switching active organization from org models", async () => {
+  it("lands on the target org's project when switching from org models", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a/models");
@@ -1372,6 +1394,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1387,19 +1422,224 @@ describe("App hosted OAuth callback handling", () => {
         mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
       return lastCall?.[0] as unknown as {
         activeOrganizationId?: string;
-        onSwitchActiveOrganization?: (organizationId: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
       };
     };
 
     act(() => {
-      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
     });
 
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
+  });
+
+  it("moves the URL out of the old org's project when switching organization", async () => {
+    // The regression this replaces: the handler set the active organization
+    // and asked for `/servers`, which is already the logical path — so the
+    // navigation no-opped, the pathname kept org A's project, and the route
+    // coordinator read it back as "go to org A", silently undoing the switch.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", `/p/${ORG_A_PROJECT_ID}/servers`);
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId: ORG_A_PROJECT_ID,
+        projects: {
+          [ORG_A_PROJECT_ID]: {
+            id: ORG_A_PROJECT_ID,
+            name: "Org A Project",
+            sharedProjectId: ORG_A_PROJECT_ID,
+            organizationId: "org-a",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    (mockUseQuery as any).mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_A_PROJECT_ID,
+            name: "Org A Project",
+            organizationId: "org-a",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 5,
+          },
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 9,
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
+    });
+
+    // `useAppState` is mocked here, so the route never reaches `ready`; what
+    // this asserts is the pair that used to disagree — the URL names org B's
+    // project, and the coordinator switched the active org to match it.
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+    });
+  });
+
+  it("creating from the switcher navigates rather than pre-selecting", async () => {
+    // Same contract as a project row: the URL performs the switch. Passing
+    // `switchTo` would be the state-then-URL ordering this surface stopped
+    // using, and for a cross-organization create the write is undone on the
+    // next render anyway — `activeProjectId` is derived from the
+    // organization-FILTERED map, which cannot contain the new project yet.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const handleCreateProjectSpy = vi.fn(async () => ORG_B_PROJECT_ID);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-a",
+      isCloudSyncActive: true,
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Payments", "org-b");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Payments", false, {
+      organizationId: "org-b",
+    });
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+  });
+
+  it("creating a local project selects it through the create itself", async () => {
+    // The one case the URL cannot carry: a local-fallback id is a UUID, which
+    // `buildProjectPath` refuses to put in the canonical position. The
+    // selection has to happen inside `handleCreateProject`, atomically with
+    // the create — `handleSwitchProject` afterwards validates against the
+    // project map from the render it was created in, which cannot contain a
+    // project dispatched a moment ago, and answers "Project not found".
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const localProjectId = "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const handleCreateProjectSpy = vi.fn(async () => localProjectId);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: false,
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Scratch");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Scratch", true, {
+      organizationId: undefined,
+    });
+    // Never through `handleSwitchProject`: its stale-map check would reject
+    // the id and leave the user on the project they were already in.
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/servers");
   });
 
   it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {

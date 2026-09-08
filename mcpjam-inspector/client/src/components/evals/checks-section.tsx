@@ -272,7 +272,7 @@ export interface CheckRowProps {
   widgetToolNames?: string[];
   toolArgSchemas?: ToolArgSchemas;
   readOnly?: boolean;
-  /** Strip outer card chrome + kind header when nested inside a step row. */
+  /** Strip outer card chrome + kind header when nested in a step or the scorer table. */
   embedded?: boolean;
   /** Scenario predicate still in Global gates list — prompt move to steps. */
   legacyScenarioGate?: boolean;

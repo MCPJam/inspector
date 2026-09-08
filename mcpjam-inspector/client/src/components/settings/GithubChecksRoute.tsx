@@ -42,6 +42,7 @@ import {
 } from "@/lib/github-checks-errors";
 import { redirectToGithub } from "@/lib/github-external-redirect";
 import {
+  isSelectableGithubRepo,
   findRepoByPickerValue,
   installationBindingsKey,
   pickerLabelFor,
@@ -256,13 +257,13 @@ export function GithubChecksRoute({
   // to the server snapshot until the list refreshes, so two fast clicks would
   // both read the same stale `row.enabled` and send the same value twice.
   const [pendingToggles, setPendingToggles] = useState<ReadonlySet<string>>(
-    () => new Set()
+    () => new Set(),
   );
   // Policy writes are tracked SEPARATELY from `pendingToggles`: they are
   // different writes on the same row, and one set would have a policy change
   // disable the enable switch (and vice versa) for no reason the user can see.
   const [pendingPolicies, setPendingPolicies] = useState<ReadonlySet<string>>(
-    () => new Set()
+    () => new Set(),
   );
   const [pendingConformance, setPendingConformance] = useState<
     ReadonlySet<string>
@@ -271,7 +272,7 @@ export function GithubChecksRoute({
   // different writes land on one row, and a shared set would grey out a control
   // the admin has no reason to think is busy.
   const [pendingFeedback, setPendingFeedback] = useState<ReadonlySet<string>>(
-    () => new Set()
+    () => new Set(),
   );
   // The picker's value is the repository's NUMERIC ID as a string, not its
   // name. Two accounts can both have a `widgets`, and the id is what the connect
@@ -320,7 +321,7 @@ export function GithubChecksRoute({
    */
   const bindingsKey = useMemo(
     () => installationBindingsKey(bindings),
-    [bindings]
+    [bindings],
   );
 
   // Switching organizations must not carry a selection across: the connect
@@ -377,7 +378,7 @@ export function GithubChecksRoute({
       listingGenerationRef.current += 1;
       listedForRef.current = null;
     },
-    []
+    [],
   );
 
   useEffect(() => {
@@ -433,7 +434,7 @@ export function GithubChecksRoute({
     void listInstallationRepos()
       .then((repositories) => {
         if (listingGenerationRef.current !== generation) return;
-        setInstallationRepos(repositories);
+        setInstallationRepos(repositories.filter(isSelectableGithubRepo));
       })
       .catch((error) => {
         if (listingGenerationRef.current !== generation) return;
@@ -540,7 +541,7 @@ export function GithubChecksRoute({
           projectId: suite.projectId,
           suiteId: suite._id,
           outagePolicy: pickerPolicy,
-        })
+        }),
       );
       // A completion for the PREVIOUS org lands on a page that is now showing a
       // different one. Clearing selections there would wipe a fresh choice, and
@@ -582,7 +583,7 @@ export function GithubChecksRoute({
 
   const handleSuiteChange = async (
     row: GithubCheckRepoConfigRow,
-    suiteId: string
+    suiteId: string,
   ) => {
     const suite = suiteById(suiteId);
     if (!suite?.projectId) return;
@@ -599,7 +600,7 @@ export function GithubChecksRoute({
 
   const handlePolicyChange = async (
     row: GithubCheckRepoConfigRow,
-    outagePolicy: GithubCheckOutagePolicy
+    outagePolicy: GithubCheckOutagePolicy,
   ) => {
     // Same reason as the enable toggle: the select stays bound to the server
     // snapshot until the list refreshes, so a second change made before the
@@ -641,7 +642,7 @@ export function GithubChecksRoute({
   };
 
   const handleFeedbackCommentsToggle = async (
-    row: GithubCheckRepoConfigRow
+    row: GithubCheckRepoConfigRow,
   ) => {
     if (pendingFeedback.has(row._id)) return;
     // ABSENT IS `on`. Only a stored `off` turns the comment off, so the flip of
@@ -709,7 +710,7 @@ export function GithubChecksRoute({
   }
 
   const alreadyConnected = new Set(
-    rows.map((row) => normalizeRepoName(row.repoFullName))
+    rows.map((row) => normalizeRepoName(row.repoFullName)),
   );
   // Offer nothing until the connected list has actually loaded. `rows` is `[]`
   // while `repos` is undefined, so filtering then would advertise repositories
@@ -718,7 +719,7 @@ export function GithubChecksRoute({
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName))
+          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName)),
         );
 
   // Selection and labelling live in `@/lib/github-repo-picker`, shared with the
@@ -881,7 +882,7 @@ export function GithubChecksRoute({
                     </span>
                     <RepoVisibilityBadge
                       isPrivate={visibilityByRepo.get(
-                        normalizeRepoName(row.repoFullName)
+                        normalizeRepoName(row.repoFullName),
                       )}
                     />
                     <RepoConnectionState status={row.connectionStatus} />
@@ -943,7 +944,7 @@ export function GithubChecksRoute({
                   onValueChange={(value) =>
                     void handlePolicyChange(
                       row,
-                      value as GithubCheckOutagePolicy
+                      value as GithubCheckOutagePolicy,
                     )
                   }
                 >

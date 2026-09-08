@@ -17,6 +17,14 @@
  * The toggle is deliberate. A chat that silently gained tools because a browser
  * session was left open in another tab would be a surprise, and these tools run
  * code on somebody else's site.
+ *
+ * Rendered in BOTH modes. It was local-only while `/api/web/chat-v2` ignored
+ * `pageTools` — listing tools that would then be dropped mid-conversation is
+ * worse than not offering them — and the hosted route now validates, advertises
+ * and approval-classifies them exactly as the local one does. Fulfilment was
+ * never the obstacle: the client invokes through the session it already owns,
+ * and that session's transport is hosted or local without this component
+ * knowing which.
  */
 import { Globe } from "lucide-react";
 import {
@@ -27,7 +35,6 @@ import {
 } from "@/lib/app-navigation";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useWebmcpInspectorEnabled } from "@/hooks/useWebmcpInspectorEnabled";
-import { HOSTED_MODE } from "@/lib/config";
 
 export function WebmcpPageToolsSection() {
   const flagOn = useWebmcpInspectorEnabled();
@@ -41,16 +48,6 @@ export function WebmcpPageToolsSection() {
   const navigate = useAppNavigate();
 
   if (!flagOn) return null;
-  // HOSTED HAS NO SERVER PATH FOR PAGE TOOLS, yet. The local chat route reads
-  // `pageTools` and classifies their approvals (`routes/mcp/chat-v2.ts`); the
-  // hosted one at `/api/web/chat-v2` never looks at the field, so a turn that
-  // advertised them would silently drop every call. Rendering the section
-  // would offer a capability that does nothing — worse than not offering it,
-  // because the tools would be listed and then ignored mid-conversation.
-  //
-  // The WebMCP tab itself works hosted; this is only the Playground bridge.
-  // Threading page tools through the hosted chat path is its own change.
-  if (HOSTED_MODE) return null;
 
   const live = Boolean(session) && session?.status !== "closed";
 

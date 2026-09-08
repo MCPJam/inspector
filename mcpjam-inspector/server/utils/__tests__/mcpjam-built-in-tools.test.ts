@@ -166,6 +166,7 @@ describe("workspace tool catalog", () => {
       "run_eval_suite",
       "get_eval_run",
       "get_eval_run_stage_analytics",
+      "get_eval_run_gate",
       "get_eval_run_route_facts",
       "get_eval_description_experiment",
       "propose_eval_description_rewrite",

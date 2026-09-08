@@ -25,7 +25,10 @@ vi.mock("convex/react", () => ({
   useConvex: () => convexClient,
 }));
 
-import { useSuiteCapabilities } from "../use-suite-capabilities";
+import {
+  hasJudgeSeverityCapability,
+  useSuiteCapabilities,
+} from "../use-suite-capabilities";
 
 describe("useSuiteCapabilities", () => {
   it("reports `unavailable` when the backend answers null", async () => {
@@ -93,5 +96,38 @@ describe("useSuiteCapabilities", () => {
     // A save that changes what someone may do next has to change the rows,
     // not leave them describing the suite as it was when the page loaded.
     await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("hasJudgeSeverityCapability", () => {
+  it("is false without C1 judges, even when today's judge fields exist", () => {
+    expect(hasJudgeSeverityCapability(null)).toBe(false);
+    expect(hasJudgeSeverityCapability(undefined)).toBe(false);
+    expect(
+      hasJudgeSeverityCapability({
+        judge: { role: "gating" },
+      } as never),
+    ).toBe(false);
+  });
+
+  it("is true only when goal-completion identity is advertised", () => {
+    expect(
+      hasJudgeSeverityCapability({
+        judges: {
+          goalCompletion: {
+            role: "advisory",
+            template: { version: 1, hash: "h" },
+            execution: "wired",
+            calibration: { reviews: 0 },
+          },
+          groundedness: {
+            role: "advisory",
+            template: null,
+            execution: "not_wired",
+            calibration: "unavailable",
+          },
+        },
+      } as never),
+    ).toBe(true);
   });
 });

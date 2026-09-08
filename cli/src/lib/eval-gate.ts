@@ -61,6 +61,10 @@ export type EvalGateOptions = {
   minEffectSizePercent?: string;
   gateDeterministicRegressions?: boolean;
   maxP95LatencyIncreaseMs?: string;
+  /** Absolute USD ceiling on the run's MCPJam-billed cost. */
+  maxCostUsd?: string;
+  /** PERCENT increase over the baseline's cost. Requires a baseline. */
+  maxCostIncreasePercent?: string;
 };
 
 function parsePercent(raw: string, flag: string): number {
@@ -106,6 +110,23 @@ function parseScorerMap(
   return out;
 }
 
+/**
+ * A non-negative decimal, for a dollar amount.
+ *
+ * The existing parsers are all integer- or percent-shaped, and a cost
+ * threshold is neither: `--max-cost-usd 0.05` is the ordinary case, and an
+ * integer parser would reject it. Same blank guard as `parsePercent` and for
+ * the same reason — `Number("")` is 0, so an empty flag value would become a
+ * $0 ceiling that fails every run.
+ */
+function parseNonNegativeDecimal(raw: string, flag: string): number {
+  const value = raw.trim() === "" ? NaN : Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw usageError(`${flag} must be a non-negative number, got "${raw}".`);
+  }
+  return value;
+}
+
 function parseUnit(raw: string, flag: string): number {
   // Same blank guard as `parsePercent`, for the same reason.
   const value = raw.trim() === "" ? NaN : Number(raw);
@@ -146,6 +167,12 @@ export function policyFromOptions(options: EvalGateOptions): GatePolicy {
       parseUnit
     );
   }
+  if (options.maxCostUsd !== undefined) {
+    policy.maximumCostUsd = parseNonNegativeDecimal(
+      options.maxCostUsd,
+      "--max-cost-usd"
+    );
+  }
   return policy;
 }
 
@@ -159,7 +186,10 @@ export function policyNeedsIterations(policy: GatePolicy): boolean {
       // p95 comes from iteration durations, exactly like tokens come from
       // iteration counts. Omitting it here would leave the latency gate
       // permanently non-gateable — the fetch that could decide it never runs.
-      policy.maximumP95LatencyMs !== undefined
+      policy.maximumP95LatencyMs !== undefined ||
+      // Same for cost: it is summed from per-iteration `usage`, so without
+      // the iterations the gate can only ever answer non-gateable.
+      policy.maximumCostUsd !== undefined
   );
 }
 
@@ -474,6 +504,7 @@ export function comparePolicyFromGateOptions(
     | "minEffectSizePercent"
     | "gateDeterministicRegressions"
     | "maxP95LatencyIncreaseMs"
+    | "maxCostIncreasePercent"
     | "baselineSha"
   >
 ): GatePolicy {
@@ -481,7 +512,8 @@ export function comparePolicyFromGateOptions(
     options.minSampleSize !== undefined ||
     options.minEffectSizePercent !== undefined ||
     options.gateDeterministicRegressions === true ||
-    options.maxP95LatencyIncreaseMs !== undefined;
+    options.maxP95LatencyIncreaseMs !== undefined ||
+    options.maxCostIncreasePercent !== undefined;
   // EITHER selector enables the gate. Reading only `baseline` here would make
   // every comparative flag silently inert under `--baseline-sha` — the exact
   // failure mode this pre-check exists to prevent, reintroduced by the new
@@ -490,9 +522,9 @@ export function comparePolicyFromGateOptions(
   if (hasComparativeFlag && !hasBaseline) {
     throw usageError(
       "--min-sample-size, --min-effect-size-percent, " +
-        "--gate-deterministic-regressions, and --max-p95-latency-increase-ms " +
-        "tune the baseline regression gate; pass --baseline or " +
-        "--baseline-sha to enable it."
+        "--gate-deterministic-regressions, --max-p95-latency-increase-ms " +
+        "and --max-cost-increase-percent tune the baseline regression gate; " +
+        "pass --baseline or --baseline-sha to enable it."
     );
   }
   return comparePolicyFromOptions({
@@ -501,6 +533,7 @@ export function comparePolicyFromGateOptions(
     minEffectSizePercent: options.minEffectSizePercent,
     gateDeterministicRegressions: options.gateDeterministicRegressions,
     maxP95LatencyIncreaseMs: options.maxP95LatencyIncreaseMs,
+    maxCostIncreasePercent: options.maxCostIncreasePercent,
   });
 }
 
@@ -694,6 +727,7 @@ export function buildBaselineProvenance(
         : null,
       noDeterministicRegressions: policy.noDeterministicRegressions === true,
       maximumP95LatencyIncreaseMs: policy.maximumP95LatencyIncreaseMs ?? null,
+      maximumCostIncreasePercent: policy.maximumCostIncreasePercent ?? null,
     },
     compatibility: {
       caseSetChanged: input.caseSetChanged,

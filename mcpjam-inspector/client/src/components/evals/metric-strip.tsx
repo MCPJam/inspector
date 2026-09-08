@@ -7,6 +7,7 @@ import {
   type MetricStripData,
   type MetricStripPoint,
 } from "./metric-strip-data";
+import { formatCost, formatCostOrDash } from "./helpers";
 
 export function LatencyTrendMetric({
   p50,
@@ -104,7 +105,12 @@ export function LatencyTrendMetric({
         ) : null}
       </div>
       {showTrend ? (
-        <div className={cn("relative overflow-visible", matrixCell ? "mt-1.5" : "mt-2.5")}>
+        <div
+          className={cn(
+            "relative overflow-visible",
+            matrixCell ? "mt-1.5" : "mt-2.5",
+          )}
+        >
           <EvalDualSparkline
             primary={p50Series}
             secondary={p95Series}
@@ -154,7 +160,11 @@ export function TrendMetric({
         <div
           className={cn(
             "mt-1 font-semibold leading-none tabular-nums tracking-tight text-foreground",
-            matrixCell ? "truncate text-[12px]" : compact ? "text-[15px]" : "text-[17px]",
+            matrixCell
+              ? "truncate text-[12px]"
+              : compact
+                ? "text-[15px]"
+                : "text-[17px]",
           )}
         >
           {value}
@@ -166,7 +176,12 @@ export function TrendMetric({
         ) : null}
       </div>
       {chart ? (
-        <div className={cn("relative overflow-visible", matrixCell ? "mt-1.5" : "mt-2.5")}>
+        <div
+          className={cn(
+            "relative overflow-visible",
+            matrixCell ? "mt-1.5" : "mt-2.5",
+          )}
+        >
           {chart}
         </div>
       ) : null}
@@ -204,6 +219,36 @@ export function MetricStrip({
   const tokenSeries = seriesOf((p) => p.tokens);
   const tokenHeadline = latest.tokens;
   const tokenSub = "per run";
+  /**
+   * The cost trend is drawn ONLY when every run in the window was fully
+   * priced.
+   *
+   * A sparkline's whole content is its SHAPE, and there is no number that
+   * honestly stands for "we did not price this run". Plotting an unpriced or
+   * partly-priced run at 0 draws a dip that never happened, and reads as the
+   * run getting cheaper exactly when we measured less of it — the same lie
+   * `formatCostOrDash` exists to prevent in the headline.
+   *
+   * So an incomplete window gets no line. The headline still shows the latest
+   * run's cost (or an em dash), and the sub-label says how much of it was
+   * priced.
+   */
+  const costFullyPriced = series.every(
+    (p) => p.costUsd !== null && p.costedIterations >= p.total,
+  );
+  const costSeries = costFullyPriced ? seriesOf((p) => p.costUsd ?? 0) : [];
+  const costHeadline = formatCostOrDash(latest.costUsd);
+  // "per run" is a claim that MCPJam measured the whole thing. It is only
+  // true when every trial was priced AND none of the figures came from a
+  // customer's runner; otherwise the sub-label says which of those is not so.
+  const costSub =
+    latest.costUsd === null
+      ? "not priced"
+      : latest.costedIterations < latest.total
+        ? `${latest.costedIterations} of ${latest.total} trials`
+        : latest.hasRunnerReportedCost
+          ? "includes runner-reported"
+          : "per run";
   const toolCallSeries = seriesOf((p) => p.toolCalls);
   const toolCallHeadline = latest.toolCalls;
   const toolCallSub = "per run";
@@ -275,7 +320,11 @@ export function MetricStrip({
     <div
       className={cn(
         "flex flex-col justify-between",
-        matrixCell ? "gap-1.5 px-3 py-2" : compact ? "gap-3 px-3.5 py-2.5" : "gap-3 px-5 py-3.5",
+        matrixCell
+          ? "gap-1.5 px-3 py-2"
+          : compact
+            ? "gap-3 px-3.5 py-2.5"
+            : "gap-3 px-5 py-3.5",
         vertical && !matrixCell && "gap-2",
       )}
       data-testid="metric-strip-pass-rate"
@@ -341,6 +390,26 @@ export function MetricStrip({
         matrixCell={matrixCell}
       />
       <TrendMetric
+        label="Cost"
+        value={costHeadline}
+        sub={costSub}
+        compact={compact}
+        layout={layout}
+        matrixCell={matrixCell}
+        chart={
+          // Empty when the window is not fully priced; `EvalSparkline` renders
+          // nothing below two points, which is the intended suppression.
+          showTrend && costSeries.length > 0 ? (
+            <EvalSparkline
+              points={costSeries}
+              pointLabels={runLabels}
+              formatValue={formatCost}
+              testId="metric-sparkline-cost"
+            />
+          ) : null
+        }
+      />
+      <TrendMetric
         label="Tokens"
         value={formatCompactNumber(tokenHeadline)}
         sub={tokenSub}
@@ -384,17 +453,21 @@ export function MetricStrip({
       data-testid={testId}
       className={cn(
         surface === "card" && evalSurfaceCardClass,
-        showTrend ? "overflow-visible" : surface === "card" ? "overflow-hidden" : "overflow-visible",
+        showTrend
+          ? "overflow-visible"
+          : surface === "card"
+            ? "overflow-hidden"
+            : "overflow-visible",
         vertical
           ? "flex flex-col divide-y divide-border/60"
           : compact
-            ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr]"
-            : "grid grid-cols-[1.4fr_1fr_1fr_1fr]",
+            ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]"
+            : "grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr]",
       )}
     >
       {passSection}
       {vertical ? (
-        <div className="grid min-w-0 grid-cols-3 divide-x divide-border/60 [&>*]:min-w-0">
+        <div className="grid min-w-0 grid-cols-4 divide-x divide-border/60 [&>*]:min-w-0">
           {metricSections}
         </div>
       ) : (

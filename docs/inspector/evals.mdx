@@ -29,18 +29,76 @@ Evals are available to both signed-in users and guests. Guests authenticate auto
 
 ## Authoring a case
 
-Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open a blank case editor. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
+Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open the case workspace. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
 
-Each case has four moving parts:
+### Case workspace
 
-- **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
-- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
-- **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
-- **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
+The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
+
+**Left column — the case form**
+
+Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It organizes authoring into three sections:
+
+- **User asks** — the prompt the model receives.
+- **In the app** — interact steps (clicks, typing) and widget assertions recorded against a live widget, shown in the order they run.
+- **Check the result** — tool-call assertions and other checks that decide pass/fail.
+
+Steps are stored and executed in the order you author them. Adding a new tool check splices it into the first turn, after the last tool check already there, so the grading order matches what you see.
+
+Under **More checks**, a case shows both kinds of check it can carry, without converting between them:
+
+- **Checks written as steps** (what the CLI and the SDK produce) are graded in place, at their position in the run. They are labelled by that position — a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level check.
+- **Case-level checks** you add here are graded once, over the finished transcript.
+
+Because a failing step halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
+
+**Which tool should handle it?**
+
+The answer to this question is what marks a case negative — never an inference from its steps:
+
+- **A named tool** — the case must take that route.
+- **No tool should be called** — a negative case. It passes only if the model called nothing. A check that requires a tool call contradicts this, and the form says so.
+- **No specific tool is required** — the case names no route and is graded by its checks. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+
+A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without a check, a rubric, or a named tool, it would pass vacuously.
+
+**Also in this case**
+
+A case can hold steps this form has no section for — a second prompt, or a pinned tool call. Those are listed at the bottom of the column with the turn they belong to. Click **Edit in Steps** to open the full step list.
+
+**Steps**
+
+**Steps** (top right of the column) swaps the form for the flat, ordered step list, in the same workspace with the same trial on the right. **Back to form** returns.
+
+**Right column — the selected trial**
+
+The right column resolves to one of these views, in precedence order:
+
+1. **Explicit history pick** — a trial you selected from History.
+2. **Recording** — a live recording session is active.
+3. **Live run** — a quick run is in progress.
+4. **Latest** — the most recent persisted iteration with a trace.
+5. **Spec preview** — the authored steps rendered as a conversation preview.
+6. **Empty** — no trial yet; start typing a prompt.
 
 <Note>
-  A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
+  A **negative case** is one you marked **No tool should be called**. Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape. A case that simply names no tool is *not* negative — it is graded by its checks.
 </Note>
+
+### History inspect
+
+Click **History** in the trial header to open a list of past iterations. Selecting one freezes the left form on that trial's snapshot — the exact steps, checks, and settings that were in effect when it ran — so you can compare what you see in the trace against what was authored at the time.
+
+While a trial is frozen, an **Inspecting** banner appears at the top of the left column. If the current draft differs from the frozen snapshot, a **Changed** indicator appears. Click **Edit case** to return to the live draft; the selected trial stays visible on the right.
+
+### Next run sheet
+
+Click the **Model**, **Trials**, or **Host** chip above the form to open the **Next run** sheet. It separates two kinds of settings:
+
+- **Saved with this case** — *Trials* and *Model* are written to the case before every quick run and on Save. Changes here persist.
+- **For this run** — *Host* applies only to the next run and is not saved to the case.
+
+Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
 
 ## Case attachments
 
@@ -62,7 +120,9 @@ When attachments are present, a note is automatically prepended to the case's fi
 
 If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
 
-When you arm record mode on a test case, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+Click **Start recording** in the *In the app* section of the case form. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+
+Recorded interact steps and widget assertions appear in the **In the app** section in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
 
 ### Widget `ui/message` follow-ups
 
@@ -99,6 +159,18 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 | **Token budget under N** | Total token usage stayed below the cap. | Case only |
 
 When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
+
+<Note>
+**A per-trial token ceiling is not a spend control.** It is set without seeing
+what the suite normally uses, it is in a unit that is not comparable across
+models, and it goes stale on every prompt or model change. `Token budget under
+N` remains a valid check and keeps working wherever it is already authored,
+but for spend, two things replace it: [cost on every run](#cost), which shows
+what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+when a change makes the suite more expensive relative to its own baseline. For
+a ceiling on what the whole organization may spend, see the [spend
+budget](/hosted/overview#spend-budget).
+</Note>
 
 ### Harness system tools in assertion dropdowns
 
@@ -282,9 +354,33 @@ The **Runs / Cases** segmented control switches between the run history list and
 
 When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used — so a run's
+cost does not move later when prices change. It rolls up onto cases, runs and
+the metric strip.
+
+A dash (`—`) means **no cost was observed**, never that the trial was free:
+
+| Why | What you see |
+|---|---|
+| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+| No token usage reported | Nothing to price. |
+
+A cost your own SDK runner reported is shown but labelled **runner** — it is
+real, but MCPJam neither computed nor verified it.
+
+When only some of a run's trials were priced, the total says so. That
+distinction matters most in CI: a run that looks cheaper may simply be a run
+we priced less of, which is why the compare API reports coverage counts
+alongside the cost and a cost gate treats partial coverage as non-gateable
+rather than as a pass.
+
 ### Run view
 
-- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)

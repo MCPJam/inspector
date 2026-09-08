@@ -38,6 +38,8 @@ model ──► browser_* tools ──► SessionClient ──► browserd stack
 | Routes                                 | `server/routes/mcp/computers.ts` (`/local-browser/*`)                                                         |
 | Frame socket                           | `server/routes/web/local-browser-frames.ts`                                                                   |
 | Rail pane                              | `client/src/components/browser/BrowserPaneSurface.tsx`, with `LocalBrowserBody.tsx` / `HostedBrowserBody.tsx` |
+| The desktop app's native surface       | `server/services/browserd/electron/agent-surface.ts`, `src/ipc/agent-browser/agent-browser-listeners.ts`      |
+| The pane with no picture               | `client/src/components/browser/ElectronNativeBody.tsx`                                                        |
 
 ## Trust model
 
@@ -142,6 +144,58 @@ The same caveat governs rollback as for the shell: this is a _server_ env var,
 and users on published npm or Electron builds are on their own machines. UI
 exposure needs its own client-evaluated flag before wide release.
 
+## The desktop app shows the page, not a picture of it
+
+In the packaged app the agent's browser is a `WebContentsView` running in this
+very process. Encoding it to JPEG, base64-ing it into a socket, decoding it in
+the renderer and painting it to a canvas is a round trip through three format
+changes to show somebody a page their own machine already has — so the app does
+not do that. The main process parents the active view into the app's own window
+at the rail's bounds, and the person is looking at Chromium.
+
+|                     | Native surface                                   | Frames                 |
+| ------------------- | ------------------------------------------------ | ---------------------- |
+| Who can have it     | the desktop app, Electron with `WebContentsView` | every engine           |
+| What the pane draws | an empty measured slot                           | a `<canvas>`           |
+| Input               | the OS, straight into the page                   | events over the socket |
+| Frame socket        | never opened                                     | opened per session     |
+
+**Three answers have to agree** before the pane branches, and each rules out a
+different way it can be wrong:
+
+- `GET /local-browser/status` → `runtime: "electron"` — this engine is the
+  desktop app's own Chromium;
+- the same response's `surface: "native"` — the server built the context with
+  views (see the kill switch below);
+- `electronAPI.agentBrowser.capability()` → `{ available: true }` — this app has
+  the channel and this Electron has the constructor. A shipped app older than
+  this wave reports `runtime: "electron"` exactly as a new one does and has no
+  channel at all, so the server's answer alone is not enough.
+
+Anything short of all three falls back to frames, which is the path that has
+always worked.
+
+**The lease still decides.** `setViewport({visible: true})` is a _request_: the
+surface answers to the daemon's `HandoffLease` — the same authority that
+refuses the model's commands — and a view held by somebody else is **hidden**,
+not merely deafened. A visible native view of a page another person is typing
+their password into is an observation, which is the one thing the lease exists
+to prevent. A renderer-side gate would be a suggestion.
+
+**A native view is a sibling of the renderer, not a node in it.** It paints
+_over_ whatever the app draws in that rectangle and does not scroll, clip or
+z-index with the page. So `ElectronNativeBody` measures its slot continuously
+(`ResizeObserver`, window resize, capturing scroll) and takes the view back out
+of the window the moment the pane stops being the visible tab, loses consent, or
+unmounts — otherwise a live browser sits over somebody's logs.
+
+```dotenv
+MCPJAM_BROWSER_NATIVE_SURFACE=false
+```
+
+Restores the pre-wave shape exactly: one hidden `BrowserWindow` per tab, frames
+over a socket. Read at call time, so a deployment flips it without a rebuild.
+
 ## The same pane for the hosted engine
 
 The rail's Browser tab serves both engines from one component. The picture,
@@ -222,3 +276,18 @@ RUN_BROWSERD_SPIKE=true npx vitest run --project server \
 
 The spike accepts `MCPJAM_SPIKE_CHROMIUM_PATH` for images that ship a Chromium
 at a path Playwright's resolver does not know. Production never sets it.
+
+```bash
+# The six Electron behaviours the native surface is built on, against a REAL
+# Electron. Opens a window for a moment; prints one JSON verdict and exits
+# non-zero if any check failed.
+RUN_BROWSERD_SPIKE=true npx electron scripts/electron-surface-spike.mjs
+```
+
+The checks are (a) the constructors exist, (b) a view in a hidden holder still
+loads and runs, (c) reparenting into a visible window keeps the page, (d)
+`setBounds` is honoured, (e) a detached view keeps its page alive, and (f) a
+`BaseWindow` is not counted by `BrowserWindow.getAllWindows()` — which is what
+lets `window-all-closed` still fire with agent tabs open. Each is a claim about
+Electron's own implementation, which is exactly the class of thing a fake in a
+unit test cannot answer.

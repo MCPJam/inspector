@@ -46,9 +46,14 @@ import {
   listLocalBrowserSessions,
   LocalBrowserUnavailableError,
   resolveLocalBrowserRuntime,
+  resolveLocalBrowserSurface,
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  isBrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
 
 const computers = new Hono();
 
@@ -59,7 +64,7 @@ const computers = new Hono();
  * moves; this is the server's own bound so a hostile or broken caller cannot
  * hand the browser an unbounded array to replay.
  */
-const INPUT_BATCH_LIMIT = 64;
+const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
 
 computers.use("/local-consent/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-consent/*", async (c, next) => {
@@ -203,6 +208,11 @@ computers.get("/local-browser/status", async (c) => {
   const sessions = listLocalBrowserSessions();
   return c.json({
     runtime,
+    // Whether the pane gets the page itself or a picture of it. The pane
+    // BRANCHES on this — a native surface has no frame socket to open — so it
+    // is answered by the same function the session layer builds the context
+    // with, rather than re-derived from `runtime` here.
+    surface: resolveLocalBrowserSurface(process.env, runtime),
     installed: electron ? true : await isChromiumInstalled(),
     install,
     running: sessions.length > 0,
@@ -255,6 +265,45 @@ async function requireConsent(c: {
 }): Promise<string | null> {
   return verifyAndFingerprintLocalConsent(c.req.header(LOCAL_CONSENT_HEADER));
 }
+
+/**
+ * "Somebody is looking at this browser."
+ *
+ * The idle reap closes a browser nobody has used for ten minutes, and until
+ * now WATCHING was reported by the frame socket's own heartbeat: a pane with a
+ * stream open was, by definition, a pane somebody had open. The NATIVE Electron
+ * surface has no such socket — the page is a real view in the app's window,
+ * with no frames to carry a heartbeat — so without this a person who is
+ * watching the agent work, and not holding the lease, has their browser closed
+ * underneath them while they are looking at it.
+ *
+ * Deliberately not a lease action: watching is not holding, and a route that
+ * conflated the two would let a viewer block the agent by doing nothing.
+ */
+computers.post("/local-browser/watch", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const session = findLocalBrowserSession(bootId);
+  // A browser that has already gone is not an error worth showing anybody: the
+  // pane's next measure will discover it for itself.
+  if (!session) return c.json({ watching: false }, 404);
+  touchLocalBrowserSession(session.handle);
+  // AND who has it. A pane that has been refused its input needs to know when
+  // the other holder gives the browser back, and nothing on the frame socket
+  // says so — the frames were flowing the whole time. Answering here rather
+  // than making the pane call `ensure` is the difference between asking and
+  // STARTING: `ensure` launches a Chromium when the watched browser has gone,
+  // which is a browser nobody asked for on a machine whose own just crashed.
+  // This route is keyed by `bootId`, so it can only ever describe the browser
+  // the caller is actually looking at.
+  const lease = await session.client.lease?.();
+  return c.json({ watching: true, lease: lease ?? { state: "free" } });
+});
 
 /**
  * Start (or find) this project's browser and report how to reach it.
@@ -399,6 +448,14 @@ computers.post("/local-browser/input", async (c) => {
       { error: "A holder and at least one event are required" },
       400,
     );
+  }
+  // Refused WHOLE rather than filtered, and by the same allowlist the frame
+  // socket and the hosted panel use: dropping the bad ones would deliver a
+  // drag missing its release, leaving the page holding a button down. The
+  // daemon ignores a type it does not know, which is a 200 that did nothing —
+  // and on a metered box a 200 defers the idle sweep.
+  if (!events.every(isBrowserPaneInputEvent)) {
+    return c.json({ error: "invalid_input" }, 400);
   }
   const session = findLocalBrowserSession(bootId);
   if (!session) return c.json({ error: "No such local browser" }, 404);

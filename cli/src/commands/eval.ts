@@ -96,6 +96,11 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
+import { composeSuiteGateWithBaseReport } from "@mcpjam/sdk/contract";
+import type {
+  SuiteGateComposedOutcome,
+  SuiteGateReportV1,
+} from "@mcpjam/sdk/contract";
 import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
   PlatformApiClient,
@@ -207,6 +212,7 @@ type CreateOptions = PlatformOptions & {
   model?: string;
   provider?: string;
   server?: string[];
+  host?: string[];
 };
 
 /**
@@ -775,6 +781,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     ...(options.model !== undefined ? { model: options.model } : {}),
     ...(options.provider !== undefined ? { provider: options.provider } : {}),
     ...(options.server !== undefined ? { servers: options.server } : {}),
+    ...(options.host !== undefined ? { hosts: options.host } : {}),
   };
 
   const parsed = createEvalSuiteOperation.inputSchema.safeParse(merged);
@@ -1109,6 +1116,37 @@ const RUN_POLL_INTERVAL_MS = 3000;
 const GRADING_WAIT_EXTENSION_MS = 31 * 60_000;
 
 /**
+ * A positively identified missing gate route — never a 404 envelope, which
+ * would mean the run is not visible and is not proof the suite has no policy.
+ */
+function isSuiteGateRouteUnsupported(error: unknown): boolean {
+  if (!isPlatformApiError(error)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+/**
+ * An enveloped `NOT_FOUND` from the gate route, on a run this command ALREADY
+ * fetched.
+ *
+ * The route answers `not_configured` with a 200, so a 404 here is never "the
+ * suite has no policy". It is either a router that does not know the path (an
+ * older deployment whose catch-all still speaks the v1 envelope) or a run that
+ * vanished between two calls — and the base report was already measured from
+ * the run we did fetch. Neither is a verdict, so both skip the section rather
+ * than turning a measured pass into an infrastructure answer.
+ */
+function isSuiteGateReportAbsent(error: unknown): boolean {
+  if (!isPlatformApiError(error)) return false;
+  return error.status === 404;
+}
+
+/**
  * Poll a run to a terminal status.
  *
  * The extension is granted ONCE, on first observing `grading`. A run held for
@@ -1267,6 +1305,12 @@ async function runEvalGate(
        * other way silently enables the gate on every invocation.
        */
       gatingScoreErrors?: boolean;
+      /**
+       * Commander models `--no-suite-policy` as the NEGATION of an implicit
+       * `--suite-policy`, so the field is `suitePolicy` and it is `false`
+       * exactly when the user passed the flag.
+       */
+      suitePolicy?: boolean;
     },
   command: Command
 ): Promise<void> {
@@ -1305,6 +1349,7 @@ async function runEvalGate(
   const resolved = resolveCloudProjectArgs(options);
 
   let decisionSummary: EvalRunDecisionSummary | undefined;
+  let resolvedProjectId: string | undefined;
   let outcome: {
     report: GateReport;
     run?: PlatformEvalRun;
@@ -1332,6 +1377,7 @@ async function runEvalGate(
           );
         }
         const project = resolution.project;
+        resolvedProjectId = project.id;
         let deadline = Date.now() + waitTimeoutMs;
         let gradingExtended = false;
         let run = await client.getEvalRun(
@@ -1661,7 +1707,100 @@ async function runEvalGate(
     outcome.report,
     activeWaiverForRun(outcome.run)
   );
-  const exitCode = evalGateExitCode(report);
+  // THE SUITE POLICY, folded in AFTER the base waiver and never waived by
+  // it. `--no-suite-policy` skips only this call. A missing route is a
+  // documented compatibility skip; any other failure is incomplete — never
+  // proof the suite has no policy, and never a green.
+  let suiteGate: SuiteGateReportV1 | undefined;
+  let suiteGateSkip: string | undefined;
+  // Widened on purpose: the composed vocabulary carries `unavailable`, which
+  // the flag/base report never produces but the type union does.
+  let composedOutcome: SuiteGateComposedOutcome = report.outcome;
+  if (options.suitePolicy !== false && resolvedProjectId) {
+    const fetched = await runPlatformCommand(
+      platformOptionsOf(command),
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        try {
+          return {
+            kind: "report" as const,
+            report: await client.getEvalRunGate(
+              { projectId: resolvedProjectId!, runId },
+              { signal }
+            ),
+          };
+        } catch (error) {
+          if (isSuiteGateRouteUnsupported(error)) {
+            return {
+              kind: "skip" as const,
+              message:
+                "This MCPJam deployment does not serve stored suite quality-gate evaluation.",
+            };
+          }
+          if (isSuiteGateReportAbsent(error)) {
+            return {
+              kind: "skip" as const,
+              message:
+                "No stored suite quality-gate report for this run. The gate section was not evaluated.",
+            };
+          }
+          return {
+            kind: "error" as const,
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+    );
+    if (fetched.kind === "report") {
+      suiteGate = fetched.report;
+      composedOutcome = composeSuiteGateWithBaseReport({
+        base: { outcome: report.outcome },
+        suite: fetched.report,
+      }).outcome;
+    } else if (fetched.kind === "skip") {
+      suiteGateSkip = fetched.message;
+    } else {
+      suiteGateSkip = fetched.message;
+      // A failure to READ the suite gate is an infrastructure condition, and
+      // it must not overwrite what the base report already measured: a
+      // regression stays exit 1 and a usage error stays exit 2. Only an
+      // otherwise-green run becomes incomplete, because a configured gate
+      // that could not be evaluated is never a pass.
+      if (report.outcome === "passed" || report.outcome === "waived") {
+        composedOutcome = "incomplete";
+      }
+    }
+  }
+  const composedReport: GateReport = {
+    ...report,
+    outcome: composedOutcome === "unavailable" ? "incomplete" : composedOutcome,
+    // The suite gate's own conditions ride into the report's verdict list, so
+    // every renderer — human, JUnit, HTML — names the condition that turned
+    // CI red. Without them a suite-gate failure prints "Gate: FAILED" over
+    // nothing but PASS rows, and the JUnit failure message is empty.
+    verdicts: suiteGate
+      ? [
+          ...report.verdicts,
+          ...suiteGate.conditions
+            .filter((condition) => condition.status !== "passed")
+            .map((condition) => ({
+              gate: `suiteGate:${condition.condition}`,
+              status:
+                condition.status === "failed"
+                  ? ("failed" as const)
+                  : ("non_gateable" as const),
+              message: condition.message,
+              ...(typeof condition.observed === "number"
+                ? { observed: condition.observed }
+                : {}),
+              ...(typeof condition.threshold === "number"
+                ? { threshold: condition.threshold }
+                : {}),
+            })),
+        ]
+      : report.verdicts,
+  };
+  const exitCode = evalGateExitCode(composedReport);
   const structured = needsReport
     ? buildEvalRunReport(
         outcome.run
@@ -1677,8 +1816,8 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(report, outcome.baselineProvenance)],
-          verdict: gateOutcomeVerdict(report.outcome),
+          cases: [gateReportCase(composedReport, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(composedReport.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
@@ -1699,16 +1838,21 @@ async function runEvalGate(
     writeResult(
       globalOptions.format === "json"
         ? {
-            gate: report,
+            gate: composedReport,
             exitCode,
+            ...(suiteGate ? { suiteGate } : {}),
+            ...(suiteGateSkip ? { suiteGateSkip } : {}),
             ...(decisionSummary ? { decisionSummary } : {}),
           }
-        : { gate: report, exitCode },
+        : { gate: composedReport, exitCode },
       globalOptions.format
     );
   }
   if (globalOptions.format === "human" && !reporter) {
-    process.stderr.write(`${formatGateReport(report)}\n`);
+    process.stderr.write(`${formatGateReport(composedReport)}\n`);
+    if (suiteGateSkip) {
+      process.stderr.write(`${suiteGateSkip}\n`);
+    }
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
@@ -2911,6 +3055,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--server <id-or-name...>",
       "Project HTTP server names or IDs (overrides the file)"
+    )
+    .option(
+      "--host <id-or-name...>",
+      "Clients (hosts) to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --host` has nothing to select"
     )
     .action(async (options: CreateOptions, command) => {
       const globalOptions = getGlobalOptions(command);
@@ -4408,6 +4556,14 @@ export function registerEvalCommands(program: Command): void {
       "--max-p95-latency-increase-ms <ms>",
       "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha"
     )
+    .option(
+      "--max-cost-usd <usd>",
+      "Fail if the run's MCPJam-billed cost exceeded this many dollars; non-gateable when the run's cost is unknown or only partly measured"
+    )
+    .option(
+      "--max-cost-increase-percent <percent>",
+      "Fail if cost rose by more than this percentage of the baseline's; requires --baseline or --baseline-sha"
+    )
     .option("--wait", "Poll until the run reaches a terminal status")
     .option(
       "--wait-timeout <ms>",
@@ -4420,6 +4576,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--out <path>",
       "Atomically write the structured report selected by --reporter (default: json-summary)"
+    )
+    .option(
+      "--no-suite-policy",
+      "Skip the stored suite quality-gate; evaluate only the flag/base report"
     )
     .action(
       async (
@@ -4514,6 +4674,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--max-p95-latency-increase-ms <ms>",
       "Fail if p95 end-to-end latency rose by more than this many milliseconds"
+    )
+    .option(
+      "--max-cost-increase-percent <percent>",
+      "Fail if cost rose by more than this percentage of the baseline's; non-gateable when either run's cost is unknown or only partly measured"
     )
     .option(
       "--reporter <json-summary|junit-xml|html>",
