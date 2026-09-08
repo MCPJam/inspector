@@ -15,6 +15,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import { isRecommendedDefaultPredicateKind } from "@mcpjam/sdk/contract";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
 import { SYNTHETIC_MONITOR_KINDS } from "./predicate-kind-meta";
@@ -27,6 +28,7 @@ import {
 export function SuiteScorerLibraryMenu({
   onAdd,
   kinds,
+  authorableKinds,
   triggerLabel = "Add scorer",
   onAddWidgetCheck,
 }: {
@@ -39,6 +41,18 @@ export function SuiteScorerLibraryMenu({
    * that the route row then contradicts.
    */
   kinds?: readonly Predicate["type"][];
+  /**
+   * The kinds this DEPLOYMENT accepts (`authorablePredicateKinds`). Offering
+   * a kind the backend rejects turns "Add scorer" into a failed save, and one
+   * an older runner cannot evaluate fails closed on every trial.
+   *
+   * Independent of `kinds` and intersected with it: that one is about this
+   * SURFACE, this one about the SERVER, and a kind has to clear both. Omitted
+   * means the caller has not resolved the deployment's answer — the callers
+   * that care resolve it themselves, so a default here would quietly narrow
+   * the surfaces that do not.
+   */
+  authorableKinds?: readonly Predicate["type"][];
   /**
    * What the button says. The suite table's "Add scorer" is the default; the
    * spine says "Add a check after this", because there the menu answers WHERE
@@ -54,7 +68,11 @@ export function SuiteScorerLibraryMenu({
   onAddWidgetCheck?: (kind: WidgetAssertion["kind"]) => void;
 }) {
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
-  const categories = scorerLibraryCategories(kinds).map((category) => ({
+  const offered =
+    kinds && authorableKinds
+      ? kinds.filter((kind) => authorableKinds.includes(kind))
+      : (kinds ?? authorableKinds);
+  const categories = scorerLibraryCategories(offered).map((category) => ({
     ...category,
     kinds: category.kinds.filter(
       (kind) =>
@@ -144,7 +162,19 @@ function LibraryCategory({
               className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent/50"
             >
               <span>{PREDICATE_KIND_LABELS[kind] ?? kind}</span>
-              {NEW_SCORER_KINDS.includes(kind) ? (
+              {/*
+                "Recommended" outranks "New": a kind a new suite already
+                starts with is not news to an author reading this menu, and
+                two chips on one row is noise.
+              */}
+              {isRecommendedDefaultPredicateKind(kind) ? (
+                <span
+                  title="New suites start with this check, as Warn"
+                  className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground"
+                >
+                  Recommended
+                </span>
+              ) : NEW_SCORER_KINDS.includes(kind) ? (
                 <span className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
                   New
                 </span>

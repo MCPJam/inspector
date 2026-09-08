@@ -22,6 +22,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
   SelectContent,
@@ -557,6 +558,56 @@ function CheckFields({
           Passes when the final assistant message contains non-whitespace text.
         </div>
       );
+    case "toolLatencyUnder":
+      return (
+        <ToolResultNumberFields
+          predicate={predicate}
+          field="ms"
+          label="Max time in ms (strictly under)"
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "toolResultSizeUnder":
+      return (
+        <ToolResultNumberFields
+          predicate={predicate}
+          field="maxBytes"
+          label="Max result size in bytes (strictly under)"
+          hint="Measured on what the server returned, before we cap the text we store. Bytes, not tokens — a budget has to be graded on a measurement."
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "toolResultContains":
+      return (
+        <ToolResultContainsFields
+          predicate={predicate}
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "toolResultMatchesSchema":
+      return (
+        <ToolResultSchemaFields
+          predicate={predicate}
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "noEndingQuestion":
+      return (
+        <div className="text-xs text-muted-foreground">
+          Notices answers whose last non-empty line ends with a question mark.
+          It cannot tell an offer ("Would you like a breakdown?") from a request
+          for something missing, so it reports what it saw and never fails a
+          trial.
+        </div>
+      );
     case "tokenBudgetUnder":
       return (
         <TokenBudgetField
@@ -642,6 +693,86 @@ function CheckFields({
           />
         </div>
       );
+    case "toolErrorNamesInput":
+      return (
+        <ObservationFields
+          predicate={predicate}
+          copy="Notices a tool error whose message names none of that tool's input keys and none of the values the call sent. It does not measure recovery quality — \u201cRate limited. Retry in 30 seconds.\u201d is a good message that names nothing."
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "fullPageHasContinuation":
+      return (
+        <ObservationFields
+          predicate={predicate}
+          copy="Notices a page whose length equals the limit it asked for and that carries no cursor, hasMore or similar. A full page is not proof that more results exist, so this reports rather than fails."
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "noRepeatedIdenticalCall":
+      return (
+        <ObservationFields
+          predicate={predicate}
+          copy="Notices a call repeated immediately after an identical one \u2014 same tool, same arguments. A poll loop and a retry after a transient failure are the same shape and both are correct, so this reports rather than fails."
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "argumentsMatchToolSchema":
+      return (
+        <ObservationFields
+          predicate={predicate}
+          copy="Validates every call's arguments against the tool's declared inputSchema, and names which rule broke. Valid arguments can still miss what the user asked for \u2014 this does not judge intent. Reports an error, not a failure, when the run captured no tool inventory."
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "toolCallCountUnder":
+      return (
+        <ToolResultNumberFields
+          predicate={predicate}
+          field="count"
+          label="Max tool calls (strictly under)"
+          hint="Total calls, which is not the same as calls before the right tool. A server that forces a lookup before a write spends hops the model did not choose."
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "toolCalledBefore":
+      return (
+        <ToolOrderFields
+          predicate={predicate}
+          onChange={onChange}
+          availableTools={availableTools}
+          readOnly={readOnly}
+        />
+      );
+    case "noDeprecatedToolCalled":
+      return (
+        <div className="text-xs text-muted-foreground">
+          Notices a call to a tool whose own description marks it deprecated
+          (&ldquo;[DEPRECATED]&rdquo;, &ldquo;use X instead&rdquo;). It reads
+          prose, so it reports rather than fails; a tool that merely mentions a
+          deprecated predecessor does not count.
+        </div>
+      );
+    case "noDestructiveToolCalled":
+      return (
+        <div className="text-xs text-muted-foreground">
+          Passes when no called tool declares{" "}
+          <code>annotations.destructiveHint</code>. You assert the prompt is
+          read-only by adding this check; the server&rsquo;s own annotation
+          decides the rest. Reports an error when no tool declares annotations
+          at all &mdash; nothing was stated, so nothing can be checked.
+        </div>
+      );
   }
 }
 
@@ -652,11 +783,19 @@ function ToolNameField({
   onChange,
   availableTools,
   readOnly,
+  label = "Tool",
 }: {
   value: string;
   onChange: (next: string) => void;
   availableTools?: string[];
   readOnly: boolean;
+  /**
+   * What this control is FOR, when a row carries more than one of them.
+   * `toolCalledBefore` renders two, and two fields both labelled "Tool" are
+   * indistinguishable to a screen reader — which is the whole of that rule's
+   * UI. The outer heading is not enough: it is not associated with the input.
+   */
+  label?: string;
 }) {
   const id = useId();
   // When a suite has attached servers and we know the tool list, prefer a
@@ -667,11 +806,11 @@ function ToolNameField({
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Tool
+        {label}
       </Label>
       {useDropdown && !readOnly ? (
         <Select value={value || undefined} onValueChange={onChange}>
-          <SelectTrigger id={id} className="h-8 text-xs">
+          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
             <SelectValue placeholder="Pick a tool…" />
           </SelectTrigger>
           <SelectContent>
@@ -686,6 +825,7 @@ function ToolNameField({
         <Input
           id={id}
           value={value}
+          aria-label={label}
           onChange={(e) => onChange(e.target.value)}
           placeholder="e.g. search"
           className="h-8 text-xs"
@@ -1422,6 +1562,363 @@ function WidgetLatencyFields({
           else next.toolName = toolName;
           onChange(next);
         }}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+    </div>
+  );
+}
+
+/**
+ * "Limit to tool (optional)", for the result-shaped checks.
+ *
+ * A separate component from `WidgetToolFilterField` only because its empty
+ * option says "All tools" rather than "All widgets" — the same control would
+ * otherwise tell an author their payload budget applies to widgets.
+ */
+function ResultToolFilterField({
+  value,
+  onChange,
+  availableTools,
+  readOnly,
+  label = "Limit to tool (optional)",
+}: {
+  value: string | undefined;
+  onChange: (next: string | undefined) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+  /**
+   * What this control is FOR, when the row uses more than one of them. Two
+   * fields both labelled "Limit to tool" are indistinguishable to a screen
+   * reader, which is the whole of the ordering rule's UI.
+   */
+  label?: string;
+}) {
+  const id = useId();
+  // The all-tools option and a real tool name live in ONE value space, so the
+  // sentinel must be unreachable by any tool name rather than merely unlikely:
+  // a server with a tool called `__all__` would otherwise clear the
+  // restriction when a reader selected it. Real names are prefixed; the
+  // sentinel is not, so no encoding of a name can collide with it.
+  const ALL = "all";
+  const encode = (toolName: string) => `tool:${toolName}`;
+  const decode = (option: string) =>
+    option === ALL ? undefined : option.slice("tool:".length);
+  const useDropdown = availableTools && availableTools.length > 0;
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-[11px]">
+        {label}
+      </Label>
+      {useDropdown && !readOnly ? (
+        <Select
+          value={value === undefined ? ALL : encode(value)}
+          onValueChange={(next) => onChange(decode(next))}
+        >
+          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL} className="text-xs">
+              All tools
+            </SelectItem>
+            {availableTools!.map((t) => (
+              <SelectItem key={t} value={encode(t)} className="text-xs">
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          id={id}
+          value={value ?? ""}
+          aria-label={label}
+          onChange={(e) =>
+            onChange(e.target.value === "" ? undefined : e.target.value)
+          }
+          placeholder="All tools"
+          className="h-8 text-xs"
+          disabled={readOnly}
+        />
+      )}
+    </div>
+  );
+}
+
+/** A description plus the optional tool filter, for the fieldless kinds. */
+function ObservationFields<
+  P extends Extract<
+    Predicate,
+    {
+      type:
+        | "toolErrorNamesInput"
+        | "fullPageHasContinuation"
+        | "noRepeatedIdenticalCall"
+        | "argumentsMatchToolSchema";
+    }
+  >,
+>({
+  predicate,
+  copy,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  predicate: P;
+  copy: string;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-muted-foreground">{copy}</div>
+      <ResultToolFilterField
+        value={predicate.toolName}
+        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+    </div>
+  );
+}
+
+/** The two tool names an ordering rule constrains. */
+function ToolOrderFields({
+  predicate,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  predicate: Extract<Predicate, { type: "toolCalledBefore" }>;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <ToolNameField
+        label="Must be called first"
+        value={predicate.toolName}
+        onChange={(toolName) => onChange({ ...predicate, toolName })}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+      <ToolNameField
+        label="Before this tool"
+        value={predicate.beforeToolName}
+        onChange={(beforeToolName) =>
+          onChange({ ...predicate, beforeToolName })
+        }
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+      <p className="text-[11px] text-muted-foreground">
+        Vacuously true when the second tool is never called &mdash; the rule
+        has nothing to violate.
+      </p>
+    </div>
+  );
+}
+
+/** Set `toolName`, or remove it — an empty string would filter to nothing. */
+function withToolName<T extends { toolName?: string }>(
+  predicate: T,
+  toolName: string | undefined,
+): T {
+  const next = { ...predicate };
+  if (toolName === undefined) delete next.toolName;
+  else next.toolName = toolName;
+  return next;
+}
+
+/** A positive-integer ceiling plus the optional tool filter. */
+function ToolResultNumberFields<
+  P extends Extract<
+    Predicate,
+    { type: "toolLatencyUnder" | "toolResultSizeUnder" | "toolCallCountUnder" }
+  >,
+>({
+  predicate,
+  field,
+  label,
+  hint,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  predicate: P;
+  field: "ms" | "maxBytes" | "count";
+  label: string;
+  hint?: string;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const id = useId();
+  const value = (predicate as Record<string, unknown>)[field] as number;
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-[11px]">
+          {label}
+        </Label>
+        <Input
+          id={id}
+          type="number"
+          min={1}
+          step={1}
+          value={value}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isFinite(n)) return;
+            onChange({ ...predicate, [field]: Math.floor(n) } as Predicate);
+          }}
+          className="h-8 w-40 text-xs"
+          disabled={readOnly}
+        />
+        {hint ? (
+          <p className="text-[11px] text-muted-foreground">{hint}</p>
+        ) : null}
+      </div>
+      <ResultToolFilterField
+        value={predicate.toolName}
+        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+    </div>
+  );
+}
+
+function ToolResultContainsFields({
+  predicate,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  predicate: Extract<Predicate, { type: "toolResultContains" }>;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const id = useId();
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-[11px]">
+          Text the result must contain
+        </Label>
+        <Input
+          id={id}
+          value={predicate.needle}
+          onChange={(e) => onChange({ ...predicate, needle: e.target.value })}
+          placeholder="ISS-4412"
+          className="h-8 text-xs"
+          disabled={readOnly}
+        />
+      </div>
+      <ResultToolFilterField
+        value={predicate.toolName}
+        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+    </div>
+  );
+}
+
+function ToolResultSchemaFields({
+  predicate,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  predicate: Extract<Predicate, { type: "toolResultMatchesSchema" }>;
+  onChange: (next: Predicate) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState(() =>
+    JSON.stringify(predicate.schema ?? {}, null, 2),
+  );
+  const [error, setError] = useState<string | null>(null);
+  // Resync when `predicate` changes from OUTSIDE this instance. Rows are keyed
+  // by array index, so removing or reordering a row above reuses this same
+  // component with a different predicate — and without this the textarea keeps
+  // showing the previous check's schema, which the next keystroke then writes
+  // onto the current one. Compared against our own draft so a mid-edit value is
+  // left alone; `RawArgsJsonEditor` documents the identical hazard.
+  useEffect(() => {
+    let drift = true;
+    try {
+      drift =
+        JSON.stringify(JSON.parse(draft)) !==
+        JSON.stringify(predicate.schema ?? {});
+    } catch {
+      drift = true;
+    }
+    if (drift) {
+      setDraft(JSON.stringify(predicate.schema ?? {}, null, 2));
+      setError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [predicate.schema]);
+  return (
+    <div className="space-y-2">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-[11px]">
+          JSON Schema the result must match
+        </Label>
+        <Textarea
+          id={id}
+          value={draft}
+          spellCheck={false}
+          rows={6}
+          onChange={(e) => {
+            const next = e.target.value;
+            setDraft(next);
+            try {
+              const parsed = JSON.parse(next);
+              setError(null);
+              onChange({ ...predicate, schema: parsed });
+            } catch (parseError) {
+              // Kept LOCAL rather than written through: a half-typed schema is
+              // not an assertion, and persisting one would make the check
+              // unusable-schema on the next run.
+              //
+              // But the row still HOLDS the last schema that parsed, and a
+              // save writes that one — so the message below says so. A form
+              // that shows one thing, saves another, and mentions neither is
+              // the worse half of this trade.
+              setError(
+                parseError instanceof Error
+                  ? parseError.message
+                  : String(parseError),
+              );
+            }
+          }}
+          className="font-mono text-xs"
+          disabled={readOnly}
+        />
+        {error ? (
+          <p className="text-[11px] text-destructive">
+            Not valid JSON: {error}. Saving now keeps the last schema that
+            parsed, not what is in the box.
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            Validated against the tool's structured content, then its JSON
+            output, then text that parses as JSON. Any JSON root — an array is
+            legal under protocol 2026-07-28.
+          </p>
+        )}
+      </div>
+      <ResultToolFilterField
+        value={predicate.toolName}
+        onChange={(toolName) => onChange(withToolName(predicate, toolName))}
         availableTools={availableTools}
         readOnly={readOnly}
       />

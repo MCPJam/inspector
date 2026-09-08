@@ -24,10 +24,14 @@ import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
+import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
+import { useEvalRunServerFacts } from "@/hooks/use-eval-run-server-facts";
+import { ServerFactsCard } from "./server-facts-card";
+import { SERVER_FACTS_FAILURE_COPY } from "./server-facts-model";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
 import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
@@ -253,6 +257,22 @@ export function SingleRunContent({
   const routeFactsContractError =
     persistedRouteFacts.status === "error" &&
     persistedRouteFacts.error?.kind === "invalidContract";
+  // Server facts are COMPUTED ON READ, so there is no materializer to wait for
+  // and no page-local fallback: nothing in the browser can reconstruct the
+  // snapshot the run was taken against, and a fabricated stand-in would be a
+  // description of a server nobody observed.
+  //
+  // NOT gated on a terminal run status, unlike every sibling above. Those read
+  // materialized rollups that only exist once a run has finished; this one
+  // describes the SNAPSHOT the run was taken against and what setup observed,
+  // both of which are true from the run's first trial. Waiting for terminal
+  // would hide the server's own facts for exactly as long as somebody is
+  // watching the run that needs them.
+  const serverFacts = useEvalRunServerFacts({
+    projectId,
+    runId: run._id,
+    enabled: decisionSummaryEnabled,
+  });
   const routeLines = useMemo(
     () =>
       routeFactsDoc
@@ -518,6 +538,49 @@ export function SingleRunContent({
             onSelectStage={setStageFilter}
           />
         </div>
+
+        {/*
+          Directly under the strip, because it answers the two cells the strip
+          could only say "observed by the runner" about. The card renders on a
+          real document; every OTHER outcome says which one it is, because the
+          alternative — the card's own first version — was a blank space under
+          the strip that read identically for "this deployment does not serve
+          the route yet", "the read failed" and "there is no such run".
+        */}
+        {serverFacts.status === "ready" && serverFacts.document ? (
+          <ServerFactsCard
+            document={serverFacts.document}
+            stageFilter={stageFilter}
+          />
+        ) : null}
+        {serverFacts.status === "error" && serverFacts.error ? (
+          <div
+            className={cn(
+              "border-t border-border/40 px-5 py-2 text-[12px]",
+              // A contract mismatch is a BUG REPORT — our builder and our
+              // published contract have drifted. The other three are service
+              // states, and painting them red would report a defect nobody
+              // observed.
+              serverFacts.error.kind === "invalidContract"
+                ? "text-destructive"
+                : "text-muted-foreground",
+            )}
+            data-testid="server-facts-error"
+          >
+            <p className="font-medium">
+              {SERVER_FACTS_FAILURE_COPY[serverFacts.error.kind].title}
+            </p>
+            <p>{SERVER_FACTS_FAILURE_COPY[serverFacts.error.kind].detail}</p>
+          </div>
+        ) : null}
+        {serverFacts.status === "absent" ? (
+          <p
+            className="border-t border-border/40 px-5 py-2 text-[12px] text-muted-foreground"
+            data-testid="server-facts-absent"
+          >
+            No server facts for this run — it is not visible here.
+          </p>
+        ) : null}
 
         {routeFactsContractError ? (
           <p

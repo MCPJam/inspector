@@ -11,6 +11,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { collectToolAnnotations } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
@@ -4120,6 +4121,10 @@ const runLocalIteration = async ({
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
     // doing it here is equivalent to the former post-finalize position.)
     browser.flushActiveWidgetChecks();
+    const toolAnnotations = collectToolAnnotations(
+      mcpClientManager,
+      selectedServers,
+    );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
       promptTurns,
@@ -4129,6 +4134,28 @@ const runLocalIteration = async ({
       // Skill-tool calls are exempt from tool-call expectations (a skill load is
       // agent housekeeping); active only when skill tools were advertised.
       skillToolsActive: hasSkillTools(Object.keys(prepared?.allTools ?? {})),
+      // The registry the model actually saw this iteration. Checks that
+      // compare a call against what the server DECLARED (its input schema,
+      // its `destructiveHint`) read it here and report `status: "error"` when
+      // it is absent — so it must be the ADVERTISED set, not the complete
+      // one. `prepared.allTools` is always complete; under progressive
+      // discovery the model was shown a subset, and letting a check read a
+      // declaration for a tool the model never saw is the same mistake D7
+      // narrows against one call below.
+      ...(prepared?.allTools
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  prepared.allTools,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState,
+                )
+              : prepared.allTools,
+          }
+        : {}),
+      // The AI SDK ToolSet above drops the server's `annotations`; they come
+      // from the manager's own tools/list cache instead.
+      ...(toolAnnotations ? { selectionToolAnnotations: toolAnnotations } : {}),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -5526,6 +5553,10 @@ const runHostedIterationWithBrowser = async (
       : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
+  const stepToolAnnotations = collectToolAnnotations(
+    mcpClientManager,
+    selectedServers,
+  );
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5533,6 +5564,19 @@ const runHostedIterationWithBrowser = async (
     matchOptions: test.matchOptions,
     // Skill-tool calls are exempt from tool-call expectations (see local path).
     skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
+    // See the local path: the declaration a schema/annotation check reads,
+    // narrowed to what progressive discovery advertised. `prepared` is always
+    // assigned on this runner, so the plan and state are read directly rather
+    // than through a captured copy.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState,
+    ),
+    // See the sibling call site: `annotations` are not on the ToolSet.
+    ...(stepToolAnnotations
+      ? { selectionToolAnnotations: stepToolAnnotations }
+      : {}),
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,

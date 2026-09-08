@@ -62,6 +62,13 @@ const routeFacts = vi.hoisted(() => ({
     error: null as { kind: string; message: string } | null,
   },
 }));
+const serverFacts = vi.hoisted(() => ({
+  current: {
+    status: "idle" as string,
+    document: null as unknown,
+    error: null as { kind: string; message: string } | null,
+  },
+}));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
 const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
@@ -138,6 +145,12 @@ vi.mock("@/hooks/use-eval-run-route-facts", () => ({
       refetch: () => {},
     };
   },
+}));
+vi.mock("@/hooks/use-eval-run-server-facts", () => ({
+  useEvalRunServerFacts: () => ({
+    ...serverFacts.current,
+    refetch: () => {},
+  }),
 }));
 
 // Server quality reaches Convex through `useMutation`, which needs a provider
@@ -277,6 +290,7 @@ afterEach(() => {
     start: () => Promise.resolve(),
     refetch: () => {},
   };
+  serverFacts.current = { status: "idle", document: null, error: null };
   compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
@@ -949,5 +963,69 @@ describe("EvaluateRunContent", () => {
     const line = screen.getByTestId("route-line-case_1").textContent ?? "";
     expect(line).toContain("claude (anthropic)");
     expect(line).toContain("gpt (openai)");
+  });
+});
+
+/**
+ * The server-facts read, in each state that is not a document.
+ *
+ * Silence is the one answer a reader cannot act on, and it was the answer they
+ * got for three of these: the card rendered only on `ready`, so a deployment
+ * that does not serve the route yet, a read that failed, and a run nobody can
+ * see were all the same empty space under the stage strip.
+ */
+describe("EvaluateRunContent — server facts service states", () => {
+  it("says so when the deployment does not serve the route yet", () => {
+    serverFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "routeUnavailable", message: "404" },
+    };
+    renderContent();
+    const note = screen.getByTestId("server-facts-error");
+    expect(note).toHaveTextContent(/not available on this deployment/i);
+    // A service state is NOT a defect in the server under test.
+    expect(note.className).not.toContain("text-destructive");
+  });
+
+  it("says the read failed, rather than showing nothing", () => {
+    serverFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "requestFailed", message: "network" },
+    };
+    renderContent();
+    expect(screen.getByTestId("server-facts-error")).toHaveTextContent(
+      /Couldn't load the server facts/i,
+    );
+  });
+
+  it("keeps a contract mismatch red, because that one IS a bug report", () => {
+    serverFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "invalidContract", message: "bad payload" },
+    };
+    renderContent();
+    const note = screen.getByTestId("server-facts-error");
+    expect(note).toHaveTextContent(/did not match their contract/i);
+    expect(note.className).toContain("text-destructive");
+  });
+
+  it("explains an absent read instead of rendering nothing", () => {
+    serverFacts.current = { status: "absent", document: null, error: null };
+    renderContent();
+    expect(screen.getByTestId("server-facts-absent")).toHaveTextContent(
+      /not visible here/i,
+    );
+  });
+
+  it("stays quiet while the read is still in flight", () => {
+    // Loading is not a state to explain — a message here would flash on every
+    // page load and say nothing.
+    serverFacts.current = { status: "loading", document: null, error: null };
+    renderContent();
+    expect(screen.queryByTestId("server-facts-error")).toBeNull();
+    expect(screen.queryByTestId("server-facts-absent")).toBeNull();
   });
 });

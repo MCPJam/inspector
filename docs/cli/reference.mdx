@@ -1464,6 +1464,43 @@ Every run records the environment and the exact revision it used, so `eval
 status` can answer "which configuration did this run actually execute against?"
 long after the environment has been edited.
 
+### `cloud eval server-facts`
+
+Read the server a run was taken against.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+Per server: the tool count, the catalog's measured size, annotation and
+output-schema coverage, and the deterministic tool-metadata prechecks — plus
+what connect and discovery observed, and any conformance or readiness runs for
+the same servers.
+
+**None of it is a verdict.** A large tool surface is not a defect and a slow
+connect is not a failure; only a precheck with `class: "spec_required"` names a
+violation, and a row marked `protocolDependent` is a rule that may not apply to
+this server's protocol version at all.
+
+**Payload size is three different numbers** and this reports two of them, each
+carrying its `payload.basis`: `aggregated_catalog_json` is the catalog as the
+client assembled it (measured at capture), `normalized_snapshot` is what was
+retained after redaction — smaller, and `payload.complete` says so. What the
+model actually saw is a host fact and is not here. Token figures are estimated
+as `json_chars_div_4` against a **reference** window, not measured against any
+model's real context.
+
+Server facts are computed on read, so there is no backfill window: a run that
+finished long ago still answers. A run with nothing to describe answers inside
+the document with `state: "unavailable"` and a reason — `snapshotMissing`,
+`snapshotPartial` (the servers that answered are still listed, and their numbers
+are real), or `setupNotObserved` (unmeasured, **not** failed).
+
+Related conformance and readiness runs are joined by **server id alone**, so a
+different server version, environment or auth context is not excluded by the
+match. Each carries its own timestamp, and none of them is this run's verdict.
+
 ### `cloud eval status`
 
 Get the status and summary of an eval run.
