@@ -96,7 +96,12 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergePageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+import { isWebmcpPageToolName } from "@/shared/declared-tools";
+import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
 
 function unwrapJsonEnvelope(value: unknown): unknown {
   let current = value;
@@ -635,6 +640,79 @@ function backendFailureSlug(
   return describeAsSlug("internal/unknown", detail);
 }
 
+/**
+ * A tool-set change, as a mid-turn refresher describes it.
+ *
+ * ADD and RETIRE rather than "here is the new set", because the two are not
+ * symmetric. An added tool must arrive with its approval classification or it
+ * would execute ungated; a retired one must NOT simply vanish, because the
+ * model may already have decided to call it — an absent tool of any name
+ * throws "Tool not found" and the model has nothing to recover from. So a
+ * retired tool stays callable and answers with a sentence saying the page
+ * moved on, and only its DEFINITION is withdrawn.
+ */
+export interface ToolRefresh {
+  /** Tools to advertise from the next step. */
+  add?: ToolSet;
+  /**
+   * Names whose definitions are withdrawn. Their entries stay in `tools` as
+   * tombstones so a call already in flight gets a recoverable answer.
+   */
+  retire?: readonly string[];
+  /**
+   * The tombstones themselves, installed into `tools` WITHOUT being advertised.
+   *
+   * A retired name keeps whatever entry it had if none is supplied here, which
+   * is the honest fallback rather than the intended one: the old entry still
+   * answers, but with the daemon's `stale_binding` refusal instead of a
+   * sentence saying the page moved on.
+   */
+  tombstones?: ToolSet;
+}
+
+/**
+ * Apply one refresh to the live tool set and definitions. Every added tool
+ * carries its own `needsApproval`, which is the one channel the engine reads.
+ *
+ * Identity is preserved when nothing changed: an unchanged `toolDefs` array is
+ * what lets the per-step request stay byte-identical, which matters because
+ * every provider keys its prompt cache on the serialized tools.
+ */
+function applyToolRefresh(
+  refresh: ToolRefresh,
+  io: {
+    tools: ToolSet;
+    setToolDefs: (defs: ToolDefinition[]) => void;
+    currentToolDefs: () => ToolDefinition[];
+  },
+): void {
+  const added = Object.entries(refresh.add ?? {});
+  const retired = refresh.retire ?? [];
+  if (added.length === 0 && retired.length === 0) return;
+
+  for (const [name, definition] of added) io.tools[name] = definition;
+  // Tombstones are installed but never advertised, so a call the model had
+  // already decided on lands somewhere that can explain itself.
+  for (const [name, definition] of Object.entries(refresh.tombstones ?? {})) {
+    io.tools[name] = definition;
+  }
+
+  const retiredSet = new Set(retired);
+  const kept = io
+    .currentToolDefs()
+    .filter(
+      (def) =>
+        !retiredSet.has(def.name) &&
+        // `hasOwn`, not `in`: a page tool called `constructor` or `toString`
+        // must not be mistaken for one the refresh re-added.
+        !Object.hasOwn(refresh.add ?? {}, def.name),
+    );
+  const addedDefs = serializeToolsForConvex(
+    Object.fromEntries(added) as ToolSet,
+  );
+  io.setToolDefs([...kept, ...addedDefs]);
+}
+
 export interface MCPJamHandlerOptions {
   messages: ModelMessage[];
   modelId: string;
@@ -1032,6 +1110,30 @@ export interface MCPJamHandlerOptions {
    * synthetic omit; the eval runner closes over harness state to decide.
    */
   prepareAdvertisedTools?: PrepareAdvertisedTools;
+  /**
+   * Let the tool set GROW between model steps.
+   *
+   * This engine is the only one that can. It re-sends the tool definitions on
+   * every step (the per-step Convex call is stateless) and re-reads the
+   * executable map from the live `tools` object each time — so a tool added
+   * after step one is advertised on step two with no further plumbing. BYOK
+   * cannot (the AI SDK's `PrepareStepResult` carries no `tools`), and the
+   * harness takes its toolset as a constructor argument.
+   *
+   * WHY IT IS WORTH THE COMPLEXITY. The agent browser's page tools belong to
+   * whatever page is open, and the page changes inside a turn: the model
+   * navigates on step one and the tools it needs exist only from step two. A
+   * turn-start-only set means the model must either spend a turn per page or
+   * fall back to clicking — both of which are what this whole program is for.
+   *
+   * Called after each continuing step. A refresh that returns nothing changes
+   * nothing; a throw is swallowed, because a failed tool-list read must never
+   * be the reason a conversation stops.
+   */
+  refreshTools?: (ctx: {
+    stepIndex: number;
+    signal?: AbortSignal;
+  }) => Promise<ToolRefresh | undefined>;
   /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
@@ -1534,6 +1636,9 @@ function scrubMessagesForBackend(
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
     Object.keys(tools as Record<string, unknown>),
+    // A page's tools exist only while that page is open; what the model did
+    // with them is still what happened. See the parameter's doc.
+    isWebmcpPageToolName,
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
@@ -1947,9 +2052,16 @@ async function processStream(
           flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
-          const providerMetadata = mergeMcpToolOriginMetadata(
-            chunk.providerMetadata,
-            serverIdForToolCall,
+          // AND THE PAGE TOOL'S BINDING, on the same channel. It rides the
+          // tool-call part to the client and back, so an approval resumed in a
+          // later request can tell whether the page moved under it — see
+          // `mergePageToolBindingMetadata`.
+          const providerMetadata = mergePageToolBindingMetadata(
+            mergeMcpToolOriginMetadata(
+              chunk.providerMetadata,
+              serverIdForToolCall,
+            ),
+            pageToolBindingOf(tools[chunk.toolName]),
           );
           contentParts.push({
             type: "tool-call",
@@ -3571,6 +3683,7 @@ export async function runChatEngineLoop(
     failureReporter: failureReporterOption,
     // Browser-rendered MCP App eval PR 2: advertised-tool narrowing hook.
     prepareAdvertisedTools,
+    refreshTools,
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
@@ -3596,11 +3709,17 @@ export async function runChatEngineLoop(
       ? Math.floor(heartbeatIntervalMs)
       : DEFAULT_HEARTBEAT_INTERVAL_MS;
 
-  const toolDefs = serializeToolsForConvex(tools);
-  const toolDefsByName = new Map<string, ToolDefinition>();
+  // MUTABLE, because the tool set can grow between steps (`refreshTools`).
+  // `toolDefs` is re-sent on every step and the executable map is re-read from
+  // the live `tools` object, so replacing these two is the whole mechanism.
+  let toolDefs = serializeToolsForConvex(tools);
+  let toolDefsByName = new Map<string, ToolDefinition>();
   for (const def of toolDefs) {
     toolDefsByName.set(def.name, def);
   }
+  // A tool that appears mid-turn arrives WITH its gate: `needsApproval` is
+  // declared on the tool object itself, which is the one channel this engine
+  // reads (see `toolCallNeedsApproval`).
   const messageHistory = [...messages];
 
   // Seed the pending-approval set from history so resumed turns keep
@@ -3971,6 +4090,36 @@ export async function runChatEngineLoop(
 
         if (!shouldContinue) {
           break;
+        }
+
+        // BETWEEN STEPS, and only on a step that continues: a turn that is
+        // finishing has nothing to advertise to. Placed after
+        // `fireStepFinish` so a runner watching the step boundary sees the
+        // step that ran, then the tools the next one will have.
+        if (refreshTools) {
+          try {
+            const refresh = await refreshTools({
+              stepIndex: effectiveSteps() - 1,
+              ...(abortSignal ? { signal: abortSignal } : {}),
+            });
+            if (refresh) {
+              applyToolRefresh(refresh, {
+                tools,
+                setToolDefs: (defs) => {
+                  toolDefs = defs;
+                  toolDefsByName = new Map(defs.map((def) => [def.name, def]));
+                },
+                currentToolDefs: () => toolDefs,
+              });
+            }
+          } catch (error) {
+            // SWALLOWED. This is a tool-list read; a browser that would not
+            // answer it is not a reason to end somebody's conversation, and
+            // the step that follows simply advertises what it already had.
+            logger.warn("[chat] mid-turn tool refresh failed; keeping the current set", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
 

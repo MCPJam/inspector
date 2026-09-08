@@ -188,9 +188,46 @@ export {
   GRADER_STAGE,
   PREDICATE_KINDS,
   PREDICATE_STAGE,
+  RECOMMENDED_DEFAULT_PREDICATES,
+  isRecommendedDefaultPredicateKind,
   isSelectionStagePredicateKind,
   type PredicateKind,
 } from "./grader-stage.js";
+
+// ── server facts (F1) ────────────────────────────────────────────────────────
+/**
+ * What the SERVER SNAPSHOT a run was taken against looked like, and what the
+ * setup phase observed. Facts, not checks: nothing here becomes a stage state.
+ */
+export {
+  MAX_SERVER_FACTS_PRECHECKS,
+  MAX_SERVER_FACTS_RELATED,
+  MAX_SERVER_FACTS_SERVERS,
+  SERVER_FACTS_PAYLOAD_BASES,
+  SERVER_FACTS_PRECHECK_CLASSES,
+  SERVER_FACTS_REFERENCE_WINDOW_TOKENS,
+  SERVER_FACTS_SCHEMA_VERSION,
+  SERVER_FACTS_SOURCE_VERSION,
+  SERVER_FACTS_TOKEN_METHOD,
+  SERVER_FACTS_TOKEN_NOTE,
+  SERVER_FACTS_UNAVAILABLE_REASONS,
+  estimateTokensFromJson,
+  evalRunServerFactsSchema,
+  parseEvalRunServerFacts,
+  referenceWindowShare,
+  serverFactsPrecheckSchema,
+  serverFactsRelatedAssessmentSchema,
+  serverFactsServerSchema,
+  serverFactsSetupPhaseSchema,
+  type EvalRunServerFactsV1,
+  type ServerFactsPayloadBasis,
+  type ServerFactsPrecheck,
+  type ServerFactsPrecheckClass,
+  type ServerFactsRelatedAssessment,
+  type ServerFactsServer,
+  type ServerFactsSetupPhase,
+  type ServerFactsUnavailableReason,
+} from "./server-facts.js";
 
 // ── stage analytics (D5) ─────────────────────────────────────────────────────
 /**

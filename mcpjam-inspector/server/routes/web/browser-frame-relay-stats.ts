@@ -59,6 +59,16 @@ export interface DaemonFrameCounters {
    * hosted-only feature — never updated once.
    */
   tabs?: { active?: string; list?: Array<{ id: string; url: string }> };
+  /**
+   * The page's WebMCP tools as a change signal.
+   *
+   * Carried HERE and not only on the frame wire, for the same reason `tabs` is:
+   * the hosted relay consumes the daemon's heartbeat itself and re-emits its
+   * own `stats` message, so the pane's frame-wire `onHeartbeat` never fires on
+   * that engine at all. Without this the Tools pane would be live on the local
+   * engine and permanently stale on the hosted one.
+   */
+  webmcp?: { revision: number; hash: string; count: number; url?: string };
 }
 
 export interface FrameRelayStatsSnapshot {

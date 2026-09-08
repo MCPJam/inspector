@@ -23,6 +23,10 @@ import {
   buildIterationUsageMetadata,
   buildIterationUsagePayload,
 } from "./iteration-usage-metadata.js";
+import {
+  extractFinalAssistantMessage,
+  finalMessageEndsWithQuestion,
+} from "@mcpjam/sdk/predicates";
 import { buildIterationMetadata } from "./iteration-metadata.js";
 import {
   buildHostIterationMetadata,
@@ -925,6 +929,19 @@ export function buildIterationFinishParams(args: {
     metadata: {
       ...iterationMetadataBase,
       ...buildIterationMetadata(evaluation as never),
+      // Written for EVERY trial, from the same helper the `noEndingQuestion`
+      // check uses — not only when somebody authored that check.
+      //
+      // Route facts have consumed `endedWithQuestion` since they shipped and
+      // have reported `notMeasured` the whole time, because nothing produced
+      // it. A fact that exists only where a check happens to be authored is
+      // not a run-level rate; it is a rate over the suites that opted in. So
+      // the producer is unconditional and the check is optional, and the two
+      // cannot disagree because there is one implementation of "ends with a
+      // question".
+      endedWithQuestion: finalMessageEndsWithQuestion(
+        extractFinalAssistantMessage(messages),
+      ),
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),

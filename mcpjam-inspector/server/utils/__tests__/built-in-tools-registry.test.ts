@@ -579,12 +579,16 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("builds the six verbs when enabled, attested and computer-backed", () => {
+  it("builds the browser verbs when enabled, attested and computer-backed", () => {
     withFlag("1", () => {
       const tools = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
         browserCtx,
       );
+      // SIX, including the listing verb: this ctx carries no page-tool
+      // snapshot, which is a session's first turn — no page has been read, so
+      // nothing first-class can replace the verb that lists a page's tools.
+      // The first-class shape (five) is pinned below, with a snapshot.
       expect(Object.keys(tools ?? {}).sort()).toEqual([
         "browser_act",
         "browser_navigate",
@@ -851,6 +855,8 @@ describe("resolveHostTools — browser engines", () => {
         { builtInToolIds: ["browser"], computer },
         localCtx,
       );
+      // No snapshot on this ctx ⇒ the listing verb stays (see the hosted
+      // case above for why).
       expect(Object.keys(tools ?? {}).sort()).toEqual([
         "browser_act",
         "browser_navigate",
@@ -1094,5 +1100,88 @@ describe("resolveHostTools — an unattended run names itself", () => {
       expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
       expect(suppressed[0]?.reason).toContain("name the run");
     });
+  });
+});
+
+describe("resolveHostTools — first-class page tools", () => {
+  const SNAPSHOT = {
+    tools: [
+      {
+        name: "add_topping",
+        description: "Add a topping",
+        origin: "https://pizza.test",
+        isMainFrame: true,
+        frameId: "frame-main",
+        registrationSeq: 1,
+      },
+    ],
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 2,
+  };
+
+  function withFlag<T>(mode: string | undefined, run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    const beforeHosted = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (mode === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = mode;
+    process.env.HOSTED_BROWSER_TOOLS_ENABLED = "1";
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+      if (beforeHosted === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = beforeHosted;
+      }
+    }
+  }
+
+  function resolve(over: Record<string, unknown>) {
+    return resolveHostTools(
+      { builtInToolIds: ["browser"], computer: { kind: "personal" } },
+      {
+        authHeader: "Bearer t",
+        projectId: "p1",
+        browserApprovalDelivery: { kind: "attested" },
+        ...over,
+      } as never,
+    );
+  }
+
+  it("advertises the peeked page tools when one is threaded", () => {
+    const tools = withFlag("first_class", () =>
+      resolve({ browserPageTools: SNAPSHOT, browserDynamicPageTools: true }),
+    );
+    expect(Object.keys(tools ?? {})).toContain("webmcp_add_topping");
+  });
+
+  it("advertises none when the route threaded nothing", () => {
+    // ABSENT ⇒ no page tools, whatever the flag says. A turn only gets them
+    // when its route decided to read the page AND got an answer.
+    const tools = withFlag("first_class", () => resolve({}));
+    expect(
+      Object.keys(tools ?? {}).some((name) => name.startsWith("webmcp_")),
+    ).toBe(false);
+  });
+
+  it("hands the advertised set back so the turn can persist it", () => {
+    const seen: Array<{ minted: Array<{ name: string }> }> = [];
+    withFlag("first_class", () =>
+      resolve({
+        browserPageTools: SNAPSHOT,
+        browserDynamicPageTools: true,
+        onBrowserPageTools: (info: { minted: Array<{ name: string }> }) =>
+          seen.push(info),
+      }),
+    );
+    // Written down rather than re-derived: the live browser describes the page
+    // it is on NOW, so a reopened conversation would attribute its cards to
+    // whatever tool happens to carry that name then.
+    expect(seen[0]?.minted.map((tool) => tool.name)).toEqual([
+      "webmcp_add_topping",
+    ]);
   });
 });

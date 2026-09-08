@@ -1,3 +1,4 @@
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
@@ -262,6 +263,23 @@ export interface PersistedTurnTrace {
     name: string;
     revision: number;
   };
+  /**
+   * The page's WebMCP tools this turn ADVERTISED, and the exact document
+   * generation each was bound to.
+   *
+   * PERSISTED, not derived. The live tool set describes the page the browser is
+   * on NOW; a conversation reopened tomorrow would attribute its cards to
+   * whatever tool happens to carry that name then, and the Raw view would show
+   * a request that was never sent. Follows the `skillsAtTurn` precedent exactly
+   * — carried INSIDE the turn trace, which `buildIngestBody` serializes whole,
+   * so this reaches the wire with no change to the body builder.
+   *
+   * The backend validates and strips what it does not recognize, so this side
+   * never needs to; until its validator lands the field is dropped server-side
+   * and Raw falls back to synthesizing from the live browser, with a note
+   * saying so.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer

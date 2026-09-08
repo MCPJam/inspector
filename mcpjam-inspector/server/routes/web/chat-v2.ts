@@ -1,3 +1,14 @@
+import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
@@ -41,6 +52,7 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
+  advertisedPageToolsOnly,
   validatePageToolEntries,
   PageToolValidationError,
   type PageToolEntry,
@@ -1638,6 +1650,51 @@ chatV2.post("/", async (c) => {
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
     }
 
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built.
+    //
+    // Read-only: this never starts, attaches or reserves a browser (see
+    // `peekPageTools`). A turn that was not going to drive one pays nothing,
+    // and a failure of any kind means "no page tools this turn" rather than a
+    // failed conversation.
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      // TRANSITIONAL: this client fulfils page tools itself through `page_*`.
+      // Advertising the same page's tools twice, under two namespaces with two
+      // fulfilment paths, is how a model calls one of each.
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: "hosted",
+      projectId: hostedBody.projectId,
+      bearer: bearerToken,
+      ...(sandboxBinding?.sandboxRowId
+        ? { sandboxRowId: sandboxBinding.sandboxRowId }
+        : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    // Filled by `runWebChatTurn` once `prepareChatV2` has decided which names
+    // are spoken for. Only the persisted record reads it — the model's own set
+    // is filtered inside the turn, where the decision is made.
+    let reservedAgainstPageTools: ReadonlySet<string> | undefined;
+    // The generation `advertisedPageTools` belongs to. Starts as the turn's own
+    // peek and moves with each refresh: pairing refreshed tools with the
+    // turn-start tab and navCounter would persist an identity that never was.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: {
+            signal?: AbortSignal;
+          }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1678,6 +1735,27 @@ chatV2.post("/", async (c) => {
         // A person is watching this surface, so it may advertise interactive
         // browser tools and keep a signed-in profile.
         browserApprovalDelivery: { kind: "attested" },
+        ...(pageToolsSnapshot
+          ? { browserPageTools: pageToolsSnapshot }
+          : {}),
+        // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
+        // a constructor argument and never re-reads it, so claiming it here
+        // would build a refresher nothing consumes. NOT gated on the snapshot:
+        // the ordinary turn starts on a blank tab or with no browser at all,
+        // and is exactly the one whose set has to grow.
+        browserDynamicPageTools: !resolvedExecution.harness,
+        // KEPT HERE, dropped later. Which engine runs this turn depends on a
+        // Convex-backed runtime resolution that has not happened yet, and one
+        // of them — local BYOK — does not consume refreshes; retiring the
+        // verbs from here took the page away from it. `runWebChatTurn` drops
+        // them on the paths that do refresh.
+        browserRetireInvokeVerb: false as const,
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
+        },
+        onBrowserToolsRefresh: (refresh) => {
+          pageToolRefresh = refresh;
+        },
       },
     );
 
@@ -1847,6 +1925,27 @@ chatV2.post("/", async (c) => {
           pageTools: validatedPageTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+          // step and the tools it needs exist only from the next; a
+          // turn-start-only set would mean a turn per page.
+          //
+          // The persisted record is re-read here rather than captured at turn
+          // start, so a reopened conversation shows the set the turn ENDED
+          // with — which is the one the last steps actually used.
+          onPageToolNamesReserved: (reserved) => {
+            reservedAgainstPageTools = reserved;
+          },
+          ...(pageToolRefresh
+            ? {
+                refreshTools: async (ctx: { signal?: AbortSignal }) => {
+                  const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+                  advertisedPageTools = pageToolRefresh!.currentPageTools();
+                  advertisedPageToolsBinding =
+                    pageToolRefresh!.currentPageToolsBinding();
+                  return refresh as never;
+                },
+              }
+            : {}),
           // COMP-16: root the harness Shell at the host-configured working
           // directory — the same `computer.workdir` the bash tool runs in.
           ...(harnessComputerWorkdir
@@ -1897,6 +1996,31 @@ chatV2.post("/", async (c) => {
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
           ...(turnProvenance ? { turnProvenance } : {}),
+          // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
+          // rather than re-derived, so a reopened conversation shows the tools
+          // the model really had rather than the ones the browser has now.
+          // A THUNK: the set is read when the turn is persisted, not when
+          // these options are built. On a turn that navigated the two differ,
+          // and the later one is the one its last steps actually used.
+          // A turn that started with no snapshot but grew tools mid-turn has
+          // a record worth keeping too — the refresher's, read at persist time.
+          ...(pageToolsSnapshot || pageToolRefresh
+            ? {
+                pageToolsAtTurn: () =>
+                  toMintedPageToolRecords(
+                    // Filtered by the same collision policy the model's set
+                    // was, so the record cannot name a tool the model was
+                    // never actually offered.
+                    reservedAgainstPageTools
+                      ? advertisedPageToolsOnly(
+                          advertisedPageTools,
+                          reservedAgainstPageTools,
+                        )
+                      : advertisedPageTools,
+                    advertisedPageToolsBinding ?? pageToolsSnapshot,
+                  ),
+              }
+            : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide
           // file query cannot return a plugin skill's) and the pinned plugin

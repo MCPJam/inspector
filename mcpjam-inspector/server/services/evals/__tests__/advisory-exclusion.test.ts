@@ -38,10 +38,14 @@ const FAILING_ADVISORY: Predicate = {
   severity: "warn",
 };
 
-/** hostedCriterionId literals pinned 2026-09-06. */
+/**
+ * hostedCriterionId literals, pinned 2026-09-06 and extended with each kind.
+ *
+ * The pin catches the HASHER's inputs moving: an existing literal that changes
+ * renames a scorer, which breaks every historical join on it. New rows are
+ * added when the fixture set grows; a changed row is a bug.
+ */
 const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
-  "onlyToolsCalled — an allow-list of tools": "onlyToolsCalled-ef1d9ea3488c",
-  "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)": "onlyToolsCalled-01ce35d01165",
   "toolCalledWith — minimal (only required fields)":
     "toolCalledWith-bb535809fe86",
   "toolCalledWith — all optional fields populated":
@@ -64,11 +68,7 @@ const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
   "responseMatches — minimal regex": "responseMatches-acad91d7f657",
   "responseMatches — anchored regex": "responseMatches-0095f40480be",
   "noToolErrors — no fields beyond type": "noToolErrors-037586125822",
-  "noToolErrors — second example (still no fields)":
-    "noToolErrors-037586125822",
   "finalAssistantMessageNonEmpty — no fields beyond type":
-    "finalAssistantMessageNonEmpty-175378843b04",
-  "finalAssistantMessageNonEmpty — second example":
     "finalAssistantMessageNonEmpty-175378843b04",
   "tokenBudgetUnder — minimal": "tokenBudgetUnder-5c2d14380e24",
   "tokenBudgetUnder — large budget": "tokenBudgetUnder-d73c1738301e",
@@ -78,14 +78,47 @@ const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
   "widgetRendered — minimal (no toolName filter)":
     "widgetRendered-68223fde7ae1",
   "widgetRendered — with toolName filter": "widgetRendered-78fd2ef5d0e0",
-  "widgetRenderLatencyUnder — minimal":
-    "widgetRenderLatencyUnder-24b285bfa69e",
+  "widgetRenderLatencyUnder — minimal": "widgetRenderLatencyUnder-24b285bfa69e",
   "widgetRenderLatencyUnder — with toolName filter":
     "widgetRenderLatencyUnder-1dc192155096",
   "widgetNoConsoleErrors — minimal (no toolName filter)":
     "widgetNoConsoleErrors-def686b4d83a",
   "widgetNoConsoleErrors — with toolName filter":
     "widgetNoConsoleErrors-19ad36911f9d",
+  "toolLatencyUnder — all tools": "toolLatencyUnder-a6090b8a9328",
+  "toolResultContains — minimal": "toolResultContains-25686816ee42",
+  "toolResultContains — case-sensitive, one tool":
+    "toolResultContains-e9027a7d0d3d",
+  "toolResultMatchesSchema — object root":
+    "toolResultMatchesSchema-bb67e721141b",
+  "toolResultMatchesSchema — array root (legal under 2026-07-28)":
+    "toolResultMatchesSchema-48c37c32583d",
+  "toolResultSizeUnder — all tools": "toolResultSizeUnder-b2b683d7a85c",
+  "argumentsMatchToolSchema — all tools":
+    "argumentsMatchToolSchema-1133950cdc56",
+  "argumentsMatchToolSchema — one tool":
+    "argumentsMatchToolSchema-b241a938d174",
+  "toolCallCountUnder — all tools": "toolCallCountUnder-8f28c5b8530e",
+  "toolCallCountUnder — one tool": "toolCallCountUnder-8d40f66fe2f2",
+  "toolCalledBefore — minimal": "toolCalledBefore-32c7ea98b93d",
+  "noDestructiveToolCalled — minimal": "noDestructiveToolCalled-4d38da27d4c1",
+  "toolCalledWith — minimal (no minCount)": "toolCalledWith-82112c464770",
+  "toolCalledWith — full (argumentMatching=partial with placeholder leaves, minCount)":
+    "toolCalledWith-75853c7f2405",
+  "toolCalledAtLeastOnce — minimal (2)": "toolCalledAtLeastOnce-9afdc368e48e",
+  "toolCalledAtLeastOnce — dotted tool name":
+    "toolCalledAtLeastOnce-59f33db297d8",
+  "toolNeverCalled — minimal (2)": "toolNeverCalled-1097cd0fde9f",
+  "toolNeverCalled — namespaced": "toolNeverCalled-0405b542932e",
+  "firstToolWas — minimal (Phase 2 NEW)": "firstToolWas-3f689e7534ff",
+  "firstToolWas — namespaced": "firstToolWas-faa3941fa463",
+  "responseContains — caseSensitive true (2)": "responseContains-9a40ccf7b841",
+  "responseMatches — minimal regex (2)": "responseMatches-fab1d18c0181",
+  "responseMatches — character class regex": "responseMatches-5f159fe0cbd8",
+  "tokenBudgetUnder — large budget (2)": "tokenBudgetUnder-8b5817a6f1fc",
+  "onlyToolsCalled — an allow-list of tools": "onlyToolsCalled-ef1d9ea3488c",
+  "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)":
+    "onlyToolsCalled-01ce35d01165",
 };
 
 function hostedBase() {

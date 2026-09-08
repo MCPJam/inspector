@@ -91,6 +91,26 @@ export interface FakePage extends DriverPage {
   };
 }
 
+/**
+ * Fill in the bridge methods a test's stub did not bother to write.
+ *
+ * Tests stub the two or three methods their case is about, and the driver
+ * legitimately calls more than that — it subscribes for tool-set changes, waits
+ * out a support re-probe, and reads a registration sequence to validate a
+ * binding. Defaulting them here keeps every existing stub honest (a test that
+ * cares about one of them still overrides it) without making each one restate
+ * the whole interface.
+ */
+function withBridgeDefaults(bridge: unknown): unknown {
+  const stub = bridge as Record<string, unknown>;
+  return {
+    subscribe: () => () => {},
+    probeSettled: async () => {},
+    registrationSeqFor: () => undefined,
+    ...stub,
+  };
+}
+
 export function fakePage(init: {
   url?: string;
   dom?: string;
@@ -217,7 +237,7 @@ export function fakePage(init: {
     },
     async webmcp() {
       init.onWebmcp?.();
-      return (init.webmcp ?? null) as never;
+      return (init.webmcp ? withBridgeDefaults(init.webmcp) : null) as never;
     },
     async cdp() {
       return page.cdpSession === undefined ? defaultCdp : page.cdpSession;

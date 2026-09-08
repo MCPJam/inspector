@@ -53,6 +53,7 @@ import {
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -276,6 +277,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already

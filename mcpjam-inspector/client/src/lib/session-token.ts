@@ -471,7 +471,7 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // `requestFailed`/service copy ("could not be loaded"), which reads as a
   // backend outage rather than a missing header, so the panels look broken
   // while the API is fine.
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics|route-facts)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics|route-facts|server-facts)$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
   // Description-experiment reads and the two writes the Evaluate card
   // issues through authFetch (propose + start). Anchored the same way as

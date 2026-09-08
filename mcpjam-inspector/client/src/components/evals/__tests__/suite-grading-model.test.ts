@@ -45,6 +45,10 @@ function samplePredicate(kind: string): Predicate {
   if (kind === "tokenBudgetUnder") base.tokens = 100;
   if (kind === "turnCountUnder") base.turns = 3;
   if (kind === "widgetRenderLatencyUnder") base.ms = 500;
+  if (kind === "toolLatencyUnder") base.ms = 500;
+  if (kind === "toolResultSizeUnder") base.maxBytes = 32_000;
+  if (kind === "toolResultContains") base.needle = "hi";
+  if (kind === "toolResultMatchesSchema") base.schema = { type: "object" };
   return base as Predicate;
 }
 
@@ -168,11 +172,23 @@ describe("groupGradersByStage", () => {
         },
       ],
     });
-    const predicates = USER_VALUE_STAGES.flatMap(
-      (stage) => model.byStage[stage],
-    ).filter((row) => row.kind === "predicate");
-    expect(predicates.map((row) => row.role)).toEqual(["gating", "advisory"]);
-    expect(predicates.map((row) => row.severity)).toEqual([undefined, "warn"]);
+    // Keyed by kind, not by flattened stage order: the two predicates file at
+    // DIFFERENT stages (`noToolErrors` moved to `response` in analyzer 11), so
+    // reading them positionally would pin the stage order rather than the
+    // role, and would have to be rewritten every time a kind is re-filed.
+    const byIndex = new Map(
+      USER_VALUE_STAGES.flatMap((stage) => model.byStage[stage])
+        .filter((row) => row.kind === "predicate")
+        .map((row) => [row.predicateIndex, row]),
+    );
+    // predicate 0 is `responseContains` (userValue), predicate 1 the advisory
+    // `noToolErrors` (response).
+    expect(byIndex.get(0)).toMatchObject({ role: "gating" });
+    expect(byIndex.get(0)?.severity).toBeUndefined();
+    expect(byIndex.get(1)).toMatchObject({
+      role: "advisory",
+      severity: "warn",
+    });
     expect(
       USER_VALUE_STAGES.flatMap((stage) => model.byStage[stage])
         .filter((row) => row.kind === "match")
@@ -292,7 +308,10 @@ describe("stageConfigStates", () => {
   it("counts warn and report separately from gates", () => {
     const states = statesFor({
       predicates: [
-        { type: "noToolErrors", role: "advisory", severity: "warn" },
+        // Both advisory, both at userValue — `noToolErrors` files at
+        // `response` since analyzer 11, so a Warn/Report split asserted over
+        // one stage needs two kinds that actually land there.
+        { type: "responseMatches", pattern: "hi", role: "advisory", severity: "warn" },
         { type: "responseContains", needle: "hi", role: "advisory" },
       ],
     });
@@ -301,6 +320,16 @@ describe("stageConfigStates", () => {
       warn: 1,
       report: 1,
     });
+  });
+
+  it("counts an advisory response check under response, not user value", () => {
+    // The re-file, stated as its own assertion rather than left implicit in
+    // the counts above.
+    const states = statesFor({
+      predicates: [{ type: "noToolErrors", role: "advisory", severity: "warn" }],
+    });
+    expect(stateOf(states, "response")).toMatchObject({ gates: 0, warn: 1 });
+    expect(stateOf(states, "userValue")).toMatchObject({ gates: 0, warn: 0 });
   });
 
   it("autoRun: true is judgeAutomatic", () => {

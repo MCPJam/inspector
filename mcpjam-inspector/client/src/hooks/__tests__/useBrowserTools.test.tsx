@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   definitions: [{ name: "browser_navigate", description: "Open a URL." }],
   definitionCalls: [] as string[],
   pageCalls: [] as string[],
+  pageTabIds: [] as Array<string | undefined>,
 }));
 
 vi.mock("convex/react", () => ({
@@ -60,8 +61,9 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
     state.definitionCalls.push(engine);
     return state.definitions;
   }),
-  fetchHostedPageTools: vi.fn(async () => {
+  fetchHostedPageTools: vi.fn(async (_tokens: unknown, _signal: unknown, tabId?: string) => {
     state.pageCalls.push("hosted");
+    state.pageTabIds.push(tabId);
     return {
       ok: true,
       url: "https://webmcp.dev/",
@@ -69,8 +71,9 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
       tools: [],
     };
   }),
-  fetchLocalPageTools: vi.fn(async () => {
+  fetchLocalPageTools: vi.fn(async (args: { tabId?: string }) => {
     state.pageCalls.push("local");
+    state.pageTabIds.push(args?.tabId);
     return {
       ok: true,
       url: "http://localhost/",
@@ -81,6 +84,11 @@ vi.mock("@/lib/browser-page-tools/client", () => ({
 }));
 
 import { useBrowserTools } from "../useBrowserTools";
+import {
+  browserPageToolsKey,
+  noteWebmcpStats,
+  useBrowserPageToolsStore,
+} from "@/stores/browser-page-tools-store";
 
 const WITH_BROWSER = { builtInToolIds: ["browser", "bash"] };
 const WITHOUT_BROWSER = { builtInToolIds: ["bash"] };
@@ -92,6 +100,8 @@ beforeEach(() => {
   state.consentToken = null;
   state.definitionCalls = [];
   state.pageCalls = [];
+  state.pageTabIds = [];
+  useBrowserPageToolsStore.setState({ live: {}, epoch: {} });
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -205,5 +215,34 @@ describe("useBrowserTools — which browser it reads", () => {
 
     await waitFor(() => expect(state.pageCalls).toEqual(["hosted", "hosted"]));
     expect(state.definitionCalls).toHaveLength(definitionsBefore);
+  });
+});
+
+describe("useBrowserTools — the read follows the tab the signal came from", () => {
+  it("sends the beat's active tab, so the pane is not the default tab's list", async () => {
+    // The heartbeat measures the ACTIVE tab. The page-tools read is a separate
+    // request, and one sent with no tab observes `@session` — a literal key,
+    // not "whichever tab is active". Without this the pane refreshed to the
+    // DEFAULT tab's definitions and put a live badge on them, beside a view of
+    // the tab the person was actually in.
+    state.projectDefault = WITH_BROWSER;
+    const { result } = renderHook(() =>
+      useBrowserTools({ projectId: "proj_1", hostId: null }),
+    );
+    await waitFor(() => expect(state.pageCalls.length).toBeGreaterThan(0));
+    // The opening read has no signal yet, so no tab: today's behaviour.
+    expect(state.pageTabIds.at(-1)).toBeUndefined();
+
+    const before = state.pageCalls.length;
+    noteWebmcpStats(
+      browserPageToolsKey("proj_1", "hosted"),
+      { webmcp: { revision: 7, hash: "h7", count: 1 }, tabs: { active: "t2" } },
+      "boot-1",
+    );
+    await waitFor(() =>
+      expect(state.pageCalls.length).toBeGreaterThan(before),
+    );
+    expect(state.pageTabIds.at(-1)).toBe("t2");
+    expect(result.current.attached).toBe(true);
   });
 });

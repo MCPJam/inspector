@@ -869,6 +869,136 @@ describe("BrowserdRequestHandler — POST /v1/policy", () => {
   });
 });
 
+describe("BrowserdRequestHandler — WebMCP capabilities and cancellation", () => {
+  it("announces the WebMCP features on /v1/status", async () => {
+    // A feature flag rather than a protocol bump: both additions are additive
+    // on the wire, and bumping the protocol version would have killed every
+    // live hosted browser on deploy to gain a capability the server can ask
+    // about instead.
+    const { handler } = makeHandler();
+    const res = await handler.handle(
+      req({ method: "GET", path: "/v1/status", body: undefined }),
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { features?: string[]; protocolVersion?: number };
+    expect(body.features).toEqual(
+      expect.arrayContaining(["webmcp-eager", "webmcp-binding"]),
+    );
+    expect(body.protocolVersion).toBe(BROWSERD_PROTOCOL_VERSION);
+  });
+
+  it("passes a webmcp_cancel that names only a commandId straight through", async () => {
+    // The envelope validator is structural, so this is really a guard AGAINST
+    // a future per-action check that would reject the field the whole cancel
+    // path depends on.
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-cancel",
+            source: "chat",
+            action: { kind: "webmcp_cancel", commandId: "c-invoke" },
+          },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0].action).toEqual({
+      kind: "webmcp_cancel",
+      commandId: "c-invoke",
+    });
+  });
+
+  it("passes an expectedBinding through unaltered", async () => {
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const binding = {
+      bootId: BOOT,
+      tabId: "@session",
+      navCounter: 3,
+      frameId: "frame-main",
+      registrationSeq: 9,
+    };
+    await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-invoke",
+            source: "chat",
+            action: {
+              kind: "webmcp_invoke",
+              toolKey: "pay",
+              input: { amount: 1 },
+              expectedBinding: binding,
+            },
+          },
+        }),
+      }),
+    );
+    expect(
+      (seen[0].action as { expectedBinding?: unknown }).expectedBinding,
+    ).toEqual(binding);
+  });
+
+  it("refuses a binding minted on ANOTHER boot as stale, before the queue", async () => {
+    // `expectedBootId` is the caller's idea of the daemon and is refreshed
+    // whenever it re-acquires a handle; the binding's `bootId` is the daemon
+    // the tool was LISTED on. After a relaunch the two differ, and the driver
+    // (which does not know its own boot) would compare a fresh daemon's
+    // `navCounter: 0` against a previous life's. Checked here, where the boot
+    // is known — and as a command RESULT, the same `stale_binding` the driver
+    // answers, so the caller's one recovery path handles both.
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-invoke",
+            source: "chat",
+            action: {
+              kind: "webmcp_invoke",
+              toolKey: "pay",
+              input: { amount: 1 },
+              expectedBinding: {
+                bootId: "boot-previous-life",
+                tabId: "@session",
+                navCounter: 0,
+                frameId: "frame-main",
+                registrationSeq: 1,
+              },
+            },
+          },
+          expectedBootId: BOOT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { result?: { ok: boolean; error?: string } };
+    expect(body.result?.ok).toBe(false);
+    expect(body.result?.error).toMatch(/^stale_binding/);
+    // Nothing reached the page.
+    expect(seen).toEqual([]);
+  });
+});
+
 /**
  * R-1. Motion looks the same whoever is driving.
  *

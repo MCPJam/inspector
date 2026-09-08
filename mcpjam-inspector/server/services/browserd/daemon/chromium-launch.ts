@@ -122,6 +122,13 @@ export function wrapPage(page: AnyPage): DriverPage {
   // The console ring. Attached once per wrapped page; entries are captured
   // eagerly because a console message is gone the moment it is emitted.
   const consoleRing: ConsoleEntry[] = [];
+  // Monotonic totals, never decremented when the ring evicts or a handoff
+  // purges. They are CURSORS: a ledger row records where they stood after a
+  // command, and two rows bracket the output that command produced. Counting
+  // only what is still readable would make a lost window indistinguishable
+  // from a quiet one.
+  let consoleTotal = 0;
+  let errorsTotal = 0;
   page.on("console", (message: { type?: () => string; text?: () => string }) => {
     try {
       const text = message.text?.() ?? "";
@@ -130,6 +137,7 @@ export function wrapPage(page: AnyPage): DriverPage {
         text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
         at: Date.now(),
       });
+      consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
       // A console listener must never take the page down.
@@ -144,13 +152,26 @@ export function wrapPage(page: AnyPage): DriverPage {
       ),
       at: Date.now(),
     });
+    // Counted in BOTH: a page error is a console entry (the ring holds one) and
+    // it is also the thing `errors` names. A reader asking "did this command
+    // throw" wants the second number, and deriving it from the first would mean
+    // scanning entries the ring may already have dropped.
+    consoleTotal += 1;
+    errorsTotal += 1;
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
 
-  // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
-  // page tool should not pay for a CDP session. It reuses the memoized session
-  // below rather than attaching its own — a page serving both a tool call and
-  // the pane would otherwise hold two.
+  // The WebMCP bridge is attached ONCE and memoized here. It USED to be
+  // attached lazily, on the first `webmcp_*` action, on the reasoning that a
+  // tab which never calls a page tool should not pay for a CDP session. The
+  // driver now attaches it eagerly on tab creation instead (see
+  // `ChromiumDriver.getOrCreateTab`), because the tool set became something
+  // READ between model steps: a bridge that attaches on first use knows
+  // nothing about what the page registered before it existed, so a tool
+  // registered during page load would be invisible until something else
+  // happened to touch WebMCP. It still reuses the memoized session below
+  // rather than attaching its own — a page serving both a tool call and the
+  // pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
   // The CDP session itself is memoized separately and shared: the WebMCP
   // bridge and the viewport both want one, and attaching twice to the same
@@ -261,6 +282,7 @@ export function wrapPage(page: AnyPage): DriverPage {
       }
     },
     consoleEntries: () => consoleRing,
+    consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
     dropConsoleSince: (since: number) => {
       // Walk from the end: the ring is chronological, so the tail is the
       // window to drop.
@@ -304,15 +326,22 @@ async function attachWebMcp(
   session: CdpLike,
 ): Promise<WebMcpBridge | null> {
   try {
-    const bridge = new WebMcpBridge(session);
-    await bridge.start(async () => {
+    // ONE probe closure, used for the initial `start()` AND re-run on every
+    // main-frame navigation. `document.modelContext` is a property of the
+    // DOCUMENT, not of the session: a bridge that probed once reported "this
+    // browser has no WebMCP" forever after opening on a page that had none,
+    // including on the WebMCP page the model navigated to next.
+    const probe = async () => {
       // `WebMCP.enable` resolves even where the feature is off — the page API
       // is the only honest probe (same reasoning as the local inspector's).
       const supported = await page
         .evaluate<boolean>(`(() => ${PAGE_API_PROBE})()`)
         .catch(() => false);
       return supported === true;
-    });
+    };
+    const bridge = new WebMcpBridge(session);
+    bridge.resupport(probe);
+    await bridge.start(probe);
     return bridge;
   } catch {
     return null;
