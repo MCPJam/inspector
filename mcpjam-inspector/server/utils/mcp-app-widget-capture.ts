@@ -329,10 +329,22 @@ export const MAX_REPLAY_VIDEO_BYTES = 64 * 1024 * 1024;
 export const VIDEO_UPLOAD_TIMEOUT_MS = 60_000;
 
 /**
- * Upload one run's Playwright replay `.webm` to Convex storage and return its
- * storageId. Same path as {@link uploadScreenshotBlob} (generate URL → POST
- * bytes → storageId); only the mime type differs. One video per run, so this
- * runs at most once per finalize.
+ * The container a replay is in unless the caller says otherwise.
+ *
+ * `webm` because that is what the local widget harness's Playwright recording
+ * has always been, and every caller that predates a second recorder is one of
+ * those. A hosted daemon's recording is `video/mp4` and MUST say so: Convex
+ * serves back exactly the content type the bytes were posted with, so an MP4
+ * announced as webm is a file the browser refuses to play — and the only
+ * symptom is an empty player on the trace page.
+ */
+export const DEFAULT_REPLAY_VIDEO_MIME = "video/webm";
+
+/**
+ * Upload one run's replay video to Convex storage and return its storageId.
+ * Same path as {@link uploadScreenshotBlob} (generate URL → POST bytes →
+ * storageId); only the mime type differs. One video per run, so this runs at
+ * most once per finalize.
  *
  * Bounded on both axes — size ({@link MAX_REPLAY_VIDEO_BYTES}, matching the
  * backend's write-boundary check) and time ({@link VIDEO_UPLOAD_TIMEOUT_MS}).
@@ -342,7 +354,9 @@ export const VIDEO_UPLOAD_TIMEOUT_MS = 60_000;
 export async function uploadVideoBlob(
   convexClient: ConvexHttpClient,
   bytes: Buffer,
+  options: { contentType?: string } = {},
 ): Promise<string | undefined> {
+  const contentType = options.contentType || DEFAULT_REPLAY_VIDEO_MIME;
   if (bytes.length > MAX_REPLAY_VIDEO_BYTES) {
     throw new Error(
       `Replay video is too large to upload (${bytes.length} bytes; max ${MAX_REPLAY_VIDEO_BYTES})`,
@@ -361,10 +375,10 @@ export async function uploadVideoBlob(
 
   const response = await fetch(uploadUrl, {
     method: "POST",
-    headers: { "Content-Type": "video/webm" },
+    headers: { "Content-Type": contentType },
     // `new Uint8Array(bytes)` so a Node `Buffer` is a valid `BlobPart`
     // regardless of its backing-buffer type.
-    body: new Blob([new Uint8Array(bytes)], { type: "video/webm" }),
+    body: new Blob([new Uint8Array(bytes)], { type: contentType }),
     signal: timeout,
   });
 

@@ -2199,6 +2199,7 @@ describe("operation catalog consistency", () => {
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
     get_eval_run_gate: { project: "p", runId: "r" },
     get_eval_run_route_facts: { project: "p", runId: "r" },
+    get_eval_run_server_facts: { project: "p", runId: "r" },
     propose_eval_description_rewrite: {
       project: "p",
       runId: "r",

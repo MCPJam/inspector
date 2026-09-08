@@ -29,6 +29,7 @@
  * capped before they reach model context (`MODEL_OUTPUT_CAP`).
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import {
   callServerToolOperation,
   connectProjectServerOperation,
@@ -50,6 +51,7 @@ import {
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -186,6 +188,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -752,8 +755,13 @@ export function buildMcpjamTool(
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;
 
-  const needsApproval =
-    APPROVAL_REQUIRED_IDS.has(id) && opts.requireToolApproval === true;
+  // Floors: the ops that open a connection, spend credits or write a server row
+  // follow the switch; everything else is a read of the user's own workspace,
+  // which pausing cannot make safer.
+  const needsApproval = needsApprovalFor(
+    APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never",
+    opts.requireToolApproval === true,
+  );
 
   const clamp = WORKSPACE_INPUT_CLAMPS[id];
 

@@ -93,7 +93,7 @@ describe("shape invariants", () => {
   });
 
   test("stamps the analyzer version on every derivation", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(10);
+    expect(STAGE_ANALYZER_VERSION).toBe(11);
     expect(derive().stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     expect(
       derive({ iteration: { status: "cancelled" } }).stageAnalyzerVersion
@@ -1259,34 +1259,46 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
   });
 
   test("the derivation routes exactly the kinds it is meant to route", () => {
-    // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is now
-    // COMPUTED from the map, so a mistake in the derivation would silently
-    // widen or narrow what the analyzer routes — and the 93 behavioural tests
-    // above would still pass if it only widened. Naming the set makes either
-    // direction a failure.
+    // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is COMPUTED
+    // from the map, so a mistake in the derivation would silently widen or
+    // narrow what the analyzer routes — and the behavioural tests above would
+    // still pass if it only widened. Naming the set makes either direction a
+    // failure.
     //
-    // `onlyToolsCalled` joined the set deliberately: a tool outside the
-    // allowed set is the same observed fact as a forbidden tool, so it routes
-    // to `unexpectedToolCall` beside `toolNeverCalled`. Widening this list is
-    // a decision, never a side effect — every other addition still fails here
+    // `toolCalledWith` is absent on purpose: it is matcher-graded, so reading
+    // its raw predicate row here would let a residual contradict the
+    // adjudicated verdict. Everything else the map files at `selection` is
+    // routed.
+    //
+    // Both additions below joined the set deliberately: a tool outside an
+    // allowed set, a call before its prerequisite, one the server marks
+    // deprecated or destructive, one call too many — each is the same observed
+    // fact as a forbidden tool in a different dress. Widening this list is a
+    // decision, never a side effect: every other addition still fails here
     // first.
     const routed = (PREDICATE_KINDS as readonly string[])
       .filter((kind) => isSelectionPredicateKind(kind))
       .sort();
     expect(routed).toEqual([
       "firstToolWas",
+      "noDeprecatedToolCalled",
+      "noDestructiveToolCalled",
       "onlyToolsCalled",
+      "toolCallCountUnder",
       "toolCalledAtLeastOnce",
+      "toolCalledBefore",
       "toolNeverCalled",
     ]);
   });
 
-  test("the analyzer version is advisory exclusion", () => {
-    // A2 (advisory exclusion) bumped the analyzer to 10: Warn/Report
-    // checks no longer consume selection, fail-predicate precedence, or
-    // userValue. B7's routing set is unchanged; the version moved for
-    // the skip, not the route table.
-    expect(STAGE_ANALYZER_VERSION).toBe(10);
+  test("the analyzer version is response/call routing", () => {
+    // 10 was advisory exclusion: Warn/Report checks stopped consuming
+    // selection, fail-predicate precedence, and userValue.
+    // 11 routes `response` and `call` predicate rows to their own stages,
+    // moves `noToolErrors` to `response` (it used to fail there AND at
+    // userValue on the same evidence), and stops an unscorable row
+    // (`status: "error"`) from establishing any state.
+    expect(STAGE_ANALYZER_VERSION).toBe(11);
   });
 });
 
