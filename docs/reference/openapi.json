@@ -13228,14 +13228,15 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
                 "deprecated": true,
-                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
             },
             "oneOf": [
@@ -13597,14 +13598,15 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
                 "deprecated": true,
-                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
             },
             "oneOf": [
@@ -14077,14 +14079,15 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
                 "deprecated": true,
-                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
             },
             "oneOf": [
@@ -14314,14 +14317,15 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
                 "deprecated": true,
-                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
             },
             "oneOf": [

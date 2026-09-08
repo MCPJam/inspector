@@ -47,7 +47,12 @@ function withoutRefs(node: unknown): unknown {
 }
 
 function validator(schema: unknown): (body: unknown) => boolean {
-  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  // `ajv/dist/2020` is CJS; under Node's ESM interop the class arrives on
+  // `.default` in some resolutions and directly in others. Same unwrap as
+  // `eval-decision-summary.test.ts`, for the same reason.
+  const Ajv = ((Ajv2020 as unknown as { default?: typeof Ajv2020 }).default ??
+    Ajv2020) as typeof Ajv2020;
+  const ajv = new Ajv({ strict: false, allErrors: true });
   const compiled = ajv.compile(withoutRefs(schema) as object);
   return (body) => compiled(body) === true;
 }
@@ -185,12 +190,36 @@ describe("openapi.json refuses the bodies the eval routes refuse", () => {
     it.each(COPIES)("%s bounds the percent to [0, 100]", (_name, schema) => {
       const accepts = validator(schema);
 
+      // BOTH bounds on BOTH spellings: a regression in either branch would
+      // otherwise slip through while generated clients keep submitting bodies
+      // the route rejects.
       // The reported bug: 8000 was accepted and the gate could never pass.
       expect(accepts({ minimumPassRate: 8000 })).toBe(false);
+      expect(accepts({ minimumPassRatePercent: 8000 })).toBe(false);
+      expect(accepts({ minimumPassRate: -1 })).toBe(false);
       expect(accepts({ minimumPassRatePercent: -1 })).toBe(false);
-      // The unit is in the canonical name, so a sub-1% floor is expressible
-      // there — the backend compares an UNROUNDED `passRate * 100`.
-      expect(accepts({ minimumPassRatePercent: 0.5 })).toBe(true);
+
+      // The endpoints are real floors, not off-by-one casualties.
+      expect(accepts({ minimumPassRate: 0 })).toBe(true);
+      expect(accepts({ minimumPassRate: 100 })).toBe(true);
+      expect(accepts({ minimumPassRatePercent: 0 })).toBe(true);
+      expect(accepts({ minimumPassRatePercent: 100 })).toBe(true);
     });
+
+    it.each(COPIES)(
+      "%s refuses a fraction-looking value only on the ambiguous spelling",
+      (_name, schema) => {
+        const accepts = validator(schema);
+
+        // The name is the disambiguator, and the SPEC has to say so too — its
+        // prose said `(0, 1)` was invalid on the alias while `minimum: 0` /
+        // `maximum: 100` accepted `0.8`, which is the published contract
+        // disagreeing with itself and with the route.
+        expect(accepts({ minimumPassRate: 0.8 })).toBe(false);
+        // The unit is in the canonical name, so a sub-1% floor is expressible
+        // there — the backend compares an UNROUNDED `passRate * 100`.
+        expect(accepts({ minimumPassRatePercent: 0.5 })).toBe(true);
+      },
+    );
   });
 });
