@@ -24,6 +24,7 @@ import {
   type BrowserCommand,
   type BrowserCommandResult,
   type BrowserdErrorCode,
+  type ActObserve,
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
@@ -387,6 +388,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           (page) => page.goto(action.url),
           permit,
+          action.observe,
         );
       }
       case "back":
@@ -402,6 +404,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           (page) => (action.kind === "back" ? page.goBack() : page.reload()),
           permit,
+          action.observe,
         );
       }
       case "observe":
@@ -877,28 +880,34 @@ export class ChromiumDriver implements BrowserDriver {
     entry: TabEntry,
     navigate: (page: DriverPage) => Promise<void>,
     permit: () => boolean,
+    observe?: ActObserve,
   ): Promise<BrowserCommandResult> {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
-      );
-    }
-    const frame = await this.snapshot(entry.page);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url },
-        frame,
-        permit,
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
-      ),
-      settled,
-    };
+    const blockedDetail =
+      "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back";
+    // THE SAME PATH AN ACT TAKES. A navigation folding in its own observation
+    // through a second mechanism would be the one thing `wantsFor` exists to
+    // prevent — two files disagreeing about what a mode means.
+    //
+    // `wantsFor`'s wire default is a screenshot, which is right for an act and
+    // wrong here: a navigation has always answered with its URL and nothing
+    // else, so absent maps to `none` before the shared mapping is applied.
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wantsFor(observe ?? "none"),
+      undefined,
+      blockedDetail,
+    );
+    // Spread order as in `act`: an observation that could not be taken keeps
+    // its own `settled: false` rather than the settle result of a page it
+    // never read.
+    return observed.ok ? { settled, ...observed } : observed;
   }
+
 
   private async observe(
     tabId: string,
@@ -1337,8 +1346,13 @@ export class ChromiumDriver implements BrowserDriver {
     blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed",
   ): BrowserCommandResult {
     if (!permit()) return this.leaseBlockedResult(blockedDetail);
+    const cursors = entry.page.consoleCursor?.();
     return {
       ok: true,
+      // Beside `stateToken`, never inside `output`: `output` is the payload
+      // that goes to the model through the untrusted-content fence, and our own
+      // ring accounting has no business in there. The ledger lifts them out.
+      ...(cursors ? { cursors } : {}),
       // WHERE this came from, on every observation without exception. The
       // unattended origin allowlist is enforced against the result's `url`
       // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result

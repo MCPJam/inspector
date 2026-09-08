@@ -122,6 +122,13 @@ export function wrapPage(page: AnyPage): DriverPage {
   // The console ring. Attached once per wrapped page; entries are captured
   // eagerly because a console message is gone the moment it is emitted.
   const consoleRing: ConsoleEntry[] = [];
+  // Monotonic totals, never decremented when the ring evicts or a handoff
+  // purges. They are CURSORS: a ledger row records where they stood after a
+  // command, and two rows bracket the output that command produced. Counting
+  // only what is still readable would make a lost window indistinguishable
+  // from a quiet one.
+  let consoleTotal = 0;
+  let errorsTotal = 0;
   page.on("console", (message: { type?: () => string; text?: () => string }) => {
     try {
       const text = message.text?.() ?? "";
@@ -130,6 +137,7 @@ export function wrapPage(page: AnyPage): DriverPage {
         text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
         at: Date.now(),
       });
+      consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
       // A console listener must never take the page down.
@@ -144,6 +152,12 @@ export function wrapPage(page: AnyPage): DriverPage {
       ),
       at: Date.now(),
     });
+    // Counted in BOTH: a page error is a console entry (the ring holds one) and
+    // it is also the thing `errors` names. A reader asking "did this command
+    // throw" wants the second number, and deriving it from the first would mean
+    // scanning entries the ring may already have dropped.
+    consoleTotal += 1;
+    errorsTotal += 1;
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
 
@@ -261,6 +275,7 @@ export function wrapPage(page: AnyPage): DriverPage {
       }
     },
     consoleEntries: () => consoleRing,
+    consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
     dropConsoleSince: (since: number) => {
       // Walk from the end: the ring is chronological, so the tail is the
       // window to drop.

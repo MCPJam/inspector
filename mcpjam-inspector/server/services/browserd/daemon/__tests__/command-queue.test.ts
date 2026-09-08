@@ -98,7 +98,15 @@ describe("browserd CommandQueue", () => {
     expect(calls).toHaveLength(1); // NOT executed twice
     await release("c1", { ok: true, output: 42 });
     const [a, b] = await Promise.all([first, dup]);
-    expect(a).toEqual(b);
+    // Same RESULT — one execution, one answer. The envelopes differ by design
+    // in exactly one field: the duplicate is marked `deduped` so the ledger can
+    // link it to the first caller's row instead of minting a second one, which
+    // would show a retry through a flaky transport as two clicks.
+    expect(b).toMatchObject({ status: "ok", deduped: true });
+    expect(b.status === "ok" && b.result).toEqual(
+      a.status === "ok" && a.result,
+    );
+    expect(a).not.toHaveProperty("deduped");
     expect(calls).toHaveLength(1);
   });
 
@@ -197,7 +205,8 @@ describe("browserd CommandQueue", () => {
       status: "ok",
       result: { ok: false, error: "cdp exploded" },
     });
-    expect(b).toEqual(a);
+    // Identical results, and the duplicate additionally marked as one.
+    expect(b).toEqual({ ...a, deduped: true });
     expect(calls).toHaveLength(1);
   });
 

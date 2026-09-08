@@ -82,7 +82,9 @@ var BROWSERD_ERROR_CODES = [
   /** Another live process owns this profile directory. */
   "profile_in_use",
   /** A result's URL is outside an unattended run's origin allowlist. */
-  "origin_not_allowed"
+  "origin_not_allowed",
+  /** The session policy does not admit this command. */
+  "tool_not_allowed"
 ];
 var BROWSERD_ERROR_CODE_SET = new Set(
   BROWSERD_ERROR_CODES
@@ -161,7 +163,7 @@ var CommandQueue = class {
     const existing = this.lookup(command.commandId);
     if (existing) {
       const result2 = existing.state === "running" ? await existing.promise : existing.result;
-      return { status: "ok", result: result2, bootId: this.bootId };
+      return { status: "ok", result: result2, bootId: this.bootId, deduped: true };
     }
     if (this.evicted.has(command.commandId)) {
       return { status: "expired", bootId: this.bootId };
@@ -278,6 +280,342 @@ var CommandQueue = class {
     this.evicted.add(commandId);
   }
 };
+
+// server/services/browserd/daemon/command-ledger.ts
+var DEFAULT_LEDGER_OPTIONS = {
+  maxRows: 512,
+  maxArtifacts: 64,
+  maxArtifactBytes: 32 * 1024 * 1024
+};
+var artifactCounter = 0;
+function defaultMintId() {
+  artifactCounter += 1;
+  return `art_${Date.now().toString(36)}_${artifactCounter.toString(36)}`;
+}
+function sanitizeLedgerUrl(value) {
+  if (typeof value !== "string" || !value) return void 0;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return void 0;
+  }
+  if (parsed.protocol === "data:") return void 0;
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+function redactAction(action, options = {}) {
+  switch (action.kind) {
+    case "navigate":
+      return {
+        kind: "navigate",
+        ...sanitizeLedgerUrl(action.url) ? { url: sanitizeLedgerUrl(action.url) } : {}
+      };
+    case "back":
+    case "reload":
+      return { kind: action.kind };
+    case "act": {
+      const target = action.target;
+      const record = {
+        kind: "act",
+        verb: action.verb,
+        ...target ? {
+          target: "selector" in target ? { selector: target.selector } : "a11yRef" in target ? { a11yRef: target.a11yRef } : { coordinates: target.coordinates }
+        } : {}
+      };
+      if (typeof action.value === "string") {
+        if (action.verb === "type" && !options.captureTypedText) {
+          record.redactedValue = { redacted: true, chars: action.value.length };
+        } else {
+          record.value = action.value;
+        }
+      }
+      return record;
+    }
+    case "observe":
+      return { kind: "observe", mode: action.mode };
+    case "webmcp_invoke":
+      return { kind: "webmcp_invoke", toolKey: action.toolKey };
+    case "webmcp_cancel":
+      return { kind: "webmcp_cancel" };
+    default: {
+      const exhaustive = action;
+      return { kind: exhaustive.kind };
+    }
+  }
+}
+var CommandLedger = class {
+  bootId;
+  maxRows;
+  maxArtifacts;
+  maxArtifactBytes;
+  mintId;
+  nextSeq = 1;
+  entries = [];
+  artifacts = /* @__PURE__ */ new Map();
+  /** Every id this boot has minted, payload or not. @see knowsArtifact */
+  knownArtifacts = /* @__PURE__ */ new Set();
+  artifactBytes = 0;
+  constructor(options) {
+    this.bootId = options.bootId;
+    this.maxRows = options.maxRows ?? DEFAULT_LEDGER_OPTIONS.maxRows;
+    this.maxArtifacts = options.maxArtifacts ?? DEFAULT_LEDGER_OPTIONS.maxArtifacts;
+    this.maxArtifactBytes = options.maxArtifactBytes ?? DEFAULT_LEDGER_OPTIONS.maxArtifactBytes;
+    this.mintId = options.mintId ?? defaultMintId;
+    if (!Number.isInteger(this.maxRows) || this.maxRows < 1) {
+      throw new RangeError(`maxRows must be an integer >= 1, got ${this.maxRows}`);
+    }
+  }
+  /** The highest seq minted so far. A reader's cursor starts here to tail. */
+  get headSeq() {
+    return this.nextSeq - 1;
+  }
+  /**
+   * Record one command's disposition.
+   *
+   * Called for EVERY command the handler answers — executed, refused or
+   * unknown alike — and returns the row it wrote so the caller can hand the
+   * seq straight back to a client that wants to look it up.
+   */
+  record(input) {
+    const { command } = input;
+    const output = input.capturePage ? asRecord(input.output) : void 0;
+    const artifacts = output ? this.storeArtifacts(output) : void 0;
+    const url = sanitizeLedgerUrl(output?.url);
+    const row = {
+      kind: "command",
+      seq: this.nextSeq++,
+      commandId: command.commandId,
+      ...input.sessionId ? { sessionId: input.sessionId } : {},
+      bootId: this.bootId,
+      ...command.tabId ? { tabId: command.tabId } : {},
+      source: command.source,
+      actor: input.actor,
+      ...input.correlation && Object.keys(input.correlation).length ? { correlation: input.correlation } : {},
+      ts: input.ts,
+      durationMs: input.durationMs,
+      command: redactAction(command.action, {
+        captureTypedText: input.captureTypedText === true
+      }),
+      outcome: input.outcome,
+      ...input.ok === void 0 ? {} : { ok: input.ok },
+      ...input.errorCode ? { errorCode: input.errorCode } : {},
+      ...input.deduped ? { deduped: true } : {},
+      ...url ? { url } : {},
+      ...typeof output?.title === "string" ? { title: output.title } : {},
+      ...input.capturePage && input.stateToken ? { stateToken: input.stateToken } : {},
+      ...input.capturePage && input.viewport ? { viewport: input.viewport } : {},
+      ...artifacts && Object.keys(artifacts).length ? { artifacts } : {},
+      ...typeof input.cursors?.console === "number" ? { consoleSeqAfter: input.cursors.console } : {},
+      ...typeof input.cursors?.errors === "number" ? { errorsSeqAfter: input.cursors.errors } : {}
+    };
+    this.push(row);
+    return row;
+  }
+  /**
+   * Note history this ledger knows it does not have.
+   *
+   * The `daemon_restart` case is written by whoever notices a bootId change —
+   * the ring itself cannot, being new. Without it a relaunch mid-session reads
+   * as a quiet stretch rather than as a browser that went away and came back.
+   */
+  noteGap(reason, span) {
+    const gap = {
+      kind: "gap",
+      seq: this.nextSeq++,
+      bootId: this.bootId,
+      ts: Date.now(),
+      fromSeq: span?.fromSeq ?? 0,
+      toSeq: span?.toSeq ?? 0,
+      reason
+    };
+    this.entries.push(gap);
+    this.trim();
+  }
+  /**
+   * Read forward from a cursor.
+   *
+   * Incremental by default: a reader tails with the `seq` it last saw, which is
+   * what both the CLI's `trace` and the rail's Activity list do on a timer. A
+   * `commandId` lookup is the other shape — the one a caller uses after an
+   * `unknown` outcome to find out what actually happened to it.
+   */
+  read(options = {}) {
+    const limit = Math.max(1, Math.min(options.limit ?? 100, 1e3));
+    let matched = this.entries;
+    if (options.commandId !== void 0) {
+      const id = options.commandId;
+      matched = matched.filter(
+        (entry) => entry.kind === "command" && entry.commandId === id
+      );
+    }
+    if (options.afterSeq !== void 0) {
+      const after = options.afterSeq;
+      matched = matched.filter((entry) => entry.seq > after);
+    }
+    return { entries: matched.slice(0, limit), headSeq: this.headSeq };
+  }
+  /**
+   * Has this ledger ever minted this artifact id?
+   *
+   * Lets a reader tell a typo from a payload that aged out — 404 against 410 —
+   * which are different problems with different fixes. The id set is bounded by
+   * the same eviction the payloads are: it is trimmed alongside them.
+   */
+  knowsArtifact(id) {
+    return this.knownArtifacts.has(id);
+  }
+  /** Fetch one artifact payload, or undefined once it has aged out. */
+  artifact(id) {
+    const stored = this.artifacts.get(id);
+    if (!stored) return void 0;
+    return {
+      id: stored.id,
+      mediaType: stored.mediaType,
+      encoding: stored.encoding,
+      data: stored.data
+    };
+  }
+  /**
+   * Forget one artifact payload, once something durable has it.
+   *
+   * The inspector calls this after writing a screenshot to disk: the daemon's
+   * store is a hand-off buffer, not a second copy, and holding megabytes of
+   * pictures that already exist as files is how a long session runs a laptop
+   * out of memory.
+   */
+  releaseArtifact(id) {
+    const stored = this.artifacts.get(id);
+    if (!stored) return;
+    this.artifacts.delete(id);
+    this.artifactBytes -= stored.bytes;
+  }
+  push(row) {
+    this.entries.push(row);
+    this.trim();
+  }
+  /**
+   * Drop the oldest entries past the cap and say so IN PLACE.
+   *
+   * The gap row is written during the trim rather than deferred to the next
+   * command, because a reader can arrive at any moment — including right after
+   * an overflow and before anything else happens — and a ring whose last entry
+   * is a real row would then be lying about history it had just thrown away.
+   *
+   * The gap is inserted AFTER the drop loop, never inside it: a gap row placed
+   * mid-loop is itself over the cap, gets dropped on the next iteration, and
+   * the loop trims forever. So the loop only ACCUMULATES the span — absorbing
+   * any older gap it passes over — and one row is written at the end.
+   *
+   * It goes at the FRONT, where the dropped rows were, and coalesces with a
+   * leading overflow gap already there. Coalescing is what keeps this bounded:
+   * one gap describing everything dropped so far, rather than a ring that fills
+   * with gap rows about gap rows. The ring therefore holds `maxRows` entries
+   * plus at most that one leading gap.
+   *
+   * Its `seq` is the LAST dropped row's, so cursor arithmetic still works: a
+   * reader tailing from beyond it already has those rows and is not told about
+   * a hole it does not have, while a reader starting behind it is.
+   */
+  trim() {
+    let fromSeq;
+    let toSeq;
+    while (this.entries.length > this.maxRows) {
+      const dropped = this.entries.shift();
+      if (!dropped) break;
+      if (dropped.kind === "gap") {
+        if (dropped.reason === "ring_overflow") {
+          fromSeq = Math.min(fromSeq ?? dropped.fromSeq, dropped.fromSeq);
+          toSeq = Math.max(toSeq ?? dropped.toSeq, dropped.toSeq);
+        }
+        continue;
+      }
+      if (dropped.artifacts) {
+        for (const ref of Object.values(dropped.artifacts)) {
+          if (!ref) continue;
+          this.releaseArtifact(ref.id);
+          this.knownArtifacts.delete(ref.id);
+        }
+      }
+      fromSeq = Math.min(fromSeq ?? dropped.seq, dropped.seq);
+      toSeq = Math.max(toSeq ?? dropped.seq, dropped.seq);
+    }
+    if (fromSeq === void 0 || toSeq === void 0) return;
+    const head = this.entries[0];
+    if (head?.kind === "gap" && head.reason === "ring_overflow") {
+      head.fromSeq = Math.min(head.fromSeq, fromSeq);
+      head.toSeq = Math.max(head.toSeq, toSeq);
+      head.seq = head.toSeq;
+      return;
+    }
+    this.entries.unshift({
+      kind: "gap",
+      seq: toSeq,
+      bootId: this.bootId,
+      ts: Date.now(),
+      fromSeq,
+      toSeq,
+      reason: "ring_overflow"
+    });
+  }
+  /**
+   * Lift the page-derived payloads out of a result and into the artifact store.
+   *
+   * They leave the ROW because a row is metadata a UI lists a hundred at a time
+   * and a screenshot is a hundred kilobytes. The row keeps the id, the size and
+   * the media type — enough to render "screenshot, 84 KB" and fetch it on
+   * demand.
+   */
+  storeArtifacts(output) {
+    if (!output) return void 0;
+    const artifacts = {};
+    const screenshot = output.screenshot;
+    if (typeof screenshot === "string" && screenshot) {
+      artifacts.screenshot = this.put(screenshot, "image/jpeg", "base64");
+    }
+    const a11y = output.a11y;
+    if (typeof a11y === "string" && a11y) {
+      artifacts.a11y = this.put(a11y, "text/plain", "utf8");
+    }
+    const text = output.text;
+    if (typeof text === "string" && text) {
+      artifacts.text = this.put(text, "text/plain", "utf8");
+    }
+    return artifacts;
+  }
+  put(data, mediaType, encoding) {
+    const id = this.mintId();
+    this.knownArtifacts.add(id);
+    const bytes = encoding === "base64" ? Math.floor(data.length * 3 / 4) : Buffer.byteLength(data, "utf8");
+    if (bytes > this.maxArtifactBytes) {
+      return { id, bytes, mediaType, evicted: true };
+    }
+    this.artifacts.set(id, { id, mediaType, encoding, data, bytes });
+    this.artifactBytes += bytes;
+    this.evictArtifacts();
+    return { id, bytes, mediaType };
+  }
+  evictArtifacts() {
+    while (this.artifacts.size > this.maxArtifacts || this.artifactBytes > this.maxArtifactBytes) {
+      const oldest = this.artifacts.keys().next();
+      if (oldest.done) break;
+      const id = oldest.value;
+      this.releaseArtifact(id);
+      for (const entry of this.entries) {
+        if (entry.kind !== "command" || !entry.artifacts) continue;
+        for (const ref of Object.values(entry.artifacts)) {
+          if (ref?.id === id) ref.evicted = true;
+        }
+      }
+    }
+  }
+};
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
 
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -763,6 +1101,10 @@ var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "reload",
   "act"
 ]);
+var UNATTRIBUTED_ACTOR = {
+  kind: "inspector",
+  id: "unattributed"
+};
 var RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 var BrowserdRequestHandler = class {
   queue;
@@ -775,6 +1117,8 @@ var BrowserdRequestHandler = class {
   contextMode;
   startedBy;
   setVideoTier;
+  ledger;
+  captureTypedText;
   recorder;
   /**
    * How many frame streams are open, asked of the stream host.
@@ -806,6 +1150,8 @@ var BrowserdRequestHandler = class {
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
     this.setVideoTier = deps.setVideoTier;
+    this.ledger = deps.ledger;
+    this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
   }
   /**
@@ -905,7 +1251,111 @@ var BrowserdRequestHandler = class {
       }
       return this.handleInput(req);
     }
+    if (req.path === "/v1/trace") {
+      if (req.method === "POST") return this.handleTraceRecord(req);
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleTrace(req);
+    }
+    if (req.path === "/v1/artifact") {
+      if (req.method !== "GET" && req.method !== "DELETE") {
+        return { status: 405, headers: { allow: "GET, DELETE" } };
+      }
+      return this.handleArtifact(req);
+    }
     return { status: 404 };
+  }
+  handleTrace(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    const query = req.query;
+    const afterSeq = readNumber(query?.get("afterSeq"));
+    const limit = readNumber(query?.get("limit"));
+    const commandId = query?.get("commandId") ?? void 0;
+    const { entries, headSeq } = this.ledger.read({
+      ...afterSeq === void 0 ? {} : { afterSeq },
+      ...limit === void 0 ? {} : { limit },
+      ...commandId ? { commandId } : {}
+    });
+    return {
+      status: 200,
+      body: { entries, headSeq, bootId: this.bootId }
+    };
+  }
+  handleTraceRecord(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (!isValidCommand(parsed?.command)) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    const row = this.ledger.record({
+      command: parsed.command,
+      actor: parsed.command.actor ?? UNATTRIBUTED_ACTOR,
+      ...parsed.command.sessionId ? { sessionId: parsed.command.sessionId } : {},
+      ...parsed.command.correlation ? { correlation: parsed.command.correlation } : {},
+      ts: Date.now(),
+      durationMs: typeof parsed.durationMs === "number" ? Math.max(0, parsed.durationMs) : 0,
+      // Record-only means exactly one thing: NOTHING RAN. The inspector refused
+      // it, so there is no page and no artifact to attach, and `capturePage`
+      // stays off.
+      outcome: "refused",
+      ...typeof parsed.errorCode === "string" ? { errorCode: parsed.errorCode } : {},
+      ...this.captureTypedText ? { captureTypedText: true } : {}
+    });
+    return { status: 200, body: { seq: row.seq, bootId: this.bootId } };
+  }
+  handleArtifact(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    const id = req.query?.get("id") ?? "";
+    if (!id) {
+      return {
+        status: 400,
+        body: { error: "artifact_id_required", bootId: this.bootId }
+      };
+    }
+    if (req.method === "DELETE") {
+      this.ledger.releaseArtifact(id);
+      return { status: 200, body: { released: true, bootId: this.bootId } };
+    }
+    const artifact = this.ledger.artifact(id);
+    if (!artifact) {
+      const known = this.ledger.knowsArtifact(id);
+      return {
+        status: known ? 410 : 404,
+        body: {
+          error: known ? "artifact_evicted" : "artifact_unknown",
+          id,
+          bootId: this.bootId
+        }
+      };
+    }
+    return { status: 200, body: { artifact, bootId: this.bootId } };
   }
   handlePolicy(req) {
     let parsed;
@@ -1068,6 +1518,7 @@ var BrowserdRequestHandler = class {
     };
   }
   async handleCommand(req) {
+    const startedAt = Date.now();
     let parsed;
     try {
       parsed = JSON.parse(req.body);
@@ -1090,6 +1541,10 @@ var BrowserdRequestHandler = class {
       parsed.command
     );
     if (refusal) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: refusal
+      });
       return {
         status: 423,
         body: {
@@ -1103,14 +1558,101 @@ var BrowserdRequestHandler = class {
       };
     }
     if (parsed.expectedBootId !== void 0 && parsed.expectedBootId !== this.bootId) {
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "unknown",
+        errorCode: "command_unknown_boot"
+      });
       return {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId }
       };
     }
     const outcome = await this.queue.submit(parsed.command);
+    const response = this.mapOutcome(outcome);
+    this.recordOutcome(parsed.command, outcome, startedAt);
     await this.boostAfterMotion(parsed.command, outcome);
-    return this.mapOutcome(outcome);
+    return response;
+  }
+  /**
+   * One command, one row — written from the one place that sees them all.
+   *
+   * The mapping from queue outcome to ledger outcome is the interesting part,
+   * and it turns on a single distinction the rest of this file is careful
+   * about: `refused` means NOTHING RAN, `unknown` means WE CANNOT SAY. They are
+   * never collapsed. A caller that reads "refused" and retries is correct; a
+   * caller that reads "unknown" and retries may double-submit a payment, which
+   * is why `expired` — a result the queue evicted and therefore may not re-run —
+   * is `unknown` rather than the more comfortable-looking `refused`.
+   */
+  recordOutcome(command, outcome, startedAt) {
+    if (!this.ledger) return;
+    if (outcome.status !== "ok") {
+      this.recordRow(command, startedAt, {
+        // `busy` and `at_capacity` are back-pressure: the queue never admitted
+        // the command, so nothing ran and a retry is safe. `expired` is the
+        // opposite — it ran once, its result is gone, and re-running it is the
+        // thing the tombstone exists to prevent.
+        outcome: outcome.status === "expired" ? "unknown" : "refused",
+        errorCode: outcome.status === "expired" ? "command_expired" : outcome.status === "busy" ? "busy" : "daemon_at_capacity"
+      });
+      return;
+    }
+    const { result } = outcome;
+    if (result.leaseBlocked) {
+      this.recordRow(command, startedAt, {
+        outcome: "refused",
+        errorCode: parseBrowserdErrorCode(result.error) ?? "lease_held"
+      });
+      return;
+    }
+    if (result.staleObservation) {
+      this.recordRow(command, startedAt, {
+        outcome: "refused",
+        errorCode: "stale_observation",
+        result,
+        capturePage: true
+      });
+      return;
+    }
+    if (outcome.deduped) {
+      const known = this.ledger.read({ commandId: command.commandId, limit: 1 });
+      if (known.entries.length > 0) return;
+      this.recordRow(command, startedAt, {
+        outcome: "executed",
+        deduped: true,
+        result,
+        capturePage: true
+      });
+      return;
+    }
+    this.recordRow(command, startedAt, {
+      outcome: "executed",
+      result,
+      capturePage: true
+    });
+  }
+  /** The single call site that turns a disposition into a row. */
+  recordRow(command, startedAt, what) {
+    if (!this.ledger) return;
+    const result = what.result;
+    this.ledger.record({
+      command,
+      actor: command.actor ?? UNATTRIBUTED_ACTOR,
+      ...command.sessionId ? { sessionId: command.sessionId } : {},
+      ...command.correlation ? { correlation: command.correlation } : {},
+      ts: startedAt,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      outcome: what.outcome,
+      ...result ? { ok: result.ok } : {},
+      ...what.errorCode ? { errorCode: what.errorCode } : result && !result.ok && parseBrowserdErrorCode(result.error) ? { errorCode: parseBrowserdErrorCode(result.error) } : {},
+      ...what.deduped ? { deduped: true } : {},
+      ...what.capturePage && result ? { output: result.output } : {},
+      ...what.capturePage && result?.stateToken ? { stateToken: result.stateToken } : {},
+      ...what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {},
+      ...result?.cursors ? { cursors: result.cursors } : {},
+      ...what.capturePage ? { capturePage: true } : {},
+      ...this.captureTypedText ? { captureTypedText: true } : {}
+    });
   }
   /**
    * Raise the frame rate for a moment after a command that moved the page.
@@ -1400,6 +1942,11 @@ var BrowserdRequestHandler = class {
     }
   }
 };
+function readNumber(value) {
+  if (value === null || value === void 0 || value === "") return void 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : void 0;
+}
 function isValidCommand(value) {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value;
@@ -2069,6 +2616,7 @@ function headerValue(value) {
 }
 function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
+  const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
     guardLease(lease, guardStaleness(driver, lease)),
@@ -2084,6 +2632,8 @@ function buildBrowserdStack(driver, config) {
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
     ...config.contextMode ? { contextMode: config.contextMode } : {},
     ...config.startedBy ? { startedBy: config.startedBy } : {},
+    ledger,
+    ...config.captureTypedText ? { captureTypedText: true } : {},
     ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
     ...config.recorder ? { recorder: config.recorder } : {}
   });
@@ -2100,6 +2650,7 @@ function buildBrowserdStack(driver, config) {
     server,
     handler,
     queue,
+    ledger,
     bootId,
     lease,
     closeStreams: (reason = "shutting_down") => frames.closeAll(reason)
@@ -3807,7 +4358,8 @@ var ChromiumDriver = class {
           tabId,
           entry,
           (page) => page.goto(action.url),
-          permit
+          permit,
+          action.observe
         );
       }
       case "back":
@@ -3820,7 +4372,8 @@ var ChromiumDriver = class {
           tabId,
           entry,
           (page) => action.kind === "back" ? page.goBack() : page.reload(),
-          permit
+          permit,
+          action.observe
         );
       }
       case "observe":
@@ -4138,27 +4691,20 @@ var ChromiumDriver = class {
    * (L3). Every W1 navigating verb funnels through here so settle + token are
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
-  async navigateVerb(tabId, entry, navigate, permit) {
+  async navigateVerb(tabId, entry, navigate, permit, observe) {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
-      );
-    }
-    const frame = await this.snapshot(entry.page);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url },
-        frame,
-        permit,
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
-      ),
-      settled
-    };
+    const blockedDetail = "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back";
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wantsFor(observe ?? "none"),
+      void 0,
+      blockedDetail
+    );
+    return observed.ok ? { settled, ...observed } : observed;
   }
   async observe(tabId, action, permit) {
     if (!permit()) {
@@ -4470,8 +5016,13 @@ var ChromiumDriver = class {
    */
   observation(tabId, entry, output, frame, permit, blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed") {
     if (!permit()) return this.leaseBlockedResult(blockedDetail);
+    const cursors = entry.page.consoleCursor?.();
     return {
       ok: true,
+      // Beside `stateToken`, never inside `output`: `output` is the payload
+      // that goes to the model through the untrusted-content fence, and our own
+      // ring accounting has no business in there. The ledger lifts them out.
+      ...cursors ? { cursors } : {},
       // WHERE this came from, on every observation without exception. The
       // unattended origin allowlist is enforced against the result's `url`
       // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
@@ -5088,6 +5639,8 @@ var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
   const consoleRing = [];
+  let consoleTotal = 0;
+  let errorsTotal = 0;
   page.on("console", (message) => {
     try {
       const text = message.text?.() ?? "";
@@ -5096,6 +5649,7 @@ function wrapPage(page) {
         text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
         at: Date.now()
       });
+      consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
     }
@@ -5109,6 +5663,8 @@ function wrapPage(page) {
       ),
       at: Date.now()
     });
+    consoleTotal += 1;
+    errorsTotal += 1;
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
   let webmcpPromise = null;
@@ -5194,6 +5750,7 @@ function wrapPage(page) {
       }
     },
     consoleEntries: () => consoleRing,
+    consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
     dropConsoleSince: (since) => {
       let keep = consoleRing.length;
       while (keep > 0 && consoleRing[keep - 1].at >= since) keep -= 1;

@@ -22,8 +22,24 @@
  */
 export type BootId = string;
 
-/** Where a command originated. All sources share one per-tab queue and timeline. */
-export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
+/**
+ * Where a command originated. All sources share one per-tab queue and timeline.
+ *
+ * `agent` is an outside coding agent driving this browser through the agent
+ * surface, as distinct from `chat` (the Playground model's own tool loop) and
+ * `inspector` (a pane acting on the user's behalf). It is a CATEGORY, not an
+ * identity: `BrowserCommand.actor` tells two agents apart. Like every source
+ * but `manual` it is refused outright while a person holds the lease — see
+ * `leaseRefusalFor`, which admits only `manual` and so needs no change to
+ * cover a new source. That default is the safe one, and it is deliberate that
+ * adding a source cannot accidentally widen the handoff gate.
+ */
+export type BrowserCommandSource =
+  | "manual"
+  | "chat"
+  | "inspector"
+  | "eval"
+  | "agent";
 
 /**
  * The FIFO/tab key a tab-less (whole-session) command uses. The command queue
@@ -176,9 +192,21 @@ export function wantsFor(observe: ActObserve | undefined): {
 }
 
 export type BrowserAction =
-  | { kind: "navigate"; url: string; newTab?: boolean }
-  | { kind: "back" }
-  | { kind: "reload" }
+  | {
+      kind: "navigate";
+      url: string;
+      newTab?: boolean;
+      /**
+       * What to capture once the navigation has settled. @see ActObserve
+       *
+       * Absent means `none` here, NOT `wantsFor`'s screenshot default: a
+       * navigation has always answered with its URL and nothing else, and the
+       * caller that wants a tree back from one has to ask.
+       */
+      observe?: ActObserve;
+    }
+  | { kind: "back"; observe?: ActObserve }
+  | { kind: "reload"; observe?: ActObserve }
   | {
       kind: "act";
       verb:
@@ -318,6 +346,48 @@ export interface BrowserCommand {
    * source, which the lease blocks outright.
    */
   holder?: string;
+  /**
+   * WHO is sending this, for the ledger.
+   *
+   * Stamped by the inspector route that AUTHENTICATED the caller and echoed
+   * onto the row unchanged — never read from a caller's own request body. That
+   * is the same threat the lease gate already defends against for `manual`:
+   * an actor a caller could choose is an actor a caller can borrow, and a
+   * trace whose attribution is self-declared attributes nothing.
+   *
+   * Optional on the wire so an older caller still works; a command that
+   * carries none is recorded against an `inspector`/`unattributed` actor
+   * rather than being refused, because losing the command would be worse than
+   * losing the name.
+   */
+  actor?: BrowserCommandActor;
+  /**
+   * The LOGICAL session this command belongs to (`browserLogicalSessions`
+   * locally, a JSON file beside the profile). Opaque to the daemon, which
+   * neither mints nor validates it: the daemon's own identity is the `bootId`,
+   * and a boot is replaced whenever the bundle or the box changes, so it
+   * cannot be what a permalink or an agent's history hangs off.
+   */
+  sessionId?: string;
+  /** What else this command belongs to, when the caller knows. Echoed, never read. */
+  correlation?: BrowserCommandCorrelation;
+}
+
+/** @see BrowserCommand.actor */
+export interface BrowserCommandActor {
+  kind: "agent" | "model" | "human" | "inspector";
+  id: string;
+  label?: string;
+}
+
+/** @see BrowserCommand.correlation */
+export interface BrowserCommandCorrelation {
+  chatSessionId?: string;
+  turnId?: string;
+  toolCallId?: string;
+  evalRunId?: string;
+  iterationId?: string;
+  swarmId?: string;
 }
 
 /** The daemon's result for one executed command. Opaque to the queue. */
@@ -368,6 +438,16 @@ export interface BrowserCommandResult {
    * one refusal whichever side of the queue it happened on.
    */
   leaseBlocked?: boolean;
+  /**
+   * Where the page's console and page-error rings stood AFTER this command.
+   *
+   * Rides beside `stateToken` rather than inside `output` on purpose: `output`
+   * is the model-facing payload that goes through the untrusted-content fence,
+   * and two integers of our own accounting have no business in there. The
+   * ledger stores them so a reader can compute the console delta between any
+   * two rows without the ledger copying page text into every one of them.
+   */
+  cursors?: { console: number; errors: number };
 }
 
 /**
@@ -377,7 +457,22 @@ export interface BrowserCommandResult {
  */
 export type BrowserCommandOutcome =
   /** Executed (or de-duplicated to a prior execution). Carries the result. */
-  | { status: "ok"; result: BrowserCommandResult; bootId: BootId }
+  | {
+      status: "ok";
+      result: BrowserCommandResult;
+      bootId: BootId;
+      /**
+       * This result came from a PRIOR submission of the same commandId; nothing
+       * ran this time.
+       *
+       * Surfaced because the ledger's rule is "one execution, one row": a retry
+       * that resolves to a result already recorded must LINK to that row rather
+       * than mint a second one, or a caller retrying through a flaky transport
+       * would appear in the trace to have clicked the button twice. The queue is
+       * the only layer that knows, so it is the layer that says.
+       */
+      deduped?: boolean;
+    }
   /** Per-tab queue is at its depth cap; the caller should retry later. → 429 */
   | { status: "busy"; bootId: BootId }
   /**
@@ -491,6 +586,8 @@ export const BROWSERD_ERROR_CODES = [
   "profile_in_use",
   /** A result's URL is outside an unattended run's origin allowlist. */
   "origin_not_allowed",
+  /** The session policy does not admit this command. */
+  "tool_not_allowed",
 ] as const;
 
 export type BrowserdErrorCode = (typeof BROWSERD_ERROR_CODES)[number];

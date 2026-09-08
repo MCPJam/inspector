@@ -101,6 +101,23 @@ export interface DriverPage {
    */
   dropConsoleSince(since: number): void;
   /**
+   * How many console messages and page errors this page has EVER captured.
+   *
+   * Monotonic across the ring's own eviction and across a handoff purge, which
+   * is the property that makes it a cursor: two ledger rows' values bracket the
+   * window of console output a command produced, and the reader fetches that
+   * window on demand instead of every row carrying a copy of the page's log.
+   *
+   * The counters keep climbing when entries are DROPPED, on purpose — the gap
+   * between what a cursor promises and what the ring can still hand back is
+   * real, and hiding it by decrementing would turn "48 messages you can no
+   * longer read" into "nothing happened".
+   *
+   * Optional: an engine or a test fake that does not track them omits the
+   * method, and the ledger simply records no cursor rather than a wrong one.
+   */
+  consoleCursor?(): { console: number; errors: number };
+  /**
    * The page's WebMCP bridge, attached lazily on first use (attaching a CDP
    * session to every tab that may never invoke a page tool is wasted work).
    * Resolves `null` when this build cannot speak the domain at all.
