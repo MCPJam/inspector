@@ -40,6 +40,17 @@ const POLL_INTERVAL_MS = 2_000;
  * rows is self-evidently the one to read.
  */
 const REDISCOVER_AFTER_QUIET_TICKS = 15;
+/**
+ * The session this pane may follow: an OPEN, PERSISTENT one.
+ *
+ * The frames above this list come from the project's persistent browser, so
+ * that is the browser a reader is watching. Taking the newest open session of
+ * any profile let a throwaway agent run steal the list — the history on screen
+ * then belonged to a browser nobody could see, and the model's and the
+ * person's own commands vanished from the rail.
+ */
+const watchable = (session: { closedAt?: number; profile?: string }) =>
+  !session.closedAt && session.profile !== "ephemeral";
 /** How many rows the pane keeps. Older ones stay in the trace on disk. */
 const MAX_ROWS = 200;
 
@@ -140,7 +151,7 @@ export function BrowserActivityList({
         // A lookup that failed says nothing about whether this session closed,
         // so it is not a reason to leave it.
         if (sessions && !mineStillOpen) {
-          const next = sessions.find((s) => !s.closedAt)?.sessionId ?? null;
+          const next = sessions.find(watchable)?.sessionId ?? null;
           if (next) {
             setReading({ projectId, sessionId: next });
             return;
@@ -150,7 +161,7 @@ export function BrowserActivityList({
       if (!currentSession) {
         let lookupFailed = false;
         const found = await listLocalBrowserSessions(projectId, consentToken)
-          .then((r) => r.sessions.find((s) => !s.closedAt)?.sessionId ?? null)
+          .then((r) => r.sessions.find(watchable)?.sessionId ?? null)
           .catch(() => {
             // A failure to LOOK is not an absence of history, and a pane that
             // showed "nothing has driven this browser" either way would be

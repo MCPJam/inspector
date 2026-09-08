@@ -18,6 +18,7 @@ vi.mock("node:os", async () => {
 
 const {
   appendNote,
+  disposeBrowserIfUnshared,
   artifactMediaType,
   findOpenSession,
   leaveAgentSession,
@@ -392,6 +393,45 @@ describe("the durable ledger sink", () => {
       });
       expect(bytes?.toString()).toBe("SHARED");
     }
+  });
+
+  it("holds the open lock across the dispose, so no session slips in", async () => {
+    // The close route used to mark the session closed, list the others, then
+    // dispose — three awaits with nothing holding them together, so an `open`
+    // whose session appeared in the gap was invisible to the check and had its
+    // browser shut underneath it. This asserts the MUTUAL EXCLUSION, not just
+    // the count: while the dispose runs, an open for the project cannot finish.
+    const created = await open();
+    if (!created.ok) throw new Error("no session");
+
+    let releaseDispose: () => void = () => {};
+    const disposeStarted = new Promise<void>((startedResolve) => {
+      const blocked = new Promise<void>((r) => (releaseDispose = r));
+      void disposeBrowserIfUnshared({
+        projectId: PROJECT,
+        sessionId: created.session.sessionId,
+        session: created.session,
+        dispose: async () => {
+          startedResolve();
+          await blocked;
+          return "disposed" as const;
+        },
+      });
+    });
+    await disposeStarted;
+
+    let opened = false;
+    const opening = open({ attach: "never" }).then((r) => {
+      opened = true;
+      return r;
+    });
+    // A tick or two: without the lock the open would have completed by now.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(opened).toBe(false);
+
+    releaseDispose();
+    await opening;
+    expect(opened).toBe(true);
   });
 
   it("a mirror cannot resurrect a session that was terminated", async () => {

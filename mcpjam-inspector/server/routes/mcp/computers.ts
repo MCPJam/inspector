@@ -73,6 +73,7 @@ import {
   appendNote,
   findOpenSession,
   leaveAgentSession,
+  disposeBrowserIfUnshared,
   listAgentSessions,
   mirrorLedger,
   openAgentSession,
@@ -1264,34 +1265,29 @@ computers.post("/local-browser/close", async (c) => {
     // reason. Sessions written before `browserKey` existed are matched by
     // profile, which is what the key encoded for them.
     //
+    // The count AND the disposal under one lock; see `disposeBrowserIfUnshared`.
     // A record we could not read leaves us unable to say WHICH browser this
     // session was on, so every other open session counts and the browser is
     // left running. Erring the other way closes somebody's window on a guess.
-    const closing = session;
-    const sameBrowser = (other: AgentSessionRecord) =>
-      closing === undefined
-        ? true
-        : other.browserKey && closing.browserKey
-          ? other.browserKey === closing.browserKey
-          : other.profile === closing.profile;
-    const others = (await listAgentSessions(projectId).catch(() => [])).filter(
-      (other) =>
-        !other.closedAt &&
-        other.sessionId !== sessionId &&
-        sameBrowser(other),
-    );
-    if (others.length > 0) {
+    const outcome = await disposeBrowserIfUnshared({
+      projectId,
+      sessionId,
+      session,
+      dispose: () =>
+        closeLocalBrowserSession(live.handle.bootId).catch(
+          () => ({ closed: false, reason: "not_found" }) as const,
+        ),
+    });
+    if (!outcome.disposed) {
       return c.json({
         session,
         terminated: false,
         detail:
-          `${others.length} other open session(s) still use this browser; ` +
+          `${outcome.others} other open session(s) still use this browser; ` +
           "this one was detached and the browser left running",
       });
     }
-    const closed = await closeLocalBrowserSession(live.handle.bootId).catch(
-      () => ({ closed: false, reason: "not_found" }) as const,
-    );
+    const closed = outcome.result;
     if (!closed.closed && closed.reason === "lease_held") {
       // Somebody took the browser between the check above and here.
       return c.json(

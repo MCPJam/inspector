@@ -273,6 +273,47 @@ async function openAgentSessionLocked(
   return { ok: true, session, attached: false };
 }
 
+/**
+ * Dispose this session's browser ONLY IF no other open session shares it.
+ *
+ * UNDER THE OPEN LOCK, which is the whole point. The close route marked the
+ * session closed, listed the others, and then disposed — three awaits with
+ * nothing holding them together, so an `open` that created its session in the
+ * gap was invisible to the check and had the Chromium it had just attached to
+ * shut underneath it.
+ *
+ * `openAgentSession` takes this same key, so while this runs no new session can
+ * be created for the project, and any that already exists is in the list.
+ *
+ * A caller that starts a browser and then queues here still exists — it gets a
+ * session whose browser has gone, discovers `no_browser_session` on its next
+ * command, and re-opens. Recoverable and self-evident, unlike a live session
+ * losing its window without being told.
+ */
+export async function disposeBrowserIfUnshared<T>(args: {
+  projectId: string;
+  sessionId: string;
+  session: AgentSessionRecord | undefined;
+  dispose: () => Promise<T>;
+}): Promise<{ disposed: false; others: number } | { disposed: true; result: T }> {
+  return withKeyedLock(`browser-session-open:${args.projectId}`, async () => {
+    const sameBrowser = (other: AgentSessionRecord) =>
+      args.session === undefined
+        ? true
+        : other.browserKey && args.session.browserKey
+          ? other.browserKey === args.session.browserKey
+          : other.profile === args.session.profile;
+    const others = (await listAgentSessions(args.projectId).catch(() => [])).filter(
+      (other) =>
+        !other.closedAt &&
+        other.sessionId !== args.sessionId &&
+        sameBrowser(other),
+    );
+    if (others.length > 0) return { disposed: false, others: others.length };
+    return { disposed: true, result: await args.dispose() };
+  });
+}
+
 async function joinSession(
   session: AgentSessionRecord,
   actor: { actorId: string; kind: string },

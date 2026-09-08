@@ -277,6 +277,37 @@ test("a misspelled --profile is a usage error, not the real browser", async () =
   assert.match(result.stderr + result.stdout, /Unknown --profile/);
 });
 
+test("a REFUSED command is a structured result, not a thrown error", async () => {
+  // The door answers a refusal with 403 and an unknown outcome with 502. If the
+  // transport throws those away, `refused` (nothing ran, retry is safe) and
+  // `unknown` (it may have run, do NOT retry) become one generic failure — and
+  // a script that retries on error re-submits a command that already happened.
+  const { isContractResultForTests } = await import(
+    "../src/commands/browser.js"
+  );
+  // A contract outcome is claimed by its SHAPE, whatever the status code.
+  assert.equal(
+    isContractResultForTests({ result: { status: "refused" } }),
+    true,
+  );
+  assert.equal(
+    isContractResultForTests({ result: { status: "unknown" } }),
+    true,
+  );
+  assert.equal(
+    isContractResultForTests({ result: { status: "executed", ok: false } }),
+    true,
+  );
+  // …and a genuine failure is NOT, so it still throws and stays loud.
+  assert.equal(
+    isContractResultForTests({ error: "Local computer consent is required" }),
+    false,
+  );
+  assert.equal(isContractResultForTests({ result: { status: "wat" } }), false);
+  assert.equal(isContractResultForTests(null), false);
+  assert.equal(isContractResultForTests("refused"), false);
+});
+
 test("act and navigate default to folding in an a11y observation", async () => {
   // One round trip, one ledger row, and refs for the next act — a screenshot
   // carries none.

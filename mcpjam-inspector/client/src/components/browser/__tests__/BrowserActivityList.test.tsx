@@ -250,6 +250,27 @@ describe("BrowserActivityList", () => {
     );
   });
 
+  it("follows the PERSISTENT session, not a throwaway agent run", async () => {
+    // The frames above this list come from the project's persistent browser.
+    // Following the newest open session of any profile let an ephemeral run
+    // steal the rail, so the history on screen belonged to a browser nobody
+    // could see — and the person's own clicks vanished from it.
+    listSessions.mockResolvedValue({
+      sessions: [
+        { sessionId: "bs_run", profile: "ephemeral" },
+        { sessionId: "bs_person", profile: "persistent" },
+      ],
+    });
+    readTrace.mockResolvedValue({ entries: [], headSeq: 0 });
+    mount();
+    await waitFor(() =>
+      expect(readTrace).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "bs_person" }),
+        "cap",
+      ),
+    );
+  });
+
   it("stays with an idle session while a newer one is also open", async () => {
     // A project can have a person's persistent session and several ephemeral
     // runs open at once. Switching to whichever is newest handed the pane to

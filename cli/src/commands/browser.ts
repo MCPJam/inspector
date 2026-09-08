@@ -29,7 +29,12 @@ import {
   normalizeInspectorBaseUrl,
 } from "../lib/inspector-api.js";
 import { getGlobalOptions } from "../lib/server-config.js";
-import { operationalError, usageError, writeResult } from "../lib/output.js";
+import {
+  operationalError,
+  setProcessExitCode,
+  usageError,
+  writeResult,
+} from "../lib/output.js";
 import {
   forgetSessionIf,
   getBrowserStateFilePath,
@@ -172,8 +177,33 @@ async function post(
     body,
     headers: { [LOCAL_CONSENT_HEADER]: consentOf(options) },
     ...(timeoutMs ? { timeoutMs } : {}),
+    // The door answers a REFUSAL with 403 and an UNKNOWN outcome with 502, and
+    // those bodies carry the distinction the whole contract turns on: `refused`
+    // means nothing ran and a retry is safe; `unknown` means it may have run
+    // and a retry could submit it twice. Letting the transport throw them away
+    // collapses both into one generic error, and a script that retries on
+    // failure re-submits a command that already happened.
+    //
+    // Only a body that IS a contract result is claimed. A consent failure or a
+    // bad artifactId still throws, so it stays loud.
+    treatAsSuccess: (_status, payload) => isContractResult(payload),
   });
   return (result ?? {}) as Record<string, unknown>;
+}
+
+/**
+ * Is this body one of the contract's three outcomes rather than an error?
+ *
+ * The shape, not the status code: the door uses 4xx and 5xx for outcomes a
+ * caller must read AND for failures it cannot, and only the body tells them
+ * apart.
+ */
+function isContractResult(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const result = (payload as { result?: unknown }).result;
+  if (typeof result !== "object" || result === null) return false;
+  const status = (result as { status?: unknown }).status;
+  return status === "executed" || status === "refused" || status === "unknown";
 }
 
 /** Fields every command sends so the door can attribute the row. */
@@ -706,7 +736,12 @@ async function emit(
       extra = { screenshotError: shot.detail };
     }
   }
-  writeResult({ ...envelopeFor(result), ...extra }, context.format);
+  const envelope = envelopeFor(result);
+  writeResult({ ...envelope, ...extra }, context.format);
+  // A script that branches on the exit code must see the same answer as one
+  // that reads `success`. Printing a refusal and exiting 0 tells `set -e` the
+  // command worked.
+  if (envelope.success !== true) setProcessExitCode(1);
 }
 
 /**
@@ -727,6 +762,11 @@ function envelopeFor(result: Record<string, unknown>): Record<string, unknown> {
     ...result,
     success: result.status === "executed" && result.ok !== false,
   };
+}
+
+/** Test seam for `isContractResult`; see `tests/browser-command.test.ts`. */
+export function isContractResultForTests(payload: unknown): boolean {
+  return isContractResult(payload);
 }
 
 /** Test seam for `envelopeFor`; see `tests/browser-command.test.ts`. */

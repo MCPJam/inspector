@@ -1090,6 +1090,54 @@ describe("the agent door's session routes", () => {
     expect(browserState.launched).toEqual([]);
   });
 
+  it("terminate does not kill a browser a new session just attached to", async () => {
+    // The close route marked the session closed, listed the others, then
+    // disposed — three awaits with nothing holding them together. An `open`
+    // whose session appeared in that gap was invisible to the check and had
+    // its Chromium shut underneath it.
+    const token = await grantConsent();
+    const first = await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const person = (await first.json()) as any;
+
+    // A SEPARATE session on the same browser — `attach: "never"` makes it its
+    // own record rather than joining the first, which is the case where the
+    // browser genuinely has two users.
+    const second = await openSession(
+      {
+        projectId: "proj",
+        attach: "never",
+        policy: { mode: "allow_all" },
+        observe: "none",
+      },
+      token,
+    );
+    expect(second.status).toBe(200);
+
+    const closed = await createApp().request(
+      "/api/mcp/computers/local-browser/close",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({
+          projectId: "proj",
+          sessionId: person.session.sessionId,
+          terminate: true,
+        }),
+      },
+    );
+
+    expect(closed.status).toBe(200);
+    expect((await closed.json()) as any).toMatchObject({ terminated: false });
+    // The browser the second session is using is still there.
+    expect(browserState.byKey.has("proj:persistent")).toBe(true);
+  });
+
   it("does not leave a browser behind when the attach race is lost", async () => {
     // `require` pre-checks for an open session, then starts a browser. A close
     // landing in between means the claim fails — and a browser this request
