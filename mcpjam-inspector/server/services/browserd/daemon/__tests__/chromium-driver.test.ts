@@ -1190,6 +1190,29 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(res.output).toMatchObject({ a11yUnavailable: true });
   });
 
+  it("does not treat an unfillable INPUT TYPE as a dropdown either", async () => {
+    // Playwright's third refusal shape: `Input of type "checkbox" cannot be
+    // filled`. It names neither `<input>` nor `<select>`, so the discriminator
+    // must leave it alone — a checkbox is not a field that wanted
+    // `selectOption`.
+    const { res, page } = await acted(
+      {
+        kind: "act",
+        verb: "fill_form",
+        fields: [{ selector: "#agree", value: "yes" }],
+      },
+      {
+        actErrorFor: (entry) =>
+          entry === "fill:#agree:yes"
+            ? new Error('page.fill: Error: Input of type "checkbox" cannot be filled')
+            : undefined,
+      },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("cannot be filled");
+    expect(page.calls.acts).toEqual(["fill:#agree:yes"]);
+  });
+
   it("stops at the first real failure and says which fields went in", async () => {
     // Half a filled form is a state the page is in and the model cannot see.
     const { res, page } = await acted(

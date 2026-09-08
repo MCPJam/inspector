@@ -171,6 +171,29 @@ export interface ElectronPageDeps {
  * already works — here CDP is the only way to do anything at all, so deferring
  * it would just move every failure to the first act.
  */
+/**
+ * The `<input type>`s a text insertion cannot reach.
+ *
+ * MEASURED against a real Chromium through Playwright's own `fill`, not
+ * recalled: each of these answers `Input of type "…" cannot be filled`, while
+ * text / password / search / tel / url / email / number / range fill happily
+ * and the date-ish types reject a malformed VALUE rather than the target.
+ *
+ * It matters here because this engine fills by clicking first. Clicking a
+ * checkbox toggles it, clicking a file input opens a picker, and clicking a
+ * submit sends the form — each of them a side effect the model did not ask
+ * for, followed by a `fill` that silently changed nothing.
+ */
+const UNFILLABLE_INPUT_TYPES = [
+  "button",
+  "checkbox",
+  "file",
+  "image",
+  "radio",
+  "reset",
+  "submit",
+] as const;
+
 export function createElectronPage(
   wc: PageWebContents,
   deps: ElectronPageDeps,
@@ -551,8 +574,15 @@ export function createElectronPage(
                 if (!el) return null;
                 if (el.isContentEditable) return "FILLABLE";
                 const tag = el.tagName.toUpperCase();
-                if (tag === "INPUT" || tag === "TEXTAREA") return "FILLABLE";
-                return tag === "SELECT" ? "SELECT" : "OTHER";
+                if (tag === "TEXTAREA") return "FILLABLE";
+                if (tag === "SELECT") return "SELECT";
+                if (tag !== "INPUT") return "OTHER";
+                // The types a text insertion cannot reach, measured against
+                // Playwright rather than recalled — see below.
+                const type = (el.getAttribute("type") || "text").toLowerCase();
+                return ${JSON.stringify(UNFILLABLE_INPUT_TYPES)}.includes(type)
+                  ? "TYPE:" + type
+                  : "FILLABLE";
               })()`,
             )
             .catch(() => undefined);
@@ -560,6 +590,14 @@ export function createElectronPage(
             throw new Error(
               `${selector}: Element is not an <input>, <textarea> or ` +
                 `[contenteditable] element`,
+            );
+          }
+          if (typeof kind === "string" && kind.startsWith("TYPE:")) {
+            // Playwright's THIRD refusal, word for word. It names neither
+            // `<input>` nor `<select>`, which is what keeps `fill_form` from
+            // treating a checkbox as a dropdown it should have selected.
+            throw new Error(
+              `${selector}: Input of type "${kind.slice(5)}" cannot be filled`,
             );
           }
           if (kind === "OTHER") {

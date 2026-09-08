@@ -181,6 +181,31 @@ describe("electron page — the keyboard", () => {
     expect(mouseEvents(dbg)).toHaveLength(0);
   });
 
+  it("refuses a checkbox rather than toggling it on the way past", async () => {
+    // This engine clicks before it inserts text, so a `fill_form` field aimed
+    // at a checkbox TOGGLES it, at a file input opens a picker, and at a
+    // submit sends the form — each a side effect nobody asked for, followed by
+    // an insertion that changed nothing and reported success.
+    const contents = new FakeBrowserWebContents({
+      evaluate: (code) =>
+        code.includes("isContentEditable") ? "TYPE:checkbox" : undefined,
+    });
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    const refusal = await page
+      .fillSelector("#agree", "yes")
+      .then(() => null, (error: Error) => error.message);
+
+    // Playwright's own words for this case, which name neither `<input>` nor
+    // `<select>` — so `fill_form` does not mistake a checkbox for a dropdown.
+    expect(refusal).toMatch(/Input of type "checkbox" cannot be filled/);
+    expect(refusal).not.toMatch(/not an <input>/i);
+    expect(mouseEvents(dbg)).toHaveLength(0);
+  });
+
   it("lets a MALFORMED selector fail the way it always has", async () => {
     // The preflight would reject with the page's own `querySelector` prose,
     // which the driver reads as a daemon fault; the box lookup below it
