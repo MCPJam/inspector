@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../../evals/types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../../evals/types";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
   buildSuiteRunHistoryAggregates,
@@ -15,9 +20,7 @@ import {
   summarizeTestCase,
 } from "../suite-detail-model";
 
-function makeSuite(
-  overrides: Partial<EvalSuite> = {},
-): EvalSuite {
+function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
   return {
     _id: "suite-1",
     createdBy: "u1",
@@ -167,6 +170,41 @@ describe("runPlatformLabel", () => {
         }),
       ),
     ).toBe("GitHub #4188");
+  });
+
+  it("resolves origin the same way the badge does, not off source alone", () => {
+    // This label used to hold its own copy of the source→label map, so a CLI
+    // run read "API" here while the Runs table was learning to call it CLI.
+    expect(
+      runPlatformLabel(
+        makeRun({
+          _id: "r3",
+          source: "api",
+          launcher: { kind: "cli", client: "mcpjam-cli" },
+        }),
+      ),
+    ).toBe("CLI");
+    expect(
+      runPlatformLabel(
+        makeRun({
+          _id: "r4",
+          source: "api",
+          launcher: { kind: "github_action" },
+          ciMetadata: { pipelineId: "99" },
+        }),
+      ),
+    ).toBe("GitHub #99");
+    // Verified beats declared.
+    expect(
+      runPlatformLabel(
+        makeRun({
+          _id: "r5",
+          source: "api",
+          launcher: { kind: "cli" },
+          attribution: { surface: "mcp" },
+        }),
+      ),
+    ).toBe("MCP");
   });
 });
 

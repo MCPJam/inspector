@@ -21,6 +21,12 @@ import { cn } from "@/lib/utils";
 import { formatDuration, formatRunId, formatTime } from "./helpers";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { RunSourceBadge } from "./run-source-badge";
+import {
+  RUN_ORIGIN_FILTERS,
+  RUN_ORIGIN_META,
+  maskApiKeyId,
+  type RunOrigin,
+} from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
   RunDecisionVerdictBadge,
@@ -63,6 +69,13 @@ export interface ProjectRunRow {
     passRate: number;
   } | null;
   source: EvalSuiteRun["source"] | null;
+  /**
+   * The declared and verified halves of run origin. Both nullable and read
+   * defensively: an older backend sends neither, and those rows must badge
+   * exactly as they did before the columns existed.
+   */
+  launcher: EvalSuiteRun["launcher"] | null;
+  attribution: { surface: string; apiKeyId?: string | null } | null;
   ciMetadata: EvalSuiteRun["ciMetadata"] | null;
   createdBy: string;
   createdByName: string | null;
@@ -72,18 +85,41 @@ export interface ProjectRunRow {
   durationMs: number | null;
 }
 
+/**
+ * DERIVED from the origin table, not hand-copied.
+ *
+ * The old array was a second list of labels beside the badge's, which is how a
+ * chip ends up saying something the badge does not. It also spelled the STORED
+ * values (`github_check`) rather than the origins a reader thinks in, so it
+ * could not offer CLI or MCP at all — those are not `source` values.
+ */
 const SOURCE_FILTERS: Array<{
-  value: NonNullable<EvalSuiteRun["source"]>;
+  value: RunOrigin;
   label: string;
-}> = [
-  { value: "sdk", label: "SDK" },
-  { value: "ui", label: "UI" },
-  { value: "api", label: "API" },
-  { value: "schedule", label: "Scheduled" },
-  { value: "github_check", label: "GitHub" },
-];
+  title: string;
+}> = RUN_ORIGIN_FILTERS.map((origin) => ({
+  value: origin,
+  label: RUN_ORIGIN_META[origin].label,
+  title: RUN_ORIGIN_META[origin].title,
+}));
 
 const ALL_SUITES = "__all__";
+
+/**
+ * The second line under "Run by": which credential, or which agent.
+ *
+ * `null` for a run launched from the app with a session credential — there is
+ * nothing to add, and an empty line would imply we looked and found nothing.
+ * An MCP run prefers its client name over the key id: "claude-code/1.2.3" is
+ * the more useful fact, and the key id cannot say it.
+ */
+function runByDetail(row: ProjectRunRow): string | null {
+  if (row.launcher?.kind === "mcp" && row.launcher.client) {
+    return row.launcher.client;
+  }
+  const masked = maskApiKeyId(row.attribution?.apiKeyId);
+  return masked ? `via API key ${masked}` : null;
+}
 
 function statusMeta(row: ProjectRunRow): {
   label: string;
@@ -164,12 +200,25 @@ export function ProjectRunsTable({
    */
   decisionSummaryEnabled?: boolean;
 }) {
-  const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
+  const [sourceFilter, setSourceFilter] = useState<Set<RunOrigin>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
+
+  // SERVER-SIDE. The chips used to sieve the loaded page, so a project whose
+  // six GitHub runs sat behind fifty newer API runs answered "No runs match
+  // these filters" — a false negative about rows that were one page back.
+  // Passing them to the query makes a page a page of matching runs.
+  //
+  // Stable identity per selection: a fresh array literal on every render would
+  // make `usePaginatedQuery` treat each render as a new query and reset the
+  // pagination it is holding.
+  const origins = useMemo(
+    () => (sourceFilter.size > 0 ? [...sourceFilter].sort() : undefined),
+    [sourceFilter],
+  );
 
   const { results, status, loadMore } = usePaginatedQuery(
     "testSuites:listProjectRuns" as any,
-    { projectId } as any,
+    { projectId, ...(origins ? { origins } : {}) } as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
 
@@ -185,23 +234,21 @@ export function ProjectRunsTable({
     return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [rows]);
 
+  // Suite ONLY. Origin is applied by the query above; re-applying it here
+  // would be a second implementation of the same rule, and the one that
+  // silently disagreed would be this one.
   const filtered = useMemo(
     () =>
-      rows.filter((row) => {
-        if (suiteFilter !== ALL_SUITES && row.suiteId !== suiteFilter) {
-          return false;
-        }
-        if (sourceFilter.size === 0) return true;
-        return sourceFilter.has(row.source ?? "ui");
-      }),
-    [rows, sourceFilter, suiteFilter],
+      rows.filter(
+        (row) => suiteFilter === ALL_SUITES || row.suiteId === suiteFilter,
+      ),
+    [rows, suiteFilter],
   );
 
   const isLoadingFirstPage = status === "LoadingFirstPage";
   const canLoadMore = status === "CanLoadMore";
-  const isFiltering = sourceFilter.size > 0 || suiteFilter !== ALL_SUITES;
 
-  const toggleSource = (value: string) => {
+  const toggleSource = (value: RunOrigin) => {
     setSourceFilter((prev) => {
       const next = new Set(prev);
       if (next.has(value)) next.delete(value);
@@ -250,6 +297,7 @@ export function ProjectRunsTable({
               key={filter.value}
               type="button"
               aria-pressed={active}
+              title={filter.title}
               onClick={() => toggleSource(filter.value)}
               className={cn(
                 "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
@@ -287,17 +335,12 @@ export function ProjectRunsTable({
       </div>
 
       {/*
-        Say what the filters actually cover. They run over the pages loaded
-        so far, so with more pages outstanding "no SDK runs" would otherwise
-        read as a fact about the project rather than about this page.
+        No "filtering the N loaded runs" caveat any more: the origin chips are
+        applied by the query, so an empty result means the project has no
+        matching runs rather than that this page has none. The suite select is
+        still client-side, but it only ever narrows within what is loaded and
+        the suite list itself is built from those same rows.
       */}
-      {isFiltering && canLoadMore ? (
-        <p className="text-[11px] text-muted-foreground">
-          Filtering the {rows.length} most recent runs loaded so far — load more
-          below to widen the search.
-        </p>
-      ) : null}
-
       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/60">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
@@ -393,7 +436,11 @@ function ProjectRunTableRow({
   const [visibilityRef, hasBeenVisible, onScreen] =
     useHasBeenVisible<HTMLTableRowElement>();
   const terminal = isTerminalEvalRunStatus(row.status);
-  const { status: summaryStatus, summary, error } = useEvalRunDecisionBadge({
+  const {
+    status: summaryStatus,
+    summary,
+    error,
+  } = useEvalRunDecisionBadge({
     projectId,
     runId: row._id,
     enabled: decisionSummaryEnabled && terminal && hasBeenVisible,
@@ -439,7 +486,9 @@ function ProjectRunTableRow({
         : {})}
       className={canOpen ? "cursor-pointer" : undefined}
     >
-      <TableCell className="font-mono text-xs">{formatRunId(row._id)}</TableCell>
+      <TableCell className="font-mono text-xs">
+        {formatRunId(row._id)}
+      </TableCell>
       <TableCell className="max-w-[220px] truncate text-xs">
         {row.suiteName ?? (
           <span
@@ -451,7 +500,11 @@ function ProjectRunTableRow({
         )}
       </TableCell>
       <TableCell>
-        <RunSourceBadge source={row.source ?? undefined} />
+        <RunSourceBadge
+          source={row.source ?? undefined}
+          launcher={row.launcher}
+          attribution={row.attribution}
+        />
       </TableCell>
       <TableCell>
         {summary ? (
@@ -517,8 +570,28 @@ function ProjectRunTableRow({
       <TableCell className="text-xs text-muted-foreground">
         {row.durationMs != null ? formatDuration(row.durationMs) : "—"}
       </TableCell>
-      <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
-        {row.createdByName ?? "—"}
+      <TableCell className="max-w-[140px] text-xs text-muted-foreground">
+        <span className="flex flex-col leading-tight">
+          <span className="truncate">{row.createdByName ?? "—"}</span>
+          {/*
+            WHICH CREDENTIAL, under the person.
+            
+            A delegated API key still runs as its holder, so a fan-out launched
+            by somebody's CI key and a run they clicked themselves are the same
+            name in this column — which is exactly the question an audit starts
+            with. The key id is not the secret, but it is still a credential
+            identifier in a shared table, so only the last four are shown: enough
+            to answer "which of my keys?", not enough to paste into a search.
+
+            An MCP run names its calling agent instead, which is the more useful
+            fact there and the one thing the key id cannot tell you.
+          */}
+          {runByDetail(row) ? (
+            <span className="truncate text-[10px] opacity-70">
+              {runByDetail(row)}
+            </span>
+          ) : null}
+        </span>
       </TableCell>
       <TableCell>
         {row.ciMetadata ? (

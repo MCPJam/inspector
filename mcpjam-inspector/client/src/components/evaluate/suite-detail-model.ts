@@ -12,17 +12,15 @@ import {
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import { runOriginLabel } from "@/lib/evals/run-origin";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
-
-const SOURCE_LABEL: Record<NonNullable<EvalSuiteRun["source"]>, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  api: "API",
-  schedule: "Scheduled",
-  github_check: "GitHub",
-};
 
 export type SuiteIdentityCounts = {
   caseCount: number;
@@ -58,13 +56,7 @@ export function formatSuiteIdentitySubline(
 }
 
 export type RunHistoryVerdict =
-  | "ship"
-  | "hold"
-  | "passed"
-  | "failed"
-  | "running"
-  | "pending"
-  | "cancelled";
+  "ship" | "hold" | "passed" | "failed" | "running" | "pending" | "cancelled";
 
 export type SuiteRunHistoryRow = {
   runId: string;
@@ -188,10 +180,13 @@ export function resolveRunHistoryVerdict(
 }
 
 export function runPlatformLabel(run: EvalSuiteRun): string {
-  const source = run.source ?? "ui";
-  const sourceLabel = SOURCE_LABEL[source] ?? SOURCE_LABEL.ui;
+  // The SAME resolution the badge and the filter chips use. This used to hold
+  // a private copy of the label map, keyed on `source` alone — so a CLI run
+  // and an Action both read "API" here while the Runs table was learning to
+  // tell them apart.
+  const originLabel = runOriginLabel(run);
   const ciId = run.ciMetadata?.pipelineId ?? run.ciMetadata?.jobId;
-  return ciId ? `${sourceLabel} #${ciId}` : sourceLabel;
+  return ciId ? `${originLabel} #${ciId}` : originLabel;
 }
 
 function runClientLabel(
@@ -294,7 +289,8 @@ export function buildSuiteRunHistoryAggregates(
     totalTokens: totalTokens > 0 ? totalTokens : null,
     latencyP50: iterationLatencyP50(iterations),
     latencyP95: iterationLatencyP95(iterations),
-    tokensPerRun: runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
+    tokensPerRun:
+      runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
     toolCallsPerRun:
       runCount > 0 && totalToolCalls > 0 ? totalToolCalls / runCount : null,
   };
@@ -311,9 +307,9 @@ export function runHistoryFilterOptions(
         .filter((client): client is string => Boolean(client)),
     ),
   ].sort((a, b) => a.localeCompare(b));
-  const models = [
-    ...new Set(rows.flatMap((row) => row.models)),
-  ].sort((a, b) => a.localeCompare(b));
+  const models = [...new Set(rows.flatMap((row) => row.models))].sort((a, b) =>
+    a.localeCompare(b),
+  );
   return { verdicts, clients, models };
 }
 

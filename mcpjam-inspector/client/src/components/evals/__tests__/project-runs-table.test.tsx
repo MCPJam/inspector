@@ -12,10 +12,15 @@ const mocks = vi.hoisted(() => ({
       loadMore: vi.fn(),
     },
   },
+  /** Every arg object the table handed the paginated query, in order. */
+  queryArgs: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("convex/react", () => ({
-  usePaginatedQuery: () => mocks.paginated.current,
+  usePaginatedQuery: (_name: string, args: Record<string, unknown>) => {
+    mocks.queryArgs.push(args);
+    return mocks.paginated.current;
+  },
 }));
 
 import {
@@ -34,6 +39,8 @@ function makeRow(overrides: Partial<ProjectRunRow> = {}): ProjectRunRow {
     result: "passed",
     summary: { total: 4, passed: 3, failed: 1, passRate: 75 },
     source: "sdk",
+    launcher: null,
+    attribution: null,
     ciMetadata: null,
     createdBy: "user_1",
     createdByName: "Ada",
@@ -65,6 +72,7 @@ function inTable() {
 
 beforeEach(() => {
   setRows([]);
+  mocks.queryArgs.length = 0;
 });
 
 describe("ProjectRunsTable", () => {
@@ -115,7 +123,7 @@ describe("ProjectRunsTable", () => {
     expect(table.queryByText("Accuracy")).not.toBeNull();
   });
 
-  it("filters by source", async () => {
+  it("asks the SERVER for the chosen origins instead of sieving the page", async () => {
     const user = userEvent.setup();
     setRows([
       makeRow({ _id: "run_sdk1", source: "sdk", suiteName: "CI suite" }),
@@ -127,12 +135,113 @@ describe("ProjectRunsTable", () => {
     ]);
 
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
-    expect(inTable().getByText("Playground suite")).toBeTruthy();
+    // Unfiltered: no `origins` at all, not an empty array — the query treats
+    // absent as "no filter" and would have to special-case `[]` otherwise.
+    expect(mocks.queryArgs.at(-1)).not.toHaveProperty("origins");
 
     await user.click(screen.getByRole("button", { name: "SDK" }));
+    expect(mocks.queryArgs.at(-1)?.origins).toEqual(["sdk"]);
 
+    await user.click(screen.getByRole("button", { name: "GitHub" }));
+    expect(mocks.queryArgs.at(-1)?.origins).toEqual(["github", "sdk"]);
+
+    // And the rows the server returned are rendered UNTOUCHED. Re-filtering
+    // them here would be a second implementation of the rule, and the one that
+    // silently disagreed would be this one — which is how "No runs match these
+    // filters" became a lie about runs that existed.
     expect(inTable().getByText("CI suite")).toBeTruthy();
-    expect(inTable().queryByText("Playground suite")).toBeNull();
+    expect(inTable().getByText("Playground suite")).toBeTruthy();
+  });
+
+  it("offers a chip for every origin a client can produce", () => {
+    setRows([makeRow()]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // Including the two that no `source` value can express: a CLI run and an
+    // MCP run are both stamped `api`, and the old chip row — a hand-copied
+    // list of `source` values — could not offer them at all.
+    for (const label of [
+      "CLI",
+      "MCP",
+      "GitHub",
+      "SDK",
+      "Scheduled",
+      "UI",
+      "API",
+    ]) {
+      expect(
+        screen.getByRole("button", { name: label }),
+        `no chip for ${label}`,
+      ).toBeTruthy();
+    }
+  });
+
+  it("badges a run by its declared launcher, and names the credential", () => {
+    setRows([
+      makeRow({
+        _id: "run_cli1",
+        source: "api",
+        launcher: { kind: "cli", client: "mcpjam-cli" },
+        attribution: { surface: "rest", apiKeyId: "key_live_abcd1234" },
+        suiteName: "CLI suite",
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    const table = inTable();
+    // NOT "API". Every CLI run is stamped `api`, so a badge reading the stamp
+    // alone is true and useless.
+    expect(table.getByText("CLI")).toBeTruthy();
+    expect(table.getByText("via API key ····1234")).toBeTruthy();
+  });
+
+  it("prefers a VERIFIED channel over what the client declared", () => {
+    setRows([
+      makeRow({
+        _id: "run_mcp1",
+        source: "api",
+        launcher: { kind: "cli", client: "mcpjam-cli" },
+        attribution: { surface: "mcp", apiKeyId: "key_live_wxyz9999" },
+        suiteName: "MCP suite",
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // The credential is the half nobody can forge, so where the two disagree
+    // it wins.
+    expect(inTable().getByText("MCP")).toBeTruthy();
+    expect(inTable().queryByText("CLI")).toBeNull();
+  });
+
+  it("names the calling agent on an MCP run instead of the key id", () => {
+    setRows([
+      makeRow({
+        _id: "run_mcp2",
+        source: "api",
+        launcher: { kind: "mcp", client: "claude-code/1.2.3" },
+        attribution: { surface: "rest", apiKeyId: "key_live_abcd1234" },
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // The more useful fact, and the one the key id cannot tell you.
+    expect(inTable().getByText("claude-code/1.2.3")).toBeTruthy();
+    expect(inTable().queryByText(/via API key/)).toBeNull();
+  });
+
+  it("badges a legacy row with neither column exactly as before", () => {
+    setRows([
+      makeRow({
+        _id: "run_old1",
+        source: null,
+        launcher: null,
+        attribution: null,
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+    // An older backend sends neither field, and a run that predates `source`
+    // has always read as UI.
+    expect(inTable().getByText("UI")).toBeTruthy();
   });
 
   it("filters by suite", async () => {
@@ -165,19 +274,18 @@ describe("ProjectRunsTable", () => {
     });
   });
 
-  it("loads more pages and says what the filters actually cover", async () => {
+  it("loads more pages, and no longer caveats a filter it does not apply", async () => {
     const user = userEvent.setup();
     setRows([makeRow({ source: "sdk" })], "CanLoadMore");
 
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
-
-    // Unfiltered: no caveat needed.
     expect(document.body.textContent).not.toContain("loaded so far");
 
-    // Filtered with pages outstanding: "no UI runs" would otherwise read as
-    // a fact about the project rather than about the loaded rows.
+    // The caveat existed because the chips sieved the loaded page: "no UI runs"
+    // was a claim about this page wearing the clothes of a claim about the
+    // project. The query applies them now, so there is nothing to caveat.
     await user.click(screen.getByRole("button", { name: "UI" }));
-    expect(document.body.textContent).toContain("loaded so far");
+    expect(document.body.textContent).not.toContain("loaded so far");
 
     await user.click(screen.getByRole("button", { name: "Load more" }));
     expect(mocks.paginated.current.loadMore).toHaveBeenCalledWith(
