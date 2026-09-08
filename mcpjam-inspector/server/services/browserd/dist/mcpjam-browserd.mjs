@@ -3276,6 +3276,10 @@ var ActError = class extends Error {
 };
 var LeaseTakenMidAct = class extends Error {
 };
+function withoutRefIndex(fields) {
+  const { refs: _unstored, ...rest } = fields;
+  return rest;
+}
 function isNotAnInputRefusal(message) {
   return /not an <input>/i.test(message) && !/<select>/i.test(message);
 }
@@ -4288,13 +4292,14 @@ var ChromiumDriver = class {
           blockedDetail ?? "a person has taken control of this browser; nothing was observed"
         );
       }
+      this.refs.delete(tabId);
       const url = safeUrl(page);
       return {
         ok: true,
         output: this.withHandoffNote(
           url ? {
             url,
-            ...a11yFields,
+            ...withoutRefIndex(a11yFields),
             ...screenshot ? { screenshot } : {},
             observationFailed: true
           } : { observationFailed: true }
@@ -4317,10 +4322,13 @@ var ChromiumDriver = class {
           blockedDetail ?? "a person has taken control of this browser; nothing was observed"
         );
       }
-      if (refMap) this.refs.delete(tabId);
+      this.refs.delete(tabId);
       return {
         ok: true,
-        output: this.withHandoffNote({ url: frame.url, ...output }),
+        output: this.withHandoffNote({
+          url: frame.url,
+          ...withoutRefIndex(output)
+        }),
         settled: false
       };
     }

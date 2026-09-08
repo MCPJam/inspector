@@ -102,6 +102,23 @@ class ActError extends Error {
 class LeaseTakenMidAct extends Error {}
 
 /**
+ * An a11y payload minus the ref INDEX, for a result that cannot store one.
+ *
+ * A ref is a promise the driver has to keep: the model reads `e7` and expects
+ * `rootRef:"e7"` to resolve. That promise is only made by `commitRefs`, and a
+ * result carrying no state token cannot commit — so handing the index over
+ * anyway would advertise names nothing will answer to.
+ *
+ * The rendered tree keeps its `[ref=eN]` markers, which is deliberate: they
+ * read as part of the page's shape, and a model that tries one gets the clean
+ * `unknown_ref` refusal that exists for exactly a ref this tab never issued.
+ */
+function withoutRefIndex(fields: Record<string, unknown>): Record<string, unknown> {
+  const { refs: _unstored, ...rest } = fields;
+  return rest;
+}
+
+/**
  * Did `fillSelector` refuse because the target is a `<select>`?
  *
  * See `fillOneField` for the two real messages this separates. The engines
@@ -1629,6 +1646,12 @@ export class ChromiumDriver implements BrowserDriver {
       // checked against. `page.url()` throws on a closed page — the very case
       // that brought us here — and then there is nothing to check, so the
       // captures go rather than the check.
+      //
+      // AND NO REFS, minted or remembered. There is no token to bind a fresh
+      // map to, and whatever this tab held describes a page we have just
+      // failed to read — so the index goes out of the result and the stored
+      // map goes with it.
+      this.refs.delete(tabId);
       const url = safeUrl(page);
       return {
         ok: true,
@@ -1636,7 +1659,7 @@ export class ChromiumDriver implements BrowserDriver {
           url
             ? {
                 url,
-                ...a11yFields,
+                ...withoutRefIndex(a11yFields),
                 ...(screenshot ? { screenshot } : {}),
                 observationFailed: true,
               }
@@ -1676,13 +1699,22 @@ export class ChromiumDriver implements BrowserDriver {
             "a person has taken control of this browser; nothing was observed",
         );
       }
-      if (refMap) this.refs.delete(tabId);
+      // UNCONDITIONALLY, not only when this act read a tree. The page moved
+      // under the capture, so a map minted by some earlier observation is
+      // describing a state nobody has been shown since — and `refsStillDescribe`
+      // would not catch it, because it compares page IDENTITY (which
+      // navigation, which URL) rather than shape. Cheap to lose: one
+      // `observe {mode:"a11y"}` mints a fresh set.
+      this.refs.delete(tabId);
       // `url` explicitly, for the same reason as above: `observation` is what
       // normally stamps it, and skipping that funnel must not also skip the
       // field the origin allowlist is enforced against.
       return {
         ok: true,
-        output: this.withHandoffNote({ url: frame.url, ...output }),
+        output: this.withHandoffNote({
+          url: frame.url,
+          ...withoutRefIndex(output),
+        }),
         settled: false,
       };
     }

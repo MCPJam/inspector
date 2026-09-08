@@ -1384,12 +1384,90 @@ describe("ChromiumDriver — act verbs (W3)", () => {
       }),
     );
     expect(res.stateToken).toBeUndefined();
+    // The INDEX is not advertised either: a ref map is a promise only
+    // `commitRefs` can keep, and there is no token here to bind one to.
+    expect(res.output).not.toHaveProperty("refs");
 
     const zoom = await driver.execute(
       cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
     );
     expect(zoom.ok).toBe(false);
     expect(zoom.error).toMatch(/unknown_ref|stale_ref/);
+  });
+
+  it("drops refs the tab ALREADY held when a capture goes unstable", async () => {
+    // The act destabilised the page, so a map minted by an earlier observation
+    // describes a state nobody has been shown since — and `refsStillDescribe`
+    // will not catch it, because it compares which navigation and which URL
+    // rather than the shape. This act reads no tree of its own, so nothing but
+    // an unconditional drop covers it.
+    // The shift lands INSIDE the capture — `onAct` would be too early, since
+    // the frame is sampled after the verb and after settling. Only the
+    // observation modes that take a picture reach this hook, so the two a11y
+    // reads below are untouched by it.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: oneButton(),
+      onScreenshot: ({ setDom }) => setDom("0BODY>1BANNER"),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    // A good observation first: e1 is real and usable.
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y", rootRef: "e1" })))
+        .ok,
+    ).toBe(true);
+
+    // Now a SCREENSHOT-only act during which the page shifts.
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "screenshot",
+      }),
+    );
+    expect(res.stateToken).toBeUndefined();
+
+    const zoom = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(zoom.ok).toBe(false);
+    expect(zoom.error).toMatch(/unknown_ref|stale_ref/);
+  });
+
+  it("does not advertise refs it could not store when the read failed", async () => {
+    const page = fakePage({ url: "https://x.test/", cdpReplies: oneButton() });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    let acted = false;
+    page.onAct = () => {
+      acted = true;
+    };
+    const original = page.domStructureSignal.bind(page);
+    page.domStructureSignal = async () => {
+      if (!acted) return original();
+      throw new Error("Execution context was destroyed");
+    };
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "a11y",
+      }),
+    );
+
+    expect(res.output).toMatchObject({ observationFailed: true });
+    expect(res.output).not.toHaveProperty("refs");
+    const zoom = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(zoom.ok).toBe(false);
   });
 
   it("refuses malformed fill_form fields without touching the page", async () => {

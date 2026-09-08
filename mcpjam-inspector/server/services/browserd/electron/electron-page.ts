@@ -172,24 +172,33 @@ export interface ElectronPageDeps {
  * it would just move every failure to the first act.
  */
 /**
- * The `<input type>`s a text insertion cannot reach.
+ * The `<input type>`s THIS ENGINE cannot fill, which is a longer list than
+ * Playwright's — deliberately.
  *
- * MEASURED against a real Chromium through Playwright's own `fill`, not
- * recalled: each of these answers `Input of type "…" cannot be filled`, while
- * text / password / search / tel / url / email / number / range fill happily
- * and the date-ish types reject a malformed VALUE rather than the target.
+ * Playwright refuses seven of these outright (`Input of type "…" cannot be
+ * filled`, measured, not recalled) because a keyboard cannot reach them. It
+ * FILLS `range` and `color`, but by writing the value straight onto the
+ * element; this engine has no such path, it clicks and then types.
  *
- * It matters here because this engine fills by clicking first. Clicking a
- * checkbox toggles it, clicking a file input opens a picker, and clicking a
- * submit sends the form — each of them a side effect the model did not ask
- * for, followed by a `fill` that silently changed nothing.
+ * And a click is not a no-op on either. Measured against a real Chromium: a
+ * centre click on `<input type="range" value="0">` leaves it at `"50"` — the
+ * click IS the interaction — after which the insertion changes nothing and the
+ * act reports success for a value nobody chose. `color` opens the platform
+ * picker, a modal with no keyboard behind it. Same shape as the checkbox that
+ * gets toggled and the submit that sends the form: a side effect the model did
+ * not ask for, dressed up as a filled field.
+ *
+ * Refusing is the honest answer until this engine can set a value directly,
+ * which is a feature rather than a fix.
  */
 const UNFILLABLE_INPUT_TYPES = [
   "button",
   "checkbox",
+  "color",
   "file",
   "image",
   "radio",
+  "range",
   "reset",
   "submit",
 ] as const;

@@ -190,6 +190,10 @@ describe("electron page — the keyboard", () => {
       evaluate: (code) =>
         code.includes("isContentEditable") ? "TYPE:checkbox" : undefined,
     });
+    // `range` and `color` are in the same set on THIS engine even though
+    // Playwright fills them, because it writes the value and this one clicks:
+    // a centre click on a range IS the interaction (measured: 0 → 50) and a
+    // colour input opens the platform picker.
     for (const [method, reply] of elementAt(5, 5)) {
       contents.debugger.replies.set(method, reply);
     }
