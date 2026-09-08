@@ -37,6 +37,7 @@ import {
   cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
   listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
@@ -47,6 +48,11 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
@@ -178,6 +184,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // The measured description beside the decision: how much of the run was
   // measured at all, per stage. Reads, so they ride with the run read.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   waiveEvalGateOperation,
@@ -188,6 +199,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
   listEvalCheckReposOperation,
   listScenariosOperation,
   getScenarioOperation,
@@ -288,8 +300,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
-  connect_eval_check_repo:
+  connect_eval_github_repo:
     "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
+  connect_eval_check_repo:
+    "The pre-rename spelling of connect_eval_github_repo, excluded for the same reason and by the same line.",
   launch_journey_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:
@@ -563,6 +577,12 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // useful if you can ask for them — but the spend is the user's to approve,
   // so it sits here with `cancel_eval_run` rather than executing on request.
   requestEvalRunJudgeOperation.name,
+  // The description-rewrite experiment: proposing SPENDS one model call and
+  // starting SPENDS eval-iteration credits across two replayed runs. Same
+  // rule as the judge request — advertised so the agent can drive the loop,
+  // approved by the user because the spend is theirs.
+  proposeEvalDescriptionRewriteOperation.name,
+  startEvalDescriptionExperimentOperation.name,
   // Dials a third party's server for minutes and, with the opt-in, spends the
   // organization's credits. Reading grades is only useful if you can ask for
   // one, so these are advertised rather than excluded — but the asking is the

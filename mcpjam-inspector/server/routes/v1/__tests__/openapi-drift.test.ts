@@ -106,6 +106,14 @@ const KNOWN_UNDOCUMENTED = new Set([
   // the Inspector's KNOWN_UNDOCUMENTED baseline"). Document it there when the
   // flag comes off.
   "get /harness/{harnessId}/capabilities",
+  // The `browser_*` definitions the Tools pane and the Raw preview render. The
+  // hosted browser itself is still enforced per deployment
+  // (`HOSTED_BROWSER_TOOLS_ENABLED` plus the backend's exposure verdict), and
+  // `docs/README.md` is explicit that a feature enforced that way must not be
+  // documented until the flag comes off — publishing the schemas would publish
+  // the gated capability. Same posture as the harness capability probe above.
+  // Document it when the browser exposure gate opens.
+  "get /built-in-tools/{builtInToolId}/definitions",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",
@@ -146,6 +154,17 @@ const KNOWN_UNDOCUMENTED = new Set([
   "delete /projects/{projectId}/hosts/{hostId}",
   "post /projects/{projectId}/hosts/{hostId}/servers",
   "post /projects/{projectId}/hosts/{hostId}/duplicate",
+  // Description-experiment HTTP (PR-E3). The SDK client, CLI, and MCP
+  // catalog advertise these; the hand-authored OpenAPI page follows so a
+  // spec edit does not block the inspector landing. Document them with
+  // the public evals reference update.
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}",
+  // Route-facts GET landed with the contract; the hand-authored spec
+  // has not caught up. Same follow-up as the description-experiment trio.
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts",
 ]);
 
 /**

@@ -46,6 +46,7 @@ import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /**
  * Source-agnostic identity of the session being promoted. `sessionId` is the
@@ -294,7 +295,7 @@ function ConvertSessionDialogCoreInner({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview],
   );
 
@@ -669,10 +670,11 @@ function ConvertSessionDialogCoreInner({
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
       : // The resolved ENTRY, not the id. A Convex push can drop the
         // selected suite out from under an open dialog — deleted elsewhere, or
-        // `source` flipped so the `availableSuites` filter stops returning it
+        // become CI-owned so the `availableSuites` filter stops returning it
         // — and every other consumer keys off the entry. Gating on the id left
         // Promote enabled over a picker reading "Choose a suite", for an id
-        // `authorizeForSuite` then rejects.
+        // the backend then refuses: `authorizeForSuite` on a deleted suite,
+        // `CI_OWNED_SUITE_READ_ONLY` on a CI-owned one, both after the click.
         Boolean(selectedSuiteEntry) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 

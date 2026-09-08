@@ -61,7 +61,6 @@ async function buildDocumentApp() {
         host,
         forwardedHost,
         allowedHosts: ALLOWED_HOSTS,
-        hostedMode: true,
       })
     ) {
       try {
@@ -218,9 +217,7 @@ describe("guest-session document bootstrap", () => {
   it("bounds the whole mint against the 1500ms deadline (provisioning hang)", async () => {
     // Simulate a hung mint that never resolves — the whole-helper race must
     // abandon it and serve blob-less within the deadline.
-    mockFetchConvexGuestSession.mockImplementation(
-      () => new Promise(() => {})
-    );
+    mockFetchConvexGuestSession.mockImplementation(() => new Promise(() => {}));
 
     vi.useFakeTimers();
     try {

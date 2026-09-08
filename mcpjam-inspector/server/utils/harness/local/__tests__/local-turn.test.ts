@@ -51,16 +51,32 @@ vi.mock("../supervised-provider.js", () => ({
 vi.mock("../runtime-install.js", () => ({
   readRuntimeInstallStatus: async () => ({
     state: "ready",
+    // A pack version and digest as well, because the turn now takes a runtime
+    // USE reservation keyed on the pack identity before it verifies anything —
+    // that reservation is what stops another Inspector replacing the tree these
+    // children execute from.
+    packVersion: "test-pack-1",
+    digest: `sha256:${"a".repeat(64)}`,
+    // The RUNTIME root stays unreachable: these tests are about what happens
+    // when a later step fails, and the bundle never has to resolve.
     runtimeRoot: "/nonexistent/runtime-root",
   }),
+  // The INSTALL root must be writable, though — the reservation is a real file
+  // in a real directory. Pointing it at `/nonexistent` made every test in this
+  // file fail with EACCES on any machine that is not root, which is what CI
+  // caught and a root-owned sandbox did not.
+  runtimeInstallRoot: () => installRoot,
 }));
+// Mutable so a test can drive the `keyId === null` refusal — an Inspector
+// whose local installation is not registered yet.
+const identityFixture = vi.hoisted(() => ({ keyId: "key_1" as string | null }));
 vi.mock("../instance-key.js", () => ({
   readLocalInstanceIdentity: async () => ({
     machineId: "machine_1",
     publicKey: "pub",
-    keyId: "key_1",
+    keyId: identityFixture.keyId,
   }),
-  getRegisteredKeyId: () => "key_1",
+  getRegisteredKeyId: () => identityFixture.keyId,
 }));
 vi.mock("../availability.js", () => ({
   resolveLocalHarnessAvailability: async () => ({
@@ -86,11 +102,36 @@ vi.mock("../availability.js", () => ({
 vi.mock("../grants.js", () => ({
   localHarnessStateRoot: () => stateRoot,
 }));
+// The supervisor, only so a test can make `stopSession` report an ESCAPED
+// tree. The default is the answer the real one gives for a session that never
+// spawned anything, so every other test in this file behaves as before.
+const supervisorFixture = vi.hoisted(() => ({
+  stopOutcome: { stopped: true } as { stopped: boolean; escaped?: number },
+  stopCalls: 0,
+}));
+vi.mock("../supervisor.js", () => ({
+  LocalHarnessSupervisor: class {
+    ownsPid() {
+      return false;
+    }
+    async stopSession() {
+      supervisorFixture.stopCalls += 1;
+      return supervisorFixture.stopOutcome;
+    }
+  },
+}));
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
-const { getLocalHarnessSession, listLocalHarnessSessions } = await import(
-  "../session-registry.js"
-);
+// Real, not mocked: whether a reservation is still held is the subject here.
+const { runtimeUseState } = await import("../runtime-lifecycle.js");
+const { localPackTarget } = await import("../targets.js");
+const {
+  endLocalHarnessSession,
+  forgetLocalHarnessSession,
+  getLocalHarnessSession,
+  listLocalHarnessSessions,
+  registerLocalHarnessSession,
+} = await import("../session-registry.js");
 
 function turnArgs() {
   return {
@@ -114,10 +155,16 @@ function turnArgs() {
 }
 
 let tempDir = "";
+/** Writable install root for the turn's runtime-use reservation. */
+let installRoot = "";
 
 beforeEach(async () => {
   tempDir = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-turn-")));
   stateRoot = tempDir;
+  installRoot = join(tempDir, "runtime");
+  identityFixture.keyId = "key_1";
+  supervisorFixture.stopOutcome = { stopped: true };
+  supervisorFixture.stopCalls = 0;
   // `reset`, not `clear`: a `…Once` override that a failing test never consumed
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
@@ -205,5 +252,135 @@ describe("a local setup that succeeds", () => {
     expect(gatewayRevoke).toHaveBeenCalledTimes(1);
     expect(revokeHarnessModelBroker).toHaveBeenCalledTimes(1);
     expect(getLocalHarnessSession("s_local_1")).toBeUndefined();
+  });
+
+  it("keeps a session whose tree escaped, so stop-all can try again", async () => {
+    // The turn's teardown declines to release the reservation when the stop
+    // cannot prove the tree is down — but it used to drop the registry record
+    // FIRST, unconditionally. That left an escaped tree holding the version
+    // directory with nothing in this process able to stop it or hand it back:
+    // `stop-all` reads this map, so the retry went out with the record and
+    // reinstall and repair stayed blocked until the Inspector quit.
+    supervisorFixture.stopOutcome = { stopped: false, escaped: 2 };
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    await result.prepared.teardown();
+    expect(supervisorFixture.stopCalls).toBe(1);
+    // Still listed, and still holding its claim on the runtime directory.
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    await expect(
+      runtimeUseState({
+        key: {
+          runtimeRoot: installRoot,
+          harnessId: "claude-code",
+          target: localPackTarget()!,
+          packVersion: "test-pack-1",
+          treeDigest: `sha256:${"a".repeat(64)}`,
+        },
+        runtimeRoot: "/nonexistent/runtime-root",
+      }),
+    ).resolves.toMatchObject({ busy: true });
+
+    // And the retained record is what lets a later stop finish the job.
+    supervisorFixture.stopOutcome = { stopped: true };
+    await endLocalHarnessSession("s_local_1");
+    expect(getLocalHarnessSession("s_local_1")).toBeUndefined();
+    await expect(
+      runtimeUseState({
+        key: {
+          runtimeRoot: installRoot,
+          harnessId: "claude-code",
+          target: localPackTarget()!,
+          packVersion: "test-pack-1",
+          treeDigest: `sha256:${"a".repeat(64)}`,
+        },
+        runtimeRoot: "/nonexistent/runtime-root",
+      }),
+    ).resolves.toMatchObject({ busy: false });
+  });
+});
+
+describe("a teardown that finishes late", () => {
+  it("drops only its OWN record, never a session registered since", async () => {
+    // Dropping the record moved AFTER the stop, so it now runs on the far side
+    // of a SIGTERM grace. By session id alone it would remove whatever is
+    // registered under that id by then — including a live session from a later
+    // turn, putting a running tree beyond the reach of `stop-all`. The id is
+    // a fresh uuid per turn today, so this is unreachable through
+    // `run-harness-turn.ts`; the comparison is what stops that invariant, which
+    // lives in another file, from being load-bearing here.
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // A later turn claims the same id while this one is still tearing down.
+    const later = {
+      ...(getLocalHarnessSession("s_local_1") as NonNullable<
+        ReturnType<typeof getLocalHarnessSession>
+      >),
+      runtimeId: "rt_later",
+    };
+    registerLocalHarnessSession(later);
+
+    await result.prepared.teardown();
+    // Still reachable, and still the LATER record.
+    expect(getLocalHarnessSession("s_local_1")?.runtimeId).toBe("rt_later");
+    forgetLocalHarnessSession("s_local_1");
+  });
+});
+
+describe("a refused turn does not keep the runtime reserved", () => {
+  it("releases the reservation when preparation refuses", async () => {
+    // A refusal is a RESOLVED value, not a throw, so it never reached the
+    // caller's `catch` — and the reservation it left behind names this live
+    // server process, so nothing reclaims it. `activateVerifiedPack` then
+    // refuses to replace a version directory "in use by N running session(s)",
+    // counting sessions that never started: one declined turn disabled
+    // reinstall and repair for the rest of the process's life.
+    identityFixture.keyId = null;
+
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result).toMatchObject({ ok: false, status: "consent-required" });
+
+    await expect(
+      runtimeUseState({
+        key: {
+          runtimeRoot: installRoot,
+          harnessId: "claude-code",
+          target: localPackTarget()!,
+          packVersion: "test-pack-1",
+          treeDigest: `sha256:${"a".repeat(64)}`,
+        },
+        runtimeRoot: "/nonexistent/runtime-root",
+      }),
+    ).resolves.toMatchObject({ busy: false });
+  });
+});
+
+describe("a runtime this Inspector cannot reserve", () => {
+  it("refuses the turn instead of throwing out of preparation", async () => {
+    // The reservation is what stops another Inspector — or the install CLI —
+    // replacing the tree this session's children are about to execute from.
+    // A machine where it cannot be taken (a read-only runtime root, a full
+    // disk, the wrong owner) must not run the session unprotected, and must
+    // not surface the failure as an unhandled ENOSPC/EACCES either: CI caught
+    // exactly that, with every test in this file dying on `mkdir` before it
+    // reached its own subject.
+    // A FILE where the reservation needs a directory, so `mkdir` fails with
+    // ENOTDIR for every user. Deliberately not a `chmod`: this suite runs as
+    // root in some containers, where a permission bit stops nothing — which is
+    // precisely how the original defect survived a green local run.
+    await writeFile(join(tempDir, "not-a-directory"), "");
+    installRoot = join(tempDir, "not-a-directory", "runtime");
+
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result).toMatchObject({ ok: false, status: "runtime-unavailable" });
+    expect((result as { message: string }).message).toMatch(
+      /could not reserve/,
+    );
+    // And nothing was started that would then need tearing down.
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
   });
 });

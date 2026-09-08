@@ -10,6 +10,7 @@
  */
 
 import { argMatch } from "./argMatcher.js";
+import { checkRole } from "./policy.js";
 import { isTurnScopablePredicateKind } from "./types.js";
 import type {
   IterationTranscript,
@@ -306,6 +307,54 @@ export function evaluatePredicate(
           );
     }
 
+    case "onlyToolsCalled": {
+      // A non-array would make `includes` throw or silently allow substrings,
+      // so fail closed rather than grade a malformed predicate.
+      if (
+        !Array.isArray(predicate.toolNames) ||
+        predicate.toolNames.some(
+          (name) => typeof name !== "string" || !name.trim()
+        )
+      ) {
+        return fail(
+          predicate,
+          `onlyToolsCalled requires toolNames (array of tool names)`
+        );
+      }
+      if (
+        (transcript.toolCalls ?? []).some(
+          (call) => typeof call.toolName !== "string" || !call.toolName.trim()
+        )
+      ) {
+        return fail(
+          predicate,
+          "a tool call has no tool name; the allowed set cannot be verified"
+        );
+      }
+      const allowed = new Set(predicate.toolNames);
+      const offenders = [
+        ...new Set(
+          (transcript.toolCalls ?? [])
+            .map((call) => call.toolName)
+            .filter((name) => typeof name === "string" && !allowed.has(name))
+        ),
+      ];
+      if (offenders.length > 0) {
+        return fail(
+          predicate,
+          allowed.size === 0
+            ? `expected no tool call, but ${offenders.join(", ")} was called`
+            : `tool(s) outside the allowed set were called: ${offenders.join(", ")}`
+        );
+      }
+      return pass(
+        predicate,
+        allowed.size === 0
+          ? `no tool was called`
+          : `only allowed tools were called`
+      );
+    }
+
     case "responseContains": {
       // `includes("")` is always true, so an empty/missing needle would PASS for
       // any message — fail closed on a malformed predicate instead.
@@ -592,11 +641,14 @@ export function evaluatePredicates(
 }
 
 /**
- * Case verdict from predicate results: passes iff **all** pass. An empty set
- * passes vacuously (a case with no predicates is not gated by predicates).
+ * Case verdict from predicate results: passes iff **all gating** predicates
+ * pass. Advisory results are recorded and never fail the trial. An empty
+ * gating set passes vacuously.
  */
 export function allPredicatesPassed(results: PredicateResult[]): boolean {
-  return results.every((r) => r.passed);
+  return results.every(
+    (r) => r.passed || checkRole(r.predicate) === "advisory"
+  );
 }
 
 /** One prompt turn's checks plus the turn-scoped transcript to run them on. */

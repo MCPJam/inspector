@@ -121,6 +121,9 @@ export function buildEvalIterationVerdict(
   // `[case, …per-turn]` order (NOT execution order).
   const predicateResults = [...casePredicateResults, ...input.turnCheckResults];
 
+  // Advisory predicate results still persist on `predicateResults` (and
+  // project as advisory score rows). `finalizePassedForEval` ignores them,
+  // so a Warn/Report failure never fails the hosted trial.
   let passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: input.trace,

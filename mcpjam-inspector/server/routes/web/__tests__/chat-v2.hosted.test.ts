@@ -15,6 +15,8 @@ const {
   emitConstructorRpcLogMock,
   validateAppToolEntriesMock,
   AppToolValidationErrorMock,
+  validatePageToolEntriesMock,
+  PageToolValidationErrorMock,
   validateUiToolEntriesMock,
   UiToolValidationErrorMock,
   validateWidgetModelContextEntriesMock,
@@ -37,6 +39,13 @@ const {
     constructor(message: string) {
       super(message);
       this.name = "AppToolValidationError";
+    }
+  },
+  validatePageToolEntriesMock: vi.fn(() => []),
+  PageToolValidationErrorMock: class PageToolValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "PageToolValidationError";
     }
   },
   validateUiToolEntriesMock: vi.fn(() => []),
@@ -103,6 +112,8 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
   validateAppToolEntries: validateAppToolEntriesMock,
   AppToolValidationError: AppToolValidationErrorMock,
+  validatePageToolEntries: validatePageToolEntriesMock,
+  PageToolValidationError: PageToolValidationErrorMock,
   validateUiToolEntries: validateUiToolEntriesMock,
   UiToolValidationError: UiToolValidationErrorMock,
   validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
@@ -332,6 +343,48 @@ describe("web routes — chat-v2 hosted mode", () => {
     // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+  });
+
+  it("validates a pageTools snapshot and forwards it, so a hosted turn can offer a page's own tools", async () => {
+    // The Playground's "Page tools" opt-in was local-only while this route
+    // ignored the field: the model would have been offered tools whose calls
+    // nothing forwarded. `uiTools` below is still ignored — that one is
+    // agent-route-only — and the two live side by side on purpose.
+    const { app, token } = createWebTestApp();
+    const pageTools = [
+      {
+        alias: "page_1a2b3c4d",
+        rawName: "bookSlot",
+        toolKey: "bookSlot",
+        origin: "https://example.test",
+        description: "Book a slot",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ];
+    validatePageToolEntriesMock.mockReturnValueOnce(pageTools as never);
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-1",
+        messages: [{ role: "user", content: "hi" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+        pageTools,
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(validatePageToolEntriesMock).toHaveBeenCalledWith(pageTools);
+    const prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.pageTools).toEqual(pageTools);
   });
 
   it("ignores a client uiTools snapshot on direct AND scenario turns (agent-route-only, never rejected)", async () => {

@@ -194,6 +194,8 @@ function suiteEntry(suite: {
   environment?: { servers: string[] };
   serverAttachment?: EvalSuiteOverviewEntry["suite"]["serverAttachment"];
   hostAttachments?: EvalSuiteOverviewEntry["suite"]["hostAttachments"];
+  source?: EvalSuiteOverviewEntry["suite"]["source"];
+  declaredSuiteId?: string;
 }): EvalSuiteOverviewEntry {
   return {
     suite: {
@@ -1479,5 +1481,116 @@ describe("ConvertSessionDialogCore — a suites query that rejects", () => {
 
     expect(screen.queryByText("Import unavailable")).toBeNull();
     expect(screen.getByLabelText("Test case name")).toBeTruthy();
+  });
+});
+
+/**
+ * Carried through the #4778 merge. That PR replaced this dialog's
+ * `entry.suite.source !== "sdk"` filter with `isCiOwnedSuite`, which is the
+ * broader predicate — `declaredSuiteId` counts too — and landed its coverage
+ * in the pre-BB-163 UI. The rebase had to bring both halves across, because
+ * resolving toward this branch alone would have dropped the filter AND the
+ * tests that notice it is gone: CI-owned suites back in the destination
+ * picker, and a `CI_OWNED_SUITE_READ_ONLY` from the backend after the click.
+ */
+describe("ConvertSessionDialogCore — a suite CI owns", () => {
+  // The suite already carries the session's server, so `missingServers` is
+  // empty and the only thing left to decide submit is the lock.
+  const APP_SUITE = suiteEntry({
+    _id: "suite-app",
+    name: "Checkout",
+    source: "ui",
+    environment: { servers: ["Excalidraw"] },
+    hostAttachments: [hostAttachment("Claude")],
+  });
+  const SECOND_SUITE = suiteEntry({
+    _id: "suite-second",
+    name: "Billing evals",
+    source: "ui",
+    environment: { servers: ["Excalidraw"] },
+    hostAttachments: [hostAttachment("Cursor")],
+  });
+
+  function submitButton() {
+    return screen.getByRole("button", { name: "Promote to test case" });
+  }
+
+  it("keeps it out of the destination picker", () => {
+    // Nothing to pick means nothing to pick INTO: the platform refuses a case
+    // write to a CI-owned suite, so offering it is offering a 409. Filtered
+    // to empty, this is the project-with-no-suites branch — no radio group,
+    // and the new-suite fields directly.
+    mocks.useQuery.mockReturnValue([
+      { ...APP_SUITE, suite: { ...APP_SUITE.suite, source: "sdk" } },
+    ]);
+    renderCore();
+
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByText("Checkout")).toBeNull();
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
+  });
+
+  it("is filtered on `declaredSuiteId` too, not only on `source`", () => {
+    // The half `source !== "sdk"` missed. A suite whose id an author
+    // committed to a versioned file is CI-owned however it was created, and
+    // its sync hard-deletes cases the file does not name — so a case promoted
+    // into it disappears at the next CI run.
+    mocks.useQuery.mockReturnValue([
+      suiteEntry({
+        _id: "suite-declared",
+        name: "Checkout",
+        source: "ui",
+        declaredSuiteId: "checkout-suite",
+        environment: { servers: ["Excalidraw"] },
+      }),
+    ]);
+    renderCore();
+
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
+  });
+
+  it("cannot be submitted when a selected suite BECOMES CI-owned", async () => {
+    // Two suites, so the existing branch stays reachable when the selected
+    // one drops out — with a single suite the list empties and
+    // `effectiveDestinationMode` legitimately falls back to New suite.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : [APP_SUITE, SECOND_SUITE],
+    );
+    const props = {
+      open: true,
+      summary: SUMMARY,
+      detail: READY_DETAIL,
+      isAuthenticated: true,
+      onOpenChange: vi.fn(),
+      onImported: vi.fn(),
+    };
+    const { rerender } = render(<ConvertSessionDialogCore {...props} />);
+    await waitFor(() =>
+      expect(submitButton().hasAttribute("disabled")).toBe(false),
+    );
+
+    // The suite is re-reported as SDK-owned — a CI run landed while the
+    // dialog sat open. The filter drops it from the picker, but
+    // `selectedSuiteId` still names it, and submitting sent a write the
+    // backend refuses.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip"
+        ? undefined
+        : [
+            { ...APP_SUITE, suite: { ...APP_SUITE.suite, source: "sdk" } },
+            SECOND_SUITE,
+          ],
+    );
+    rerender(<ConvertSessionDialogCore {...props} />);
+
+    // Still a choice to make, so this is the selected entry going missing
+    // rather than the branch disappearing.
+    expect(screen.getByRole("radiogroup")).toBeTruthy();
+    expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
+    await waitFor(() =>
+      expect(submitButton().hasAttribute("disabled")).toBe(true),
+    );
+    expect(importAction).not.toHaveBeenCalled();
   });
 });

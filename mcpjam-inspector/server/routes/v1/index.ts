@@ -28,6 +28,7 @@ import exporter from "./export.js";
 import evals from "./evals.js";
 import clients from "./clients.js";
 import harness from "./harness.js";
+import builtInTools from "./built-in-tools.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
 import skills from "./skills.js";
@@ -53,6 +54,7 @@ import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
+import spendBudget from "./spend-budget.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
 import evalDisclosure from "./eval-disclosure.js";
@@ -127,6 +129,11 @@ v1.route("/", readiness);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
+// MCPJam's own built-in tool definitions — static, and the same text for every
+// caller. Guest-DENIED by default (they are not on the allowlist): the browser
+// capability is never advertised to a guest turn, so a guest reading its
+// schemas would be reading about something they cannot be given.
+v1.route("/", builtInTools);
 // Project Environments (named execution bundles for suites and journeys) stay
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
@@ -228,6 +235,7 @@ v1.route("/", registry);
 // Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
 v1.route("/", organizations);
 v1.route("/", evalChecks);
+v1.route("/", spendBudget);
 v1.route("/", projects);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which

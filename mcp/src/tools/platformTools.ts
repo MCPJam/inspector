@@ -37,6 +37,11 @@ import {
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getScenarioOperation,
@@ -46,6 +51,8 @@ import {
   getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -267,6 +274,8 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // stopped; these say how much of the run was measured at all — and until
   // now nothing outside the web app could ask.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already
@@ -279,6 +288,19 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  // The description-rewrite experiment, beside the judge request it most
+  // resembles: propose and start are spends with a stated cap, so they carry
+  // the same risk metadata the judge request does, and the read closes the
+  // loop an agent opened. Both routes are wired now (PR-E3), so the earlier
+  // catalog exclusion no longer applies.
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
+  // The pre-rename spellings of the two above, still advertised so an agent
+  // already calling one keeps its tool. `check` in these names is a GITHUB
+  // check, never a case's grading check; the new names say so out loud.
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
@@ -824,6 +846,20 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
+    // Declared on every eval-run launch this call may make, so a run started
+    // by an agent reads as MCP rather than as the generic API badge every
+    // hosted launch used to show. `client` names WHICH agent, when the request
+    // said; see `PlatformToolContext.callerUserAgent` on why it is the
+    // request's user-agent and not the `initialize` handshake's `clientInfo`.
+    //
+    // Set on the CLIENT rather than on the operation's input, deliberately: an
+    // operation's `inputSchema` is exposed verbatim as the MCP tool's own
+    // input, so a launcher field there would let the agent whose run it is
+    // choose its own badge.
+    launcher: {
+      kind: "mcp",
+      ...(context.callerUserAgent ? { client: context.callerUserAgent } : {}),
+    },
   });
 
   try {

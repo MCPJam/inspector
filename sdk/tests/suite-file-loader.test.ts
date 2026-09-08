@@ -367,6 +367,145 @@ describe("case intent", () => {
   });
 });
 
+describe("case kind", () => {
+  it("accepts capability and regression and omits when absent", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, kind: "regression" } : entry
+      ),
+    };
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.kind).toBe("regression");
+    expect(loaded.resolved.cases[0]?.kind).toBe("regression");
+
+    const omitted = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
+    expect(omitted.authored.cases[0]?.kind).toBeUndefined();
+    expect(omitted.resolved.cases[0]?.kind).toBeUndefined();
+  });
+
+  it("treats an explicit null kind as absent in the runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, kind: null } : entry
+      ),
+    };
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.authored.cases[0]?.kind).toBeNull();
+    expect(loaded.resolved.cases[0]?.kind).toBeUndefined();
+  });
+});
+
+/**
+ * The case's grading rules are CHECKS. `assertions` is the name they were
+ * authored under before the API, the UI and `create_eval_case` all settled on
+ * `check`, and it still loads — a customer's committed suite file cannot stop
+ * working because the word moved.
+ */
+describe("case checks", () => {
+  const CHECK = {
+    type: "toolCalledAtLeastOnce",
+    toolName: "search",
+  } as const;
+
+  it("loads `checks` into the runner view", () => {
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, checks: [CHECK] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.checks).toEqual([CHECK]);
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([CHECK]);
+  });
+
+  it("still loads the deprecated `assertions` spelling", () => {
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, assertions: [CHECK] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([CHECK]);
+  });
+
+  it("refuses a case that sets both, rather than picking one", () => {
+    // Two lists are two different gradings of one case. Choosing silently
+    // would score it against rules its author cannot see in the file.
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, checks: [CHECK], assertions: [] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const result = loadEvalSuiteFile(asText(authored));
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).toContain("assertions");
+  });
+
+  it("serializes `checks` in canonical key order, not after `import`", () => {
+    // A key missing from CASE_KEY_ORDER falls through to the remainder and is
+    // appended last, so an authored file would reorder itself on its first
+    // write-back — diff churn on a file a customer keeps in review.
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, checks: [CHECK] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const text = serializeEvalSuiteFile(authored);
+    expect(text.indexOf("checks:")).toBeGreaterThan(text.indexOf("steps:"));
+
+    // And it is STABLE: serializing the reparsed file returns the same bytes.
+    expect(serializeEvalSuiteFile(loadOrThrow(text).authored)).toBe(text);
+  });
+
+  it("sorts `checks` BEFORE `import`, the key it would have followed", () => {
+    // The ordering that actually regressed: an unlisted key lands in the
+    // remainder, which `ordered()` appends AFTER every listed one — so the
+    // symptom is `checks` trailing `import`. A case with no `import` cannot
+    // show that, so this one carries both (and the provenance an import
+    // status requires).
+    const authored = {
+      ...MINIMAL,
+      provenance: {
+        sourceHash: "a".repeat(64),
+        sourceFormat: "promptfoo",
+        reportHash: "b".repeat(64),
+      },
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0
+          ? {
+              ...entry,
+              checks: [CHECK],
+              import: { status: "approximated", note: "widened the matcher" },
+            }
+          : entry
+      ),
+    } as EvalSuiteFile;
+
+    const text = serializeEvalSuiteFile(authored);
+    const checksAt = text.indexOf("checks:");
+    const importAt = text.indexOf("import:");
+    expect(checksAt).toBeGreaterThan(-1);
+    expect(importAt).toBeGreaterThan(-1);
+    expect(checksAt).toBeLessThan(importAt);
+    expect(serializeEvalSuiteFile(loadOrThrow(text).authored)).toBe(text);
+  });
+
+  it("leaves a case with neither empty in the runner view", () => {
+    const loaded = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([]);
+  });
+});
+
 describe("findings", () => {
   const duplicateCaseIds = asText(
     payload(findFixture(data.reject, "duplicate case ids"))
