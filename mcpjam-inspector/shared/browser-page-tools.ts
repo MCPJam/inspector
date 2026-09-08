@@ -3,15 +3,15 @@
  * Playground's Tools pane reads them.
  *
  * One shape for BOTH engines. The hosted panel route and the local route each
- * send the daemon the same `observe {mode:"webmcp_tools"}` the model's
- * `browser_webmcp_tools` tool sends, and hand the answer back through this
- * module — so the pane, the model and the two engines can never disagree about
- * what a page offers.
+ * send the daemon the same `observe {mode:"webmcp_tools"}` the turn-start peek
+ * sends, and hand the answer back through this module — so the pane, the model
+ * and the two engines can never disagree about what a page offers.
  *
  * Kept apart from `webmcp-inspector-protocol.ts` on purpose: that is the V1
  * WebMCP Inspector's own session protocol (origin-keyed `toolKey`s, SSE
  * registry deltas). This is a read of the browser the MODEL drives, whose
- * tools are invoked BY NAME through `browser_webmcp_invoke`.
+ * tools become first-class `webmcp_*` model tools — see
+ * `built-in-tools/page-tools.ts` for how these rows are minted into them.
  */
 
 /** One page tool, as the daemon's WebMCP bridge reports it. */
@@ -30,6 +30,22 @@ export interface BrowserPageTool {
   origin?: string;
   isMainFrame?: boolean;
   registrationKind?: "declarative" | "imperative" | "unknown";
+  /**
+   * The CDP frame that registered it.
+   *
+   * Carried through because it is HALF THE IDENTITY once a page tool becomes a
+   * model tool: two same-origin duplicate iframes declare the same names with
+   * the same origin, and nothing else tells them apart. Dropping it here was
+   * fine while the pane only listed names; it is not fine now that the same
+   * rows are minted into tools the model calls.
+   */
+  frameId?: string;
+  /**
+   * WHICH REGISTRATION, minted by the daemon. The other half: a page that
+   * re-registers a tool under an unchanged name in an unchanged frame has a
+   * different handler behind it.
+   */
+  registrationSeq?: number;
 }
 
 export interface BrowserPageToolsOk {
@@ -101,6 +117,21 @@ function pageToolFrom(value: unknown): BrowserPageTool | null {
     tool.annotations = value.annotations as BrowserPageTool["annotations"];
   }
   if (typeof value.origin === "string") tool.origin = value.origin;
+  // IDENTITY FIELDS ARE VALIDATED, not merely typed. A tool advertised with an
+  // empty frame id or a nonsense sequence gets a binding that can never match
+  // the daemon's live registration, so every call to it is refused as
+  // `stale_binding` — a tool that exists only to fail. Better to arrive here
+  // WITHOUT them and be dropped as unbindable, which says so plainly.
+  if (typeof value.frameId === "string" && value.frameId.length > 0) {
+    tool.frameId = value.frameId;
+  }
+  if (
+    typeof value.registrationSeq === "number" &&
+    Number.isInteger(value.registrationSeq) &&
+    value.registrationSeq > 0
+  ) {
+    tool.registrationSeq = value.registrationSeq;
+  }
   if (typeof value.isMainFrame === "boolean") {
     tool.isMainFrame = value.isMainFrame;
   }

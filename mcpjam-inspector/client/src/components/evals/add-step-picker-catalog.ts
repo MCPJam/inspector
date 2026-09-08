@@ -242,6 +242,41 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     keywords: ["tool", "error", "mcp", "transport"],
     choice: { kind: "check", predicateKind: "noToolErrors" },
   },
+  {
+    key: "check:noEndingQuestion",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("noEndingQuestion"),
+    hint: "Reports; never fails a trial",
+    keywords: ["question", "clarify", "ask", "answer", "ending"],
+    choice: { kind: "check", predicateKind: "noEndingQuestion" },
+  },
+  {
+    key: "check:noRepeatedIdenticalCall",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("noRepeatedIdenticalCall"),
+    hint: "Reports; a poll loop looks the same",
+    keywords: ["repeat", "identical", "retry", "loop", "duplicate"],
+    choice: { kind: "check", predicateKind: "noRepeatedIdenticalCall" },
+  },
+  {
+    key: "check:toolCallCountUnder",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("toolCallCountUnder"),
+    keywords: ["calls", "count", "budget", "hops"],
+    choice: { kind: "check", predicateKind: "toolCallCountUnder" },
+  },
+  {
+    key: "check:toolCalledBefore",
+    group: "transcriptMore",
+    tier: "secondary",
+    label: labelForInlineAssert("toolCalledBefore"),
+    hint: "Ordering: the lookup before the write",
+    keywords: ["order", "before", "prerequisite", "sequence"],
+    choice: { kind: "check", predicateKind: "toolCalledBefore" },
+  },
 ];
 
 export function primaryItems(): PickerCatalogEntry[] {

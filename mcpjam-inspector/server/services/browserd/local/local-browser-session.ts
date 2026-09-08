@@ -50,7 +50,10 @@ import {
   registerContextSurface,
   type ContextSurface,
 } from "../electron/agent-surface.js";
-import { createInProcessBrowserdClient } from "../in-process-client.js";
+import {
+  createInProcessBrowserdClient,
+  type InProcessBrowserdClient,
+} from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
 import type { LocalBrowserSessionHandle } from "../browser-session.js";
@@ -192,6 +195,16 @@ export interface EnsureLocalBrowserArgs {
    * browser, and without this they would collide on the project key alone.
    */
   ownerKey?: string;
+  /**
+   * Let this browser's ledger keep `type` values verbatim.
+   *
+   * A property of the DAEMON rather than of a command, so no envelope a caller
+   * controls can ask for it. The door only ever passes it for an EPHEMERAL
+   * profile — a persistent profile is somebody's real logged-in browser, and a
+   * ledger that recorded what they typed into it would be the wrong default in
+   * the one place it matters most.
+   */
+  captureTypedText?: boolean;
 }
 
 interface LocalSession {
@@ -204,6 +217,16 @@ interface LocalSession {
    */
   projectKey: string;
   stack: BrowserdStack;
+  /**
+   * The in-process client, kept alongside the handle's own.
+   *
+   * `handle.client` is the engine-agnostic `SessionClient` every surface talks
+   * to; this is the same object at its real type. The agent door needs the
+   * methods only this engine's client has — the ledger read and the record-only
+   * refusal — and narrowing a union at each call site would be a cast asserting
+   * something this module already knows.
+   */
+  inProcessClient: InProcessBrowserdClient;
   driver: ChromiumDriver;
   lease: HandoffLease;
   handle: LocalBrowserSessionHandle;
@@ -249,7 +272,20 @@ function sessionKey(args: EnsureLocalBrowserArgs): string {
         "ownerKey two unattended runs would share one profile",
     );
   }
-  return `${project}:ephemeral:${owner}`;
+  // `captureTypedText` is part of the KEY, because it configures the daemon at
+  // boot and a reused session keeps whatever the first one asked for. Without
+  // this, a run that asked for recording and a later run on the same owner key
+  // that did not would share a browser whose ledger records typed values — the
+  // quieter direction of that mistake, and the one nobody would notice.
+  //
+  // BEFORE the owner, not after. An owner key may contain colons, so a suffix
+  // let one forge the other's key: owner `run:typed` with recording off and
+  // owner `run` with it on produced the same string, and the two runs shared a
+  // browser under whichever policy booted first — the exact leak this is here
+  // to prevent, reachable by naming a run. The owner is the free-form part, so
+  // it goes last, where nothing follows it to be confused with.
+  const capture = args.captureTypedText ? "typed" : "redacted";
+  return `${project}:ephemeral:${capture}:${owner}`;
 }
 
 /**
@@ -462,7 +498,12 @@ async function startSession(
   // and a stack whose auth is disabled on one engine is a stack whose auth is
   // untested on that engine.
   const token = randomBytes(32).toString("hex");
-  const stack = buildBrowserdStack(driver, { token, lease });
+  const stack = buildBrowserdStack(driver, {
+    token,
+    lease,
+    contextMode,
+    ...(args.captureTypedText ? { captureTypedText: true } : {}),
+  });
   const client = createInProcessBrowserdClient(stack, token);
   // BY BOOT ID, which is what the renderer knows and the only thing it may
   // name: a renderer that could address a surface by index could reach another
@@ -483,6 +524,7 @@ async function startSession(
     key,
     projectKey: validateLocalProjectKey(args.projectId),
     stack,
+    inProcessClient: client,
     driver,
     lease,
     handle,
@@ -521,9 +563,20 @@ export function touchLocalBrowserSession(
  */
 export function findLocalBrowserSession(bootId: string):
   | {
-      client: LocalBrowserSessionHandle["client"];
+      client: InProcessBrowserdClient;
       handler: BrowserdStack["handler"];
       handle: LocalBrowserSessionHandle;
+      /**
+       * This boot's command ledger.
+       *
+       * Handed over directly rather than read back through `/v1/trace`, because
+       * on this engine the daemon is in THIS process: the mirror would
+       * otherwise serialize every row to JSON and parse it again to copy it
+       * into a file a few lines away. The ledger is a read-and-drain buffer,
+       * not a rule to be enforced, so there is nothing here for the handler to
+       * gate — unlike a command, which must go through the client.
+       */
+      ledger: BrowserdStack["ledger"];
       /** For callers that must prove the session is the one they may reach. */
       projectKey: string;
     }
@@ -531,9 +584,10 @@ export function findLocalBrowserSession(bootId: string):
   for (const session of sessions.values()) {
     if (session.stack.bootId === bootId) {
       return {
-        client: session.handle.client,
+        client: session.inProcessClient,
         handler: session.stack.handler,
         handle: session.handle,
+        ledger: session.stack.ledger,
         projectKey: session.projectKey,
       };
     }
@@ -555,20 +609,53 @@ export function findLocalBrowserSession(bootId: string):
  * ensure path does, so a route can answer 400 rather than 404.
  */
 export function findLocalBrowserSessionForProject(projectId: string):
-  | {
-      client: LocalBrowserSessionHandle["client"];
-      handle: LocalBrowserSessionHandle;
-      projectKey: string;
-    }
+  | LiveLocalBrowser
   | undefined {
   const project = validateLocalProjectKey(projectId);
-  const session = sessions.get(`${project}:persistent`);
+  return findLocalBrowserSessionByKey(`${project}:persistent`);
+}
+
+/** What a caller gets when it has found the browser it may reach. */
+export interface LiveLocalBrowser {
+  client: InProcessBrowserdClient;
+  handle: LocalBrowserSessionHandle;
+  ledger: BrowserdStack["ledger"];
+  projectKey: string;
+}
+
+/**
+ * The browser one key names, for a caller that knows WHICH browser it means.
+ *
+ * A project does not identify a browser. An ephemeral context is keyed by the
+ * run that owns it, so a project can have a person's persistent browser and
+ * several throwaway ones at once — and resolving an ephemeral session's
+ * commands by project alone found the persistent one, which is somebody's real
+ * logged-in browser being driven under another session's policy and recorded in
+ * another session's ledger. A logical session stores the key it opened, and
+ * this is how it gets back to it across a relaunch: the key outlives a boot id.
+ */
+export function findLocalBrowserSessionByKey(
+  key: string,
+): LiveLocalBrowser | undefined {
+  const session = sessions.get(key);
   if (!session) return undefined;
   return {
-    client: session.handle.client,
+    client: session.inProcessClient,
     handle: session.handle,
+    ledger: session.stack.ledger,
     projectKey: session.projectKey,
   };
+}
+
+/**
+ * The key `ensureLocalBrowserSession` would use for these arguments.
+ *
+ * Exported so a caller can record which browser a logical session belongs to
+ * without duplicating the derivation — the ephemeral shape includes the owner
+ * key and the typed-text setting, and a second copy of that rule would drift.
+ */
+export function localBrowserKeyFor(args: EnsureLocalBrowserArgs): string {
+  return sessionKey(args);
 }
 
 /** Every live local browser, for status routes and the reap. */
@@ -709,6 +796,54 @@ function disposeSession(session: LocalSession): Promise<void> {
 }
 
 /** Close every local browser. Non-latching: the app may start another. */
+/**
+ * Who the teardown claims the lease as.
+ *
+ * A `script` holder rather than a `human` one: nothing is going to hand this
+ * back, and the lease's resume semantics for a script are the ones that
+ * describe a process that took the page and then finished with it.
+ */
+const TEARDOWN_HOLDER = "browserd:teardown";
+
+/**
+ * Close ONE local browser, by the boot the caller is looking at.
+ *
+ * `killLocalBrowserSessions` closes every browser on the machine, which is the
+ * right answer for a shutdown and the wrong one for "this agent is finished
+ * with its session": another project's browser has nothing to do with it.
+ *
+ * Answers whether it found one, so a caller can tell "closed it" apart from
+ * "there was nothing there" — which for a non-idempotent terminate is a
+ * distinction the caller asked for.
+ */
+export async function closeLocalBrowserSession(
+  bootId: string,
+): Promise<{ closed: true } | { closed: false; reason: "not_found" | "lease_held" }> {
+  for (const session of sessions.values()) {
+    if (session.stack.bootId !== bootId) continue;
+    // CLAIMED, not merely checked. A read says who held the lease a moment ago;
+    // `acquire` says who holds it now and keeps holding it. It returns the
+    // OTHER holder's state unchanged when somebody already has the browser, so
+    // "it took" is the only atomic way to know the page is ours to close — and
+    // holding it through disposal closes the window in which a person takes the
+    // browser between the check and the teardown.
+    const claim = session.lease.acquire(TEARDOWN_HOLDER, 30_000, "script");
+    if (claim.state !== "held" || claim.holder !== TEARDOWN_HOLDER) {
+      return { closed: false, reason: "lease_held" };
+    }
+    session.stack.closeStreams();
+    // The SAME per-key lock the sweep and the kill path take. Without it a
+    // `session`/`ensure` arriving a moment later either reuses an entry that is
+    // already disposing or launches straight into the profile's singleton lock
+    // that Chromium has not yet released, and the caller sees `profile_in_use`.
+    await withKeyedLock(`local-browser:${session.key}`, () =>
+      disposeSession(session),
+    );
+    return { closed: true };
+  }
+  return { closed: false, reason: "not_found" };
+}
+
 export async function killLocalBrowserSessions(): Promise<void> {
   killGeneration += 1;
   await Promise.all(

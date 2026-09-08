@@ -22,6 +22,10 @@ const suggestionAt = (stage: Suggestion["stage"]): Suggestion =>
 
 describe("coverageForCase", () => {
   it("counts authored checks by role, at their own stage", () => {
+    // "Its own stage" is the analyzer's answer, not the page's: `noToolErrors`
+    // files at RESPONSE under analyzer 11 and only the advisory
+    // `responseContains` lands on user value. Counting the tool error at user
+    // value as well is the double-count that bump removed.
     const c = coverageForCase(
       card({
         steps: [
@@ -40,7 +44,8 @@ describe("coverageForCase", () => {
         ],
       }),
     );
-    expect(c.userValue).toMatchObject({ gates: 1, warn: 1 });
+    expect(c.userValue).toMatchObject({ gates: 0, warn: 1 });
+    expect(c.response).toMatchObject({ gates: 1, warn: 0 });
   });
 
   it("counts a real route as one Selection gate", () => {

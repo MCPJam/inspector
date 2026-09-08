@@ -83,6 +83,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
   PlatformEvalRouteFacts,
+  PlatformEvalServerFacts,
   PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
   PlatformEvalRunGate,
@@ -7184,7 +7185,7 @@ const ROUTE_FACTS_READING_RULES =
   "Population is the TRIAL. Substitution is named only for the one-to-one in-catalog shape: exactly one expected name missing and exactly one unexpected in-catalog name observed. Cosine similarity is not a diagnostic. " +
   "`catalogState` is `loaded` or `notLoaded`; catalog-not-loaded forbids substitution and unexpected tools read as `catalogNotLoaded`, never as in- or outside-catalog. " +
   "A ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `notMeasured` is not zero. " +
-  "`endedWithQuestion` stays `notMeasured` until a producer exists; it is not a zero and it is not a pass. " +
+  "`endedWithQuestion` is measured GOING FORWARD: the runner records it on every trial it finalizes from now on, and there is no backfill — a run that finished before that shipped stays `notMeasured`, which is not a zero and not a pass. " +
   "This document is REPORT-ONLY and never a verdict: nothing here writes `result`, feeds a gate, or changes a pass/fail. " +
   "There is NO BACKFILL: a run that terminalized before route-facts measurement shipped has no document and never will, and that absence is unmeasured, never zeros.";
 
@@ -7270,6 +7271,77 @@ export const getEvalRunRouteFactsOperation: PlatformOperation<
           routeFactsState: "unmeasured",
           routeFacts: null,
         };
+      }
+      throw error;
+    }
+  },
+};
+
+const SERVER_FACTS_READING_RULES =
+  "Everything here is a FACT ABOUT THE SERVER, and none of it is a verdict: a 57-tool surface is not a defect, a three-second connect is not a failure, and a precheck is a signal. Nothing in this document feeds a gate or changes a pass/fail. " +
+  "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run HOST fact and is NOT in this document. Never compare numbers across bases and never report either as context consumption. " +
+  "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a REFERENCE window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. Quote the estimate with its caveat or not at all. " +
+  "A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: \"spec_required\"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. " +
+  "RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: \"sameServerId\"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run's verdict. " +
+  "AN UNOBSERVED SETUP PHASE IS NOT A FAILED ONE: an absent `setup.connection` means nothing was recorded, and `durationMs` is measured ONCE PER RUN — a run with 200 trials did not connect 200 times.";
+
+export type GetEvalRunServerFactsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  serverFacts: PlatformEvalServerFacts;
+};
+
+function serverFactsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run server facts. That is a fact about the deployment, not about the run — do not report the run as having no server snapshot.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunServerFactsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunServerFactsResult
+> = {
+  name: "get_eval_run_server_facts",
+  title: "Get MCPJam eval run server facts",
+  description:
+    "Get ONE run's SERVER FACTS: the tool snapshot it ran against — per server, the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what the setup phase observed (connect and discovery outcome, attribution and wall time) and any conformance or readiness runs for the same servers. This is the SERVER half of the run story: `get_eval_run`'s `decisionSummary` says where trials stopped and `get_eval_run_route_facts` says which paths they walked; this says what they were walking through. " +
+    SERVER_FACTS_READING_RULES +
+    ' ABSENCE IS NOT A STATE OF THIS DOCUMENT, unlike route facts. Server facts are COMPUTED ON READ, so there is no materializer and no backfill window: a run that finished years ago still answers. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error, and a deployment that does not serve this route fails as an explicit deployment error. A run with nothing to describe answers INSIDE the document, with `state: "unavailable"` and a `reason` — `snapshotMissing` (no snapshot was stored), `snapshotPartial` (some servers did not answer; the ones that did are still listed and their numbers are real), or `setupNotObserved` (no setup audit was recorded, which means unmeasured and NOT failed).',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, same reason as route facts: the route answers 404 for
+    // "not visible to you" without distinguishing it from anything else, so
+    // retrieving the run separately is what turns that into a run-not-found
+    // error rather than a silence the caller has to interpret.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const serverFacts = await client.getEvalRunServerFacts(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        serverFacts,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw serverFactsRouteUnavailableError();
       }
       throw error;
     }
@@ -15861,6 +15933,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,

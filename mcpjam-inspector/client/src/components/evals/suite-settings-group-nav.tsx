@@ -24,23 +24,14 @@ export function SuiteSettingsGroupTabs({
         aria-label="Settings sections"
         className="flex w-max min-w-full items-end gap-1 border-b border-border/60"
       >
-        {groups.map((group) => {
-          const isDanger = group.id === "danger";
-          return (
-            <SectionTab
-              key={group.id}
-              label={group.label}
-              isActive={activeId === group.id}
-              onSelect={() => onSelect(group.id)}
-              className={cn(
-                isDanger &&
-                  activeId !== group.id &&
-                  "text-destructive hover:text-destructive",
-                isDanger && activeId === group.id && "text-destructive",
-              )}
-            />
-          );
-        })}
+        {groups.map((group) => (
+          <SectionTab
+            key={group.id}
+            label={group.label}
+            isActive={activeId === group.id}
+            onSelect={() => onSelect(group.id)}
+          />
+        ))}
       </nav>
     </div>
   );

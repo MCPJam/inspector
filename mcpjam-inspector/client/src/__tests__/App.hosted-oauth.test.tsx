@@ -8,7 +8,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast as sonnerToast } from "sonner";
+import { RouterProvider } from "react-router";
 import App from "../App";
+import { createAppRouter } from "../router";
+import { setAppRouter } from "../router-ref";
 import {
   clearHostedOAuthPendingState,
   writeHostedOAuthPendingMarker,
@@ -1757,6 +1760,7 @@ describe("App hosted OAuth callback handling", () => {
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
+    mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     const signIn = vi.fn();
@@ -1766,22 +1770,32 @@ describe("App hosted OAuth callback handling", () => {
       user: null,
       isLoading: false,
     });
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
     mockUseConvexAuth.mockReturnValue({
-      isAuthenticated: false,
+      // Hosted guests have a real Convex identity. WorkOS user presence, not
+      // this flag, must decide whether paid checkout needs sign-in.
+      isAuthenticated: true,
       isLoading: false,
     });
+    mockFreshGuestUser();
 
-    render(<App />);
+    const view = render(<App />);
 
     expect(screen.getByTestId("billing-handoff-loading")).toBeInTheDocument();
     await waitFor(() => {
       expect(signIn).toHaveBeenCalled();
     });
+    view.rerender(<App />);
+    expect(signIn).toHaveBeenCalledTimes(1);
     expect(readPersistedCheckoutIntent()).toEqual({
       plan: "team",
       interval: "annual",
     });
     expect(readBillingSignInReturnPath()).toBe("/billing");
+    expect(window.location.pathname).toBe("/billing");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
   });
 
@@ -1789,9 +1803,10 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "team", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "monthly" });
     writeBillingSignInReturnPath("/billing");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
@@ -1822,6 +1837,51 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
     });
     expect(readBillingSignInReturnPath()).toBeNull();
+  });
+
+  it("waits for the WorkOS user before restoring a guest billing callback", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    sessionStorage.clear();
+    persistCheckoutIntent({ plan: "team", interval: "monthly" });
+    writeBillingSignInReturnPath("/billing");
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      return name === "users:getCurrentUser" ? existingConvexUser : undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/callback");
+    expect(readBillingSignInReturnPath()).toBe("/billing");
+
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    view.rerender(<App />);
+
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+    );
+    expect(readPersistedCheckoutIntent()).toEqual({
+      plan: "team",
+      interval: "monthly",
+    });
   });
 
   it("falls back to the default callback destination when billing session intent is missing", async () => {
@@ -2300,6 +2360,7 @@ describe("App hosted OAuth callback handling", () => {
     sessionStorage.clear();
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     window.history.replaceState({}, "", "/billing");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
@@ -2360,6 +2421,7 @@ describe("App hosted OAuth callback handling", () => {
     writeBillingSignInReturnPath("/billing");
     writeScenarioSignInReturnPath("/user-testing/demo/token-123");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     const replaceStateSpy = vi.spyOn(window.history, "replaceState");
 
@@ -2378,6 +2440,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
@@ -2407,6 +2470,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
       expect(mockOrganizationsTab).toHaveBeenCalled();
     });
+    expect(window.location.pathname).toBe("/organizations/org-1/billing");
 
     expect(
       mockOrganizationsTab.mock.calls.some(
@@ -2432,10 +2496,101 @@ describe("App hosted OAuth callback handling", () => {
     ).toBe(true);
   });
 
+  it("stays on /billing until signed-in organization data is ready", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    let organizationsLoaded = false;
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "organizations:getMyOrganizations") {
+        return organizationsLoaded
+          ? [
+              {
+                _id: "org-1",
+                name: "Org One",
+                updatedAt: 1,
+                createdAt: 1,
+                createdBy: "user-1",
+                myRole: "owner",
+              },
+            ]
+          : undefined;
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/billing");
+    expect(screen.getByTestId("billing-handoff-loading")).toBeInTheDocument();
+
+    organizationsLoaded = true;
+    view.rerender(<App />);
+
+    await waitFor(() =>
+      expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+    );
+  });
+
+  it("retries checkout when another route interrupts billing navigation", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      return name === "users:getCurrentUser" ? existingConvexUser : undefined;
+    });
+
+    const router = createAppRouter();
+    const view = render(<RouterProvider router={router} />);
+    try {
+      await waitFor(() =>
+        expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+      );
+
+      await act(async () => {
+        await router.navigate("/home");
+      });
+
+      await waitFor(() =>
+        expect(window.location.pathname).toBe("/organizations/org-1/billing"),
+      );
+      expect(readPersistedCheckoutIntent()).toEqual({
+        plan: "team",
+        interval: "annual",
+      });
+    } finally {
+      view.unmount();
+      router.dispose();
+      setAppRouter(null);
+    }
+  });
+
   it("drops the billing overlay when checkout intent is consumed", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
@@ -2488,6 +2643,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
@@ -2543,6 +2699,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui",
@@ -2558,16 +2715,46 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("billing-handoff-loading"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("billing-handoff-overlay"),
+      ).not.toBeInTheDocument();
     });
+    expect(mockOrganizationsTab).not.toHaveBeenCalled();
+  });
 
+  it("clears billing handoff state when billing is unavailable", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-handoff-loading"),
+      ).not.toBeInTheDocument();
+      expect(readPersistedCheckoutIntent()).toBeNull();
+    });
+    expect(sonnerToast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves billing usable when checkout parameters are invalid", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/billing?plan=team&interval=weekly");
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(readPersistedCheckoutIntent()).toBeNull();
     expect(
       screen.queryByTestId("billing-handoff-loading"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId("billing-handoff-overlay"),
-    ).not.toBeInTheDocument();
-    expect(mockOrganizationsTab).not.toHaveBeenCalled();
   });
 
   it("renders the organization route from the hash even before active org state catches up", async () => {

@@ -85,7 +85,7 @@ function groupedRow(): SuiteFailureGroupsRow {
 /** The sankey's own `<svg role="group">`; the chevron icon is an svg too. */
 function sankeySvg(): HTMLElement | null {
   return screen.queryByRole("group", {
-    name: /Failed trials from case through route to reason/,
+    name: /Failed iterations from case through route to reason/,
   });
 }
 
@@ -110,16 +110,16 @@ describe("FailureGroupsCard", () => {
       },
     ]);
     const card = screen.getByTestId("failure-groups-card");
-    expect(card).toHaveTextContent("14 failed trials, 3 reasons");
+    expect(card).toHaveTextContent("14 failed iterations, 3 reasons");
     expect(card).toHaveTextContent("1 new");
-    expect(screen.queryByLabelText(/Failed trials from case/)).toBeNull();
+    expect(screen.queryByLabelText(/Failed iterations from case/)).toBeNull();
 
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: /14 failed trials/ }));
+      .click(screen.getByRole("button", { name: /14 failed iterations/ }));
     expect(
       screen.getByRole("group", {
-        name: /Failed trials from case through route to reason/,
+        name: /Failed iterations from case through route to reason/,
       }),
     ).toBeInTheDocument();
   });
@@ -148,15 +148,15 @@ describe("FailureGroupsCard", () => {
     render(<FailureGroupsCard suiteId="suite_1" />);
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: /failed trial/ }));
+      .click(screen.getByRole("button", { name: /failed iteration/ }));
     expect(
       screen.getByText(
-        /reasons did not separate into groups — showing the list/,
+        /reasons did not separate into groups. Showing the list/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Not judged")).toBeInTheDocument();
     expect(
-      screen.queryByRole("group", { name: /Failed trials from case/ }),
+      screen.queryByRole("group", { name: /Failed iterations from case/ }),
     ).toBeNull();
   });
 
@@ -175,7 +175,7 @@ describe("FailureGroupsCard", () => {
     );
     expect(screen.queryByTestId("failure-groups-failed")).toBeNull();
     expect(sankeySvg()).toBeNull();
-    expect(screen.queryByText(/failed trials/)).toBeNull();
+    expect(screen.queryByText(/failed iterations/)).toBeNull();
     expect(screen.getByRole("button", { name: "Grouping…" })).toBeDisabled();
   });
 

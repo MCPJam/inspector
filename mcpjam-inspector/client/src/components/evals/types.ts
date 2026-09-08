@@ -273,6 +273,8 @@ export type EvalSuite = {
    * `testIteration.testCaseSnapshot.predicates` at run-precreate time.
    */
   defaultPredicates?: Predicate[];
+  /** Checks opted out of by this suite. Absent or empty enables every check. */
+  disabledStageChecks?: string[];
   /**
    * Suite-level floor on per-case iteration count (1–10). When set, every
    * case in a suite run executes at least this many iterations. Resolved
@@ -995,6 +997,8 @@ export type EvalSuiteRun = {
     pipelineId?: string;
     jobId?: string;
     runUrl?: string;
+    /** Recorded pull request URL, when supplied by the CI integration. */
+    prUrl?: string;
     branch?: string;
     commitSha?: string;
   };

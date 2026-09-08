@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { SuiteRunHistorySnapshot } from "../suite-run-history-snapshot";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
 function run(partial: Partial<EvalSuiteRun>): EvalSuiteRun {
-  return { _id: "run-1", createdAt: 1_000, ...partial } as unknown as EvalSuiteRun;
+  return {
+    _id: "run-1",
+    createdAt: 1_000,
+    ...partial,
+  } as unknown as EvalSuiteRun;
 }
 
 function iteration(partial: Partial<EvalIteration>): EvalIteration {
@@ -68,21 +72,21 @@ describe("SuiteRunHistorySnapshot", () => {
 
     const root = screen.getByTestId("suite-run-history-snapshot");
     expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
-    expect(within(root).getByText("1 failing")).toBeTruthy();
+    expect(within(root).getByText("1 failed iteration")).toBeTruthy();
     expect(within(root).getByText("50%")).toBeTruthy();
     expect(within(root).getByText("1/2 passed")).toBeTruthy();
-    expect(within(root).getByText("latest run")).toBeTruthy();
+    expect(within(root).getByText("Latest run")).toBeTruthy();
 
-    const latency = within(root).getByTestId(
-      "suite-run-history-snapshot-latency",
-    );
+    const latency = within(root).getByTestId("metric-strip-latency");
     expect(within(latency).getByText("P50")).toBeTruthy();
     expect(within(latency).getByText("P95")).toBeTruthy();
     expect(within(latency).getByText("3.00s")).toBeTruthy();
     expect(within(latency).getByText("3.90s")).toBeTruthy();
     expect(within(root).getByText("1.3k")).toBeTruthy();
     expect(within(root).getByText("3")).toBeTruthy();
-    expect(within(root).getAllByText("per run")).toHaveLength(3);
+    expect(within(root).getByText("latency / iteration")).toBeVisible();
+    expect(within(root).getByText("avg tokens / iteration")).toBeVisible();
+    expect(within(root).getByText("tool calls / run")).toBeVisible();
   });
 
   it("names the latest run against the series length", () => {
@@ -115,7 +119,90 @@ describe("SuiteRunHistorySnapshot", () => {
       />,
     );
 
-    expect(screen.getByText("latest of 2 runs")).toBeTruthy();
+    expect(screen.getByText("Latest run · trends across 2 runs")).toBeTruthy();
     expect(screen.getByText("0%")).toBeTruthy();
+  });
+  it("shows measured history trends with real run labels and leaves unpriced cost blank", () => {
+    const bounds = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        left: 0,
+        width: 120,
+        top: 0,
+        right: 120,
+        bottom: 24,
+        height: 24,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    try {
+      render(
+        <SuiteRunHistorySnapshot
+          runs={[
+            run({ _id: "new", runNumber: 9, createdAt: 3000 }),
+            run({ _id: "missing", runNumber: 8, createdAt: 2000 }),
+            run({ _id: "old", runNumber: 7, createdAt: 1000 }),
+          ]}
+          allIterations={[
+            iteration({
+              _id: "new-it",
+              suiteRunId: "new",
+              result: "failed",
+              tokensUsed: 2000,
+              startedAt: 1000,
+              updatedAt: 5000,
+            }),
+            iteration({
+              _id: "missing-it",
+              suiteRunId: "missing",
+              startedAt: undefined,
+              updatedAt: undefined,
+            }),
+            iteration({
+              _id: "old-it",
+              suiteRunId: "old",
+              tokensUsed: 1000,
+              startedAt: 1000,
+              updatedAt: 3000,
+            }),
+          ]}
+        />,
+      );
+      for (const metric of ["pass-rate", "latency", "tokens", "tool-calls"]) {
+        expect(
+          screen.getByTestId(`metric-sparkline-${metric}`),
+        ).toBeInTheDocument();
+      }
+      expect(screen.queryByTestId("metric-sparkline-cost")).toBeNull();
+      expect(screen.getByText("not priced")).toBeVisible();
+      expect(screen.getByText("↓100 pp")).toBeVisible();
+      const latency = screen.getByTestId("metric-sparkline-latency");
+      fireEvent.mouseMove(latency, { clientX: 0 });
+      expect(within(latency).getByText(/Run #7/)).toBeVisible();
+      expect(
+        within(latency).getByTestId("metric-sparkline-tooltip-value"),
+      ).toHaveTextContent("P50 2.00s · P95 2.00s");
+      fireEvent.mouseMove(latency, { clientX: 60 });
+      expect(within(latency).getByText(/Run #9/)).toBeVisible();
+      expect(
+        within(latency).getByTestId("metric-sparkline-tooltip-value"),
+      ).toHaveTextContent("P50 4.00s · P95 4.00s");
+    } finally {
+      bounds.mockRestore();
+    }
+  });
+
+  it("does not call unfinished iterations passed", () => {
+    render(
+      <SuiteRunHistorySnapshot
+        runs={[
+          run({ summary: { total: 2, passed: 0, failed: 0, passRate: 0 } }),
+        ]}
+        allIterations={[iteration({ result: "pending", status: "running" })]}
+      />,
+    );
+    expect(screen.getByText("No failed iterations")).toBeVisible();
+    expect(screen.queryByText("All iterations passed")).toBeNull();
   });
 });

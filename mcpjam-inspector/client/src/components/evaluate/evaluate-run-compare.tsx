@@ -92,7 +92,7 @@ export function EvaluateRunCompare({
                     </div>
                   </div>
                   <span className="shrink-0 text-sm tabular-nums text-foreground">
-                    {passRate != null ? `${toPercent(passRate)}%` : "—"}
+                    {passRate != null ? `${toPercent(passRate)}%` : "-"}
                   </span>
                 </button>
               </li>

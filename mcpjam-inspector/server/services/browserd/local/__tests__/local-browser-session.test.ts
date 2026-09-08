@@ -206,6 +206,32 @@ describe("local browser session", () => {
     expect(launched).toHaveLength(0);
   });
 
+  it("an owner key cannot forge the typed-text setting of another run", async () => {
+    // `captureTypedText` is part of the key so a run that asked for recording
+    // and one that did not never share a browser. With the flag appended, an
+    // owner key containing the flag's own text produced the same string as a
+    // different owner with recording ON — and the two runs shared a Chromium
+    // under whichever policy booted first, recording somebody's typed values
+    // into a ledger that never asked for them.
+    const { deps, launched } = makeDeps();
+    await ensureLocalBrowserSession(
+      { projectId: "proj-a", contextMode: "ephemeral", ownerKey: "run:typed" },
+      deps,
+    );
+    await ensureLocalBrowserSession(
+      {
+        projectId: "proj-a",
+        contextMode: "ephemeral",
+        ownerKey: "run",
+        captureTypedText: true,
+      },
+      deps,
+    );
+    // Two runs, two browsers.
+    expect(launched).toHaveLength(2);
+    expect(listLocalBrowserSessions()).toHaveLength(2);
+  });
+
   it("does not probe the singleton for an ephemeral browser", async () => {
     // There is no shared profile directory to own.
     const probe = vi.fn().mockResolvedValue({ live: true, pid: 1 });

@@ -47,6 +47,32 @@ export interface BrowserdConfig {
    */
   deviceScaleFactor: number;
   /**
+   * Where recordings are written, one MP4 per take.
+   *
+   * A directory rather than a file: the id names the file, and the inspector
+   * reads it back over the same E2B files API that put the daemon's own bytes
+   * there. Under the user data dir by default so a box with a writable profile
+   * has a writable recording dir for free.
+   */
+  recordDir: string;
+  /**
+   * The size ffmpeg stops itself at (`-fs`).
+   *
+   * Below the evidence pipe's 64 MiB upload limit, with room for the fragment
+   * being written when the cap lands. A take that hits it is TRUNCATED, not
+   * dropped — the fragmented container keeps it playable and the caller says
+   * so beside it.
+   */
+  recordMaxBytes: number;
+  /**
+   * May this daemon record at all?
+   *
+   * The operator's kill switch. Off means `/v1/status.features` omits
+   * `"record"`, so the inspector never asks — the same announced-capability
+   * rule the video encoder follows.
+   */
+  recordingEnabled: boolean;
+  /**
    * Where to write a freshly-minted token, when none was supplied.
    *
    * The prelaunch case: a daemon baked into the image has no inspector to hand
@@ -62,6 +88,18 @@ export interface BrowserdConfig {
 export const DEFAULT_BROWSERD_PORT = 8791;
 export const DEFAULT_BROWSERD_HOST = "0.0.0.0";
 export const DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+
+/**
+ * The default size cap for one recording.
+ *
+ * 60 MiB against the evidence pipe's 64 MiB ceiling
+ * (`MAX_REPLAY_VIDEO_BYTES`), leaving room for the fragment in flight when
+ * `-fs` lands. Chosen on the SAFE side because the failure it prevents —
+ * discovering an oversized file at upload time, where the only options left
+ * are dropping the evidence or failing the run — is worse than a recording
+ * that stops early and says so.
+ */
+export const DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
 
 /**
  * Parse and validate the environment. Throws (fail closed) rather than falling
@@ -122,6 +160,13 @@ export function readBrowserdConfig(
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir:
+      env.MCPJAM_BROWSERD_RECORD_DIR?.trim() ||
+      `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...(tokenFile ? { tokenFile } : {}),
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector",
@@ -140,6 +185,24 @@ function readDeviceScaleFactor(env: NodeJS.ProcessEnv): number {
   const raw = Number(env.MCPJAM_BROWSERD_DPR);
   if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
   return raw;
+}
+
+/**
+ * The recording size cap, in bytes.
+ *
+ * LENIENT like `readDeviceScaleFactor`, and for the same reason: this is a
+ * bound on evidence, and refusing to boot a browser over a mistyped
+ * environment variable trades a shorter recording for no browser at all.
+ * Bounded above by the evidence pipe's own limit, because a value past it
+ * produces a file nothing can accept.
+ */
+function readRecordMaxBytes(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  // `< 1`, not `<= 0`: a positive fraction floors to zero, and `-fs 0` tells
+  // ffmpeg to stop at the first byte — a switch meant to bound a recording
+  // would silently abolish it. A cap under one byte cannot be meant.
+  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 
 /**
@@ -175,6 +238,44 @@ function defaultMintToken(path: string): string {
  * what the compositor actually rasterises — and the encoder grabs the
  * compositor's output, not the page's opinion of itself.
  */
+/**
+ * What this daemon announces it can do with the display — ANNOUNCED rather
+ * than assumed by a caller, which never asks for a route or a codec that is
+ * not listed here.
+ *
+ * Two switches, and they are INDEPENDENT:
+ *
+ *   `MCPJAM_BROWSER_VIDEO=false`  turns off the live `h264` stream. It is the
+ *                                 same variable the inspector reads to decide
+ *                                 kiosk, and `h264` also needs kiosk: the live
+ *                                 encoder grabs the whole X display, so "the
+ *                                 display IS the page" only holds when the
+ *                                 window covers it with no chrome.
+ *   `MCPJAM_BROWSERD_RECORD=0`    turns off `record` (`recordingEnabled`).
+ *
+ * They used to be nested — the video switch silenced both — so an operator who
+ * disabled live video to exercise the JPEG fallback also, silently, stopped
+ * every unattended run from leaving evidence. A recording is watched
+ * afterwards and never clicked, so it needs neither kiosk nor the live stream;
+ * only its own switch says no.
+ *
+ * ffmpeg's presence is checked for neither, deliberately: probing for a binary
+ * at boot costs a process on every start, and the honest answer arrives anyway
+ * — the spawn fails and the stream ends `video_unavailable` or the start
+ * answers `record_unavailable`.
+ */
+export function announcedFeatures(
+  config: Pick<BrowserdConfig, "kiosk" | "recordingEnabled">,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const features: string[] = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
+}
+
 export function extraArgsFor(config: BrowserdConfig): string[] {
   const args: string[] = [];
   if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
