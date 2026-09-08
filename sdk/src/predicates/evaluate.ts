@@ -27,10 +27,12 @@ import type {
 } from "./types.js";
 
 // Reason strings are persisted to `testIteration.metadata.predicates`, so any
-// value interpolated from the live run (actual tool args, tool error messages)
-// is a data-exfiltration and metadata-bloat risk. Every interpolated value goes
-// through `brief()` (deep key-redaction + length cap) or `truncate()`, and every
-// finished reason is capped by `pass()`/`fail()`.
+// value interpolated from the live run (actual tool args, tool error messages,
+// the model's own words) is a data-exfiltration and metadata-bloat risk.
+// Structured values go through `brief()` (deep key-redaction + length cap);
+// FREE TEXT goes through `scrubText()` first, because key-redaction cannot see
+// a secret that sits in the middle of a sentence. Every finished reason is
+// capped by `pass()`/`fail()`.
 const MAX_VALUE_CHARS = 200;
 const MAX_ERROR_MSG_CHARS = 200;
 const MAX_ITEMS_SHOWN = 3;
@@ -77,6 +79,56 @@ function redact(value: unknown, depth = 0): unknown {
 /** Cap a string, marking how much was dropped. */
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…(+${s.length - max} chars)`;
+}
+
+/**
+ * A credential-shaped run of characters inside FREE TEXT.
+ *
+ * `redact()` cannot help here: it walks object KEYS, and a tool error message
+ * or a model's sentence is one string with the secret in the middle of it —
+ * `"401: invalid api_key sk-live-abc123"`. Two shapes are covered, because
+ * they are the two that actually appear in an error a server returns: a
+ * sensitive key followed by its value, and the vendor prefixes that announce
+ * a token on their own.
+ *
+ * Deliberately conservative. This is a reason string, not a redaction
+ * perimeter — an error naming an unrecognised secret still reaches the row,
+ * and the length cap is what bounds the blast radius. Over-matching would eat
+ * the message that makes the finding actionable.
+ */
+const SENSITIVE_ASSIGNMENT = new RegExp(
+  // `api_key: "sk-x"`, `token=abc`, `Authorization: Bearer abc`. An explicit
+  // `:` or `=` is REQUIRED: matching a bare space too would eat ordinary
+  // prose — "token expired", "password required" — and the message is the
+  // half of the reason a reader acts on.
+  String.raw`\b(authorization|password|passwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|cookie|credential|private[_-]?key)\b` +
+    String.raw`(\s*[:=]\s*)` +
+    String.raw`(?:bearer\s+)?["']?[\w.\-+/=]{6,}["']?`,
+  "gi"
+);
+/** `Bearer <token>` carries its own announcement and needs no separator. */
+const BEARER_TOKEN = /\bbearer\s+["']?[\w.\-+/=]{8,}["']?/gi;
+/** Vendor prefixes that say "this is a credential" on their own. */
+const VENDOR_TOKEN =
+  /\b(?:sk|pk|rk|ghp|gho|ghu|ghs|ghr|xox[abprs])[-_][\w.\-]{8,}\b/gi;
+
+/**
+ * Mask credential-shaped substrings in text captured from a live run.
+ *
+ * Applied to every interpolation of server- or model-authored prose, so a
+ * secret echoed back inside an error message does not get persisted to
+ * `testIteration.metadata.predicates` — which is read by the UI, the API and
+ * the agent surfaces.
+ */
+function scrubText(text: string): string {
+  return text
+    .replace(SENSITIVE_ASSIGNMENT, (_match, key: string, sep: string) => {
+      // Keep the key and the separator so the reason still reads as a
+      // sentence; replace only what followed them.
+      return `${key}${sep}${REDACTED}`;
+    })
+    .replace(BEARER_TOKEN, `Bearer ${REDACTED}`)
+    .replace(VENDOR_TOKEN, REDACTED);
 }
 
 /**
@@ -795,7 +847,7 @@ export function evaluatePredicate(
         .map((e) => {
           const name = e.toolName ? `"${e.toolName}"` : "tool";
           const msg = e.message
-            ? `: ${truncate(e.message, MAX_ERROR_MSG_CHARS)}`
+            ? `: ${truncate(scrubText(e.message), MAX_ERROR_MSG_CHARS)}`
             : "";
           return `${name} (${e.kind}${msg})`;
         })
@@ -949,7 +1001,7 @@ export function evaluatePredicate(
       // Console error text is live-page-controlled data; truncate like tool
       // error messages.
       const first = truncate(
-        offenders[0]?.consoleErrors?.[0] ?? "",
+        scrubText(offenders[0]?.consoleErrors?.[0] ?? ""),
         MAX_ERROR_MSG_CHARS
       );
       return fail(
@@ -971,7 +1023,7 @@ export function evaluatePredicate(
       return fail(
         predicate,
         `final message ended with a question: "${truncate(
-          lastNonEmptyLine(message),
+          scrubText(lastNonEmptyLine(message)),
           MAX_VALUE_CHARS
         )}"`
       );
@@ -1515,14 +1567,34 @@ export function evaluatePredicate(
       const called = new Set(
         (transcript.toolCalls ?? []).map((c) => c.toolName)
       );
+      const undescribed: string[] = [];
       for (const name of called) {
         const tool = inventoryEntry(transcript, name);
-        if (describesItselfAsDeprecated(tool?.description)) {
+        if (!tool) {
+          // A call we have no declaration for cannot be cleared. Collected
+          // rather than returned, because a violation already seen is proof
+          // and must not be downgraded to "we could not tell".
+          undescribed.push(name);
+          continue;
+        }
+        if (describesItselfAsDeprecated(tool.description)) {
           return fail(
             predicate,
             `a tool whose description marks it deprecated was called: "${name}"`
           );
         }
+      }
+      if (undescribed.length > 0) {
+        // The same rule `argumentsMatchToolSchema` applies one case above: a
+        // tool the inventory does not describe is unreadable, not clean. A
+        // widget-initiated or out-of-band call would otherwise pass a check
+        // whose whole question is what the description says.
+        return evidenceError(
+          predicate,
+          `${undescribed.length} called tool(s) are not in the captured ` +
+            `inventory, so their descriptions could not be read: ` +
+            `${undescribed.slice(0, MAX_ITEMS_SHOWN).join(", ")}`
+        );
       }
       return pass(
         predicate,
@@ -1551,18 +1623,17 @@ export function evaluatePredicate(
       const called = new Set(
         (transcript.toolCalls ?? []).map((c) => c.toolName)
       );
+      const undeclaredCalls: string[] = [];
       for (const name of called) {
-        const entry = inventoryEntry(transcript, name);
-        // A called tool the inventory does not describe has no declaration to
-        // read. One row somewhere else carrying annotations does not speak for
-        // it, and reading its silence as safety is the vacuous pass this whole
-        // check exists to avoid.
-        if (!entry || entry.annotations === undefined) {
-          return evidenceError(
-            predicate,
-            `"${name}" was called and the inventory carries no annotations ` +
-              "for it; destructiveHint was never stated for the tool in question"
-          );
+        const tool = inventoryEntry(transcript, name);
+        // A tool the inventory does not describe — or describes with no
+        // annotations at all — declared nothing we can read. Collected, not
+        // returned: a destructive call already seen is proof and outranks a
+        // tool we could not look up. One row elsewhere carrying annotations
+        // does not speak for this one.
+        if (!tool || tool.annotations === undefined) {
+          undeclaredCalls.push(name);
+          continue;
         }
         // The protocol's own reading, in the protocol's own order — the same
         // three steps `client-fulfilled-tools.ts` applies:
@@ -1573,9 +1644,9 @@ export function evaluatePredicate(
         //   3. otherwise an ABSENT `destructiveHint` means destructive. Only
         //      an explicit `false` is a declaration of safety.
         //
-        // Step 3 is the one that matters here: reading absence as `false`
-        // reported every unannotated write as safe.
-        const annotations = entry.annotations;
+        // Step 3 is the one that matters here: a truthiness test on
+        // `destructiveHint` reported every unannotated write as safe.
+        const annotations = tool.annotations;
         if (annotations.destructiveHint === true) {
           return fail(
             predicate,
@@ -1590,6 +1661,17 @@ export function evaluatePredicate(
               "readOnlyHint; the protocol reads an absent hint as destructive"
           );
         }
+      }
+      if (undeclaredCalls.length > 0) {
+        // Same rule as the missing-annotations guard above, one level finer:
+        // a tool the inventory cannot describe declared nothing we can read,
+        // so "nothing destructive was called" is a claim this run cannot make.
+        return evidenceError(
+          predicate,
+          `${undeclaredCalls.length} called tool(s) have no annotations in ` +
+            `the captured inventory, so destructiveHint could not be read: ` +
+            `${undeclaredCalls.slice(0, MAX_ITEMS_SHOWN).join(", ")}`
+        );
       }
       return pass(
         predicate,
@@ -1679,7 +1761,7 @@ export function evaluatePredicate(
             predicate,
             `a tool error did not name an input${
               error.toolName ? ` ("${error.toolName}")` : ""
-            }: ${truncate(error.message ?? "", MAX_ERROR_MSG_CHARS)}`
+            }: ${truncate(scrubText(error.message ?? ""), MAX_ERROR_MSG_CHARS)}`
           );
         }
       }

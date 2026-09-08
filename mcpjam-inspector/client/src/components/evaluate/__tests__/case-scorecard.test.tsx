@@ -219,6 +219,36 @@ describe("CaseScorecard — roles", () => {
     expect(onCasePredicateChange).not.toHaveBeenCalled();
   });
 
+  it("withholds Gate from an observation, the way the suite table does", () => {
+    // An observation is a heuristic, and the Zod schema REFUSES a gating one
+    // on save. Offering the segment here made the case page — the surface with
+    // the most authoring traffic — a control that lies: click Gate, get a
+    // rejected write with no explanation.
+    renderCard({
+      checkPolicy: true,
+      input: {
+        ...baseInput,
+        predicates: {
+          mode: "extend",
+          list: [
+            {
+              type: "noEndingQuestion",
+              role: "advisory",
+              severity: "warn",
+            } as Predicate,
+          ],
+        },
+      },
+    });
+    const row = rowFor("Final message does not end with a question");
+    const group = within(row).getByRole("group", { name: /^Role for/ });
+    expect(within(group).queryByRole("button", { name: "Gate" })).toBeNull();
+    expect(within(group).getByRole("button", { name: "Warn" })).toBeInTheDocument();
+    expect(
+      within(group).getByRole("button", { name: "Report" }),
+    ).toBeInTheDocument();
+  });
+
   it("does not offer a role on the route, because an advisory route is not a route", () => {
     renderCard({ checkPolicy: true });
     const route = screen.getByTestId("case-route-row");

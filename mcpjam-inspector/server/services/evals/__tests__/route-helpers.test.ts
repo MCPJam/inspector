@@ -249,6 +249,7 @@ describe("captureToolSnapshotForEvalAuthoring", () => {
         {
           serverId: "alpha",
           bytes: expect.any(Number),
+          chars: expect.any(Number),
           basis: "aggregated_catalog_json",
           complete: true,
         },
@@ -256,9 +257,16 @@ describe("captureToolSnapshotForEvalAuthoring", () => {
     });
     // Measured on what the server SENT, before the snapshot transform drops
     // and rewrites fields — so it is larger than what we retained.
-    const measured = (
-      toolSnapshotDebug as { catalogBytes: Array<{ bytes: number }> }
-    ).catalogBytes[0]!.bytes;
-    expect(measured).toBeGreaterThan(0);
+    const row = (
+      toolSnapshotDebug as {
+        catalogBytes: Array<{ bytes: number; chars: number }>;
+      }
+    ).catalogBytes[0]!;
+    expect(row.bytes).toBeGreaterThan(0);
+    // Both units come from ONE serialization, so on an ASCII catalog they
+    // agree exactly. The point is not the equality — it is that a reader
+    // dividing `chars` for a token estimate and quoting `bytes` for a payload
+    // size is describing the same string.
+    expect(row.chars).toBe(row.bytes);
   });
 });

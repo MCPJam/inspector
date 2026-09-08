@@ -19,6 +19,7 @@ import {
   RoleSegmentGroup,
 } from "@/components/evals/scorer-role-control";
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
+import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import { StatusDot, type SimpleCaseOverlay, overlayStatus } from "../simple-case/status-dot";
 import { ProvenanceChip } from "./provenance-chip";
 import { RowMarker } from "./row-marker";
@@ -106,6 +107,12 @@ export function ScorecardRowView({
         {canRole && onChangePredicate ? (
           <RoleSegmentGroup
             value={row.role}
+            // An observation is a heuristic, so it is offered as Warn or
+            // Report and never as a Gate — the same rule the Zod schema
+            // enforces at the save, and the same restriction the suite table
+            // applies. Offering a Gate the save is going to refuse is a
+            // control that lies.
+            roles={rolesForPredicateKind(row.predicate!.type)}
             ariaLabel={`Role for ${row.label}`}
             onChange={(role) =>
               onChangePredicate(withPredicateRole(row.predicate!, role))

@@ -27,10 +27,12 @@
 
 import {
   SERVER_FACTS_REFERENCE_WINDOW_TOKENS,
+  referenceWindowShare,
   type EvalRunServerFactsV1,
   type ServerFactsPrecheck,
   type ServerFactsServer,
 } from "@mcpjam/sdk/contract";
+import type { ServerFactsFailureKind } from "@/lib/apis/eval-server-facts-api";
 
 /** One rendered fact. Deliberately NOT `StageFactLine` — see the header. */
 export type RunFactLine = {
@@ -98,7 +100,10 @@ export function summarizeServerFacts(
     (total, server) => total + server.estimatedTokens,
     0,
   );
-  const share = tokens / SERVER_FACTS_REFERENCE_WINDOW_TOKENS;
+  // Through the contract helper, which is the only way a rate is minted in
+  // this document — it is what refuses a non-finite or negative input rather
+  // than rendering `NaN%` at a reader.
+  const share = referenceWindowShare(tokens);
   const serverWord = document.servers.length === 1 ? "server" : "servers";
   return (
     `${document.servers.length} ${serverWord} · ${tools} tools · ` +
@@ -106,6 +111,46 @@ export function summarizeServerFacts(
     `${formatApproxTokens(SERVER_FACTS_REFERENCE_WINDOW_TOKENS)} window)`
   );
 }
+
+/**
+ * Why the READ produced no document — as distinct from a document that says
+ * it has nothing to describe.
+ *
+ * Silence is the one answer a reader cannot act on, and it is the answer they
+ * got: the card rendered only on `ready`, so a deployment that does not serve
+ * the route yet, a read that failed, and a run nobody can see were all the
+ * same blank space under the stage strip. The shape follows
+ * `FINDINGS_FAILURE_COPY` in `use-stage-findings.tsx`, which answers the same
+ * question for the sibling document.
+ *
+ * None of these is a finding about the server under test, and none may read
+ * as one — the stage strip above is a different document and stays rendered.
+ */
+export const SERVER_FACTS_FAILURE_COPY: Record<
+  ServerFactsFailureKind,
+  { title: string; detail: string }
+> = {
+  notFound: {
+    title: "No server facts for this run",
+    detail:
+      "This project has no run with that id, or it is no longer visible here.",
+  },
+  routeUnavailable: {
+    title: "Server facts are not available on this deployment",
+    detail:
+      "The API this app is talking to does not serve the server-facts contract yet, so the snapshot this run ran against is not described here.",
+  },
+  invalidContract: {
+    title: "The server facts did not match their contract",
+    detail:
+      "The API answered with a payload this build cannot validate, so nothing from it is shown. The stages above come from a different document and are unaffected.",
+  },
+  requestFailed: {
+    title: "Couldn't load the server facts",
+    detail:
+      "The read did not complete, so the snapshot this run ran against is not described here. It will be retried automatically.",
+  },
+};
 
 /** Why a document has no servers, in a sentence a reader can act on. */
 export function unavailableReasonCopy(

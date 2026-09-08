@@ -259,17 +259,25 @@ export function renderServerToolSnapshotSection(
 }
 
 /**
- * Bytes of one server's ASSEMBLED tool catalog, measured at capture.
+ * The size of one server's ASSEMBLED tool catalog, measured at capture.
  *
  * Rides on `toolSnapshotDebug` (a `v.any()` field), so recording it needs no
  * schema change. The BASIS is part of the value rather than assumed by the
  * reader: three different "payload size" numbers exist for a server, and a
  * number that does not say which one it is will be compared against the wrong
  * one. See `sdk/src/contract/server-facts.ts`.
+ *
+ * BOTH units come from the SAME serialization, deliberately. `bytes` is what a
+ * transport moved; `chars` is what the documented token estimator divides
+ * (`json_chars_div_4` — characters, so a non-ASCII catalog is not
+ * double-counted by UTF-8). Measuring the two against different strings is how
+ * a document ends up reporting a size and a token count that describe
+ * different things under one basis.
  */
 export type ServerCatalogBytes = {
   serverId: string;
   bytes: number;
+  chars: number;
   basis: "aggregated_catalog_json";
   complete: true;
 };
@@ -498,12 +506,20 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
         // client manager pages `tools/list` internally and returns one merged
         // `ListToolsResult`, which is why the basis is not called "raw".
         // Per-page wire bytes need a transport hook and are a later change.
-        catalogBytes?.push({
-          serverId,
-          bytes: utf8ByteLength(safeJsonStringify(result)),
-          basis: "aggregated_catalog_json",
-          complete: true,
-        });
+        if (catalogBytes) {
+          // ONE serialization, both units. The token estimator divides
+          // CHARACTERS and the payload figure reports BYTES; deriving them
+          // from two different strings would put two measurements under one
+          // basis, which is the comparison the contract exists to prevent.
+          const serialized = safeJsonStringify(result);
+          catalogBytes.push({
+            serverId,
+            bytes: utf8ByteLength(serialized),
+            chars: serialized.length,
+            basis: "aggregated_catalog_json",
+            complete: true,
+          });
+        }
 
         const tools = (result?.tools ?? []).map(transformToolForSnapshot);
 
