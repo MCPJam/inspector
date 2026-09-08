@@ -845,6 +845,111 @@ describe("the agent door's session routes", () => {
     expect(browserState.launched).toEqual([]);
   });
 
+  it("reads the EPHEMERAL session's own trace, not the person's browser", async () => {
+    // Mirroring is a WRITE into the session's durable history. Reading an
+    // ephemeral session's trace off the persistent ring copied the person's
+    // browsing into an unattended run's ledger — and, the boot ids differing,
+    // wrote a `daemon_restart` gap claiming the run's browser had relaunched.
+    const token = await grantConsent();
+    await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const ephemeral = await openSession(
+      {
+        projectId: "proj",
+        profile: "ephemeral",
+        runKey: "run-t",
+        policy: { mode: "allow_all" },
+        observe: "none",
+      },
+      token,
+    );
+    const run = (await ephemeral.json()) as any;
+
+    // Something drives the PERSON's browser.
+    const personBoot = browserState.byKey.get("proj:persistent")!;
+    const personLedger = browserState.sessions.get(personBoot).ledger;
+    personLedger.record({
+      command: {
+        commandId: "person-1",
+        source: "manual",
+        action: { kind: "navigate", url: "https://bank.example/statements" },
+      },
+      actor: { kind: "human", id: "pane:u" },
+      ts: Date.now(),
+      durationMs: 1,
+      outcome: "executed",
+      ok: true,
+    });
+
+    const trace = await createApp().request(
+      "/api/mcp/computers/local-browser/trace",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({
+          projectId: "proj",
+          sessionId: run.session.sessionId,
+        }),
+      },
+    );
+    expect(trace.status).toBe(200);
+    const body = (await trace.json()) as any;
+    // Nothing of the person's, and no invented restart.
+    expect(JSON.stringify(body)).not.toContain("bank.example");
+    expect(
+      (body.entries ?? []).some((e: any) => e.reason === "daemon_restart"),
+    ).toBe(false);
+  });
+
+  it("terminates the EPHEMERAL session's browser, not the person's", async () => {
+    // `live` was the project's persistent Chromium whatever session was
+    // closing, so ending a throwaway run shut the window somebody was signed
+    // into and left the run's own process up.
+    const token = await grantConsent();
+    await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const ephemeral = await openSession(
+      {
+        projectId: "proj",
+        profile: "ephemeral",
+        runKey: "run-x",
+        policy: { mode: "allow_all" },
+        observe: "none",
+      },
+      token,
+    );
+    const run = (await ephemeral.json()) as any;
+
+    const closed = await createApp().request(
+      "/api/mcp/computers/local-browser/close",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({
+          projectId: "proj",
+          sessionId: run.session.sessionId,
+          terminate: true,
+        }),
+      },
+    );
+
+    expect(closed.status).toBe(200);
+    expect((await closed.json()) as any).toMatchObject({ terminated: true });
+    // The run's browser is gone; the person's is untouched.
+    expect(browserState.byKey.has("proj:ephemeral:redacted:run-x")).toBe(false);
+    expect(browserState.byKey.has("proj:persistent")).toBe(true);
+  });
+
   it("does not leave a browser behind when the attach race is lost", async () => {
     // `require` pre-checks for an open session, then starts a browser. A close
     // landing in between means the claim fails — and a browser this request

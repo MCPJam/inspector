@@ -220,7 +220,7 @@ describe("BrowserActivityList", () => {
     releaseNew({ entries: [], headSeq: 0 });
   });
 
-  it("notices when a NEWER session takes over the browser", async () => {
+  it("moves on when the session it was reading has CLOSED", async () => {
     // It resolves a session once and follows it, which is right until that
     // session ends — a closed session's trace still reads perfectly, so the
     // pane sat on a history that had simply stopped moving.
@@ -235,7 +235,9 @@ describe("BrowserActivityList", () => {
       ),
     );
 
-    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_b" }] });
+    listSessions.mockResolvedValue({
+      sessions: [{ sessionId: "bs_a", closedAt: 1 }, { sessionId: "bs_b" }],
+    });
     // Quiet ticks, until the pane thinks to ask again.
     for (let tick = 0; tick <= 16; tick += 1) {
       await vi.advanceTimersByTimeAsync(POLL_MS);
@@ -245,6 +247,35 @@ describe("BrowserActivityList", () => {
         expect.objectContaining({ sessionId: "bs_b", afterSeq: 0 }),
         "cap",
       ),
+    );
+  });
+
+  it("stays with an idle session while a newer one is also open", async () => {
+    // A project can have a person's persistent session and several ephemeral
+    // runs open at once. Switching to whichever is newest handed the pane to
+    // the last run to start and wiped the history somebody was reading — for a
+    // session that had never closed. Quiet is not the same as over.
+    vi.useFakeTimers();
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_a" }] });
+    readTrace.mockResolvedValue({ entries: [], headSeq: 0 });
+    mount();
+    await vi.waitFor(() =>
+      expect(readTrace).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "bs_a" }),
+        "cap",
+      ),
+    );
+
+    // A run starts alongside it; `bs_a` is quiet but open.
+    listSessions.mockResolvedValue({
+      sessions: [{ sessionId: "bs_b" }, { sessionId: "bs_a" }],
+    });
+    for (let tick = 0; tick <= 20; tick += 1) {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    }
+    expect(readTrace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: "bs_a" }),
+      "cap",
     );
   });
 

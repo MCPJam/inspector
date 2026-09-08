@@ -46,6 +46,7 @@ import {
   findLocalBrowserSession,
   findLocalBrowserSessionByKey,
   findLocalBrowserSessionForProject,
+  type LiveLocalBrowser,
   localBrowserKeyFor,
   closeLocalBrowserSession,
   listLocalBrowserSessions,
@@ -641,30 +642,44 @@ async function resolveAgentSession(
   }
   if (!stored) return { ok: false, status: 404, error: "no_such_session" };
   if (stored.closedAt) return { ok: false, status: 409, error: "session_closed" };
-  // THE SESSION'S OWN BROWSER, not the project's. An ephemeral context is keyed
-  // by the run that owns it, so looking one up by project found the persistent
-  // browser instead — the person's real logged-in Chromium, driven under an
-  // ephemeral session's policy and written into its ledger. A record from
-  // before `browserKey` existed has only its profile to go on: a persistent one
-  // is the project's browser by definition, and an ephemeral one is refused
-  // rather than resolved to a browser that is not it.
-  //
-  // READS, NEVER STARTS. Launching a Chromium because an agent sent a command
-  // to a session whose browser has gone would put a window on someone's desk
-  // for a session they may have finished with; the caller re-opens explicitly.
+  const live = liveBrowserFor(stored);
+  if (!live) return { ok: false, status: 409, error: "no_browser_session" };
+  return { ok: true, session: stored, live };
+}
+
+/**
+ * THE SESSION'S OWN BROWSER, not the project's.
+ *
+ * An ephemeral context is keyed by the run that owns it, so looking one up by
+ * project found the persistent browser instead — the person's real logged-in
+ * Chromium, read and written under an ephemeral session's name. A record from
+ * before `browserKey` existed has only its profile to go on: a persistent one
+ * is the project's browser by definition, and an ephemeral one resolves to
+ * nothing rather than to a browser that is not it.
+ *
+ * ONE RULE, USED EVERYWHERE. Three routes ask this question — command, trace
+ * and close — and the first version of this answered it in the command path
+ * alone, which left `trace` mirroring one browser's ring into another
+ * session's history and `close --terminate` shutting the wrong window. A rule
+ * with three copies is a rule with two that are wrong.
+ *
+ * READS, NEVER STARTS. Launching a Chromium because a request named a session
+ * whose browser has gone would put a window on someone's desk for a session
+ * they may have finished with; the caller re-opens explicitly.
+ */
+function liveBrowserFor(
+  stored: AgentSessionRecord,
+): LiveLocalBrowser | undefined {
   const live = stored.browserKey
     ? findLocalBrowserSessionByKey(stored.browserKey)
     : stored.profile === "persistent"
-      ? findLocalBrowserSessionForProject(projectId)
+      ? findLocalBrowserSessionForProject(stored.projectId)
       : undefined;
-  if (!live) return { ok: false, status: 409, error: "no_browser_session" };
   // The key is stored, not parsed, so this is the one place that can still
   // catch a record pointing at another project's browser. `stored.projectId` is
   // the validated key the session was opened under.
-  if (live.projectKey !== stored.projectId) {
-    return { ok: false, status: 409, error: "no_browser_session" };
-  }
-  return { ok: true, session: stored, live };
+  if (!live || live.projectKey !== stored.projectId) return undefined;
+  return live;
 }
 
 /**
@@ -1031,7 +1046,7 @@ computers.post("/local-browser/trace", async (c) => {
 
   let session = stored;
   let historyWarning: string | undefined;
-  const live = findLocalBrowserSessionForProject(projectId);
+  const live = liveBrowserFor(stored);
   if (live) {
     try {
       const mirrored = await mirrorLedger({
@@ -1151,7 +1166,7 @@ computers.post("/local-browser/close", async (c) => {
     return c.json({ error: "invalid_session" }, 404);
   }
   if (!stored) return c.json({ error: "no_such_session" }, 404);
-  const live = findLocalBrowserSessionForProject(projectId);
+  const live = liveBrowserFor(stored);
   if (terminate && live) {
     const lease = await live.client.lease?.();
     if (lease && lease.state !== "free") {

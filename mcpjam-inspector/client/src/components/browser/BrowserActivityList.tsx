@@ -121,17 +121,30 @@ export function BrowserActivityList({
     try {
       let currentSession = sessionId;
       // A session that has gone quiet may have ended. Ask before assuming it is
-      // simply idle; a different open session means we are watching the wrong
-      // one, and switching resets the list through `readingKey`.
+      // simply idle; switching resets the list through `readingKey`.
+      //
+      // ONLY WHEN THIS ONE HAS CLOSED, though — not merely because a newer one
+      // exists. A project can have a person's persistent session and several
+      // ephemeral runs open at once, so "switch to the newest" handed the pane
+      // to whichever run started last and wiped the history somebody was
+      // reading, for a session that had never closed.
       if (currentSession && quietTicks.current >= REDISCOVER_AFTER_QUIET_TICKS) {
         quietTicks.current = 0;
-        const live = await listLocalBrowserSessions(projectId, consentToken)
-          .then((r) => r.sessions.find((s) => !s.closedAt)?.sessionId ?? null)
+        const sessions = await listLocalBrowserSessions(projectId, consentToken)
+          .then((r) => r.sessions)
           .catch(() => null);
         if (generation.current !== mine) return;
-        if (live && live !== currentSession) {
-          setReading({ projectId, sessionId: live });
-          return;
+        const mineStillOpen = sessions?.some(
+          (s) => s.sessionId === currentSession && !s.closedAt,
+        );
+        // A lookup that failed says nothing about whether this session closed,
+        // so it is not a reason to leave it.
+        if (sessions && !mineStillOpen) {
+          const next = sessions.find((s) => !s.closedAt)?.sessionId ?? null;
+          if (next) {
+            setReading({ projectId, sessionId: next });
+            return;
+          }
         }
       }
       if (!currentSession) {
