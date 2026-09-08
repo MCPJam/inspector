@@ -820,12 +820,25 @@ computers.post("/local-browser/session", async (c) => {
         409,
       );
     }
+    // THE RACE, not the ordinary refusal. `require` on an ephemeral profile is
+    // turned down before anything launches, and a project with no open session
+    // fails the pre-check — so reaching here means the session that pre-check
+    // found was closed while this request was starting a browser. A browser
+    // reaped for idleness while its logical session stayed open makes that a
+    // real sequence, not a theoretical one.
+    //
+    // A browser THIS request started is therefore owned by nobody, and would
+    // sit on somebody's desk until the idle reaper noticed. One we merely
+    // reused belongs to whoever was already using it and is not ours to close.
+    if (!handle.reused) {
+      await closeLocalBrowserSession(handle.bootId).catch(() => undefined);
+    }
     return c.json(
       {
         error: "nothing_to_attach",
         detail:
-          "attach: 'require' was asked for and this project has no open " +
-          "persistent browser session",
+          "attach: 'require' was asked for and this project's open browser " +
+          "session was closed while this one was starting; try again",
       },
       409,
     );

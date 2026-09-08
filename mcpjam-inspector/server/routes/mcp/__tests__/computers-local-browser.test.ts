@@ -74,6 +74,8 @@ const browserState = vi.hoisted(() => ({
   byKey: new Map<string, string>(),
   /** Every set of arguments a route actually asked to launch a browser with. */
   launched: [] as Array<Record<string, unknown>>,
+  /** Runs while a browser is "starting", to place a race deterministically. */
+  onLaunch: null as null | (() => Promise<void>),
   /** Everything the pane's input actually reached CDP as. */
   cdpSent: [] as Array<{ method: string }>,
   /** Which Chromium this machine has: a downloaded one, or Electron's own. */
@@ -165,6 +167,11 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
       await import("../../../services/browserd/in-process-client.js");
     const { fakeContext, fakePage, fakeCdpSession } =
       await import("../../../services/browserd/daemon/__tests__/fake-page.js");
+    if (browserState.onLaunch) {
+      const hook = browserState.onLaunch;
+      browserState.onLaunch = null;
+      await hook();
+    }
     const existingId = browserState.byKey.get(key);
     const existing = existingId
       ? browserState.sessions.get(existingId)
@@ -237,6 +244,7 @@ beforeEach(() => {
   browserState.sessions.clear();
   browserState.byKey.clear();
   browserState.launched = [];
+  browserState.onLaunch = null;
   authState.verified = true;
   authState.guest = false;
   configState.browserEnabled = true;
@@ -835,6 +843,58 @@ describe("the agent door's session routes", () => {
       error: "nothing_to_attach",
     });
     expect(browserState.launched).toEqual([]);
+  });
+
+  it("does not leave a browser behind when the attach race is lost", async () => {
+    // `require` pre-checks for an open session, then starts a browser. A close
+    // landing in between means the claim fails — and a browser this request
+    // started is then owned by nobody, sitting on somebody's desk until the
+    // idle reaper notices. A browser reaped for idleness while its logical
+    // session stayed open makes that sequence real, not theoretical.
+    const token = await grantConsent();
+    const opened = await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const person = (await opened.json()) as any;
+    // The browser goes away, the logical session does not — what an idle reap
+    // leaves behind.
+    browserState.sessions.clear();
+    browserState.byKey.clear();
+    browserState.launched = [];
+
+    // The close lands AFTER the pre-check and BEFORE the claim — the only
+    // window in which this goes wrong, placed deterministically rather than
+    // hoped for.
+    const { leaveAgentSession } = await import(
+      "../../../services/browserd/local/agent-session-store.js"
+    );
+    browserState.onLaunch = async () => {
+      await leaveAgentSession({
+        projectId: "proj",
+        sessionId: person.session.sessionId,
+        actorId: "cli:abc",
+        terminate: true,
+      });
+    };
+    const res = await openSession(
+      {
+        projectId: "proj",
+        attach: "require",
+        policy: { mode: "allow_all" },
+        observe: "none",
+      },
+      token,
+    );
+    // The browser really was started, which is what makes this a leak.
+    expect(browserState.launched).toHaveLength(1);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as any).toMatchObject({
+      error: "nothing_to_attach",
+    });
+    // Nothing left running that no session owns.
+    expect(browserState.sessions.size).toBe(0);
   });
 
   it("an unrelated run does not keep somebody's browser open", async () => {
