@@ -42,6 +42,7 @@ import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { SCHEDULED_EVALS_WRITE_ENABLED } from "../../config.js";
 import {
   deriveItemIdempotencyKey,
   deriveOperationIdempotencyKey,
@@ -7182,6 +7183,22 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(scheduleSchema, await readJsonObjectBody(c));
+  // The deployment switch, checked before anything is read. It answers 404,
+  // not 403 (following the local-harness kill switch): an operator who turned
+  // the feature off should not have the surface advertise that it exists.
+  //
+  // ENABLING ONLY. `enabled: false` falls through untouched, so a schedule
+  // that is already firing can always be stopped — a gate that strands a live
+  // schedule is worse than one that lets it be switched off. This single guard
+  // covers the SDK client, the `set_eval_suite_schedule` MCP tool, the CLI and
+  // proposal execution: all four self-dispatch through `/api/v1`.
+  if (body.enabled && !SCHEDULED_EVALS_WRITE_ENABLED) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "Scheduled runs are not available on this deployment.",
+    );
+  }
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
