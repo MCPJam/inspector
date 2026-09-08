@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildEvalsRunsPath, buildEvalsPath } from "../app-navigation";
+import {
+  buildEvalsRunsPath,
+  buildEvalsPath,
+  buildEvaluatePath,
+} from "../app-navigation";
 import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 describe("eval-route-url", () => {
@@ -261,6 +265,45 @@ describe("eval-route-url", () => {
     expect(
       buildEvalsPath({ type: "commit-detail", commitSha: "abc1234567890" })
     ).toBe("/evals");
+  });
+
+  it("keeps /evaluate and /evals from parsing each other's URLs", () => {
+    // The flag-gated Evaluate (New) tab is a SIBLING of /evals, not a
+    // sub-tree: `/evaluate` does not start with `/evals/`, and `/evals` does
+    // not start with `/evaluate/`. If either prefix ever swallowed the
+    // other's URLs, one tab would silently render the other's routes.
+    expect(parseEvalRouteFromUrl("/evals", "/evaluate")).toBeNull();
+    expect(parseEvalRouteFromUrl("/evals", "/evaluate/suite/s_123")).toBeNull();
+    expect(parseEvalRouteFromUrl("/evaluate", "/evals")).toBeNull();
+    expect(parseEvalRouteFromUrl("/evaluate", "/evals/runs")).toBeNull();
+
+    expect(parseEvalRouteFromUrl("/evaluate", "/evaluate")).toEqual({
+      type: "list",
+    });
+    expect(parseEvalRouteFromUrl("/evaluate", "/evaluate/create")).toEqual({
+      type: "create",
+    });
+    expect(
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123/runs/r_9")
+    ).toEqual({
+      type: "run-detail",
+      suiteId: "s_123",
+      runId: "r_9",
+      iteration: undefined,
+      testCaseId: undefined,
+    });
+  });
+
+  it("builds /evaluate paths and degrades its commit route to the list", () => {
+    expect(buildEvaluatePath({ type: "list" })).toBe("/evaluate");
+    expect(buildEvaluatePath({ type: "create" })).toBe("/evaluate/create");
+    expect(
+      buildEvaluatePath({ type: "suite-overview", suiteId: "s_123" })
+    ).toBe("/evaluate/suite/s_123");
+    // Commits are a Runs-mode lens; Evaluate (New) has no cross-suite SHA view.
+    expect(
+      buildEvaluatePath({ type: "commit-detail", commitSha: "abc1234567890" })
+    ).toBe("/evaluate");
   });
 
   it("decodes path params", () => {

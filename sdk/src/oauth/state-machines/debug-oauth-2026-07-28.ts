@@ -25,6 +25,7 @@ import type {
 import type { DiagramAction } from "./shared/types.js";
 import { buildOAuthSequenceDiagramActions } from "./shared/sequence-diagram.js";
 import {
+  addChallengeStatusWarning,
   addInfoLog,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
@@ -51,9 +52,11 @@ import {
 } from "./shared/resource-indicator.js";
 import { buildStatelessVerifyRequestBody } from "./shared/initialize.js";
 import {
+  classifyUnauthenticatedProbe,
   computeScopeUnion,
   parseBearerAuthenticateParameters,
   parseScopeString,
+  UnexpectedProbeStatusError,
 } from "./shared/challenges.js";
 import {
   buildTokenRequestClientAuth,
@@ -682,8 +685,16 @@ export const createDebugOAuthStateMachine = (
                   Date.now() - (lastEntry.timestamp || Date.now());
               }
 
-              if (response.status === 401) {
-                // Expected 401 response with WWW-Authenticate header
+              const probe = classifyUnauthenticatedProbe({
+                status: response.status,
+                statusText: response.statusText,
+                wwwAuthenticateHeader: response.headers["www-authenticate"],
+                serverMessage: response.body?.error?.message,
+              });
+
+              if (probe.kind === "challenged") {
+                // The server issued an auth challenge: a 401, or a 403 that still
+                // carried a WWW-Authenticate Bearer challenge.
                 const wwwAuthenticateHeader =
                   response.headers["www-authenticate"];
                 const challengeParams = parseBearerAuthenticateParameters(
@@ -694,7 +705,7 @@ export const createDebugOAuthStateMachine = (
                 );
 
                 // Add info log for WWW-Authenticate header
-                const infoLogs = wwwAuthenticateHeader
+                let infoLogs = wwwAuthenticateHeader
                   ? addInfoLog(
                       state,
                       "received_401_unauthorized",
@@ -710,6 +721,15 @@ export const createDebugOAuthStateMachine = (
                     )
                   : state.infoLogs;
 
+                if (!probe.specCompliant) {
+                  infoLogs = addChallengeStatusWarning(
+                    state,
+                    infoLogs,
+                    "received_401_unauthorized",
+                    responseData,
+                  );
+                }
+
                 updateState({
                   currentStep: "received_401_unauthorized",
                   wwwAuthenticateHeader: wwwAuthenticateHeader || undefined,
@@ -719,7 +739,7 @@ export const createDebugOAuthStateMachine = (
                   infoLogs,
                   isInitiatingAuth: false,
                 });
-              } else if (response.status === 200) {
+              } else if (probe.kind === "anonymous_allowed") {
                 // Server allows anonymous access - try proactive OAuth discovery
                 // Add info log explaining optional auth
                 const infoLogs = addInfoLog(
@@ -747,11 +767,17 @@ export const createDebugOAuthStateMachine = (
                   lastResponse: responseData,
                   httpHistory: updatedHistory,
                 });
-                throw new Error(
-                  `Expected 401 Unauthorized but got HTTP ${response.status}: ${response.body?.error?.message || response.statusText}`
+                throw new UnexpectedProbeStatusError(
+                  probe.message,
+                  response.status
                 );
               }
             } catch (error) {
+              // The server replied; relabelling that as a request failure hides
+              // what it actually said.
+              if (error instanceof UnexpectedProbeStatusError) {
+                throw error;
+              }
               throw new Error(
                 `Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`
               );

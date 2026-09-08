@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import { getEffectiveSuiteServers } from "./helpers";
+import { ImportClaimBadge } from "./import-claim-badge";
 import { isModelFree } from "@/shared/steps";
 import {
   getDefaultTestCaseModelValue,
@@ -454,6 +455,7 @@ export function TestCaseListSidebar({
                             >
                               {line1}
                             </span>
+                            <ImportClaimBadge claim={testCase.import} />
                           </div>
                           {line2 ? (
                             <span

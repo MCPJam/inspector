@@ -11,6 +11,7 @@ import {
   scoreFromTasksResult,
   type ConformanceScore,
 } from "./conformance-score.js";
+import { deepJsonSafe } from "./json-safe.js";
 import { redactForTelemetry } from "./telemetry-redaction.js";
 import type { ConformanceProfileStamp } from "./conformance-profile.js";
 import type {
@@ -218,7 +219,11 @@ function buildDetailPayload(parts: Record<string, unknown>): unknown {
     return undefined;
   }
 
-  return Object.fromEntries(entries);
+  // Reports get persisted, and the persistence layer rejects class instances
+  // (a raw MCPAuthError in `errorDetails` used to fail the whole report
+  // write). The check helpers already sanitize what they attach; this is the
+  // shared last line for every suite's detail payload.
+  return deepJsonSafe(Object.fromEntries(entries));
 }
 
 function summarizeHttpAttempts(

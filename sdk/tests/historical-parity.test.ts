@@ -152,6 +152,8 @@ describe("parity corpus manifest", () => {
       "expectsToolCall",
       "expectsWidgetRender",
       "assertionCount",
+      "hasUserAsk",
+      "toolExpectation",
       // evidence
       "setupSignals",
       "connection",

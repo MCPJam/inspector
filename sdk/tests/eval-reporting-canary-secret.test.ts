@@ -27,7 +27,10 @@ import {
   reportEvalResults,
   reportEvalResultsSafely,
 } from "../src/report-eval-results";
-import { renderStructuredRunJson } from "../src/structured-reporting";
+import {
+  renderStructuredRunHtml,
+  renderStructuredRunJson,
+} from "../src/structured-reporting";
 
 /**
  * Distinctive enough that a substring search cannot collide with fixture noise,
@@ -220,5 +223,39 @@ describe("canary secret — eval reporting", () => {
     } as never);
 
     expectNoCanary(JSON.stringify(rendered), "renderStructuredRunJson");
+  });
+
+  it("keeps planted credentials out of the rendered HTML report", () => {
+    // `--out`/`--reporter` are two terminals for the same artifact
+    // (`cli/src/lib/reporting.ts`), so the HTML renderer needs the identical
+    // guarantee the JSON one has above: rendering from the unredacted report
+    // would reopen a gap that already shipped once.
+    const html = renderStructuredRunHtml({
+      schemaVersion: 1,
+      kind: "eval-run",
+      passed: false,
+      summary: {
+        total: 1,
+        passed: 0,
+        failed: 1,
+        byCategory: {
+          eval: { total: 1, passed: 0, failed: 1 },
+        },
+      },
+      cases: [
+        {
+          id: "case-1",
+          title: "canary case",
+          category: "eval",
+          passed: false,
+          error: `connection refused (authorization: Bearer ${CANARY})`,
+          details: { accessToken: CANARY, refreshToken: CANARY_REFRESH },
+        },
+      ],
+      durationMs: 5,
+      metadata: { accessToken: CANARY, refreshToken: CANARY_REFRESH },
+    } as never);
+
+    expectNoCanary(html, "renderStructuredRunHtml");
   });
 });

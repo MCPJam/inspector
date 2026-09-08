@@ -1,5 +1,6 @@
 import type { ErrorOrigin, MCPClientManager } from "@mcpjam/sdk";
 import type { RequestLogContext } from "../utils/log-events.js";
+import type { RouteFailureHop } from "../utils/route-error-report.js";
 
 // Extend Hono's context with our custom variables
 declare module "hono" {
@@ -27,6 +28,12 @@ declare module "hono" {
       message: string;
       origin?: ErrorOrigin;
       slug?: string;
+      /**
+       * Which hop the failure came off, when the catch site declared one.
+       * Orthogonal to `origin` — see the field docs on
+       * `http.request.failed` in `log-events.ts`. Absent means unknown.
+       */
+      hop?: RouteFailureHop;
     };
     /**
      * Auth method used to resolve the caller. Set by `bearerAuthMiddleware`:

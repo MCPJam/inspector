@@ -158,6 +158,128 @@ describe("StepListEditor", () => {
     ]);
   });
 
+  // A locator with no reference point is rejected at the write boundary, so the
+  // placeholders an added step carries have to read as unfinished on the fields
+  // themselves — not only in the blocked-Save tooltip.
+  it("flags the seeded placeholders on an untouched interact step", () => {
+    const steps: TestStep[] = [
+      {
+        id: "1",
+        kind: "interact",
+        toolName: "",
+        action: { kind: "click", target: { testId: "" } },
+      },
+    ];
+    render(
+      <StepListEditor
+        steps={steps}
+        onStepsChange={vi.fn()}
+        availableTools={[]}
+        suiteServers={[]}
+        evalValidationBorderClass=""
+      />,
+    );
+    expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByPlaceholderText("testId…")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
+  // With tools loaded the view field is a Select, not the fallback Input, so
+  // the flag lands on its trigger instead.
+  it("flags the view picker when tools load and none is picked", () => {
+    const renderWithTool = (toolName: string) =>
+      render(
+        <StepListEditor
+          steps={[
+            {
+              id: "1",
+              kind: "interact",
+              toolName,
+              action: { kind: "click", target: { testId: "canvas" } },
+            },
+          ]}
+          onStepsChange={vi.fn()}
+          availableTools={[{ name: "create_view" }]}
+          suiteServers={[]}
+          evalValidationBorderClass=""
+        />,
+      );
+
+    const { unmount } = renderWithTool("");
+    expect(
+      screen.getByText("Pick a view tool…").closest("button"),
+    ).toHaveAttribute("aria-invalid", "true");
+    unmount();
+
+    renderWithTool("create_view");
+    expect(
+      screen.getByText("create_view").closest("button"),
+    ).toHaveAttribute("aria-invalid", "false");
+  });
+
+  // A snapshot records what ran; nothing there is authorable, so the authoring
+  // flags stay off even on a step that reads incomplete.
+  it("leaves the authoring flags off in read-only mode", () => {
+    render(
+      <StepListEditor
+        steps={[
+          {
+            id: "1",
+            kind: "interact",
+            toolName: "",
+            action: { kind: "click", target: { testId: "" } },
+          },
+        ]}
+        onStepsChange={vi.fn()}
+        availableTools={[]}
+        suiteServers={[]}
+        evalValidationBorderClass=""
+        readOnly
+      />,
+    );
+    expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    expect(screen.getByPlaceholderText("testId…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+  });
+
+  it("clears the flags once the step names a view and an element", () => {
+    const steps: TestStep[] = [
+      {
+        id: "1",
+        kind: "interact",
+        toolName: "create_view",
+        action: { kind: "click", target: { testId: "add-to-cart" } },
+      },
+    ];
+    render(
+      <StepListEditor
+        steps={steps}
+        onStepsChange={vi.fn()}
+        availableTools={[]}
+        suiteServers={[]}
+        evalValidationBorderClass=""
+      />,
+    );
+    expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    expect(screen.getByPlaceholderText("testId…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+  });
+
   describe("readOnly (snapshot view)", () => {
     const steps: TestStep[] = [
       { id: "1", kind: "prompt", prompt: "Draw a cat" },

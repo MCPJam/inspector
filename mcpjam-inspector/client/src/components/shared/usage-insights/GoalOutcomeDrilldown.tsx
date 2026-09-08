@@ -89,7 +89,9 @@ function requestKeyOf(
   const scopeKey =
     scope.kind === "swarm"
       ? `swarm:${scope.projectId}:${(scope.journeyRunIds ?? []).join(",")}`
-      : `scenario:${scope.scenarioId}`;
+      : scope.kind === "benchmark"
+        ? `benchmark:${scope.benchmarkRunId}`
+        : `scenario:${scope.scenarioId}`;
   // Chip order is not semantically meaningful, so sort for a stable key.
   const chips = filter.chips.map(chipKey).sort().join(",");
   // The selection is keyed EXPLICITLY rather than relied on to show up in

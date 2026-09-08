@@ -13,6 +13,8 @@ const sampleData: MetricStripData = {
     latencyP95: 4_000,
     tokens: 1_500,
     toolCalls: 2,
+    costUsd: null,
+    costedIterations: 0,
   },
   series: [
     {
@@ -24,6 +26,8 @@ const sampleData: MetricStripData = {
       latencyP95: 1_500,
       tokens: 1_000,
       toolCalls: 1,
+      costUsd: null,
+      costedIterations: 0,
     },
     {
       passRate: 50,
@@ -34,6 +38,8 @@ const sampleData: MetricStripData = {
       latencyP95: 4_000,
       tokens: 1_500,
       toolCalls: 2,
+      costUsd: null,
+      costedIterations: 0,
     },
   ],
   delta: -50,

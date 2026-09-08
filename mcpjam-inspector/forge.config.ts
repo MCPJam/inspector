@@ -9,6 +9,7 @@ import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
 import { assertWsNativeFallback } from "./src/ws-native-fallback.assert";
+import { electronBuildSurface } from "./shared/sentry-config";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -219,7 +220,10 @@ const config: ForgeConfig = {
       });
 
       // Release name must match what the SDKs init with: `app.getVersion()`
-      // in main, `__APP_VERSION__` in the renderer — both package.json.
+      // in main, `__APP_VERSION__` in the renderer — both package.json. Same
+      // for `--dist` below: `electronBuildSurface(process.platform)` is what
+      // main reports (src/main.ts) and what vite.renderer.config.mts stamps
+      // into the renderer, so all three agree by construction.
       const targets: Array<[string, string]> = [
         [resolve(buildPath, ".vite/build"), "inspector-electron"],
         [resolve(buildPath, ".vite/renderer"), "inspector-client"],
@@ -270,6 +274,7 @@ const config: ForgeConfig = {
             ...cli,
             "upload",
             `--release=${version}`,
+            `--dist=${electronBuildSurface(process.platform)}`,
             "--org=mcpjam-gh",
             `--project=${project}`,
             dir,

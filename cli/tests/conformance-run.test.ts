@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
 import test from "node:test";
 import { Command } from "commander";
 import {
@@ -6,6 +7,7 @@ import {
   registerConformanceRunCommand,
 } from "../src/commands/conformance-run.js";
 import { CliError } from "../src/lib/output.js";
+import { main } from "../src/index.js";
 
 function parseConformanceRun(argv: string[]): Record<string, unknown> {
   const program = new Command();
@@ -92,5 +94,53 @@ test("a single-suite command does not publish just because a key is exported", a
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.MCPJAM_API_KEY;
     else process.env.MCPJAM_API_KEY = originalKey;
+  }
+});
+
+// `--reporter html` is invalid for `conformance run` regardless of what the
+// suite would find — so it must be rejected before the suite runs, not
+// after. A version of this check placed after `runConformance` would let an
+// option the command ultimately refuses still issue real requests first.
+test("conformance run rejects --reporter html before making any request", async () => {
+  let requestCount = 0;
+  const server: Server = createServer((_req, res) => {
+    requestCount += 1;
+    res.statusCode = 404;
+    res.end("not used");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  let stderr = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    const result = await main(
+      [
+        "node",
+        "mcpjam",
+        "conformance",
+        "run",
+        "--url",
+        `http://127.0.0.1:${address.port}/mcp`,
+        "--reporter",
+        "html",
+      ],
+      { telemetry: { env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" } } },
+    );
+
+    assert.equal(result.exitCode, 2);
+    assert.match(stderr, /html\\?" reporter is not available/);
+    assert.equal(requestCount, 0);
+  } finally {
+    process.stderr.write = originalWrite;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

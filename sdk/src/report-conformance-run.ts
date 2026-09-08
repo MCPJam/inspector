@@ -27,7 +27,9 @@ export type ConformanceRunSource =
   | "cli"
   | "github_action"
   | "github_app"
-  | "api";
+  | "api"
+  /** A hosted Connector Bench run's conformance child. Never CI-detected. */
+  | "benchmark";
 
 export type ConformanceTargetInput = {
   kind: "server" | "github_repo" | "external";

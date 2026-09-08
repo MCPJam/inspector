@@ -12,6 +12,7 @@ import {
   finalizeEvalRun,
   generateExternalRunId,
   printRunUrl,
+  projectRunVerdict,
   reportEvalResults,
   reportEvalResultsSafely,
   startEvalRun,
@@ -313,6 +314,12 @@ class EvalRunReporterImpl implements EvalRunReporter {
           externalRunId: this.externalRunId,
           ci: this.withoutCiProvider(this.input.ci),
           expectedIterations: this.expectedIterations,
+          // The v2 marker rides the START call: the backend freezes the policy
+          // once, and every later chunk is evidence graded against that
+          // snapshot rather than a policy of its own.
+          ...(this.input.verdictPolicy
+            ? { verdictPolicy: this.input.verdictPolicy }
+            : {}),
         });
         this.runId = started.runId;
         if (
@@ -326,7 +333,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
             runId: started.runId,
             ...(started.projectId ? { projectId: started.projectId } : {}),
             status: started.status as "completed" | "failed",
-            result: started.result as "passed" | "failed",
+            ...projectRunVerdict(started),
             summary: started.summary,
           };
           // The streaming reporter BYPASSES `reportEvalResultsInternal`, so
@@ -399,6 +406,9 @@ class EvalRunReporterImpl implements EvalRunReporter {
         strict: this.input.strict,
         agent: this.input.agent,
         mcpClientManager: this.input.mcpClientManager,
+        ...(this.input.verdictPolicy
+          ? { verdictPolicy: this.input.verdictPolicy }
+          : {}),
         results: this.buffered,
       };
 

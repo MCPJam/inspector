@@ -239,6 +239,20 @@ export function describeEvalSuite(
         try {
           // `assertGate` throws on `incomplete` too: a gate that could not be
           // decided has not been satisfied.
+          //
+          // NO WAIVER PATH HERE, and its absence is a decision rather than an
+          // omission. `GateReport` gained a `waived` outcome for the HOSTED
+          // gate, where a waiver is an audited platform record with an
+          // authorized granter, a reason and an expiry behind it. This gate
+          // runs against a local, code-first suite result: there is no such
+          // record to consult, and the only way to express "waive this" would
+          // be a flag in the same file as the assertion — a gate that turns
+          // itself off, which is not a waiver at all. A caller who wants a
+          // policy relaxed here edits the policy, in the open, in git.
+          //
+          // `formatGateReport` below renders a `waived` report correctly if
+          // one ever does reach it, so the widened union is safe to pass
+          // through untouched.
           assertGate(gateInputFromSuiteResult(result), options.gate as GatePolicy);
         } catch (error) {
           throw new Error(gateFailureMessage(error));

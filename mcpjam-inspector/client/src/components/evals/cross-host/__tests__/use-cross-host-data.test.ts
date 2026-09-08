@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../../types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../../types";
 
 // Exercise the data-shaping logic directly by calling the hook's memoized
 // computation via a thin helper that skips the React useMemo wrapper.
@@ -112,10 +117,7 @@ function makeSuite(
 // Import the hook's computation inline by re-implementing the shape logic here.
 // The real test target is `use-cross-host-data.ts`; this mirrors the logic to
 // avoid requiring a React test renderer for pure data-shaping.
-import {
-  buildCellTrendSeries,
-  useCrossHostData,
-} from "../use-cross-host-data";
+import { buildCellTrendSeries, useCrossHostData } from "../use-cross-host-data";
 import { renderHook } from "@testing-library/react";
 
 describe("useCrossHostData", () => {
@@ -134,9 +136,7 @@ describe("useCrossHostData", () => {
       { namedHostId: "h1", hostName: "Claude" },
       { namedHostId: "h2", hostName: "Cursor" },
     ]);
-    const { result } = renderHook(() =>
-      useCrossHostData(suite, [], [], []),
-    );
+    const { result } = renderHook(() => useCrossHostData(suite, [], [], []));
     expect(result.current.hasHostAttachments).toBe(true);
     expect(result.current.hasAnyData).toBe(false);
     expect(result.current.hostColumns).toHaveLength(2);
@@ -260,7 +260,9 @@ describe("useCrossHostData", () => {
         isHistorical: false,
       },
     ]);
-    expect(result.current.matrix.get("c1")?.get("h_env::client-default")?.passCount).toBe(1);
+    expect(
+      result.current.matrix.get("c1")?.get("h_env::client-default")?.passCount,
+    ).toBe(1);
   });
 
   it("collapses two environments resolving to the same host into one column", () => {
@@ -288,7 +290,9 @@ describe("useCrossHostData", () => {
     expect(result.current.hostColumns).toHaveLength(1);
     expect(result.current.hostColumns[0].hostId).toBe("h_env");
     // Latest run wins the cell, exactly as it does for host-backed reruns.
-    expect(result.current.matrix.get("c1")?.get("h_env::client-default")?.failCount).toBe(1);
+    expect(
+      result.current.matrix.get("c1")?.get("h_env::client-default")?.failCount,
+    ).toBe(1);
   });
 
   it("keeps a host historical when only legacy runs reached it", () => {
@@ -388,7 +392,7 @@ describe("useCrossHostData", () => {
       useCrossHostData(suite, cases, [run1, run2], [iter1, iter2]),
     );
     expect(
-      result.current.matrix.get("c1")?.get("h1::client-default")?.trendSeries
+      result.current.matrix.get("c1")?.get("h1::client-default")?.trendSeries,
     ).toBeUndefined();
   });
 
@@ -421,6 +425,52 @@ describe("useCrossHostData", () => {
     // Snapshot still reflects latest run only
     expect(cell?.passCount).toBe(0);
     expect(cell?.failCount).toBe(1);
+  });
+
+  it("carries per-run iteration counts on trend points", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const run1 = makeRun("r1", "h1", 1000);
+    const run2 = makeRun("r2", "h1", 2000);
+    const iters = [
+      makeIteration("i1", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("i2", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+      makeIteration("i3", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("i4", {
+        suiteRunId: "r2",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("i5", {
+        suiteRunId: "r2",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [run1, run2], iters, {
+        cellTrends: true,
+      }),
+    );
+    const series = result.current.matrix
+      .get("c1")
+      ?.get("h1::client-default")?.trendSeries;
+    expect(series?.map((p) => [p.passed, p.failed, p.total])).toEqual([
+      [2, 1, 3],
+      [2, 0, 2],
+    ]);
   });
 
   it("buildCellTrendSeries supports uneven host histories", () => {
@@ -479,7 +529,13 @@ describe("useCrossHostData", () => {
   it("splits one host into two columns for default + override", () => {
     const suite = makeSuite();
     const cases = [makeCase("c1")];
-    const inherit = makeEnvironmentRun("rInherit", "h1", "env-inherit", 1, 1000);
+    const inherit = makeEnvironmentRun(
+      "rInherit",
+      "h1",
+      "env-inherit",
+      1,
+      1000,
+    );
     const override = {
       ...makeEnvironmentRun("rOverride", "h1", "env-override", 1, 2000),
       modelSource: "override" as const,
@@ -515,13 +571,15 @@ describe("useCrossHostData", () => {
       "h1::client-default",
       "h1::google/gemini-2.5-flash",
     ]);
-    expect(result.current.hostColumns.every((c) => c.hostId === "h1")).toBe(true);
+    expect(result.current.hostColumns.every((c) => c.hostId === "h1")).toBe(
+      true,
+    );
     expect(
-      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount
+      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount,
     ).toBe(1);
     expect(
       result.current.matrix.get("c1")?.get("h1::google/gemini-2.5-flash")
-        ?.failCount
+        ?.failCount,
     ).toBe(1);
   });
 
@@ -551,7 +609,7 @@ describe("useCrossHostData", () => {
     expect(result.current.hostColumns[0].columnKey).toBe("h1::client-default");
     // Latest run (env inherit) wins the cell.
     expect(
-      result.current.matrix.get("c1")?.get("h1::client-default")?.failCount
+      result.current.matrix.get("c1")?.get("h1::client-default")?.failCount,
     ).toBe(1);
   });
 
@@ -599,6 +657,114 @@ describe("useCrossHostData", () => {
     expect(result.current.hostColumns[0].splitLabel).not.toBe(
       result.current.hostColumns[1].splitLabel,
     );
+  });
+
+  it("splits the matrix by exact skill revision, not just by skill ids", () => {
+    // Two environments selecting the SAME skill at two revisions is the
+    // side-by-side comparison version pins exist for. Fingerprinting on ids
+    // alone would report them as one slot and average both revisions' runs
+    // into a single cell — silently erasing the difference under test.
+    const suite = makeSuite();
+    const cases = [makeCase("c1")];
+    const runA = makeEnvironmentRun("rA", "h1", "envA", 1, 1000);
+    const runB = makeEnvironmentRun("rB", "h1", "envB", 1, 2000);
+    const iters = [
+      makeIteration("iA", {
+        suiteRunId: "rA",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("iB", {
+        suiteRunId: "rB",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [runA, runB], iters, {
+        hostNamesById: new Map([["h1", "Claude"]]),
+        environments: [
+          {
+            environmentId: "envA",
+            hostId: "h1",
+            skillSelection: {
+              skillIds: ["skill-refunds"],
+              versionPins: [{ skillId: "skill-refunds", versionId: "ver-1" }],
+            },
+          },
+          {
+            environmentId: "envB",
+            hostId: "h1",
+            // Same skill, Latest — the other arm of the comparison.
+            skillSelection: { skillIds: ["skill-refunds"] },
+          },
+        ],
+      }),
+    );
+    expect(result.current.hostColumns).toHaveLength(2);
+    expect(result.current.hostColumns.map((c) => c.columnKey)).toEqual([
+      "h1::client-default::envA",
+      "h1::client-default::envB",
+    ]);
+    // A skill COUNT would read "1 skill" on both columns and tell nobody
+    // anything; the pinned arm has to name what makes it different.
+    expect(result.current.hostColumns[0].splitLabel).not.toBe(
+      result.current.hostColumns[1].splitLabel,
+    );
+    expect(result.current.hostColumns[0].splitLabel).toMatch(/pinned/);
+  });
+
+  it("names the revision in the label, since a pin COUNT is equally blind", () => {
+    // Two environments each pinning ONE skill to a different revision: a count
+    // would read "pinned 1 version" on both columns, reproducing exactly the
+    // ambiguity the label exists to remove.
+    const suite = makeSuite();
+    const cases = [makeCase("c1")];
+    const runA = makeEnvironmentRun("rA", "h1", "envA", 1, 1000);
+    const runB = makeEnvironmentRun("rB", "h1", "envB", 1, 2000);
+    const iters = [
+      makeIteration("iA", {
+        suiteRunId: "rA",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("iB", {
+        suiteRunId: "rB",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [runA, runB], iters, {
+        hostNamesById: new Map([["h1", "Claude"]]),
+        environments: [
+          {
+            environmentId: "envA",
+            hostId: "h1",
+            skillSelection: {
+              skillIds: ["skill-refunds"],
+              versionPins: [
+                { skillId: "skill-refunds", versionId: "version-aaaa" },
+              ],
+            },
+          },
+          {
+            environmentId: "envB",
+            hostId: "h1",
+            skillSelection: {
+              skillIds: ["skill-refunds"],
+              versionPins: [
+                { skillId: "skill-refunds", versionId: "version-bbbb" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    expect(result.current.hostColumns).toHaveLength(2);
+    const labels = result.current.hostColumns.map((c) => c.splitLabel);
+    expect(labels[0]).not.toBe(labels[1]);
+    expect(labels).toEqual(["pinned aaaa", "pinned bbbb"]);
   });
 
   it("annotates a split by the slot that actually differs, not the sandbox pin", () => {
@@ -673,11 +839,11 @@ describe("useCrossHostData", () => {
     const keys = result.current.hostColumns.map((c) => c.columnKey);
     expect(keys).toContain("h1::client-default");
     expect(
-      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount
+      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount,
     ).toBe(1);
     expect(
       result.current.matrix.get("c1")?.get("h1::google/gemini-2.5-flash")
-        ?.passCount ?? 0
+        ?.passCount ?? 0,
     ).toBe(0);
   });
 
@@ -709,10 +875,10 @@ describe("useCrossHostData", () => {
     );
     expect(
       result.current.matrix.get("c1")?.get("h1::google/gemini-2.5-flash")
-        ?.failCount
+        ?.failCount,
     ).toBe(1);
     expect(
-      result.current.matrix.get("c1")?.get("h1::openai/gpt-4o")?.failCount ?? 0
+      result.current.matrix.get("c1")?.get("h1::openai/gpt-4o")?.failCount ?? 0,
     ).toBe(0);
   });
 
@@ -810,7 +976,7 @@ describe("useCrossHostData", () => {
       "h1::client-default",
     ]);
     expect(
-      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount
+      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount,
     ).toBe(1);
   });
 });

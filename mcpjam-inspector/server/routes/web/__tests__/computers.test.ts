@@ -3,7 +3,11 @@ import { Hono } from "hono";
 
 // Controllable HOSTED_MODE / kill switch: both are import-time consts in the
 // real config module, so env stubs can't reach them.
-const configState = vi.hoisted(() => ({ hosted: false, localEnabled: true }));
+const configState = vi.hoisted(() => ({
+  hosted: false,
+  localEnabled: true,
+  harnessEnabled: false,
+}));
 vi.mock("../../../config.js", async () => {
   const actual = await vi.importActual<typeof import("../../../config.js")>(
     "../../../config.js"
@@ -16,9 +20,26 @@ vi.mock("../../../config.js", async () => {
     get LOCAL_COMPUTER_ENABLED() {
       return configState.localEnabled;
     },
+    get LOCAL_HARNESS_ENABLED() {
+      return configState.harnessEnabled;
+    },
+    // Derived from the mocked HOSTED_MODE the same way the real constant is
+    // derived from the real one. Spreading `actual` would freeze whatever this
+    // machine computed at import time, so a hosted-mode case would assert
+    // `browserAvailable: true` where production forces it false.
+    get LOCAL_BROWSER_ENABLED() {
+      return (
+        !configState.hosted &&
+        process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false"
+      );
+    },
   };
 });
 
+// The kill switch the route reads for `engines.local.browserAvailable`.
+// Imported through the SAME specifier the mock above registers, so the test
+// and the route see one value rather than a hard-coded `true`.
+import { LOCAL_BROWSER_ENABLED } from "../../../config.js";
 import { createComputersRoutes } from "../computers";
 import { isLocalComputerEngineAvailable } from "../../../utils/computers/local-machine";
 import { getLocalTerminalAvailability } from "../../../utils/computers/local-pty";
@@ -113,6 +134,7 @@ beforeEach(() => {
   installFetchStub();
   configState.hosted = false;
   configState.localEnabled = true;
+  configState.harnessEnabled = false;
 });
 
 afterEach(() => {
@@ -131,17 +153,23 @@ describe("GET /api/web/computers/config", () => {
     // host running the tests just like `available` does — compose it from the
     // same probe the route consults rather than hard-coding either answer.
     const terminal = await getLocalTerminalAvailability();
+    // `browserAvailable` is a SERVER capability bit, independent of whether
+    // bash is on this machine's PATH — the agent browser does not need a
+    // shell. Composed from the same switch the route reads so the suite stays
+    // honest on a server where it is turned off.
     return availability.available
       ? {
           available: true,
           terminalAvailable: terminal.available,
           workspaceDisplayRoot: "~/.mcpjam/computer",
+          browserAvailable: LOCAL_BROWSER_ENABLED,
         }
       : {
           available: false,
           // A machine whose local ENGINE is off never offers a terminal.
           terminalAvailable: false,
           workspaceDisplayRoot: null,
+          browserAvailable: LOCAL_BROWSER_ENABLED,
           reason: availability.reason,
         };
   }
@@ -162,6 +190,11 @@ describe("GET /api/web/computers/config", () => {
         personalCloudAvailable: false,
         ephemeralCloudAvailable: false,
       },
+      // A different axis from the engines: an engine decides where a bash call
+      // runs, a harness target decides where the whole vendor agent runs. Off
+      // by default, and on this OPEN endpoint the answer is deliberately
+      // coarse — a server capability, nothing about this machine.
+      harnessTargets: { localNative: { serverEnabled: false } },
       // No cloud anywhere ⇒ local when the machine can serve it, else the
       // honest "no engine exists" null.
       defaultEngine: localBlock.available ? "local" : null,
@@ -227,6 +260,31 @@ describe("GET /api/web/computers/config", () => {
     const response = await createApp().request("/api/web/computers/config");
     const body = (await response.json()) as Record<string, any>;
     expect(body.defaultEngine).toBe("cloud");
+  });
+
+  it("reports the harness kill switch, and only the kill switch", async () => {
+    configState.harnessEnabled = true;
+    const response = await createApp().request("/api/web/computers/config");
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.harnessTargets).toEqual({
+      localNative: { serverEnabled: true },
+    });
+    // Everything that would identify THIS MACHINE stays behind the
+    // authenticated route: this endpoint takes no bearer.
+    const raw = JSON.stringify(body);
+    expect(raw).not.toMatch(/runtimeId|machineId|digest|fingerprint/i);
+  });
+
+  it("hosted forces the harness target off, whatever the kill switch says", async () => {
+    // The structural rule: a hosted replica must never offer to run an agent
+    // on ITS machine. `LOCAL_HARNESS_ENABLED` is already false under
+    // `HOSTED_MODE` in the real config; the route re-checks anyway, and this
+    // pins the route's own answer rather than the constant's.
+    configState.harnessEnabled = true;
+    configState.hosted = true;
+    const response = await createApp().request("/api/web/computers/config");
+    const body = (await response.json()) as Record<string, any>;
+    expect(body.harnessTargets.localNative.serverEnabled).toBe(false);
   });
 
   it("never leaks an absolute home path — the display root is a tilde literal", async () => {

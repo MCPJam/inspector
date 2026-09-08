@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { updateSuiteSchema } from "../evals.js";
-import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manifest";
+import {
+  EVAL_SUITE_SETTINGS_MANIFEST,
+  QUALITY_GATE_REQUEST_SAMPLES,
+  SAMPLE_BY_PATH,
+} from "@/shared/eval-suite-settings-manifest";
 
 /**
  * The API half of the settings-parity ratchet.
@@ -26,16 +30,6 @@ import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manif
  * reason. Any path added to the manifest without a sample here fails loudly
  * below rather than being skipped.
  */
-const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
-  "settings.minimumAccuracy": 80,
-  "settings.minimumIterations": 3,
-  "settings.matchOptions": { toolCallOrder: "exact" },
-  "settings.checks": [{ type: "responseContains", needle: "hi" }],
-  "settings.judge": { enabled: true, autoRun: true, threshold: 0.8 },
-  "environment.computerEnvironment": "Playwright",
-  environmentIds: ["env_1"],
-};
-
 /** Build `{a: {b: value}}` from `"a.b"`. */
 function bodyForPath(path: string, value: unknown): Record<string, unknown> {
   const segments = path.split(".");
@@ -46,6 +40,34 @@ function bodyForPath(path: string, value: unknown): Record<string, unknown> {
 }
 
 const OPERATION_NAMES = new Set(ALL_OPERATIONS.map((op) => op.name));
+
+/** Full refined bodies for quality-gate leaves — a standalone leaf fails the reason/revision refine. */
+const QUALITY_GATE_BODY_BY_PATH: Record<string, Record<string, unknown>> = {
+  "settings.qualityGate.baseline":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "baseline only")
+      ?.body ?? {},
+  "settings.qualityGate.maximumPassRateDrop":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "maximum drop")
+      ?.body ?? {},
+  "settings.qualityGate.noDeterministicRegressions":
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "deterministic regressions",
+    )?.body ?? {},
+  "settings.qualityGate.maximumP95LatencyIncreaseMs":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "p95 latency")
+      ?.body ?? {},
+  "settings.qualityGate.noGatingScoreErrors":
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "gating-score errors",
+    )?.body ?? {},
+};
+
+function requestBodyForApiPath(
+  path: string,
+  sample: unknown,
+): Record<string, unknown> {
+  return QUALITY_GATE_BODY_BY_PATH[path] ?? bodyForPath(path, sample);
+}
 
 describe("eval suite settings manifest — API parity", () => {
   it("declares exactly one reachability answer per row", () => {
@@ -74,7 +96,7 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key} names api path "${row.api}" with no sample value in this test — add one`
       ).toBeDefined();
       const parsed = updateSuiteSchema.safeParse(
-        bodyForPath(row.api, sample)
+        requestBodyForApiPath(row.api, sample)
       );
       if (!parsed.success) {
         unreachable.push(`${row.key} → ${row.api}: ${parsed.error.message}`);
@@ -106,7 +128,7 @@ describe("eval suite settings manifest — API parity", () => {
       if (!row.api || !row.api.includes(".")) continue;
       const [head, leaf] = row.api.split(".");
       const parsed = updateSuiteSchema.parse(
-        bodyForPath(row.api, SAMPLE_BY_PATH[row.api])
+        requestBodyForApiPath(row.api, SAMPLE_BY_PATH[row.api])
       ) as Record<string, Record<string, unknown>>;
       expect(
         parsed[head],
@@ -123,6 +145,66 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key} names operation "${row.op}", which is not in ALL_OPERATIONS`
       ).toBe(true);
     }
+  });
+
+  it("accepts every refined quality-gate request sample", () => {
+    for (const sample of QUALITY_GATE_REQUEST_SAMPLES) {
+      const parsed = updateSuiteSchema.safeParse(sample.body);
+      expect(
+        parsed.success,
+        `${sample.name} should be accepted: ${
+          parsed.success ? "" : parsed.error.message
+        }`
+      ).toBe(true);
+    }
+  });
+
+  it("refuses a quality-gate write without a revision note or precondition", () => {
+    const missingNote = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      settings: { qualityGate: { noGatingScoreErrors: true } },
+    });
+    expect(missingNote.success).toBe(false);
+
+    const missingRevision = updateSuiteSchema.safeParse({
+      revisionNote: "Tighten the bar.",
+      settings: { qualityGate: { noGatingScoreErrors: true } },
+    });
+    expect(missingRevision.success).toBe(false);
+  });
+
+  it("refuses previous_completed and comparative conditions without a baseline", () => {
+    const previous = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      revisionNote: "Try previous run.",
+      settings: {
+        qualityGate: { baseline: { kind: "previous_completed" } },
+      },
+    });
+    expect(previous.success).toBe(false);
+
+    const drop = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      revisionNote: "Drop without a baseline.",
+      settings: { qualityGate: { maximumPassRateDrop: 0.05 } },
+    });
+    expect(drop.success).toBe(false);
+  });
+
+  it("has no writable groundedness path", () => {
+    for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if (row.api) {
+        expect(row.api).not.toMatch(/groundedness/i);
+      }
+    }
+    expect(SAMPLE_BY_PATH["settings.judge.groundedness"]).toBeUndefined();
+    expect(
+      JSON.stringify(SAMPLE_BY_PATH["settings.judge"] ?? {}),
+    ).not.toMatch(/groundedness/);
+    const refused = updateSuiteSchema.safeParse({
+      settings: { judge: { groundedness: { enabled: true } } },
+    });
+    expect(refused.success).toBe(false);
   });
 
   it("gives every `excluded:` row a substantive reason", () => {

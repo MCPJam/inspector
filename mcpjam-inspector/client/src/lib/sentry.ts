@@ -19,6 +19,9 @@ export function resolveClientSentryConfig() {
   return buildClientSentryConfig({
     environment: import.meta.env.PROD ? "prod" : "dev",
     release: __APP_VERSION__,
+    // Paired with the `dist` every upload site passes. Without it the builds
+    // that share this `release` are indistinguishable to Sentry.
+    dist: __BUILD_SURFACE__,
     deployment: HOSTED_MODE ? "hosted" : "self_hosted",
     // Literally the same predicate PostHog's `disable_session_recording`
     // uses, so the two recorders cannot drift: a self-hosted npx/Docker
@@ -66,9 +69,10 @@ let sentryReplayStoppedByGuard = false;
 export function syncSentryReplayForPath(pathname: string): void {
   try {
     if (!isErrorCaptureSurface()) return;
-    const replay = Sentry.getClient()?.getIntegrationByName?.<
-      ReturnType<typeof Sentry.replayIntegration>
-    >("Replay");
+    const replay =
+      Sentry.getClient()?.getIntegrationByName?.<
+        ReturnType<typeof Sentry.replayIntegration>
+      >("Replay");
     if (!replay) return;
 
     if (isCredentialBearingPath(pathname)) {
@@ -103,7 +107,14 @@ export function syncSentryReplayForPath(pathname: string): void {
  */
 export function captureSentryException(
   error: Error,
-  context?: { tags?: Record<string, string> }
+  context?: { tags?: Record<string, string> },
 ): void {
   Sentry.captureException(error, context);
+}
+
+export function captureSentryMessage(
+  message: string,
+  context: Parameters<typeof Sentry.captureMessage>[1],
+): void {
+  Sentry.captureMessage(message, context);
 }

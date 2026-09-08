@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,66 +11,10 @@ import {
   resolveInspectorStartIfNeeded,
 } from "../src/commands/tools.js";
 import { buildInspectorServerName } from "../src/lib/inspector-render.js";
+import { runCli } from "./support/task-cli-harness.js";
 
-const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
-  ? process.cwd()
-  : path.join(process.cwd(), "cli");
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
 const INSPECTOR_FRONTEND_HTML =
   '<!doctype html><meta name="mcpjam-inspector" content="true"><title>MCPJam Inspector</title><div id="root"></div>';
-
-async function runCli(
-  args: string[],
-  options: { env?: NodeJS.ProcessEnv } = {},
-): Promise<{
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}> {
-  return await new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args],
-      {
-        cwd: CLI_DIR,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
-          MCPJAM_TELEMETRY_DISABLED: "1",
-          NODE_NO_WARNINGS: "1",
-          ...options.env,
-        },
-      },
-      (error, stdout, stderr) => {
-        if (
-          error &&
-          (error as NodeJS.ErrnoException).code !== undefined &&
-          typeof (error as NodeJS.ErrnoException).code !== "number"
-        ) {
-          reject(
-            new Error(
-              `Failed to execute CLI: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            ),
-          );
-          return;
-        }
-        resolve({
-          exitCode:
-            typeof (error as NodeJS.ErrnoException | null)?.code === "number"
-              ? Number((error as NodeJS.ErrnoException).code)
-              : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
-  });
-}
 
 function lastJsonLine(stdout: string): string {
   const lines = stdout.trim().split(/\r?\n/);
@@ -801,6 +743,7 @@ test("tools call --ui opens by default in a TTY and may render while waiting for
         "--tool-args",
         "{}",
       ],
+      undefined,
       {
         env: {
           MCPJAM_CLI_TEST_STDOUT_TTY: "1",
@@ -855,6 +798,7 @@ test("tools call --ui --open keeps milestone progress but drops the elapsed hear
         "--tool-args",
         "{}",
       ],
+      undefined,
       {
         env: {
           MCPJAM_CLI_TEST_STDERR_TTY: "0",

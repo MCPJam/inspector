@@ -11,6 +11,13 @@ import type {
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunDecisionSummary,
+  PlatformEvalRouteFacts,
+  PlatformEvalDescriptionExperiment,
+  PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
+  PlatformGateWaiverRead,
+  PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -20,6 +27,7 @@ import type {
   PlatformEvalCheckRepos,
   PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunDisclosure,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -27,9 +35,11 @@ import type {
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformEvalVerdictPolicyDefaults,
   PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalStepResult,
   PlatformComputerAttached,
   PlatformComputerReset,
@@ -45,6 +55,14 @@ import type {
   PlatformJourneyArchived,
   PlatformPersona,
   PlatformPersonaDeleted,
+  PlatformSecret,
+  PlatformSecretDeleted,
+  PlatformSpendBudget,
+  PlatformTraceDestination,
+  PlatformTraceDestinationBackfillJob,
+  PlatformTraceDestinationDeleted,
+  PlatformTraceDestinationResumed,
+  PlatformTraceDestinationTestScheduled,
   PlatformRunCompare,
   PlatformRunScorecard,
   PlatformGuestExecution,
@@ -71,6 +89,10 @@ import type {
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
+  PlatformClient,
+  PlatformClientDeleted,
+  PlatformClientDetail,
+  PlatformClientImpact,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -79,11 +101,14 @@ import type {
   PlatformOrganization,
   PlatformPage,
   PlatformPlugin,
+  PlatformProjectSkill,
+  PlatformProjectSkillDetail,
   PlatformPluginVersion,
   PlatformProject,
   PlatformServerConnection,
   PlatformServerConnectionCreateBody,
   PlatformProjectServer,
+  PlatformServerGroup,
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
@@ -142,6 +167,253 @@ export interface PlatformApiClientOptions {
   timeoutMs?: number;
   /** Optional User-Agent; ignored by browsers (forbidden header). */
   userAgent?: string;
+  /**
+   * Extra headers sent on every request — for a deployment that sits behind an
+   * edge authenticator (Cloudflare Access, a WAF, a corporate proxy) which
+   * demands its own credential BEFORE the platform's bearer is ever seen.
+   *
+   * Applied FIRST, so the headers this client derives from its own contract
+   * always win: `authorization` stays the credential `getAuth` resolved,
+   * `idempotency-key` stays the retry key the caller passed, and
+   * `content-type` stays what the body actually is. A caller cannot swap the
+   * credential or the dedupe key through this door, whatever it passes.
+   */
+  extraHeaders?: Record<string, string>;
+  /**
+   * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
+   *
+   * The platform stamps a run's `source` itself, and everything arriving over
+   * the public API is `api` — a CLI run, a GitHub Actions job and an MCP
+   * agent are indistinguishable there, because from the server's side all
+   * three are API calls. Deriving the difference from `user-agent` was tried
+   * and removed as forgeable. So the difference is declared, and stored beside
+   * the stamp rather than inside it: a display label, never an authorization
+   * input.
+   *
+   * SET ON THE CLIENT, not per call. The HOST PROCESS knows what it is; a run
+   * request does not, and putting it on a run's arguments would expose it as a
+   * settable field of the MCP `run_eval_suite` tool — letting the agent
+   * whose run it is choose its own badge.
+   *
+   * `kind` is allowlisted to the three the server cannot see for itself.
+   * Anything else is dropped at the API boundary rather than refused: a label
+   * must never fail a launch.
+   */
+  launcher?: PlatformRunLauncherOption;
+  /**
+   * The CI job this process is running inside, declared on every eval-run
+   * launch. Fills the run's CI columns and makes it resolvable by commit for
+   * baseline comparison. Build it with `detectCiMetadata()`.
+   */
+  ci?: PlatformCiMetadataOption;
+}
+
+/** See {@link PlatformApiClientOptions.launcher}. */
+export interface PlatformRunLauncherOption {
+  kind: "cli" | "mcp" | "github_action";
+  /** The launching program — `"mcpjam-cli"`, an MCP client's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+/**
+ * See {@link PlatformApiClientOptions.ci}.
+ *
+ * Deliberately the shape `detectCiMetadata` returns, GitHub's own spellings and
+ * all: the platform maps `runId`→`pipelineId` and `job`→`jobId` at its header
+ * boundary. One mapping, in one place, rather than every caller learning the
+ * run row's vocabulary.
+ *
+ * ACCEPTED IS NOT SENT. `repository`, `pullRequestNumber` and `workflow` are
+ * accepted because that is what the environment offers and a caller should not
+ * have to strip them by hand. A run row has no column for any of the three, so
+ * none of them reaches the wire — see the key list in `buildLaunchHeaders`.
+ */
+export interface PlatformCiMetadataOption {
+  provider?: string;
+  repository?: string;
+  commitSha?: string;
+  branch?: string;
+  pullRequestNumber?: number;
+  workflow?: string;
+  job?: string;
+  runUrl?: string;
+  runId?: string;
+  /** Accepted in the run row's own spelling too, when a caller has it. */
+  pipelineId?: string;
+  jobId?: string;
+}
+
+/**
+ * The two headers, and why they are headers.
+ *
+ * Both `/v1` eval-run bodies reject unknown properties, so a new BODY field is
+ * a 400 against any deployment that predates it — self-hosted installs and
+ * staging included. An unknown header is ignored by every version of
+ * everything, so the first SDK release to send these keeps working against
+ * every server that has ever run.
+ */
+export const RUN_LAUNCH_HEADERS = {
+  launcher: "x-mcpjam-launcher",
+  ci: "x-mcpjam-ci",
+} as const;
+
+/**
+ * The API boundary's own caps, mirrored here.
+ *
+ * Not redundant with them. A header this client builds is assembled from
+ * caller-supplied strings — an MCP client's `user-agent`, a CI provider's
+ * branch name — and the request crosses proxies, gateways and CDNs before it
+ * reaches the boundary that would drop an oversized value harmlessly. Those
+ * intermediaries answer an outsized header with 431 or 400, and the launch
+ * fails over a label. Trimming here keeps the failure cosmetic on the one side
+ * we control.
+ */
+const MAX_LAUNCHER_HEADER_BYTES = 512;
+const MAX_CI_HEADER_BYTES = 2048;
+const MAX_LAUNCHER_FIELD_CHARS = 200;
+const MAX_CI_FIELD_CHARS = 512;
+
+function headerByteLength(value: string): number {
+  return typeof TextEncoder === "function"
+    ? new TextEncoder().encode(value).length
+    : // Node without a global TextEncoder: every byte of a header is at worst
+      // 4 for one JS char, and over-counting only drops a header early.
+      value.length * 4;
+}
+
+/** The serialized header, or nothing when it would not fit. */
+function withinHeaderCap(
+  serialized: string,
+  maxBytes: number
+): string | undefined {
+  return headerByteLength(serialized) <= maxBytes ? serialized : undefined;
+}
+
+/**
+ * Serialize the declared launch context into its two headers, dropping
+ * anything unusable.
+ *
+ * Drops rather than throws, at every step. This is a label on a run, and a
+ * client that refused to construct because a version string was empty would
+ * trade a real capability for a cosmetic one. The API boundary drops the same
+ * values again for the same reason — belt and braces on a field whose worst
+ * failure mode is a missing badge.
+ */
+function buildLaunchHeaders(
+  options: PlatformApiClientOptions
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  const kind = options.launcher?.kind;
+  if (kind === "cli" || kind === "mcp" || kind === "github_action") {
+    const client = trimmedOrUndefined(
+      options.launcher?.client,
+      MAX_LAUNCHER_FIELD_CHARS
+    );
+    const version = trimmedOrUndefined(
+      options.launcher?.version,
+      MAX_LAUNCHER_FIELD_CHARS
+    );
+    const serialized = withinHeaderCap(
+      JSON.stringify({
+        kind,
+        ...(client ? { client } : {}),
+        ...(version ? { version } : {}),
+      }),
+      MAX_LAUNCHER_HEADER_BYTES
+    );
+    if (serialized) headers[RUN_LAUNCH_HEADERS.launcher] = serialized;
+  }
+
+  if (options.ci) {
+    // Serialized from a KNOWN key list rather than by spreading the object: a
+    // detector that grows a field would otherwise start sending it into a
+    // header with a size cap, and the first symptom would be the whole
+    // envelope being dropped for being too long.
+    //
+    // The list is exactly what a run row can hold — its own six columns, plus
+    // the two GitHub spellings (`runId`, `job`) the platform maps onto
+    // `pipelineId` and `jobId` at its header boundary.
+    //
+    // `repository`, `pullRequestNumber` and `workflow` are absent ON PURPOSE,
+    // not by oversight. `detectCiMetadata` returns all three because they are
+    // what the environment offers, and the boundary is documented and tested
+    // to drop all three: a run row has no column for any of them. Sending them
+    // anyway would spend the header budget on fields nothing can read — and an
+    // envelope over that cap is dropped WHOLE, so a dead field's only possible
+    // effect is to cost a live one.
+    const ci: Record<string, string> = {};
+    for (const key of [
+      "provider",
+      "commitSha",
+      "branch",
+      "job",
+      "jobId",
+      "runUrl",
+      "runId",
+      "pipelineId",
+    ] as const) {
+      const value = trimmedOrUndefined(
+        (options.ci as Record<string, unknown>)[key],
+        MAX_CI_FIELD_CHARS
+      );
+      if (value) ci[key] = value;
+    }
+    if (Object.keys(ci).length > 0) {
+      const serialized = withinHeaderCap(
+        JSON.stringify(ci),
+        MAX_CI_HEADER_BYTES
+      );
+      if (serialized) headers[RUN_LAUNCH_HEADERS.ci] = serialized;
+    }
+  }
+
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function trimmedOrUndefined(
+  value: unknown,
+  maxChars?: number
+): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return maxChars === undefined ? trimmed : trimmed.slice(0, maxChars);
+}
+
+/**
+ * Lift the suite-file sync marker out of a write body and onto the query.
+ *
+ * `declaredSuiteId` says "this write IS the suite file syncing itself", which
+ * is what lets a CI-owned suite be written at all. Callers pass it inside the
+ * body object because that is where it reads naturally beside the fields it
+ * accompanies; it must not GO there.
+ *
+ * Every one of these `/v1` bodies is `.strict()`, on this Inspector and on
+ * every Inspector that predates the CI-owned lock, and a strict object refuses
+ * an unknown key with a 400. This package is versioned independently of the
+ * deployment it talks to — a user upgrades `@mcpjam/cli` without touching their
+ * self-hosted Inspector — so a body field here would turn `eval run --file`
+ * from "syncs, and the lock lets it through" into "400, every time" against
+ * anything older. The same reasoning that puts the launcher in a header,
+ * applied to the field that actually decides whether a write lands.
+ *
+ * A query parameter is read by deployments that know it and ignored by those
+ * that do not, which is the right degradation: an Inspector with no lock has no
+ * exception to make.
+ */
+function withFileSyncMarker(body: Record<string, unknown>): {
+  body: Record<string, unknown>;
+  query?: QueryParams;
+} {
+  const { declaredSuiteId, ...rest } = body;
+  const marker =
+    typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
+  return marker.length > 0
+    ? { body: rest, query: { declaredSuiteId: marker } }
+    : { body };
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -195,17 +467,46 @@ function pickReadinessStartBody(params: {
   return body;
 }
 
+/**
+ * Strip every trailing `/` from a base URL.
+ *
+ * `replace(/\/+$/, "")` is the shorter spelling and what the rest of the SDK
+ * uses, but CodeQL rates it `js/polynomial-redos` (high): on input shaped like
+ * `"a" + "/".repeat(n) + "b"` the engine retries `\/+$` from each position, so
+ * the match is O(n²) in the length of a caller-supplied `baseUrl`. Not a
+ * practical attack here — the caller owns the string — but this is the one
+ * occurrence CodeQL surfaces on a PR that edits this file, and a linear scan
+ * costs nothing.
+ *
+ * Behaviour is identical to the regex: every trailing slash removed, nothing
+ * else touched, `"/"`-only input collapsing to `""`.
+ */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") end -= 1;
+  return url.slice(0, end);
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
   private readonly userAgent?: string;
+  private readonly extraHeaders?: Record<string, string>;
+  /**
+   * The declared-origin headers, serialized ONCE at construction.
+   *
+   * Once, because they cannot change over the client's life — the host process
+   * is what it is — and because serializing per request would put a
+   * `JSON.stringify` on the hot path of every read call that will never send
+   * them.
+   */
+  private readonly launchHeaders?: Record<string, string>;
 
   constructor(options: PlatformApiClientOptions) {
-    this.baseUrl = (options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL).replace(
-      /\/+$/,
-      "",
+    this.baseUrl = stripTrailingSlashes(
+      options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
     this.getAuth = options.getAuth;
     // Native fetch must run with `this` bound to the global scope. Storing the
@@ -214,6 +515,18 @@ export class PlatformApiClient {
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
+    this.launchHeaders = buildLaunchHeaders(options);
+    // Lower-cased at construction so `request` cannot end up with two spellings
+    // of one header — HTTP names are case-insensitive, but a plain object's
+    // keys are not, and `{Authorization, authorization}` would send both.
+    this.extraHeaders = options.extraHeaders
+      ? Object.fromEntries(
+          Object.entries(options.extraHeaders).map(([name, value]) => [
+            name.toLowerCase(),
+            value,
+          ])
+        )
+      : undefined;
   }
 
   getMe(options?: RequestOptions): Promise<PlatformMe> {
@@ -225,51 +538,51 @@ export class PlatformApiClient {
   }
 
   listOrganizations(
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformOrganization>> {
     return this.request("GET", "/organizations", {}, options);
   }
 
   listProjects(
     params: { organizationId?: string } = {},
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformProject>> {
     return this.request(
       "GET",
       "/projects",
       { query: { organizationId: params.organizationId } },
-      options,
+      options
     );
   }
 
   createProject(
     params: { body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformProject> {
     return this.request("POST", "/projects", { body: params.body }, options);
   }
 
   updateProject(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformProject> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(params.projectId)}`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   deleteProject(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<{ id: string; deleted: boolean }> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -286,7 +599,7 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     } = {},
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformDirectorySearchPage> {
     return this.request(
       "GET",
@@ -302,62 +615,64 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
-      options,
+      options
     );
   }
 
   getRegistryDirectoryServer(
     params: { catalogServerId: string } | { name: string; source?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformCatalogServer> {
     if ("catalogServerId" in params) {
       return this.request(
         "GET",
-        `/registry/directory-servers/${encodeURIComponent(params.catalogServerId)}`,
+        `/registry/directory-servers/${encodeURIComponent(
+          params.catalogServerId
+        )}`,
         {},
-        options,
+        options
       );
     }
     return this.request(
       "GET",
       `/registry/directory-servers/${encodeURIComponent(params.name)}`,
       { query: { source: params.source } },
-      options,
+      options
     );
   }
 
   listRegistryDirectorySources(
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformCatalogSourceStatus>> {
     return this.request("GET", "/registry/directory-sources", {}, options);
   }
 
   listRegistryServers(
     params: { projectId: string; scope?: "global" | "organization" | "all" },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformRegistryServer>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/registry/servers`,
       { query: { scope: params.scope } },
-      options,
+      options
     );
   }
 
   listRegistryConnections(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformRegistryConnection>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/registry/connections`,
       {},
-      options,
+      options
     );
   }
 
@@ -368,7 +683,7 @@ export class PlatformApiClient {
       endpointUrl?: string;
       expectedContentHash?: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformRegistryInstall> {
     // Explicit picks, not a rest spread — see `startClaudeReadinessRun`. The
     // route's body schema forbids additional properties.
@@ -383,7 +698,7 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(projectId)}/registry/directory-installs`,
       { body },
-      options,
+      options
     );
   }
 
@@ -393,7 +708,7 @@ export class PlatformApiClient {
       registryServerId: string;
       expectedUpdatedAt?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformRegistryInstall> {
     const { projectId, registryServerId, expectedUpdatedAt } = params;
     const body: Record<string, unknown> = { registryServerId };
@@ -404,19 +719,21 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(projectId)}/registry/installs`,
       { body },
-      options,
+      options
     );
   }
 
   uninstallRegistryServer(
     params: { projectId: string; registryServerId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<{ deleted?: boolean }> {
     return this.request(
       "DELETE",
-      `/projects/${encodeURIComponent(params.projectId)}/registry/installs/${encodeURIComponent(params.registryServerId)}`,
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/registry/installs/${encodeURIComponent(params.registryServerId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -435,13 +752,13 @@ export class PlatformApiClient {
    */
   createServerConnection(
     params: { body: PlatformServerConnectionCreateBody },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformServerConnection> {
     return this.request(
       "POST",
       "/server-connections",
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -451,27 +768,27 @@ export class PlatformApiClient {
    * means the interval itself is too fast — honour `Retry-After`. */
   getServerConnection(
     params: { connectionRequestId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformServerConnection> {
     return this.request(
       "GET",
       `/server-connections/${encodeURIComponent(params.connectionRequestId)}`,
       {},
-      options,
+      options
     );
   }
 
   cancelServerConnection(
     params: { connectionRequestId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformServerConnection> {
     return this.request(
       "POST",
       `/server-connections/${encodeURIComponent(
-        params.connectionRequestId,
+        params.connectionRequestId
       )}/cancel`,
       {},
-      options,
+      options
     );
   }
 
@@ -483,53 +800,80 @@ export class PlatformApiClient {
    */
   retryServerConnectionValidation(
     params: { connectionRequestId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformServerConnection> {
     return this.request(
       "POST",
       `/server-connections/${encodeURIComponent(
-        params.connectionRequestId,
+        params.connectionRequestId
       )}/retry-validation`,
       {},
-      options,
+      options
     );
   }
 
   listProjectServers(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformProjectServer>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/servers`,
       {},
-      options,
+      options
+    );
+  }
+
+  listServerGroups(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformServerGroup>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
+      {},
+      options
+    );
+  }
+
+  createServerGroup(
+    params: {
+      projectId: string;
+      body: { name: string; description?: string; serverIds: string[] };
+    },
+    options?: RequestOptions
+  ): Promise<PlatformServerGroup> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
+      { body: params.body },
+      options
     );
   }
 
   createProjectServer(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformProjectServer> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/servers`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   getProjectServer(
     params: { projectId: string; serverId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformProjectServer> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/servers/${encodeURIComponent(params.serverId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -539,41 +883,41 @@ export class PlatformApiClient {
       serverId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformProjectServer> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/servers/${encodeURIComponent(params.serverId)}`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   deleteProjectServer(
     params: { projectId: string; serverId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<{ id: string; deleted: boolean }> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/servers/${encodeURIComponent(params.serverId)}`,
       { body: {} },
-      options,
+      options
     );
   }
 
   listEvalSuites(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEvalSuite>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
       {},
-      options,
+      options
     );
   }
 
@@ -584,7 +928,7 @@ export class PlatformApiClient {
       limit?: number;
       before?: string;
     } = {},
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformChatSession>> {
     return this.request(
       "GET",
@@ -597,7 +941,7 @@ export class PlatformApiClient {
           before: params.before,
         },
       },
-      options,
+      options
     );
   }
 
@@ -607,15 +951,25 @@ export class PlatformApiClient {
    * were called, with what arguments, what came back, and what it cost.
    *
    * Omit `sessionId` to start a session; pass the one this returns to
-   * continue it. Configuration (model, target, system prompt, tool mode) pins
-   * on the FIRST turn — a continuation that resends any of it is refused
-   * rather than silently repinning.
+   * continue it. The PINNED configuration is `modelId`, `environmentId`,
+   * `serverIds`, `systemPrompt`, `temperature` and `toolMode`: those pin on the
+   * FIRST turn, and a continuation that resends any of them is refused rather
+   * than silently repinning. `hostId` is NOT among them — it is per-turn, and a
+   * continuation is expected to resend it (see below), as are the other
+   * per-turn fields (`allowedTools`, `allowedServerIds`, `maxToolCalls`,
+   * `maxSteps`).
    *
    * `idempotencyKey` is REQUIRED and must be stable for the triggering intent,
    * NOT freshly minted per HTTP attempt. This call spends model credits, and a
    * per-attempt key deduplicates nothing: a timeout-and-retry would run and
    * bill the turn twice. With a stable key, a retry replays the completed
    * turn instead.
+   *
+   * `hostId` names the saved host (client) the turn executes as, which is what
+   * decides between MCPJam's emulated engine and a real agent harness. It is
+   * PER-TURN, not pinned: re-send it on every turn — a continuation of a
+   * session that named only a host is REFUSED without it, rather than run on
+   * the other engine. The response's `engine` field always names what ran.
    */
   sendChatMessage(
     params: {
@@ -624,6 +978,7 @@ export class PlatformApiClient {
       projectId?: string;
       sessionId?: string;
       modelId?: string;
+      hostId?: string;
       environmentId?: string;
       serverIds?: string[];
       systemPrompt?: string;
@@ -634,7 +989,7 @@ export class PlatformApiClient {
       allowedTools?: string[];
       maxToolCalls?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformChatTurn> {
     // Built field by field rather than forwarded wholesale. The route's body
     // schema is STRICT, so any extra key a caller happens to carry on its own
@@ -655,6 +1010,7 @@ export class PlatformApiClient {
             ? { sessionId: params.sessionId }
             : {}),
           ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
+          ...(params.hostId !== undefined ? { hostId: params.hostId } : {}),
           ...(params.environmentId !== undefined
             ? { environmentId: params.environmentId }
             : {}),
@@ -684,7 +1040,7 @@ export class PlatformApiClient {
             : {}),
         },
       },
-      options,
+      options
     );
   }
 
@@ -702,7 +1058,7 @@ export class PlatformApiClient {
       afterMessageIndex?: number;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformChatSessionDetail> {
     return this.request(
       "GET",
@@ -714,7 +1070,7 @@ export class PlatformApiClient {
           limit: params.limit,
         },
       },
-      options,
+      options
     );
   }
 
@@ -734,7 +1090,7 @@ export class PlatformApiClient {
       limit?: number;
       includeSpans?: boolean;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformChatSessionTrace> {
     return this.request(
       "GET",
@@ -754,7 +1110,7 @@ export class PlatformApiClient {
               : String(params.includeSpans),
         },
       },
-      options,
+      options
     );
   }
 
@@ -785,7 +1141,7 @@ export class PlatformApiClient {
       limit?: number;
       cursor?: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformSessionsPage> {
     return this.request(
       "GET",
@@ -802,61 +1158,224 @@ export class PlatformApiClient {
           cursor: params.cursor,
         },
       },
-      options,
+      options
     );
   }
 
   listScenarios(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformScenarioSummary>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/scenarios`,
       {},
-      options,
+      options
     );
   }
 
   getScenario(
     params: { projectId: string; scenarioId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformScenarioDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/scenarios/${encodeURIComponent(params.scenarioId)}`,
       {},
-      options,
+      options
     );
   }
 
-  // ── Hosts ────────────────────────────────────────────────────────────
+  // ── Clients ──────────────────────────────────────────────────────────
+  //
+  // A **Client** is the product noun. The `listHosts`…`deleteHost` methods
+  // below these are DEPRECATED compatibility delegates: they keep calling the
+  // `/hosts` alias and keep returning its `PlatformHost*` shapes, so existing
+  // callers are unaffected. They are not thin wrappers over the client methods
+  // — the two surfaces return different fields.
 
+  listClients(
+    params: { projectId: string; includePrivateBacking?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformClient>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/clients/{client}` — `client` is a NAME or an ID.
+   *
+   * Name resolution happens server-side, where one implementation owns the
+   * eligibility and ambiguity rules. A client-side list-and-scan would be a
+   * second answer to "is this name ambiguous?", and would also have to
+   * re-implement the private-backing filter to avoid resolving a name the
+   * server would not.
+   */
+  getClient(
+    params: {
+      projectId: string;
+      client: string;
+      includePrivateBacking?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/clients/${encodeURIComponent(params.client)}`,
+      {
+        query: params.includePrivateBacking
+          ? { includePrivateBacking: "true" }
+          : undefined,
+      },
+      options
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/clients` — create a client either from a built-in
+   * template (`{ name, template, theme? }`) or from a full config
+   * (`{ name, config }`). Returns the created client detail.
+   */
+  createClient(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/clients`,
+      { body: params.body },
+      options
+    );
+  }
+
+  /**
+   * `PATCH /projects/{p}/clients/{client}` — rename and/or edit the config.
+   *
+   * The body carries the compare-and-set tokens the canonical route requires
+   * (`expectedConfigId` for a config edit, `expectedName` for a rename); a
+   * stale one comes back as a 409 whose `details` names the current value.
+   */
+  updateClient(
+    params: {
+      projectId: string;
+      client: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  setClientServers(
+    params: {
+      projectId: string;
+      client: string;
+      serverIds: string[];
+      optionalServerIds?: string[];
+      expectedConfigId: string;
+      expectedImpact?: PlatformClientImpact;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/clients/${encodeURIComponent(params.client)}/servers`,
+      {
+        body: {
+          serverIds: params.serverIds,
+          ...(params.optionalServerIds
+            ? { optionalServerIds: params.optionalServerIds }
+            : {}),
+          expectedConfigId: params.expectedConfigId,
+          ...(params.expectedImpact
+            ? { expectedImpact: params.expectedImpact }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  duplicateClient(
+    params: { projectId: string; client: string; name?: string },
+    options?: RequestOptions
+  ): Promise<PlatformClientDetail> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/clients/${encodeURIComponent(params.client)}/duplicate`,
+      { body: params.name === undefined ? {} : { name: params.name } },
+      options
+    );
+  }
+
+  deleteClient(
+    params: {
+      projectId: string;
+      client: string;
+      body?: Record<string, unknown>;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformClientDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/clients/${encodeURIComponent(params.client)}`,
+      { body: params.body ?? {} },
+      options
+    );
+  }
+
+  // ── Hosts (deprecated compatibility surface) ─────────────────────────
+
+  /** @deprecated Use {@link listClients}. Calls the deprecated `/hosts` alias. */
   listHosts(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformHost>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/hosts`,
       {},
-      options,
+      options
     );
   }
 
+  /** @deprecated Use {@link getClient}. Calls the deprecated `/hosts` alias. */
   getHost(
     params: { projectId: string; hostId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformHostDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -864,37 +1383,41 @@ export class PlatformApiClient {
    * `POST /projects/{p}/hosts` — create a host either from a built-in template
    * (`{ name, template, theme? }`) or from a full host config
    * (`{ name, config }`). Returns the created host detail.
+   *
+   * @deprecated Use {@link createClient}. Calls the deprecated `/hosts` alias.
    */
   createHost(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformHostDetail> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/hosts`,
       { body: params.body },
-      options,
+      options
     );
   }
 
+  /** @deprecated Use {@link updateClient}. Calls the deprecated `/hosts` alias. */
   updateHost(
     params: {
       projectId: string;
       hostId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformHostDetail> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       { body: params.body },
-      options,
+      options
     );
   }
 
+  /** @deprecated Use {@link setClientServers}. Calls the deprecated `/hosts` alias. */
   setHostServers(
     params: {
       projectId: string;
@@ -902,12 +1425,12 @@ export class PlatformApiClient {
       serverIds: string[];
       optionalServerIds?: string[];
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<{ hostId: string; hostConfigId: string }> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}/servers`,
       {
         body: {
@@ -917,39 +1440,41 @@ export class PlatformApiClient {
             : {}),
         },
       },
-      options,
+      options
     );
   }
 
+  /** @deprecated Use {@link duplicateClient}. Calls the deprecated `/hosts` alias. */
   duplicateHost(
     params: { projectId: string; hostId: string; name?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformHostDetail> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}/duplicate`,
       { body: params.name === undefined ? {} : { name: params.name } },
-      options,
+      options
     );
   }
 
+  /** @deprecated Use {@link deleteClient}. Calls the deprecated `/hosts` alias. */
   deleteHost(
     params: {
       projectId: string;
       hostId: string;
       body?: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformHostDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       { body: params.body ?? {} },
-      options,
+      options
     );
   }
 
@@ -965,7 +1490,7 @@ export class PlatformApiClient {
 
   listEnvironments(
     params: { projectId: string; includeArchived?: boolean },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEnvironment>> {
     return this.request(
       "GET",
@@ -973,7 +1498,7 @@ export class PlatformApiClient {
       {
         query: params.includeArchived ? { includeArchived: "true" } : undefined,
       },
-      options,
+      options
     );
   }
 
@@ -987,29 +1512,29 @@ export class PlatformApiClient {
    */
   getEnvironmentCapabilities(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironmentCapabilities> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/capabilities`,
       {},
-      options,
+      options
     );
   }
 
   getEnvironment(
     params: { projectId: string; environmentId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironment> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -1021,27 +1546,27 @@ export class PlatformApiClient {
    */
   resolveEnvironment(
     params: { projectId: string; environmentId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironmentResolved> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/resolve`,
       {},
-      options,
+      options
     );
   }
 
   createEnvironment(
     params: { projectId: string; body: PlatformEnvironmentCreateBody },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/environments`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -1060,15 +1585,15 @@ export class PlatformApiClient {
    */
   ensureAdhocEnvironment(
     params: { projectId: string; body: PlatformAdhocEnvironmentBody },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformAdhocEnvironmentEnsured> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/ensure-adhoc`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -1088,22 +1613,22 @@ export class PlatformApiClient {
       environmentId: string;
       body: PlatformEnvironmentNameBody;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/name`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
-   * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
-   * a field leaves it alone.
+   * `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or
+   * `sandboxImageId` to CLEAR them; omitting a field leaves it alone.
    */
   updateEnvironment(
     params: {
@@ -1111,15 +1636,15 @@ export class PlatformApiClient {
       environmentId: string;
       body: PlatformEnvironmentUpdateBody;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironment> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -1133,15 +1658,15 @@ export class PlatformApiClient {
       environmentId: string;
       expectedRevision: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/archive`,
       { body: { expectedRevision: params.expectedRevision } },
-      options,
+      options
     );
   }
 
@@ -1157,15 +1682,46 @@ export class PlatformApiClient {
       environmentId: string;
       expectedRevision: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/restore`,
       { body: { expectedRevision: params.expectedRevision } },
-      options,
+      options
+    );
+  }
+
+  // ── Cloud Skills ─────────────────────────────────────────────────────
+  //
+  // Read-only: the skills visible to the caller in a project, and one skill's
+  // detail including its SKILL.md body. Authoring stays on the app surface.
+
+  listProjectSkills(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformProjectSkill>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/skills`,
+      {},
+      options
+    );
+  }
+
+  getProjectSkill(
+    params: { projectId: string; skillId: string },
+    options?: RequestOptions
+  ): Promise<PlatformProjectSkillDetail> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/skills/${encodeURIComponent(params.skillId)}`,
+      {},
+      options
     );
   }
 
@@ -1176,13 +1732,13 @@ export class PlatformApiClient {
 
   listProjectPlugins(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformPlugin>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/plugins`,
       {},
-      options,
+      options
     );
   }
 
@@ -1194,13 +1750,13 @@ export class PlatformApiClient {
    */
   getPluginVersion(
     params: { pluginVersionId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPluginVersion> {
     return this.request(
       "GET",
       `/plugin-versions/${encodeURIComponent(params.pluginVersionId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -1211,39 +1767,39 @@ export class PlatformApiClient {
 
   listImages(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformImage>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/images`,
       {},
-      options,
+      options
     );
   }
 
   getImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImage> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}`,
       {},
-      options,
+      options
     );
   }
 
   createImage(
     params: { projectId: string; body: { name: string; blueprint: string } },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImage> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/images`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -1253,15 +1809,15 @@ export class PlatformApiClient {
       imageId: string;
       body: { name?: string; blueprint?: string };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImage> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -1269,70 +1825,70 @@ export class PlatformApiClient {
    * invalid blueprint is a successful lint with structured errors. */
   validateImageBlueprint(
     params: { projectId: string; body: { blueprint: string } },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImageBlueprintValidation> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/images/validate`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   deleteImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImageDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}`,
       {},
-      options,
+      options
     );
   }
 
   listImageBuilds(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformImageBuild>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}/builds`,
       {},
-      options,
+      options
     );
   }
 
   /** `POST …/build` — async (202); poll `listImageBuilds` for status. */
   buildImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImageBuildStarted> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}/build`,
       {},
-      options,
+      options
     );
   }
 
   promoteImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformImage> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}/promote`,
       {},
-      options,
+      options
     );
   }
 
@@ -1340,28 +1896,28 @@ export class PlatformApiClient {
    * pinned image). */
   useImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformComputerAttached> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/images/${encodeURIComponent(params.imageId)}/use`,
       {},
-      options,
+      options
     );
   }
 
   /** Reset the caller's computer to its image (wipes mutable state). */
   resetComputer(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformComputerReset> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/computer/reset`,
       {},
-      options,
+      options
     );
   }
 
@@ -1371,13 +1927,84 @@ export class PlatformApiClient {
    */
   createEvalRun(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalRunCreated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
-      { body: params.body },
-      options,
+      { body: params.body, declareLaunch: true },
+      options
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-suites/{id}/run-disclosure` — the pre-run
+   * disclosure for a launch plan: what happens to the run's content, keyed by
+   * the SAME destination-affecting subset `createEvalRun` uses
+   * (`caseIds`/`environmentId`/`environmentIds`). Deliberately NOT the
+   * estimator's full arg set — `iterationOverride`/`planCount` only scale
+   * volume, which is not part of this contract, and the inspector server
+   * rejects them rather than silently ignoring them.
+   *
+   * Throws `PlatformApiError` with code `FEATURE_NOT_SUPPORTED` and
+   * `details.reason === "contract_unavailable"` against an inspector
+   * deployment too old to compute this — never treat a missing disclosure as
+   * "nothing to disclose". This is a GUARANTEE only when the deployment's
+   * missing-function error reaches the client unredacted (every non-production
+   * Convex environment, and a production one whose redaction the route can
+   * unambiguously identify as a missing function). Production Convex can
+   * redact that same failure to a generic "Server Error" indistinguishable
+   * from a genuine handler crash; the route disambiguates what it safely can
+   * (a caller who cannot see the suite at all still gets a 404, never this
+   * code), but an ambiguous redacted failure on a suite the caller CAN see
+   * surfaces as a 502 `SERVER_UNREACHABLE` instead — this route has no way to
+   * independently confirm "not deployed yet" over "deployed and broken" in
+   * that one case, and guessing `contract_unavailable` would risk hiding a
+   * real incident. A caller cannot rely on this code alone to detect an
+   * old deployment in production; a 502 does not imply the contract is
+   * available either.
+   */
+  getEvalRunDisclosure(
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseIds?: string[];
+      environmentId?: string;
+      environmentIds?: string[];
+      /**
+       * Disclose for a HOST-axis launch — the attached host a run would be
+       * stamped with (G4c). Mutually exclusive with `environmentId`/
+       * `environmentIds`: a launch plan resolves on exactly one axis, and the
+       * route rejects the combination with a 400 rather than letting it reach
+       * the backend as an ambiguous query.
+       *
+       * `runnerCapabilities` is deliberately NOT a parameter here. The
+       * inspector route asserts it from the executing process, which is the
+       * only honest source for what that process can run; a client-supplied
+       * value could claim a harness capability the runner does not have.
+       */
+      namedHostId?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunDisclosure> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/run-disclosure`,
+      {
+        query: {
+          caseIds: params.caseIds?.length
+            ? params.caseIds.join(",")
+            : undefined,
+          environmentId: params.environmentId,
+          environmentIds: params.environmentIds?.length
+            ? params.environmentIds.join(",")
+            : undefined,
+          host: params.namedHostId,
+        },
+      },
+      options
     );
   }
 
@@ -1393,15 +2020,15 @@ export class PlatformApiClient {
    */
   attachEvalSuiteEnvironment(
     params: { projectId: string; suiteId: string; environmentId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalSuiteEnvironmentAttached> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/environments`,
       { body: { environmentId: params.environmentId } },
-      options,
+      options
     );
   }
 
@@ -1422,13 +2049,13 @@ export class PlatformApiClient {
    */
   createEvalRunGroup(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalRunGroupCreated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
-      { body: params.body },
-      options,
+      { body: params.body, declareLaunch: true },
+      options
     );
   }
 
@@ -1440,13 +2067,13 @@ export class PlatformApiClient {
    */
   createEvalSuite(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalSuiteCreated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -1455,30 +2082,327 @@ export class PlatformApiClient {
    * file-owned suite by declared id. Lookup is by declared id within the
    * project, never by name. A UI-authored suite has no declared id and
    * cannot be claimed.
+   *
+   * `verdictPolicyDefaults` is pinned to its type rather than left inside the
+   * untyped bag. It is the one member of this body whose in-memory
+   * counterpart has a DIFFERENT shape — the suite-file loader resolves
+   * `validity.minEligibleTrials` into a `coverage` union — and an untyped body
+   * let the resolved shape reach a strict route validator, which rejected
+   * every hosted `eval run --file` upload. Typing the field makes that
+   * substitution a compile error instead of a runtime rejection.
    */
   syncFileOwnedEvalSuite(
-    params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions,
+    params: {
+      projectId: string;
+      body: Record<string, unknown> & {
+        verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+      };
+    },
+    options?: RequestOptions
   ): Promise<PlatformFileOwnedEvalSuiteSynced> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-suites/from-file`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   getEvalRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalRun> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}`,
       {},
-      options,
+      options
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical run
+   * decision contract: the verdict, the unit its counts are in, the run's own
+   * `EvalVerdictDecision` when it has one, and one page of per-trial
+   * diagnostics.
+   *
+   * ADDITIVE, and newer than most deployments: an API that predates it answers
+   * `404`. A caller that must work against both should use the exported
+   * `readEvalRunDecisionSummary` helper, which falls back over
+   * `listEvalRunIterations` and the same contract assembler rather than
+   * creating a summary of its own.
+   *
+   * `cursor`/`limit` page the DIAGNOSTICS, using the same cursors
+   * `listEvalRunIterations` issues. The response says whether the page it
+   * returned is the whole non-passing set.
+   */
+  getEvalRunDecisionSummary(
+    params: {
+      projectId: string;
+      runId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunDecisionSummary> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/decision-summary`,
+      { query: { cursor: params.cursor, limit: params.limit } },
+      options
+    );
+  }
+
+  /**
+   * One page of a suite's materialized stage analytics, newest run-completion
+   * first — one complete `EvalStageAnalyticsV1` document per RUN.
+   *
+   * Each item stands alone: the overall funnel plus the intent, model and host
+   * MARGINAL slices for that one run. There is deliberately no cross-run merge
+   * here or anywhere in the SDK — two funnels averaged together describe no run
+   * — so a caller that wants a comparison renders runs side by side under
+   * `stageAnalyticsParityBlockers`, never by summing these documents.
+   *
+   * `from`/`to` are INCLUSIVE epoch MILLISECONDS over the run's completion
+   * stamp (not ISO strings), matching the storage boundary exactly; `from`
+   * greater than `to` is a `400`. Runs that never completed carry no stamp and
+   * are excluded by any `from` bound. `runGroupId` narrows to one comparison
+   * group. `limit` is 1..100 and defaults to 25 — these documents are large.
+   *
+   * NEWER than most deployments, and NOT backfilled: an API that predates it
+   * answers `404`, and a run that finished before the materializer shipped has
+   * no row at all. Both mean UNMEASURED and neither is a zeroed funnel — there
+   * is no client-side reconstruction to fall back to, by design.
+   */
+  listEvalSuiteStageAnalytics(
+    params: {
+      projectId: string;
+      suiteId: string;
+      from?: number;
+      to?: number;
+      runGroupId?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalStageAnalytics>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/stage-analytics`,
+      {
+        query: {
+          from: params.from,
+          to: params.to,
+          runGroupId: params.runGroupId,
+          cursor: params.cursor,
+          limit: params.limit,
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * ONE run's materialized stage-analytics document — the same
+   * `EvalStageAnalyticsV1` the suite listing returns, addressed by run.
+   *
+   * Not a convenience wrapper around the listing. `listEvalSuiteStageAnalytics`
+   * pages a suite newest-first, so reaching a specific run through it means
+   * walking pages until that run appears — unbounded work whose cost grows with
+   * how long ago the run finished, and which cannot answer at all once the run
+   * falls outside the caller's window. A reader that already knows the run
+   * asks for the run.
+   *
+   * `404` means one of two different things, and the API does not distinguish
+   * them on purpose: the run is not visible to this caller, or it has no
+   * document. Both are UNMEASURED to a reader, and separating them would leak
+   * the existence of runs in projects the caller cannot see.
+   *
+   * NOT backfilled, same as the listing: a run that terminalized before the
+   * materializer shipped has no row, and that absence is the honest answer. No
+   * client-side reconstruction exists to fall back on, by design.
+   */
+  getEvalRunStageAnalytics(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalStageAnalytics> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/stage-analytics`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's suite quality-gate report, evaluated by the platform against
+   * the suite's stored policy.
+   *
+   * A 404 after the run itself was retrieved is NEVER "no policy" —
+   * `not_configured` is a 200 report. A deployment that predates the route
+   * is FEATURE_NOT_SUPPORTED (bare 404 or 501), not proof the suite has
+   * none.
+   */
+  getEvalRunGate(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunGate> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's materialized route-facts document, addressed by run.
+   *
+   * `404` means one of two different things, and the API does not distinguish
+   * them on purpose: the run is not visible to this caller, or it has no
+   * document. Both are UNMEASURED to a reader, and separating them would leak
+   * the existence of runs in projects the caller cannot see.
+   *
+   * NOT backfilled, same as stage analytics: a run that terminalized before
+   * the materializer shipped has no row, and that absence is the honest
+   * answer. No client-side reconstruction exists to fall back on, by design.
+   */
+  getEvalRunRouteFacts(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRouteFacts> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/route-facts`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft a rewritten tool description from a finished run's failed
+   * trials. SPENDS a small model budget; poll
+   * {@link getEvalDescriptionExperiment} rather than re-proposing.
+   *
+   * HTTP route lands in a follow-up. This client method is the typed
+   * half so a later inspector can call it.
+   */
+  proposeEvalDescriptionRewrite(
+    params: {
+      projectId: string;
+      runId: string;
+      toolName: string;
+      caseIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {
+        body: {
+          toolName: params.toolName,
+          ...(params.caseIds ? { caseIds: params.caseIds } : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Launch the two-arm description experiment (original + rewrite).
+   * SPENDS eval-iteration credits: planned trials = cases × R × 2,
+   * refused over the cap (default 200, hard 400).
+   */
+  startEvalDescriptionExperiment(
+    params: {
+      projectId: string;
+      experimentId: string;
+      caseScope?: "all" | "affected";
+      iterationOverride?: number;
+      maxTrials?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}/start`,
+      {
+        body: {
+          ...(params.caseScope !== undefined
+            ? { caseScope: params.caseScope }
+            : {}),
+          ...(params.iterationOverride !== undefined
+            ? { iterationOverride: params.iterationOverride }
+            : {}),
+          ...(params.maxTrials !== undefined
+            ? { maxTrials: params.maxTrials }
+            : {}),
+        },
+        // This route LAUNCHES RUNS — one per experiment arm — and reads the
+        // launch headers to stamp both. Without the opt-in, a CLI or MCP
+        // client's experiment produced two runs badged `API` with no commit
+        // metadata, which also costs the commit-keyed baseline lookup.
+        declareLaunch: true,
+      },
+      options
+    );
+  }
+
+  /**
+   * One description-experiment document, including its report when
+   * materialised. `404` means the experiment is not visible to this
+   * caller.
+   */
+  getEvalDescriptionExperiment(
+    params: { projectId: string; experimentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Experiments already attached to a source run. Empty list when none
+   * have been proposed — that is unmeasured, not an error.
+   */
+  listEvalDescriptionExperimentsForRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<{ items: PlatformEvalDescriptionExperiment[] }> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {},
+      options
     );
   }
 
@@ -1489,15 +2413,15 @@ export class PlatformApiClient {
    */
   requestEvalRunInsights(
     params: { projectId: string; runId: string; force?: boolean },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalRunInsightsRequested> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
       { body: params.force ? { force: true } : {} },
-      options,
+      options
     );
   }
 
@@ -1520,12 +2444,12 @@ export class PlatformApiClient {
       model?: string;
       threshold?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalRunJudgeRequested> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/judge`,
       {
         body: {
@@ -1537,7 +2461,7 @@ export class PlatformApiClient {
             : {}),
         },
       },
-      options,
+      options
     );
   }
 
@@ -1547,15 +2471,15 @@ export class PlatformApiClient {
    */
   listEvalCheckRepos(
     params: { organizationId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCheckRepos> {
     return this.request(
       "GET",
       `/organizations/${encodeURIComponent(
-        params.organizationId,
+        params.organizationId
       )}/eval-check-repos`,
       {},
-      options,
+      options
     );
   }
 
@@ -1574,12 +2498,12 @@ export class PlatformApiClient {
       repo: string;
       outagePolicy: "fail_open" | "fail_closed";
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCheckRepoConnected> {
     return this.request(
       "POST",
       `/organizations/${encodeURIComponent(
-        params.organizationId,
+        params.organizationId
       )}/eval-check-repos`,
       {
         body: {
@@ -1589,7 +2513,32 @@ export class PlatformApiClient {
           outagePolicy: params.outagePolicy,
         },
       },
-      options,
+      options
+    );
+  }
+
+  /**
+   * One page of a suite's settings history, newest first.
+   *
+   * Rows carry no snapshots; this answers "what changed and when", not "what
+   * did the whole configuration look like".
+   */
+  listEvalSuiteRevisions(
+    params: {
+      projectId: string;
+      suiteId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalSuiteRevision>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/revisions`,
+      { query: { cursor: params.cursor, limit: params.limit } },
+      options
     );
   }
 
@@ -1600,47 +2549,135 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEvalIteration>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/iterations`,
       { query: { cursor: params.cursor, limit: params.limit } },
-      options,
+      options
     );
   }
 
   /** Full trace envelope (messages + analysis) for one iteration. */
   getEvalIterationTrace(
     params: { projectId: string; runId: string; iterationId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<unknown> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(
-        params.runId,
+        params.runId
       )}/iterations/${encodeURIComponent(params.iterationId)}/trace`,
       {},
-      options,
+      options
     );
   }
 
   /** Cancel an in-flight run; returns the run in its (now cancelled) state. */
   cancelEvalRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalRun> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
       {},
-      options,
+      options
+    );
+  }
+
+  // ── Gate waivers ──────────────────────────────────────────────────────
+  //
+  // An audited, time-boxed override of a run's gate. Three calls, and the
+  // asymmetry between them is deliberate: WAIVING is manage-tier, while
+  // READING is available to anyone who can see the run — a waiver only its
+  // grantors can see is not a visible waiver, and visibility is half the
+  // requirement.
+  //
+  // None of these decide authorization; the platform mutation owns that. The
+  // client does not pre-judge whether the caller may waive, because a client
+  // that guesses wrong either blocks a legitimate override or lets an
+  // illegitimate one look accepted until the write fails.
+
+  /**
+   * Grant a waiver over a failing run's gate.
+   *
+   * `reason` is stored UNREDACTED for the life of the suite: any surface
+   * collecting one must warn the human first (`GATE_WAIVER_REASON_NOTICE`).
+   * `expiresAt` is epoch ms, must be in the future, and is capped at 30 days
+   * out by the platform — there is no way to ask for a permanent waiver.
+   *
+   * Re-waiving an already-waived run answers `status: "conflict"` with the
+   * EXISTING waiver. That is a normal result, not an error: two active waivers
+   * over one run would make "which reason is on the check" a race.
+   */
+  createGateWaiver(
+    params: {
+      projectId: string;
+      runId: string;
+      reason: string;
+      expiresAt: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      { body: { reason: params.reason, expiresAt: params.expiresAt } },
+      options
+    );
+  }
+
+  /**
+   * The waiver in force over a run, or `null`.
+   *
+   * `eval gate` does NOT need this — the run projection already carries
+   * `gateWaiver`, so the gating path folds a waiver in without a second round
+   * trip. This is the explicit read, for asking the question on its own.
+   */
+  getGateWaiver(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGateWaiverRead> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate-waivers`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Revoke a waiver, putting the gate back.
+   *
+   * IDEMPOTENT: revoking an already-revoked waiver answers
+   * `status: "already_revoked"` and is a SUCCESS, not an error — restamping it
+   * would rewrite who actually ended the waiver.
+   */
+  revokeGateWaiver(
+    params: { projectId: string; runId: string; waiverId: string },
+    options?: RequestOptions
+  ): Promise<PlatformGateWaiverWriteResult> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(
+        params.runId
+      )}/gate-waivers/${encodeURIComponent(params.waiverId)}`,
+      {},
+      options
     );
   }
 
@@ -1662,8 +2699,11 @@ export class PlatformApiClient {
    * that can spend, and it defaults off.
    */
   startClaudeReadinessRun(
-    params: { projectId: string; serverId: string } & PlatformReadinessStartBody,
-    options?: RequestOptions,
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformReadinessStartBody,
+    options?: RequestOptions
   ): Promise<PlatformReadinessRunReceipt> {
     // Explicit picks, not a rest spread. The endpoint's body schema is
     // `strictObject`, and TypeScript's structural typing lets a caller hand a
@@ -1676,10 +2716,10 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
-        serverId,
+        serverId
       )}/readiness-runs/claude`,
       { body: pickReadinessStartBody(params) },
-      options,
+      options
     );
   }
 
@@ -1696,32 +2736,32 @@ export class PlatformApiClient {
       projectId: string;
       serverId: string;
     } & PlatformOpenAIReadinessStartBody,
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformReadinessRunReceipt> {
     // Explicit picks — see `startClaudeReadinessRun`.
     const { projectId, serverId, submissionMode } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
-        serverId,
+        serverId
       )}/readiness-runs/openai`,
       { body: { ...pickReadinessStartBody(params), submissionMode } },
-      options,
+      options
     );
   }
 
   /** Lane statuses, coverage and the observation axis. Poll this. */
   getReadinessRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformReadinessRun> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -1732,14 +2772,14 @@ export class PlatformApiClient {
       serverId?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformReadinessRun>> {
     const { projectId, ...query } = params;
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(projectId)}/readiness-runs`,
       { query },
-      options,
+      options
     );
   }
 
@@ -1752,15 +2792,15 @@ export class PlatformApiClient {
    */
   cancelReadinessRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<{ runId: string; projectId: string; status: string }> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
       {},
-      options,
+      options
     );
   }
 
@@ -1777,15 +2817,15 @@ export class PlatformApiClient {
    */
   getReadinessReport(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<unknown> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
       {},
-      options,
+      options
     );
   }
 
@@ -1804,10 +2844,16 @@ export class PlatformApiClient {
       protocolVersion?: string;
       engineVersion?: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformConformanceRunReceipt> {
-    const { projectId, serverId, suites, idempotencyKey, protocolVersion, engineVersion } =
-      params;
+    const {
+      projectId,
+      serverId,
+      suites,
+      idempotencyKey,
+      protocolVersion,
+      engineVersion,
+    } = params;
     const body: Record<string, unknown> = {};
     if (suites !== undefined) body.suites = suites;
     if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
@@ -1816,24 +2862,24 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
-        serverId,
+        serverId
       )}/conformance-runs`,
       { body },
-      options,
+      options
     );
   }
 
   getConformanceRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformConformanceRun> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/conformance-runs/${encodeURIComponent(params.runId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -1844,45 +2890,45 @@ export class PlatformApiClient {
       limit?: number;
       cursor?: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformConformanceRun>> {
     const { projectId, ...query } = params;
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(projectId)}/conformance-runs`,
       { query },
-      options,
+      options
     );
   }
 
   getConformanceReport(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformConformanceReport> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
       {},
-      options,
+      options
     );
   }
 
   /** One row per authored step (status + reason + evidence) for one iteration. */
   getEvalRunSteps(
     params: { projectId: string; runId: string; iterationId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEvalStepResult>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(
-        params.runId,
+        params.runId
       )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
       {},
-      options,
+      options
     );
   }
 
@@ -1905,36 +2951,45 @@ export class PlatformApiClient {
       projectId: string;
       runId: string;
       baseRunId?: string;
+      /**
+       * Pin the baseline by SOURCE SHA instead of run id. Mutually exclusive
+       * with `baseRunId` — sending both is a 400. A SHA that resolves to no
+       * completed run in the suite is the ordinary BASELINE_NOT_FOUND 404, not
+       * this error: "we looked and established nothing" stays distinct from
+       * "you asked for something impossible".
+       */
+      baseCommitSha?: string;
       previewChars?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformRunCompare> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/compare`,
       {
         query: {
           baseRunId: params.baseRunId,
+          baseCommitSha: params.baseCommitSha,
           previewChars: params.previewChars,
         },
       },
-      options,
+      options
     );
   }
 
   listEvalSuiteRuns(
     params: { projectId: string; suiteId: string; limit?: number },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEvalRun>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/runs`,
       { query: { limit: params.limit } },
-      options,
+      options
     );
   }
 
@@ -1942,15 +2997,15 @@ export class PlatformApiClient {
 
   getEvalSuite(
     params: { projectId: string; suiteId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalSuiteDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -1960,29 +3015,34 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalSuiteDetail> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      { body: params.body },
-      options,
+      withFileSyncMarker(params.body),
+      options
     );
   }
 
   deleteEvalSuite(
-    params: { projectId: string; suiteId: string },
-    options?: RequestOptions,
+    params: {
+      projectId: string;
+      suiteId: string;
+      /** See `deleteEvalCase`. A query param for the same reason. */
+      declaredSuiteId?: string;
+    },
+    options?: RequestOptions
   ): Promise<PlatformEvalSuiteDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      {},
-      options,
+      { query: { declaredSuiteId: params.declaredSuiteId } },
+      options
     );
   }
 
@@ -1992,45 +3052,45 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalSuiteDetail> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/schedule`,
-      { body: params.body },
-      options,
+      withFileSyncMarker(params.body),
+      options
     );
   }
 
   listEvalCases(
     params: { projectId: string; suiteId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformEvalCase>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
       {},
-      options,
+      options
     );
   }
 
   getEvalCase(
     params: { projectId: string; suiteId: string; caseId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCase> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(
-        params.suiteId,
+        params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -2040,15 +3100,15 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCase> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
-      { body: params.body },
-      options,
+      withFileSyncMarker(params.body),
+      options
     );
   }
 
@@ -2063,15 +3123,15 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCaseBatchResult> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/batch`,
-      { body: params.body },
-      options,
+      withFileSyncMarker(params.body),
+      options
     );
   }
 
@@ -2082,33 +3142,43 @@ export class PlatformApiClient {
       caseId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCase> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(
-        params.suiteId,
+        params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      { body: params.body },
-      options,
+      withFileSyncMarker(params.body),
+      options
     );
   }
 
   deleteEvalCase(
-    params: { projectId: string; suiteId: string; caseId: string },
-    options?: RequestOptions,
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseId: string;
+      /**
+       * The suite file's `suite.id`, when this delete is that file syncing
+       * itself — see `updateEvalSuite`'s body field of the same name. A QUERY
+       * PARAM here because the route reads no body at all.
+       */
+      declaredSuiteId?: string;
+    },
+    options?: RequestOptions
   ): Promise<PlatformEvalCaseDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(
-        params.suiteId,
+        params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      {},
-      options,
+      { query: { declaredSuiteId: params.declaredSuiteId } },
+      options
     );
   }
 
@@ -2118,56 +3188,56 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformEvalCasesGenerated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/generate`,
       { body: params.body },
-      options,
+      options
     );
   }
 
   validateServer(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "validate", options);
   }
 
   doctorServer(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformDoctorReport> {
     return this.serverOp(params, "doctor", options);
   }
 
   exportServer(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "export", options);
   }
 
   listServerTools(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.serverOp(params, "tools", options);
   }
 
   listServerResources(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.serverOp(params, "resources", options);
   }
 
   listServerPrompts(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.serverOp(params, "prompts", options);
   }
@@ -2181,7 +3251,7 @@ export class PlatformApiClient {
     params: ServerScope & {
       body: { toolName: string; parameters?: Record<string, unknown> };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "tools/call", options);
   }
@@ -2207,11 +3277,13 @@ export class PlatformApiClient {
         viewport?: { width: number; height: number };
       };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWidgetRender> {
-    return this.serverOp(params, "widgets/render", options) as Promise<
-      PlatformWidgetRender
-    >;
+    return this.serverOp(
+      params,
+      "widgets/render",
+      options
+    ) as Promise<PlatformWidgetRender>;
   }
 
   /** `POST /projects/{p}/servers/{s}/prompts/get` — render one prompt. */
@@ -2222,7 +3294,7 @@ export class PlatformApiClient {
         arguments?: Record<string, string | number | boolean>;
       };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "prompts/get", options);
   }
@@ -2230,9 +3302,49 @@ export class PlatformApiClient {
   /** `POST /projects/{p}/servers/{s}/resources/read` — read one resource. */
   readServerResource(
     params: ServerScope & { body: { uri: string } },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "resources/read", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills` — the server's Agent Skills
+   * catalog (SEP-2640).
+   *
+   * Not a page: the catalog is drained server-side, because duplicate-URI
+   * detection spans the whole listing and a page boundary would make a
+   * contradiction depend on where the caller stopped reading.
+   */
+  listServerSkills(
+    params: ServerScope & { body?: Record<string, unknown> },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills/get` — one verified skill by uri.
+   *
+   * Reaches skills a partial listing never mentioned, which is the reason
+   * `skills/get` exists in the SEP at all. Answers with `{ skill }` or with a
+   * `{ refusal }` naming the check that failed.
+   */
+  getServerSkill(
+    params: ServerScope & { body: { uri: string } },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills/get", options);
+  }
+
+  /**
+   * `POST /projects/{p}/servers/{s}/skills/read-file` — one verified
+   * supporting file, checked against the skill's own manifest.
+   */
+  readServerSkillFile(
+    params: ServerScope & { body: { skillUri: string; resourceUri: string } },
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>> {
+    return this.serverOp(params, "skills/read-file", options);
   }
 
   /**
@@ -2243,13 +3355,13 @@ export class PlatformApiClient {
    */
   createTunnel(
     params: { projectId: string; name: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformTunnelGrant> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/tunnels`,
       { body: { name: params.name } },
-      options,
+      options
     );
   }
 
@@ -2260,15 +3372,15 @@ export class PlatformApiClient {
    */
   closeTunnel(
     params: { projectId: string; serverId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformTunnelClosed> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/tunnels/${encodeURIComponent(params.serverId)}/close`,
       {},
-      options,
+      options
     );
   }
 
@@ -2290,13 +3402,13 @@ export class PlatformApiClient {
 
   listJourneys(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformJourney>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/journeys`,
       {},
-      options,
+      options
     );
   }
 
@@ -2307,29 +3419,29 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformJourneyRun>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
       { query: pageQuery(params) },
-      options,
+      options
     );
   }
 
   getJourneyRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourneyRun> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journey-runs/${encodeURIComponent(params.runId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -2340,15 +3452,15 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformJourneyRunSession>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journey-runs/${encodeURIComponent(params.runId)}/sessions`,
       { query: pageQuery(params) },
-      options,
+      options
     );
   }
 
@@ -2373,12 +3485,12 @@ export class PlatformApiClient {
       waveId?: string;
       environmentIds?: string[];
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourneyRunLaunched> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
       {
         body: {
@@ -2388,7 +3500,7 @@ export class PlatformApiClient {
             : {}),
         },
       },
-      options,
+      options
     );
   }
 
@@ -2405,15 +3517,15 @@ export class PlatformApiClient {
    */
   cancelJourneyRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourneyRunCanceled> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journey-runs/${encodeURIComponent(params.runId)}/cancel`,
       {},
-      options,
+      options
     );
   }
 
@@ -2429,27 +3541,27 @@ export class PlatformApiClient {
 
   listPersonas(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformPersona>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/personas`,
       {},
-      options,
+      options
     );
   }
 
   getPersona(
     params: { projectId: string; personaId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPersona> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/personas/${encodeURIComponent(params.personaId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -2468,14 +3580,14 @@ export class PlatformApiClient {
       avatarShape?: number;
       avatarPalette?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPersona> {
     const { projectId, ...body } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/personas`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2489,16 +3601,16 @@ export class PlatformApiClient {
       avatarShape?: number;
       avatarPalette?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPersona> {
     const { projectId, personaId, ...body } = params;
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(projectId)}/personas/${encodeURIComponent(
-        personaId,
+        personaId
       )}`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2510,29 +3622,482 @@ export class PlatformApiClient {
    */
   deletePersona(
     params: { projectId: string; personaId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPersonaDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/personas/${encodeURIComponent(params.personaId)}`,
       {},
-      options,
+      options
+    );
+  }
+
+  // ── Project secrets ───────────────────────────────────────────────────────
+  //
+  // WRITE-ONLY. Every method below returns metadata; none returns a value, and
+  // there is deliberately no method that could. A secret is written and
+  // delivered into a run, never read back.
+
+  /**
+   * List the project's secrets — METADATA ONLY.
+   *
+   * Returns project-shared secrets plus the CALLER'S OWN personal ones. Another
+   * member's personal secret is absent entirely: not redacted, not listed with
+   * a hidden value — its name never appears.
+   */
+  listSecrets(
+    params: { projectId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformSecret>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/secrets`,
+      {},
+      options
+    );
+  }
+
+  /** One secret's metadata. Never its value. */
+  getSecret(
+    params: { projectId: string; secretId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSecret> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Create a secret.
+   *
+   * THE VALUE BECOMES VISIBLE TO WHATEVER CARRIES THIS CALL. It is in the
+   * request body, so it passes through whatever process, log, shell history or
+   * transcript the call is made from. Prefer reading it from a file, an
+   * environment variable, or stdin rather than pasting it into an argument.
+   *
+   * `delivery` is required, with no default, because it decides whether the
+   * value ends up INSIDE the sandbox:
+   *   - `"brokered"` — injected by the egress proxy outside the VM. The box
+   *     never holds it. Prevents extraction, not use, and works for HTTPS APIs
+   *     only.
+   *   - `"materialized"` — a real environment variable in the box, so a CLI can
+   *     read it. Extractable by design.
+   *
+   * `sharing` defaults to `"project"`. A non-admin asking for it is refused,
+   * not silently downgraded to personal — a downgrade would look like success
+   * and then not reach anyone else's sessions.
+   *
+   * IDEMPOTENT ON `options.idempotencyKey`, and worth passing: a retried create
+   * without one fails as a name conflict with the row the first attempt already
+   * made, which is indistinguishable from a genuine collision.
+   */
+  createSecret(
+    params: {
+      projectId: string;
+      name: string;
+      value: string;
+      description?: string;
+      delivery: "brokered" | "materialized";
+      brokerHosts?: string[];
+      brokerHeader?: string;
+      brokerTemplate?: string;
+      sharing?: "user" | "project";
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSecret> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/secrets`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Rotate a secret's value and/or edit its delivery binding.
+   *
+   * ROTATION REACHES NEW RUNS ONLY. A session already running holds the old
+   * value — materialized in its box's environment, or inside an egress
+   * transform that cannot be read back — and there is no safe way to replace it
+   * mid-run.
+   *
+   * `name` and `sharing` are absent on purpose: both are immutable. Renaming
+   * would break the workflows that reference the environment variable, and
+   * re-sharing would change who has been handed the value without changing the
+   * value. Delete and recreate for either.
+   */
+  updateSecret(
+    params: {
+      projectId: string;
+      secretId: string;
+      value?: string;
+      /** `null` clears the description; omit to leave it unchanged. */
+      description?: string | null;
+      delivery?: "brokered" | "materialized";
+      brokerHosts?: string[];
+      brokerHeader?: string;
+      brokerTemplate?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSecret> {
+    const { projectId, secretId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/secrets/${encodeURIComponent(
+        secretId
+      )}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Delete a secret — HARD. The row and the ciphertext both go.
+   *
+   * Not blocked when an environment still selects it: the selection resolver
+   * drops ids that no longer resolve, and refusing would make a leaked
+   * credential un-revokable until someone edited every environment naming it.
+   * Revocation is never gated on cleanup.
+   */
+  deleteSecret(
+    params: { projectId: string; secretId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSecretDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Read an organization's spend budget.
+   *
+   * Any member may read it. A member who cannot RAISE the ceiling still needs
+   * to know it exists, because it is what refused their run.
+   */
+  getSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Set or replace the spend budget. ORG ADMIN ONLY.
+   *
+   * `capUsd` is rounded to the cent, and the response is read back from the
+   * store rather than echoed — a caller that sent $50.004 sees what was kept.
+   *
+   * `alertPercents` REPLACES the whole set; omitting it leaves the stored one
+   * alone. Reaching the cap always alerts, so 100 is rejected: it would name
+   * the same threshold twice.
+   *
+   * Reaching the cap makes MCPJam-billed work refuse with
+   * `spend_budget_reached`. That is NOT the credit-exhausted refusal and must
+   * not be answered by selling credits — the organization set this ceiling on
+   * itself, and only raising or clearing it changes the answer.
+   */
+  setSpendBudget(
+    params: {
+      organizationId: string;
+      capUsd: number;
+      alertPercents?: number[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    const { organizationId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/organizations/${encodeURIComponent(organizationId)}/spend-budget`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Remove the ceiling, leaving the organization uncapped. ORG ADMIN ONLY.
+   *
+   * The window's spend counter SURVIVES: it is a record of what was spent,
+   * not of what the budget was, and clearing a budget does not unspend money.
+   * Setting a new cap therefore takes effect against the spend already made in
+   * the current window.
+   */
+  clearSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * List an organization's trace destinations — METADATA ONLY.
+   *
+   * Header NAMES appear; their values never do, on this or any other call.
+   */
+  listTraceDestinations(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformTraceDestination>> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations`,
+      {},
+      options
+    );
+  }
+
+  /** One destination's configuration and delivery health. Never its header values. */
+  getTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Create a trace destination.
+   *
+   * THE HEADER VALUES BECOME VISIBLE TO WHATEVER CARRIES THIS CALL. They are in
+   * the request body, so they pass through whatever process, log, shell history
+   * or transcript the call is made from. Prefer reading them from a file, an
+   * environment variable, or stdin rather than pasting them into an argument.
+   *
+   * `includeContent` defaults to false, and leaving it there is the safe
+   * reading: prompts, outputs, tool arguments and screenshots are redacted
+   * unless a human decides this vendor should hold them.
+   *
+   * Omitting `projectIds` means every project in the organization, present and
+   * future — which is usually what an org-wide destination wants.
+   */
+  createTraceDestination(
+    params: {
+      organizationId: string;
+      name: string;
+      endpointUrl: string;
+      headers?: Record<string, string>;
+      resourceAttributes?: Record<string, string>;
+      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      includeContent?: boolean;
+      projectIds?: string[];
+      compression?: "gzip" | "none";
+      preset?: string;
+      enabled?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    const { organizationId, ...body } = params;
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(organizationId)}/trace-destinations`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Edit a trace destination.
+   *
+   * `headers` REPLACES the whole set; omitting it leaves the stored one alone.
+   * There is no way to edit one header in place, because a partial update would
+   * have to read the stored values to merge them and nothing may read them but
+   * the sender. A rotated credential takes effect within about a minute — the
+   * drain re-reads the destination before every POST.
+   *
+   * `allProjects: true` is the explicit way back to "every project".
+   * `projectIds: []` cannot mean it: an empty allowlist is a destination that
+   * matches nothing, and the two must not be spelled the same.
+   */
+  updateTraceDestination(
+    params: {
+      organizationId: string;
+      destinationId: string;
+      name?: string;
+      endpointUrl?: string;
+      headers?: Record<string, string>;
+      resourceAttributes?: Record<string, string>;
+      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      includeContent?: boolean;
+      projectIds?: string[];
+      allProjects?: boolean;
+      compression?: "gzip" | "none";
+      preset?: string;
+      enabled?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    const { organizationId, destinationId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/organizations/${encodeURIComponent(
+        organizationId
+      )}/trace-destinations/${encodeURIComponent(destinationId)}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Delete a trace destination. Streaming stops and anything queued is
+   * discarded; traces already delivered stay in the vendor's system.
+   */
+  deleteTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationDeleted> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Send one synthetic span, to prove the endpoint and credentials work.
+   *
+   * Returns as soon as the send is SCHEDULED — the send itself is a round trip
+   * to a third party. Read the outcome from the destination's `lastTest`.
+   */
+  testTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationTestScheduled> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}/test`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Pause a destination. NOTHING IS QUEUED while it is paused — the window is
+   * a gap, not a backlog, and only a backfill can fill it afterwards.
+   */
+  pauseTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}/pause`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Resume a destination, whether it was paused by hand or by a failure.
+   *
+   * The response carries `pausedSince` so a caller can size the gap and decide
+   * whether to backfill it.
+   */
+  resumeTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationResumed> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}/resume`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Replay a window of history into a destination.
+   *
+   * Refused while the destination is paused or disabled: enqueue skips both, so
+   * a backfill against one would scan the whole window and queue nothing.
+   * `days` outside 1-30 is REFUSED, not clamped — the operation's schema
+   * rejects it before the request is sent, so 40 is an error rather than 30.
+   */
+  backfillTraceDestination(
+    params: { organizationId: string; destinationId: string; days: number },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationBackfillJob> {
+    const { organizationId, destinationId, ...body } = params;
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        organizationId
+      )}/trace-destinations/${encodeURIComponent(destinationId)}/backfills`,
+      { body },
+      options
+    );
+  }
+
+  /** The 20 most recent backfills for a destination, newest first. */
+  listTraceDestinationBackfills(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformTraceDestinationBackfillJob>> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(
+        params.destinationId
+      )}/backfills`,
+      {},
+      options
     );
   }
 
   getJourney(
     params: { projectId: string; journeyId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourney> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journeys/${encodeURIComponent(params.journeyId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -2550,14 +4115,14 @@ export class PlatformApiClient {
       serverAttachmentId?: string;
       hostIds?: string[];
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourney> {
     const { projectId, ...body } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/journeys`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2581,16 +4146,16 @@ export class PlatformApiClient {
       sessionsPerTarget?: number;
       maxTurns?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourney> {
     const { projectId, journeyId, ...body } = params;
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(projectId)}/journeys/${encodeURIComponent(
-        journeyId,
+        journeyId
       )}`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2601,41 +4166,41 @@ export class PlatformApiClient {
    */
   archiveJourney(
     params: { projectId: string; journeyId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformJourneyArchived> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journeys/${encodeURIComponent(params.journeyId)}`,
       {},
-      options,
+      options
     );
   }
 
   listSwarms(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformSwarm>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/swarms`,
       {},
-      options,
+      options
     );
   }
 
   getSwarm(
     params: { projectId: string; swarmId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformSwarm> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/swarms/${encodeURIComponent(params.swarmId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -2649,14 +4214,14 @@ export class PlatformApiClient {
       description?: string;
       environmentIds?: string[];
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformSwarm> {
     const { projectId, ...body } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/swarms`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2670,16 +4235,16 @@ export class PlatformApiClient {
       sessionsPerTarget?: number;
       maxTurns?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformSwarm> {
     const { projectId, swarmId, ...body } = params;
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(projectId)}/swarms/${encodeURIComponent(
-        swarmId,
+        swarmId
       )}`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2689,15 +4254,15 @@ export class PlatformApiClient {
    */
   archiveSwarm(
     params: { projectId: string; swarmId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformSwarmArchived> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/swarms/${encodeURIComponent(params.swarmId)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -2719,14 +4284,14 @@ export class PlatformApiClient {
       description?: string;
       existingPersonas?: Array<{ name: string; role: string }>;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformGenerationDrafts> {
     const { projectId, ...body } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/personas/generate`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2745,14 +4310,14 @@ export class PlatformApiClient {
       journeyCount?: number;
       description?: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformGenerationDrafts> {
     const { projectId, ...body } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/journeys/generate`,
       { body },
-      options,
+      options
     );
   }
 
@@ -2766,81 +4331,81 @@ export class PlatformApiClient {
 
   getSwarmOverview(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformSwarmOverview> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/journeys-overview`,
       {},
-      options,
+      options
     );
   }
 
   getJourneyRunScorecard(
     params: { projectId: string; runId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformRunScorecard> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journey-runs/${encodeURIComponent(params.runId)}/scorecard`,
       {},
-      options,
+      options
     );
   }
 
   listSwarmFindings(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformSwarmFinding>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/journey-findings`,
       {},
-      options,
+      options
     );
   }
 
   dismissSwarmFinding(
     params: { projectId: string; findingId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformFindingDismissed> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journey-findings/${encodeURIComponent(params.findingId)}/dismiss`,
       {},
-      options,
+      options
     );
   }
 
   undismissSwarmFinding(
     params: { projectId: string; findingId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformFindingDismissed> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/journey-findings/${encodeURIComponent(params.findingId)}/undismiss`,
       {},
-      options,
+      options
     );
   }
 
   getWaveInsights(
     params: { projectId: string; waveId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWaveInsights> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/waves/${encodeURIComponent(params.waveId)}/insights`,
       {},
-      options,
+      options
     );
   }
 
@@ -2855,15 +4420,15 @@ export class PlatformApiClient {
    */
   requestWaveInsights(
     params: { projectId: string; waveId: string; force?: boolean },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWaveInsightsRequested> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/waves/${encodeURIComponent(params.waveId)}/insights`,
       { body: params.force ? { force: true } : {} },
-      options,
+      options
     );
   }
 
@@ -2874,15 +4439,15 @@ export class PlatformApiClient {
    */
   cancelWaveInsights(
     params: { projectId: string; waveId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWaveInsightsCanceled> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/waves/${encodeURIComponent(params.waveId)}/insights`,
       {},
-      options,
+      options
     );
   }
 
@@ -2897,13 +4462,13 @@ export class PlatformApiClient {
    */
   getCapabilities(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformCapabilities> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/capabilities`,
       {},
-      options,
+      options
     );
   }
 
@@ -2928,7 +4493,7 @@ export class PlatformApiClient {
       description?: string;
       mode?: "project_members" | "invited_only" | "anyone_with_link";
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformScenario> {
     const { projectId, environmentId } = params;
     // Explicit picks, not a rest spread: TypeScript's structural typing lets a
@@ -2939,31 +4504,31 @@ export class PlatformApiClient {
         name: params.name,
         description: params.description,
         mode: params.mode,
-      }).filter(([, value]) => value !== undefined),
+      }).filter(([, value]) => value !== undefined)
     );
     return this.request(
       "PUT",
       `/projects/${encodeURIComponent(
-        projectId,
+        projectId
       )}/environments/${encodeURIComponent(environmentId)}/scenario`,
       // Bodyless when there is nothing to send — the common case, and what
       // existing callers already put on the wire.
       Object.keys(body).length > 0 ? { body } : {},
-      options,
+      options
     );
   }
 
   unpublishScenario(
     params: { projectId: string; environmentId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformScenarioDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId,
+        params.projectId
       )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
       {},
-      options,
+      options
     );
   }
 
@@ -2999,16 +4564,16 @@ export class PlatformApiClient {
       description?: string;
       mode?: "project_members" | "invited_only" | "anyone_with_link";
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformScenario> {
     const { projectId, environmentId, ...body } = params;
     return this.request(
       "PUT",
       `/projects/${encodeURIComponent(
-        projectId,
+        projectId
       )}/environments/${encodeURIComponent(environmentId)}/scenario`,
       { body },
-      options,
+      options
     );
   }
 
@@ -3022,13 +4587,13 @@ export class PlatformApiClient {
    */
   getUserTestingScenario(
     params: { projectId: string; scenarioId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformUserTestingScenarioDetail> {
     return this.request(
       "GET",
       this.userTestingPath(params.projectId, params.scenarioId),
       {},
-      options,
+      options
     );
   }
 
@@ -3047,14 +4612,14 @@ export class PlatformApiClient {
       description?: string;
       mode?: "project_members" | "invited_only" | "anyone_with_link";
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformUserTestingScenario> {
     const { projectId, scenarioId, ...body } = params;
     return this.request(
       "PATCH",
       this.userTestingPath(projectId, scenarioId),
       { body },
-      options,
+      options
     );
   }
 
@@ -3066,13 +4631,13 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformUserTestingSession>> {
     return this.request(
       "GET",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/sessions`,
       { query: pageQuery(params) },
-      options,
+      options
     );
   }
 
@@ -3091,22 +4656,22 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformUserTestingSessionDetail> {
     return this.request(
       "GET",
       `${this.userTestingPath(
         params.projectId,
-        params.scenarioId,
+        params.scenarioId
       )}/sessions/${encodeURIComponent(params.sessionId)}`,
       { query: pageQuery(params) },
-      options,
+      options
     );
   }
 
   getUserTestingMetrics(
     params: { projectId: string; scenarioId: string; population?: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "GET",
@@ -3114,7 +4679,7 @@ export class PlatformApiClient {
       {
         query: params.population ? { population: params.population } : {},
       },
-      options,
+      options
     );
   }
 
@@ -3126,53 +4691,53 @@ export class PlatformApiClient {
    */
   getUserTestingUsage(
     params: { projectId: string; scenarioId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "GET",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/usage`,
       {},
-      options,
+      options
     );
   }
 
   listUserTestingFindings(
     params: { projectId: string; scenarioId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.request(
       "GET",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/findings`,
       {},
-      options,
+      options
     );
   }
 
   /** Also how you learn the CURRENT window id, which the insights read takes. */
   getUserTestingSignals(
     params: { projectId: string; scenarioId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "GET",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/signals`,
       {},
-      options,
+      options
     );
   }
 
   getUserTestingInsights(
     params: { projectId: string; scenarioId: string; windowId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "GET",
       `${this.userTestingPath(
         params.projectId,
-        params.scenarioId,
+        params.scenarioId
       )}/windows/${encodeURIComponent(params.windowId)}/insights`,
       {},
-      options,
+      options
     );
   }
 
@@ -3183,38 +4748,38 @@ export class PlatformApiClient {
    */
   requestUserTestingInsights(
     params: { projectId: string; scenarioId: string; force?: boolean },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformUserTestingInsightsRequested> {
     return this.request(
       "POST",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
       { body: params.force ? { force: true } : {} },
-      options,
+      options
     );
   }
 
   cancelUserTestingInsights(
     params: { projectId: string; scenarioId: string; windowId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "DELETE",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
       { body: { windowId: params.windowId } },
-      options,
+      options
     );
   }
 
   dismissUserTestingFinding(
     params: { projectId: string; scenarioId: string; findingId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.userTestingFindingAction(params, "dismiss", options);
   }
 
   undismissUserTestingFinding(
     params: { projectId: string; scenarioId: string; findingId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.userTestingFindingAction(params, "undismiss", options);
   }
@@ -3232,16 +4797,16 @@ export class PlatformApiClient {
       scenarioId: string;
       guestExecution: PlatformGuestExecution;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "PUT",
       `${this.userTestingPath(
         params.projectId,
-        params.scenarioId,
+        params.scenarioId
       )}/guest-execution`,
       { body: params.guestExecution },
-      options,
+      options
     );
   }
 
@@ -3251,16 +4816,16 @@ export class PlatformApiClient {
    */
   rotateUserTestingLink(
     params: { projectId: string; scenarioId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "POST",
       `${this.userTestingPath(
         params.projectId,
-        params.scenarioId,
+        params.scenarioId
       )}/rotate-link`,
       {},
-      options,
+      options
     );
   }
 
@@ -3272,29 +4837,29 @@ export class PlatformApiClient {
       email: string;
       sendInviteEmail?: boolean;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     const { projectId, scenarioId, ...body } = params;
     return this.request(
       "PUT",
       `${this.userTestingPath(projectId, scenarioId)}/members`,
       { body },
-      options,
+      options
     );
   }
 
   removeUserTestingMember(
     params: { projectId: string; scenarioId: string; member: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "DELETE",
       `${this.userTestingPath(
         params.projectId,
-        params.scenarioId,
+        params.scenarioId
       )}/members/${encodeURIComponent(params.member)}`,
       {},
-      options,
+      options
     );
   }
 
@@ -3305,46 +4870,48 @@ export class PlatformApiClient {
    */
   rebindUserTestingScenario(
     params: { projectId: string; scenarioId: string; environmentId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "POST",
       `${this.userTestingPath(params.projectId, params.scenarioId)}/rebind`,
       { body: { environmentId: params.environmentId } },
-      options,
+      options
     );
   }
 
   private userTestingPath(projectId: string, scenarioId: string): string {
     return `/projects/${encodeURIComponent(
-      projectId,
+      projectId
     )}/user-testing/scenarios/${encodeURIComponent(scenarioId)}`;
   }
 
   private userTestingFindingAction(
     params: { projectId: string; scenarioId: string; findingId: string },
     action: "dismiss" | "undismiss",
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "POST",
       `${this.userTestingPath(
         params.projectId,
-        params.scenarioId,
+        params.scenarioId
       )}/findings/${encodeURIComponent(params.findingId)}/${action}`,
       {},
-      options,
+      options
     );
   }
 
   private sharePath(
     projectId: string,
     resourceType: string,
-    resourceId: string,
+    resourceId: string
   ): string {
-    return `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(
-      resourceType,
-    )}/${encodeURIComponent(resourceId)}`;
+    return `/projects/${encodeURIComponent(
+      projectId
+    )}/shares/${encodeURIComponent(resourceType)}/${encodeURIComponent(
+      resourceId
+    )}`;
   }
 
   getShareSettings(
@@ -3353,13 +4920,13 @@ export class PlatformApiClient {
       resourceType: "scenario" | "conformanceRun" | "evalRun";
       resourceId: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "GET",
       this.sharePath(params.projectId, params.resourceType, params.resourceId),
       {},
-      options,
+      options
     );
   }
 
@@ -3371,7 +4938,7 @@ export class PlatformApiClient {
       mode: "project_members" | "invited_only" | "anyone_with_link";
       allowGuestAccess?: boolean;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     const { projectId, resourceType, resourceId, mode, allowGuestAccess } =
       params;
@@ -3384,7 +4951,7 @@ export class PlatformApiClient {
           ...(allowGuestAccess !== undefined ? { allowGuestAccess } : {}),
         },
       },
-      options,
+      options
     );
   }
 
@@ -3398,23 +4965,27 @@ export class PlatformApiClient {
       resourceType: "scenario" | "conformanceRun" | "evalRun";
       resourceId: string;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.request(
       "POST",
-      `${this.sharePath(params.projectId, params.resourceType, params.resourceId)}/rotate-link`,
+      `${this.sharePath(
+        params.projectId,
+        params.resourceType,
+        params.resourceId
+      )}/rotate-link`,
       {},
-      options,
+      options
     );
   }
 
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<T> {
     const path = `/projects/${encodeURIComponent(
-      params.projectId,
+      params.projectId
     )}/servers/${encodeURIComponent(params.serverId)}/${op}`;
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
@@ -3426,8 +4997,18 @@ export class PlatformApiClient {
     // POST's.
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    init: { query?: QueryParams; body?: unknown },
-    options?: RequestOptions,
+    init: {
+      query?: QueryParams;
+      body?: unknown;
+      /**
+       * Send the declared launch context. Opt-in per call rather than global:
+       * these headers describe a RUN's origin, and stamping them onto every
+       * read and every unrelated write would put a claim on requests that
+       * create nothing to claim.
+       */
+      declareLaunch?: boolean;
+    },
+    options?: RequestOptions
   ): Promise<T> {
     const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
@@ -3436,7 +5017,10 @@ export class PlatformApiClient {
       }
     }
 
+    // Spread FIRST: every assignment below is a contract header this client
+    // owns, and each must survive whatever the caller supplied.
     const headers: Record<string, string> = {
+      ...(this.extraHeaders ?? {}),
       authorization: `Bearer ${await this.getAuth()}`,
     };
     if (init.body !== undefined) {
@@ -3444,6 +5028,11 @@ export class PlatformApiClient {
     }
     if (this.userAgent) {
       headers["user-agent"] = this.userAgent;
+    }
+    // After `extraHeaders`, like every other header this client owns: an edge
+    // authenticator's credential must not be able to relabel a run's origin.
+    if (init.declareLaunch && this.launchHeaders) {
+      Object.assign(headers, this.launchHeaders);
     }
     if (options?.idempotencyKey) {
       headers["idempotency-key"] = options.idempotencyKey;
@@ -3464,9 +5053,9 @@ export class PlatformApiClient {
     const timeoutHandle = setTimeout(
       () =>
         controller.abort(
-          new Error(`Request timed out after ${this.timeoutMs}ms`),
+          new Error(`Request timed out after ${this.timeoutMs}ms`)
         ),
-      this.timeoutMs,
+      this.timeoutMs
     );
 
     // BOTH THE FETCH AND THE BODY READ ARE INSIDE THIS `try`, and that is the
@@ -3497,10 +5086,10 @@ export class PlatformApiClient {
           aborted
             ? `Request to ${path} timed out after ${this.timeoutMs}ms`
             : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
-                error,
+                error
               )}`,
           aborted ? "TIMEOUT" : "NETWORK_ERROR",
-          { status: 0, endpoint: path, cause: error },
+          { status: 0, endpoint: path, cause: error }
         );
       }
 
@@ -3516,13 +5105,13 @@ export class PlatformApiClient {
           throw new PlatformApiError(
             `Request to ${path} timed out after ${this.timeoutMs}ms`,
             "TIMEOUT",
-            { status: 0, endpoint: path, cause: error },
+            { status: 0, endpoint: path, cause: error }
           );
         }
         throw new PlatformApiError(
           `Failed to read the MCPJam API response (${response.status}) for ${path}`,
           "INTERNAL_ERROR",
-          { status: response.status, endpoint: path, cause: error },
+          { status: response.status, endpoint: path, cause: error }
         );
       }
     } finally {
@@ -3550,7 +5139,7 @@ export class PlatformApiClient {
       throw new PlatformApiError(
         `The MCPJam API returned a non-JSON response (${response.status}) for ${path}`,
         "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: parseError },
+        { status: response.status, endpoint: path, cause: parseError }
       );
     }
 
@@ -3561,16 +5150,20 @@ export class PlatformApiClient {
   private toApiError(
     response: Response,
     body: unknown,
-    path: string,
+    path: string
   ): PlatformApiError {
     const envelope =
       body && typeof body === "object" && !Array.isArray(body)
         ? (body as { code?: unknown; message?: unknown; details?: unknown })
         : undefined;
-    const code =
+    // Track whether the server supplied a code. A status-derived 404 can mean
+    // an undeployed route, while an envelope code identifies a missing
+    // resource; callers need to distinguish those cases.
+    const sentCode =
       typeof envelope?.code === "string" && envelope.code.length > 0
         ? envelope.code
-        : fallbackCodeForStatus(response.status);
+        : undefined;
+    const code = sentCode ?? fallbackCodeForStatus(response.status);
     const message =
       typeof envelope?.message === "string" && envelope.message.length > 0
         ? envelope.message
@@ -3587,6 +5180,7 @@ export class PlatformApiClient {
       details,
       retryAfter: parseRetryAfter(response.headers.get("retry-after")),
       endpoint: path,
+      codeSource: sentCode !== undefined ? "envelope" : "status",
     });
   }
 }
@@ -3607,7 +5201,7 @@ function fallbackCodeForStatus(status: number): string {
 
 function parseRetryAfter(
   header: string | null,
-  now: number = Date.now(),
+  now: number = Date.now()
 ): number | undefined {
   if (!header) return undefined;
   const seconds = Number(header);

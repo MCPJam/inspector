@@ -157,7 +157,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       />
     );
     const emaSwitch = screen.getByRole("switch", {
-      name: /enterprise-managed authorization/i,
+      name: /default all project servers to enterprise managed auth/i,
     });
     expect(emaSwitch).toBeDisabled();
   });
@@ -171,7 +171,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
       />
     );
     const emaSwitch = screen.getByRole("switch", {
-      name: /enterprise-managed authorization/i,
+      name: /default all project servers to enterprise managed auth/i,
     });
     expect(emaSwitch).not.toBeDisabled();
   });

@@ -1,16 +1,22 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
-import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
+import {
+  caseIntentSchema,
+  evalSuiteFileToolPolicySchema,
+} from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
+import { resolveFrozenRunGradingMode } from "../../services/evals/grading-mode.js";
 import {
   startSuiteRunWithRecorder,
+  type EvalRunProvenance,
   type SuiteRunRecorder,
 } from "../../services/evals/recorder";
 import {
@@ -18,7 +24,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isTerminalRunStatus } from "../../services/evals/run-status.js";
+import { isRunPastExecution } from "../../services/evals/run-status.js";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -43,6 +49,7 @@ import {
   type TestCaseType,
 } from "@/shared/probe-config";
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
+import type { LaunchContext } from "../../utils/launch-context.js";
 import {
   createEvalCasesInBatches,
   partialResultOf,
@@ -60,6 +67,7 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
+import type { BenchmarkWriteGuard } from "../../services/evals/artifact-ledger.js";
 import {
   environmentEffectiveServerIds,
   environmentServerIds,
@@ -184,6 +192,104 @@ function legacyCaseStepsFallback(testCase: {
   return turns.length > 0 ? promptTurnsToSteps(turns) : undefined;
 }
 
+/**
+ * A suite's or run's pass floor, as a PERCENT in [0, 100].
+ *
+ * BOUNDED, and that is the whole point. Unbounded, this was
+ * `z.object({ minimumPassRate: z.number() })` at four sites, while every
+ * consumer compares it as a percent — the backend against an UNROUNDED
+ * `passRate * 100` (`convex/testSuites.ts`, `convex/sdkEvals.ts`), the GitHub
+ * check against a rounded one (`github-checks-worker.ts`).
+ *
+ * So `minimumPassRate: 0.8` — the natural thing to send for someone who wrote
+ * `passThreshold: 0.8` as a FRACTION two fields earlier — was accepted, meant
+ * 0.8%, and produced a CI gate that could never fail. `8000` was accepted just
+ * as happily and could never pass. A gate that cannot fail is worse than no
+ * gate: it reports a verdict nobody measured.
+ *
+ * `minimumPassRatePercent` is the canonical name, following the SDK's own rule
+ * (`sdk/src/gates.ts`): every percent-valued field is named `*Percent` so a
+ * bare `100` cannot be read as "100%" when it means "10000%".
+ * `minimumPassRate` stays as the deprecated alias, because it is the name
+ * every stored policy and existing caller already uses.
+ *
+ * THE NAME IS THE DISAMBIGUATOR, which is what makes the `*Percent` convention
+ * load-bearing here rather than decorative:
+ *
+ *   - on `minimumPassRatePercent`, the unit is in the field name and nothing is
+ *     ambiguous, so the FULL range is accepted — `0.5` there is 0.5% and the
+ *     backend's unrounded comparison can genuinely act on it (1 passing case in
+ *     200 is exactly 0.5%);
+ *   - on the bare `minimumPassRate`, a value in (0, 1) is refused. That is the
+ *     spelling the bug arrives through, and this schema cannot tell a caller
+ *     who meant 80% from one who meant 0.8%. It says so, and names the field
+ *     that can say either without guessing.
+ *
+ * A fraction-looking value is never REINTERPRETED on either field: reading
+ * `0.8` as 80% would silently move the bar on every policy already stored
+ * under the old unbounded schema. `0` is a real floor ("any run clears it")
+ * and is accepted on both.
+ *
+ * ONE CAVEAT ON SUB-1% FLOORS, and it applies to every threshold to some
+ * degree. The platform verdict compares an UNROUNDED `passRate * 100`, while
+ * `github-checks-worker.ts` rounds the measured rate to an integer first (to
+ * stay in step with the eval UI's badge — see the comment there). So the
+ * GitHub check quantizes: a floor below 0.5 behaves there as if it were 0.5,
+ * exactly as a floor of 80 already passes the check at a measured 79.6%.
+ * Nothing here can fix that asymmetry — moving the check off `Math.round`
+ * would change the verdict of every existing gate at a rounding boundary,
+ * which is a decision of its own, not a side effect of bounding this field.
+ */
+const passRatePercentBoundsSchema = z
+  .number()
+  .min(0, "must be a percent in [0, 100]")
+  .max(100, "must be a percent in [0, 100] — 80 means 80%, not 8000%");
+
+/** The canonical field: unambiguous by name, so the whole range is usable. */
+const canonicalPassRatePercentSchema = passRatePercentBoundsSchema;
+
+/** The deprecated field: same unit, minus the band that reads as a fraction. */
+const aliasPassRatePercentSchema = passRatePercentBoundsSchema.refine(
+  (value) => value === 0 || value >= 1,
+  {
+    message:
+      "must be a PERCENT in [0, 100], and a value below 1 on this field is almost always a fraction sent by mistake — send 80 for 80%, not 0.8. If you really mean a sub-1% floor, send it as minimumPassRatePercent, whose name carries the unit. (A per-case passThreshold IS a fraction; this suite/run floor is not.)",
+  },
+);
+
+export const passCriteriaSchema = z
+  .strictObject({
+    /** Canonical: the unit is in the name. */
+    minimumPassRatePercent: canonicalPassRatePercentSchema.optional(),
+    /** Deprecated alias for `minimumPassRatePercent`. */
+    minimumPassRate: aliasPassRatePercentSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    const canonical = value.minimumPassRatePercent !== undefined;
+    const alias = value.minimumPassRate !== undefined;
+    if (canonical && alias) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["minimumPassRatePercent"],
+        message:
+          "Send minimumPassRatePercent or minimumPassRate, not both — they are two spellings of one percent.",
+      });
+    } else if (!canonical && !alias) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["minimumPassRatePercent"],
+        message:
+          "passCriteria needs minimumPassRatePercent (a percent in [0, 100]).",
+      });
+    }
+  })
+  // Normalized to the STORED name, so nothing downstream learns there were
+  // two spellings and no stored row changes shape.
+  .transform((value) => ({
+    minimumPassRate: (value.minimumPassRatePercent ??
+      value.minimumPassRate) as number,
+  }));
+
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
   suiteId: z.string().optional(),
@@ -207,6 +313,10 @@ export const RunEvalsRequestSchema = z.object({
         isNegativeTest: z.boolean().optional(),
         scenario: z.string().optional(),
         expectedOutput: z.string().optional(),
+        // Optional analytics label. This authoring/run shape only creates or
+        // updates from a complete test definition, so it carries the stored
+        // string form; only the authoritative PATCH wire accepts `null`.
+        intent: caseIntentSchema.optional(),
         // Unified `TestStep[]` model — the source of truth for execution.
         // Declared explicitly so Zod does not silently strip it off the wire
         // (feedback_zod_strips_unthreaded_fields). Optional on the wire so
@@ -283,11 +393,7 @@ export const RunEvalsRequestSchema = z.object({
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
-  passCriteria: z
-    .object({
-      minimumPassRate: z.number(),
-    })
-    .optional(),
+  passCriteria: passCriteriaSchema.optional(),
   /**
    * When true, the request is a rerun of an already-persisted suite — skip
    * the per-test-case upsert. Without this, derived wire fields (suite
@@ -406,18 +512,108 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   skillsOverride: z.literal("exclude").optional(),
+  /**
+   * The REWRITE arm of a description-experiment (PR-E3). `{ experimentId }`
+   * only — the backend loads the experiment and copies its proposal onto the
+   * run's `configSnapshot.toolDescriptionOverride`. Caller-supplied
+   * description text is not representable here; a silently-stripped body
+   * would launch an ORIGINAL arm while the caller believed they launched a
+   * rewrite.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  toolDescriptionOverride: z
+    .object({ experimentId: z.string().min(1) })
+    .strict()
+    .optional(),
+  /**
+   * Snapshot replay of an existing run. Threaded into Convex
+   * `startTestSuiteRun.replayedFromRunId` so the new run copies the source
+   * snapshot rather than the live suite. Used by the description-experiment
+   * two-arm launch (identical args except the rewrite arm's override).
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  replayedFromRunId: z.string().min(1).optional(),
+  /**
+   * When true with `replayedFromRunId`, re-resolve the suite's current
+   * config instead of copying the source snapshot. Description-experiment
+   * arms pass `false` so both arms replay the same frozen source.
+   */
+  useCurrentSuiteConfig: z.boolean().optional(),
+  /**
+   * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
+   *
+   * Claim-only in both directions: the caller supplies an id and a reason, and
+   * the backend derives the approver from the authenticated launcher, stamps
+   * the time, and FREEZES the resulting decision into the run's own case
+   * snapshot. A caller-supplied approver would file one person's approval
+   * under another's name and a caller-supplied timestamp could be backdated
+   * past the edit that invalidated the claim, so neither is representable
+   * here.
+   *
+   * Nothing about this persists on the case. The next run of the same
+   * approximation needs a new approval — that is the difference between
+   * approving a RUN and accepting a CASE, and the whole reason there is no
+   * second concept.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently, and a silently-stripped approval
+   * would be reported to the caller as a backend policy refusal.
+   */
+  importApprovals: z
+    .array(
+      z
+        .object({
+          testCaseId: z.string().min(1),
+          reason: z.string().trim().min(1).max(500),
+        })
+        .strict()
+    )
+    .min(1)
+    .optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
+/**
+ * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api', the
+ * scheduled-evals worker passes 'schedule', the GitHub-checks worker passes
+ * 'github_check', and the bench worker passes 'benchmark' — which, alone among
+ * them, must also carry the `benchmarkRunId` of its live parent run.
+ *
+ * Server-internal on purpose: neither field is on `RunEvalsRequestSchema`, so
+ * API callers cannot spoof run provenance. The pairing rule lives in
+ * {@link EvalRunProvenance} beside the mutation call that has to honour it.
+ */
 type RunEvalsWithManagerRequest = RunEvalsRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
   /**
-   * Run origin persisted on `testSuiteRun.source`; /api/v1 passes 'api',
-   * the scheduled-evals worker passes 'schedule', and the GitHub-checks
-   * worker passes 'github_check'. Server-internal on purpose: it is NOT on
-   * `RunEvalsRequestSchema`, so API callers cannot spoof run provenance.
+   * Extra headers stamped on every per-step Convex request this run makes.
+   *
+   * The bench worker's channel for `x-mcpjam-benchmark-grant`: a benchmark
+   * cell's model calls are billed against the run's budget, and the grant is
+   * what tells `/stream` which run to charge. It rides the request headers
+   * rather than the run row because it is a short-lived credential — a run
+   * snapshot is member-readable and would make it forgeable.
+   *
+   * Passed by REFERENCE all the way to `processOneStep`, which reads it per
+   * step, so a caller holding the same object can rotate a credential inside
+   * it mid-run without restarting anything.
    */
-  source?: "ui" | "api" | "schedule" | "github_check";
+  extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement for this cell.
+   *
+   * Server-internal like `source`: it is NOT on `RunEvalsRequestSchema`, so an
+   * API caller cannot hand itself permission to write to a target. The
+   * manifests inside are pinned in the definition and verified against the
+   * claim BEFORE the cell launches; the artifact ledger inside is the run's,
+   * shared by reference so every iteration writes into the one the run's
+   * cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /**
    * Pre-resolved environment from the caller's manager-priming preflight (the
    * hosted `/run` route and the scheduled worker resolve the environment ONCE
@@ -429,7 +625,21 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * retry) rather than pairing a stale manager with a newer run snapshot.
    */
   resolvedEnvironment?: ResolvedEnvironmentForLaunch;
-};
+  /**
+   * WHO SAYS IT LAUNCHED THIS RUN, and from which CI job.
+   *
+   * Server-internal like `source`: it is NOT on `RunEvalsRequestSchema`, so an
+   * API caller cannot put it in the body. It arrives on
+   * `x-mcpjam-launcher` / `x-mcpjam-ci` and is parsed at the `/v1` boundary
+   * (`utils/launch-context.ts`), which is also where a malformed or
+   * out-of-allowlist value is dropped — a label must never fail a launch.
+   *
+   * A LABEL. `source` is still stamped `"api"` and the verified attribution is
+   * still what the audit reads; this is what lets the Runs table stop showing
+   * a CLI run, an Actions job and an MCP agent as one indistinguishable `API`.
+   */
+  launchContext?: LaunchContext;
+} & EvalRunProvenance;
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
@@ -1052,12 +1262,19 @@ export type PreparedEvalRun = {
  *
  * FALSE against a backend with no `deduped` field, for the same reason: unknown
  * is not a licence to change behaviour.
+ *
+ * TRUE for a replay of a run held in `grading`, which is why this reads
+ * `isRunPastExecution` rather than `isTerminalRunStatus`. Such a run has run
+ * every trial and is waiting only for its judge; a redelivered claim that
+ * executed it would run the whole suite a second time and bill for it, against
+ * a run whose trials are already recorded — the exact double-spend above, in a
+ * status that is deliberately not terminal.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
 }): boolean {
-  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
+  return prepared.deduped === true && isRunPastExecution(prepared.status);
 }
 
 /**
@@ -1148,6 +1365,7 @@ function toCaseBatchItem(
     isNegativeTest?: boolean;
     scenario?: string;
     expectedOutput?: string;
+    intent?: string;
     steps?: TestStep[];
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
@@ -1166,6 +1384,9 @@ function toCaseBatchItem(
     isNegativeTest: testCaseData.isNegativeTest,
     scenario: testCaseData.scenario,
     expectedOutput: testCaseData.expectedOutput,
+    ...(testCaseData.intent !== undefined
+      ? { intent: testCaseData.intent }
+      : {}),
     steps: sanitizeForConvexTransport(testCaseData.steps),
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
@@ -1394,6 +1615,7 @@ export async function authorEvalSuite(args: {
       isNegativeTest?: boolean;
       scenario?: string;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       judgeRequirement?: string;
       advancedConfig?: any;
@@ -1415,6 +1637,7 @@ export async function authorEvalSuite(args: {
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
         expectedOutput: test.expectedOutput,
+        intent: test.intent,
         steps: authoringSteps,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
@@ -1437,15 +1660,42 @@ export async function authorEvalSuite(args: {
     // frozen execution snapshot. Only update when explicitly refreshing or
     // on first-run (non-rerun) writes.
     const shouldUpdateSnapshot = !suiteRerun || refreshSnapshot === true;
-    await convexClient.mutation("testSuites:updateTestSuite" as any, {
-      suiteId: resolvedSuiteId,
-      name: suiteName,
-      description: suiteDescription,
+    // …and when there is nothing to update, DON'T CALL AT ALL.
+    //
+    // A plain rerun carries no snapshot (above) and no name or description of
+    // its own — a bare `{ suiteId }` rerun has neither on the wire — so this
+    // was a mutation whose whole argument list was `undefined`. Harmless while
+    // every suite was writable; not harmless now that a CI-owned suite refuses
+    // suite edits, because it would make EVERY rerun of a suite managed by CI
+    // fail on a write it never needed to make. Running a CI-owned suite is
+    // exactly what the lock is meant to keep working.
+    //
+    // What still refuses, on purpose: `refreshSnapshot`, and a non-rerun
+    // inline-test launch. Both really do rewrite the suite's persisted
+    // configuration, and that is the drift the lock exists to stop.
+    //
+    // Name and description are NOT exempt from that. A rerun echoes back the
+    // suite's OWN name and description — the web client reads them off the
+    // suite row it is looking at and sends them straight back — so writing
+    // them stores what is already stored, and the only thing that write can
+    // do is fail. Renaming a suite has its own route (`PATCH
+    // /eval-suites/:suiteId`); a rerun is not it.
+    const suiteWriteFields = {
+      ...(!suiteRerun && suiteName !== undefined ? { name: suiteName } : {}),
+      ...(!suiteRerun && suiteDescription !== undefined
+        ? { description: suiteDescription }
+        : {}),
       ...(shouldUpdateSnapshot ? { environment: persistedEnvironment } : {}),
       ...(shouldUpdateSnapshot && refreshSnapshot === true
         ? { refreshHostConfigFromEnvironment: true }
         : {}),
-    });
+    };
+    if (Object.keys(suiteWriteFields).length > 0) {
+      await convexClient.mutation("testSuites:updateTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+        ...suiteWriteFields,
+      });
+    }
 
     // On a suite rerun, do NOT upsert per-case fields. The wire payload
     // contains values derived from suite.defaultConfig (model substituted in
@@ -1522,6 +1772,12 @@ export async function authorEvalSuite(args: {
             const expectedOutputChanged =
               normalize(existingTestCase.expectedOutput) !==
               normalize(testCaseData.expectedOutput);
+            // Omitted intent is a preserve, not an implicit clear. Only a
+            // caller that supplied the label may make an existing row differ.
+            const intentChanged =
+              testCaseData.intent !== undefined &&
+              normalize(existingTestCase.intent) !==
+                normalize(testCaseData.intent);
             const stepsChanged =
               JSON.stringify(
                 normalizeForComparison(existingTestCase.steps || [])
@@ -1554,6 +1810,7 @@ export async function authorEvalSuite(args: {
               isNegativeTestChanged ||
               scenarioChanged ||
               expectedOutputChanged ||
+              intentChanged ||
               stepsChanged ||
               judgeRequirementChanged ||
               advancedConfigChanged ||
@@ -1571,6 +1828,9 @@ export async function authorEvalSuite(args: {
                 isNegativeTest: testCaseData.isNegativeTest,
                 scenario: testCaseData.scenario,
                 expectedOutput: testCaseData.expectedOutput,
+                ...(testCaseData.intent !== undefined
+                  ? { intent: testCaseData.intent }
+                  : {}),
                 steps: sanitizeForConvexTransport(testCaseData.steps),
                 advancedConfig: sanitizeForConvexTransport(
                   testCaseData.advancedConfig
@@ -1888,13 +2148,31 @@ export async function prepareEvalRun(
     runGroupId,
     environmentId,
     resolvedEnvironment,
-    source,
     idempotencyKey,
     sourceHash,
     skillsOverride,
+    toolDescriptionOverride,
+    replayedFromRunId,
+    useCurrentSuiteConfig,
     ephemeralEnvironment,
     toolPolicy,
+    importApprovals,
+    extraHeaders,
+    benchmarkWriteGuard,
+    launchContext,
   } = request;
+
+  /**
+   * `source` and its licence are ONE fact (see {@link EvalRunProvenance}), so
+   * they travel as one value instead of being destructured apart. Two variables
+   * pulled out of a discriminated union are no longer correlated, and re-pairing
+   * them at the recorder call would take a cast — which is exactly the escape
+   * hatch that let `source: 'benchmark'` ship with no `benchmarkRunId`.
+   */
+  const provenance: EvalRunProvenance =
+    request.source === "benchmark"
+      ? { source: "benchmark", benchmarkRunId: request.benchmarkRunId }
+      : { source: request.source };
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
     throw new WebRouteError(
@@ -2058,6 +2336,8 @@ export async function prepareEvalRun(
     status: existingRunStatus,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
+    gradingEngine: runGradingEngine,
+    toolDescriptionOverride: runToolDescriptionOverride,
   } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
@@ -2084,11 +2364,32 @@ export async function prepareEvalRun(
     expectedEnvironmentServerIds: environmentLaunch
       ? environmentEffectiveServerIds(environmentLaunch)
       : undefined,
-    source,
+    // Spread as ONE value: `source: 'benchmark'` without its parent id is
+    // refused by `startTestSuiteRun`, so anything that can drop the id here
+    // turns a valid launch into a FORBIDDEN at the wire.
+    ...provenance,
     idempotencyKey,
     ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
+    ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+    ...(replayedFromRunId ? { replayedFromRunId } : {}),
+    ...(useCurrentSuiteConfig !== undefined
+      ? { useCurrentSuiteConfig }
+      : {}),
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+    // Named explicitly, like every other field in this call: `startSuiteRun-
+    // WithRecorder` reconstructs the mutation args from its own parameters,
+    // so a field nobody destructures here is a field the backend never sees —
+    // and an approval that never arrives is reported to the caller as the
+    // backend refusing a run they did approve.
+    ...(importApprovals?.length ? { importApprovals } : {}),
+    // Same rule, same reason. Spread apart rather than as one `launchContext`
+    // object because the recorder's parameter list is the mutation's argument
+    // list, and the backend takes the two as siblings of `source`.
+    ...(launchContext?.launcher ? { launcher: launchContext.launcher } : {}),
+    ...(launchContext?.ciMetadata
+      ? { ciMetadata: launchContext.ciMetadata }
+      : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
@@ -2214,13 +2515,15 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
     );
   }
-  // Harness MCP calls run out of process, so the policy is enforced at the MCP
-  // proxy the generated `.mcp.json` points at — sealed into the proxy token, so
-  // dropping the policy drops the credential. Refused only when this deployment
-  // cannot seal it.
+  // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
+  // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed
+  // into the proxy token, so dropping the policy drops the credential. Refused
+  // only when this deployment cannot seal it. A host-executed adapter never
+  // mints that token (it enforces in-process), and the refusal reads its
+  // delivery off the adapter rather than off a bare "is a harness" boolean.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessAdmission.harness),
+    harness: harnessAdmission.harness,
   });
   if (harnessPolicyRefusal) {
     await failRunBeforeExecution(convexClient, recorder, runId, {
@@ -2235,6 +2538,25 @@ export async function prepareEvalRun(
         harness: harnessAdmission.harness,
       }
     );
+  }
+  // Benchmark write manifests currently enforce argument/prefix ownership in
+  // the in-process tool-policy gate. Native harnesses execute MCP calls in a
+  // separate process, where that gate cannot inspect arguments or harvest
+  // created ids. Refuse this combination until the proxy carries the full
+  // side-effect guard; running it would make a consented write benchmark
+  // unbounded on the target server.
+  if (
+    benchmarkWriteGuard?.requireManifest === true &&
+    harnessAdmission.harness
+  ) {
+    const reason =
+      "benchmark write cases are not supported on an out-of-process harness yet; " +
+      "run this benchmark with an emulated client so argument and cleanup guards apply";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "BENCHMARK_WRITE_UNSUPPORTED",
+      harness: harnessAdmission.harness,
+    });
   }
   // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
   // derives `configSnapshot.executionEngine` from the run's own
@@ -2419,16 +2741,51 @@ export async function prepareEvalRun(
       recorder,
       suiteInjectOpenAiCompat,
       hostExecutionPolicy: suiteHostPolicy,
+      // B3b: the run's FROZEN grading-engine position, resolved once by the
+      // backend at run creation and combined here with this process's env
+      // ceiling. Threading it makes a per-suite `off` authoritative on the
+      // FIRST pass — before, only the judge second pass (which reads the run
+      // row) could see it — and is what lets a run reach `enforce` at all.
+      //
+      // AN ABSENT STAMP IS A DECISION, NOT A MISSING OPINION. The backend
+      // writes no `gradingEngine` key at all when it resolved `off` — so the
+      // snapshot of an `off` run stays byte-identical to a pre-B3b one — and
+      // this resolver treats a position with no opinion as UNCONSTRAINED,
+      // falling back to the env ceiling. Passing the absence straight through
+      // would therefore promote every `off` run to whatever the process env
+      // says the moment that var is raised, which is exactly backwards: the
+      // suite ceiling, the org flag and the legacy clamp all live upstream of
+      // that stamp, and an absent stamp is their combined answer.
+      gradingMode: resolveFrozenRunGradingMode(runGradingEngine),
       // PR 4d: thread the raw suite hostConfig record into the runner so
       // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
+      // The run's PROJECT ENVIRONMENT — the same id echoed to
+      // `startSuiteRunWithRecorder` above, so it is exactly what the run's
+      // `configSnapshot.environmentRef` records and therefore exactly what
+      // `resolveGrantForSandbox` will derive for each iteration's box.
+      //
+      // Threaded for the HARNESS path's external-account credential check: a
+      // BROKERED project secret is composed onto an iteration's box only when
+      // THIS environment selects it, so a project-wide answer would start an
+      // iteration that provisions a box and then fails vendor auth against a
+      // placeholder. Absent for a legacy (non-environment) run, which grants
+      // no secrets at all.
+      ...(environmentId ? { projectEnvironmentId: environmentId } : {}),
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
       // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
       // this checks for undefined rather than truthiness.
       ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
+      // The SAME object, never a copy — see `extraHeaders` on the request type.
+      ...(extraHeaders ? { extraHeaders } : {}),
+      // Likewise by reference: the ledger inside is the RUN's.
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+      ...(runToolDescriptionOverride
+        ? { toolDescriptionOverride: runToolDescriptionOverride }
+        : {}),
     });
   };
 
@@ -2534,11 +2891,12 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  // Enforced at the MCP proxy for harness runs (see the suite path); refused
-  // only where this deployment cannot seal the policy into the proxy token.
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+    harness: harnessOfHostConfig(effectiveHostConfig),
   });
   if (harnessPolicyRefusal) {
     throw new WebRouteError(
@@ -2585,6 +2943,10 @@ export async function runEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Freeze the authored analytics label onto the runtime case. The runner
+    // carries it into each iteration snapshot; reading it live later would
+    // re-attribute historical trials after a case is retagged.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
@@ -2958,11 +3320,12 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
-  // Enforced at the MCP proxy for harness runs (see the suite path); refused
-  // only where this deployment cannot seal the policy into the proxy token.
+  // Enforced at the MCP proxy for NATIVE-delivery harness runs (see the suite
+  // path); refused only where this deployment cannot seal the policy into the
+  // proxy token. Host-executed delivery enforces in-process and mints no token.
   const harnessPolicyRefusal = harnessToolPolicyLaunchRefusal({
     hasToolPolicy: Boolean(toolPolicy),
-    harness: Boolean(harnessOfHostConfig(effectiveHostConfig)),
+    harness: harnessOfHostConfig(effectiveHostConfig),
   });
   if (harnessPolicyRefusal) {
     throw new WebRouteError(
@@ -3009,6 +3372,9 @@ export async function streamEvalTestCaseWithManager(
     runs: testCaseOverrides?.runs ?? 1,
     model,
     provider,
+    // Keep quick and streamed single-case runs identical to suite runs: the
+    // label is authored metadata, but it must be frozen at iteration create.
+    ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
     expectedToolCalls:
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
@@ -3132,18 +3498,20 @@ export async function streamEvalTestCaseWithManager(
     // the run's own teardown, which aborts through this signal.
     await: { signal: streamAbortController.signal },
   });
+  // `includeAppOnly` is tied to the PRESENCE of a host policy, not to
+  // `respectToolVisibility`: eval wants the full set so the visibility gate
+  // below can both filter and COUNT the drops honestly.
+  const singleCaseToolOptions = mcpToolOptionsFor({
+    includeAppOnly: Boolean(suiteHostPolicy),
+    modelVisibleMcpToolResults: suiteHostPolicy?.modelVisibleMcpToolResults,
+    tasks: singleCaseTasksSeam,
+  });
   const tools = (
-    suiteHostPolicy || singleCaseTasksSeam
-      ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          ...(suiteHostPolicy
-            ? {
-                includeAppOnly: true,
-                modelVisibleMcpToolResults:
-                  suiteHostPolicy.modelVisibleMcpToolResults,
-              }
-            : {}),
-          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
-        })
+    singleCaseToolOptions
+      ? await clientManager.getToolsForAiSdk(
+          resolvedServerIds,
+          singleCaseToolOptions
+        )
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
   const streamToolSignals = suiteHostPolicy

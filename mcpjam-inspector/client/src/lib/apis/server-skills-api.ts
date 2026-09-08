@@ -10,11 +10,32 @@
  * Both modes share one shape. What differs is only which manager answers: the
  * long-lived local one, or a hosted ephemeral connection whose declared
  * capabilities come from the host config.
+ *
+ * The hosted calls go through `buildServerRequest`, the same builder every
+ * other per-server hosted route uses, rather than hand-assembling a body. Two
+ * of the fields it adds are load-bearing here and were both missing while this
+ * module built its own:
+ *
+ *   - `clientCapabilities`, from the active host config. Without it the
+ *     ephemeral connection falls back to the SDK defaults, which deliberately
+ *     omit `io.modelcontextprotocol/skills` — so the connection never
+ *     advertised the extension, `support.active` was false on every server,
+ *     and the section rendered nothing at all. Advertise = enforce cuts both
+ *     ways: a host that does not declare it gets no catalog, correctly, and
+ *     this host does declare it.
+ *   - the RESOLVED server id. `serverId` travels to Convex `authorizeBatch`,
+ *     which needs the `servers` table id; the display name fails argument
+ *     validation there, before any MCP frame is sent.
+ *
+ * It also carries the host's `clientInfo`, protocol pins and enterprise-auth
+ * policy, so a skills listing initializes on the same wire as every other
+ * hosted read of the same connection — which is the point of a debugger.
  */
 
 import { authFetch } from "@/lib/session-token";
 import { runByMode } from "@/lib/apis/mode-client";
 import { webPost } from "@/lib/apis/web/base";
+import { buildServerRequest } from "@/lib/apis/web/context";
 
 /** The connection's mutual-declaration state (SEP-2133 negotiation). */
 export interface ServerSkillsSupport {
@@ -34,9 +55,23 @@ export interface ServerSkillSummary {
   name: string;
   description: string;
   frontmatter: unknown;
-  resources: Array<{ uri: string; digest: string }>;
-  /** Present ⇒ discoverable but refused for loading. */
-  unloadable?: { reason: "no_resources"; message: string };
+  resources: Array<{ uri: string; digest: string; size?: number }>;
+  /**
+   * Present ⇒ discoverable but refused for loading.
+   *
+   * `dynamic_resources` is a server declaring `"resources": "dynamic"` — a
+   * form the draft defines; `no_resources` is a server omitting the field the
+   * draft requires. The UI renders `message` and never branches on `reason`,
+   * so the distinction exists for the reader of a refusal, not for layout.
+   */
+  unloadable?: {
+    reason:
+      | "no_resources"
+      | "dynamic_resources"
+      | "too_many_resources"
+      | "too_large";
+    message: string;
+  };
 }
 
 export interface ServerSkillListing {
@@ -69,7 +104,7 @@ export interface VerifiedServerSkill {
   content: string;
   contentSha256: string;
   frontmatter: unknown;
-  resources: Array<{ uri: string; digest: string }>;
+  resources: Array<{ uri: string; digest: string; size?: number }>;
 }
 
 const EMPTY_SUPPORT: ServerSkillsSupport = {
@@ -128,12 +163,9 @@ export async function listServerSkills(args: {
     hosted: async () => {
       if (!args.projectId) return empty;
       const result = await webPost<
-        { serverId: string; projectId: string },
+        Record<string, unknown>,
         ServerSkillListing
-      >("/api/web/server-skills/list", {
-        serverId: args.serverId,
-        projectId: args.projectId,
-      });
+      >("/api/web/server-skills/list", buildServerRequest(args.serverId));
       return { ...empty, ...result };
     },
   });
@@ -182,12 +214,11 @@ export async function getServerSkill(args: {
     hosted: async () =>
       unwrap(
         await webPost<
-          { serverId: string; uri: string; projectId?: string },
+          Record<string, unknown>,
           { skill?: VerifiedServerSkill; refusal?: ServerSkillRefusal }
         >("/api/web/server-skills/get", {
-          serverId: args.serverId,
+          ...buildServerRequest(args.serverId),
           uri: args.uri,
-          ...(args.projectId ? { projectId: args.projectId } : {}),
         })
       ),
   });
@@ -232,21 +263,15 @@ export async function readServerSkillFile(args: {
     hosted: async () =>
       unwrap(
         await webPost<
-          {
-            serverId: string;
-            skillUri: string;
-            resourceUri: string;
-            projectId?: string;
-          },
+          Record<string, unknown>,
           {
             file?: { uri: string; text: string; digest: string };
             refusal?: ServerSkillRefusal;
           }
         >("/api/web/server-skills/read-file", {
-          serverId: args.serverId,
+          ...buildServerRequest(args.serverId),
           skillUri: args.skillUri,
           resourceUri: args.resourceUri,
-          ...(args.projectId ? { projectId: args.projectId } : {}),
         })
       ),
   });

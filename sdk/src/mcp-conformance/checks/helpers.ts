@@ -1,3 +1,4 @@
+import { deepJsonSafe } from "../../json-safe.js";
 import type {
   MCPCheckSkipReason, MCPCheckEra, MCPCheckResult } from "../types.js";
 
@@ -32,7 +33,11 @@ export function failedResult(
     durationMs,
     error: {
       message,
-      details: errorDetails,
+      // Raw thrown values are often class instances (e.g. MCPAuthError), and
+      // the persistence layer rejects those wholesale — one live instance in
+      // `errorDetails` used to destroy the entire finished report at the
+      // Convex write. Reports carry plain JSON data only.
+      details: deepJsonSafe(errorDetails),
     },
     details,
   };

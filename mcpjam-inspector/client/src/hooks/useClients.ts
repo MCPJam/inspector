@@ -5,6 +5,7 @@ import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2"
 import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
+import { resolveClientDisplayNames } from "@/lib/client-display-name";
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -18,8 +19,18 @@ import type { HostOwnerScope } from "@/lib/host-owner-scope";
 export interface HostListItem {
   hostId: string;
   name: string;
+  /** Presentation-only unique name; never persisted or sent to mutations. */
+  displayName?: string;
   hostConfigId: string;
   modelId: string;
+  /**
+   * The emulated client this host is, from the list query's own config read.
+   * Additive: older backends omit it, so readers must treat absent as unknown
+   * rather than as "no style". Available for EVERY host, which is what lets
+   * Compare reconcile the live list against the catalog presets without
+   * depending on which rows happen to be selected.
+   */
+  hostStyle?: string | null;
   serverCount: number;
   // Additive (PR: standalone hosts). Older backends omit these; readers must
   // treat absent as null/false rather than assume presence.
@@ -82,9 +93,15 @@ export function useHostList({
 
   const hosts = useMemo(() => {
     const all = result ?? [];
+    const visible = withoutPrivateScenarioBackingHosts(all);
+    const displayNames = resolveClientDisplayNames(visible);
+    const decorated = all.map((host) => ({
+      ...host,
+      displayName: displayNames.get(host.hostId) ?? host.name,
+    }));
     return includePrivateBacking
-      ? all
-      : withoutPrivateScenarioBackingHosts(all);
+      ? decorated
+      : withoutPrivateScenarioBackingHosts(decorated);
   }, [result, includePrivateBacking]);
 
   return {

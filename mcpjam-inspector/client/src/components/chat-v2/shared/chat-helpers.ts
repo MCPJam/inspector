@@ -750,6 +750,29 @@ export function buildMcpPromptMessages(
 }
 
 /**
+ * A skill name, reduced to the character set a provider accepts inside a
+ * `tool_use.id`.
+ *
+ * Anthropic validates those ids against `^[a-zA-Z0-9_-]+$` and rejects the
+ * whole request otherwise. A SERVER-SERVED skill (SEP-2640) is addressed by a
+ * namespaced ref — `<server>/<skill>` — so its `/` made every follow-up turn
+ * fail with `messages.N.content.M.tool_use.id: String should match pattern`,
+ * and the transcript could not be continued at all. Cloud and local skills are
+ * plain slugs, which is why the id survived unsanitized until server skills
+ * introduced a separator into the name.
+ *
+ * The name is in the id for debuggability only — `generateId()` supplies the
+ * uniqueness — so replacing rather than dropping the offending characters
+ * keeps the id readable while making it valid. Sanitized at the ONE place ids
+ * are minted rather than by narrowing refs upstream: the ref's shape is the
+ * namespacing contract the picker and `loadSkill` both compute, and bending it
+ * to a provider's id rules would make two unrelated concerns share a format.
+ */
+function toolCallIdSegment(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]+/g, "_");
+}
+
+/**
  * Builds UIMessages that simulate the LLM calling loadSkill tool.
  * Creates assistant messages with tool invocations instead of user messages.
  */
@@ -761,7 +784,9 @@ export function buildSkillToolMessages(
   for (const skill of skillResults) {
     if (!skill.content) continue;
 
-    const toolCallId = `skill-load-${skill.name}-${generateId()}`;
+    const toolCallId = `skill-load-${toolCallIdSegment(
+      skill.name
+    )}-${generateId()}`;
 
     // Format output to match server-side loadSkill response.
     //

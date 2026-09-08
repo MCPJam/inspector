@@ -18,6 +18,9 @@ interface UseApiContextOptions {
   // Sibling conformance knobs; only the non-default value is ever set.
   firstPageOnly?: true;
   supportsMrtr?: false;
+  suppressListenChannel?: true;
+  dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   // Active host's enterprise-managed authorization policy (validated `on`
   // value only) — rides ad-hoc chat/eval request bodies.
   xaaPolicy?: XaaEnterprisePolicy;
@@ -43,6 +46,9 @@ export function useApiContext({
   mirrorToolParamHeaders,
   firstPageOnly,
   supportsMrtr,
+  suppressListenChannel,
+  dropToolListChanged,
+  toolCallCancellation,
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
@@ -73,6 +79,9 @@ export function useApiContext({
       mirrorToolParamHeaders,
       firstPageOnly,
       supportsMrtr,
+      suppressListenChannel,
+      dropToolListChanged,
+      toolCallCancellation,
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
@@ -97,6 +106,9 @@ export function useApiContext({
     mirrorToolParamHeaders,
     firstPageOnly,
     supportsMrtr,
+    suppressListenChannel,
+    dropToolListChanged,
+    toolCallCancellation,
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,

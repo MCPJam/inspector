@@ -1,11 +1,18 @@
 import { type ModelMessage } from "ai";
 import {
+  extractToolCallsExcludingPolicyBlocks,
+  extractToolCallsFromConversation,
+  mergeToolCalls,
+} from "../../shared/eval-tool-call-projection";
+import {
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
+import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
@@ -25,12 +32,14 @@ import {
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
+import { harnessOfHostConfig } from "./evals/harness-admission.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
+import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
   type BaseUrls,
@@ -48,6 +57,7 @@ import {
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -72,10 +82,16 @@ import {
   summarizeRenderObservations,
   widgetToolCallsByPromptIndex,
   SKILL_TOOL_NAMES,
+  resolveMatchOptions,
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
-import { META_TOOL_NAMES } from "@/shared/progressive-tool-discovery";
+import {
+  META_TOOL_NAMES,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -124,6 +140,7 @@ import {
   buildIterationFinishParams,
   buildStageMetadata,
 } from "./evals/finalize-iteration.js";
+import type { GradingEngineMode } from "./evals/grading-mode.js";
 import type {
   StageAuthoredCase,
   StageSetupSignals,
@@ -131,13 +148,18 @@ import type {
 } from "@mcpjam/sdk/contract";
 import {
   buildHarnessToolPolicySnapshots,
+  benchmarkEnforcementPolicy,
   createToolPolicyGate,
   toolAnnotationsKey,
   UnmatchedToolPolicyNameError,
   validateToolPolicyNames,
   type ToolAnnotationsLookup,
+  type ToolPolicyGate,
+  type SideEffectGate,
 } from "./evals/tool-policy-gate.js";
+import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
+import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -168,6 +190,83 @@ const MAX_CONCURRENT_RENDER_CHECKS = (() => {
   const raw = Number(process.env.MCPJAM_MAX_CONCURRENT_RENDER_CHECKS);
   return Number.isInteger(raw) && raw >= 1 ? raw : 4;
 })();
+
+/**
+ * Narrow the run-level benchmark write guard to ONE case's iteration.
+ *
+ * The prefix an artifact must carry is per-ITERATION, so a list-style case
+ * cannot observe its own sibling iterations' artifacts and grade a leak that is
+ * ours. The ledger is deliberately NOT narrowed: it belongs to the run, because
+ * the cleanup that reads it does.
+ *
+ * A case with no id cannot be matched to a manifest at all, which under
+ * `requireManifest` is refused rather than run — an unidentifiable write case
+ * is exactly the one whose blast radius nobody can state.
+ */
+function resolveSideEffectGate(
+  guard: BenchmarkWriteGuard,
+  caseId: string | undefined,
+  iteration: number,
+): SideEffectGate {
+  return {
+    sideEffects: caseId ? guard.sideEffectsByCaseId[caseId] : undefined,
+    benchmarkRunId: guard.benchmarkRunId,
+    ...(caseId ? { caseId } : {}),
+    iteration,
+    ledger: guard.ledger,
+    requireManifest: guard.requireManifest === true,
+  };
+}
+
+/**
+ * The execution-layer gate for one iteration, or `null` when nothing restrains
+ * it.
+ *
+ * ── A WRITE GUARD FORCES A GATE ON ITS OWN ────────────────────────────────
+ *
+ * `toolPolicy` is SUITE-authored; `benchmarkWriteGuard` comes from the
+ * benchmark claim. They are unrelated fields, and a benchmark write cell
+ * normally arrives with the second and not the first — nothing in the claim
+ * supplies a `toolPolicy`. Building the gate as `toolPolicy ? … : null`
+ * therefore left benchmark write cells with NO gate: no allowed-tool check, no
+ * argument or prefix validation, no mutation-target check, and no id
+ * harvesting, which also meant nothing to clean up afterwards. The entire
+ * write-safety story was switched off by the absence of an unrelated optional
+ * field.
+ *
+ * Extracted and exported so that stays true: this is the one decision that
+ * says whether anything at all bounds what a benchmark case writes to somebody
+ * else's server, and it is worth being able to assert on directly.
+ */
+export function resolveEnforcementGate(args: {
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
+  testCaseId?: string;
+  runIndex: number;
+  annotations: ToolAnnotationsLookup;
+  warnings?: ReadonlyArray<string>;
+}): ToolPolicyGate | null {
+  const sideEffectGate = args.benchmarkWriteGuard
+    ? resolveSideEffectGate(
+        args.benchmarkWriteGuard,
+        args.testCaseId,
+        args.runIndex,
+      )
+    : undefined;
+  // The suite's own policy wins when it has one — an author who wrote
+  // `readOnly` meant it, and the manifest is an additional bound rather than a
+  // replacement. With no suite policy, the guard supplies the baseline.
+  const policy =
+    args.toolPolicy ??
+    (sideEffectGate ? benchmarkEnforcementPolicy(sideEffectGate) : undefined);
+  if (!policy) return null;
+  return createToolPolicyGate({
+    policy,
+    annotations: args.annotations,
+    ...(args.warnings ? { warnings: args.warnings } : {}),
+    ...(sideEffectGate ? { sideEffectGate } : {}),
+  });
+}
 
 /**
  * Minimal async concurrency limiter: returns a function that runs at most
@@ -206,6 +305,10 @@ export type EvalTestCase = {
   title: string;
   query: string;
   runs: number;
+  /** V2 case override; absent means the suite default. */
+  repetitions?: number;
+  /** V2 case threshold fraction; absent means the suite default. */
+  passThreshold?: number;
   model: string;
   provider: string;
   expectedToolCalls: Array<{
@@ -214,6 +317,8 @@ export type EvalTestCase = {
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   expectedOutput?: string;
+  /** Authored analytics grouping label, frozen into each iteration snapshot. */
+  intent?: string;
   promptTurns?: PromptTurn[];
   /**
    * Unified `TestStep[]` model (Phase 3). When present this is the source of
@@ -334,7 +439,7 @@ export function runFrozenSkillOptions(run: {
         run.pinnedHarnessSkills === null
           ? "null"
           : typeof run.pinnedHarnessSkills
-      })`
+      })`,
     );
   }
   return {
@@ -347,9 +452,83 @@ export function runFrozenSkillOptions(run: {
   };
 }
 
+/**
+ * Which skills source an ITERATION hands `prepareChatV2` — the second half of
+ * the two-channel decision `runFrozenSkillOptions` bundles.
+ *
+ * Eval runs never use local-FS skills (decision 10), so the answer is always
+ * explicit. The part that is not obvious: a HARNESS iteration takes
+ * `{ kind: "none" }` EVEN WHEN THE RUN HAS PINS. Its pins are already travelling
+ * on the other channel (`pinnedHarnessSkills` → SKILL.md on the box), and
+ * `prepareChatV2` THROWS on harness+pinned because delivering both would hand
+ * the model the same skill twice by two mechanisms — an in-memory `loadSkill`
+ * tool AND an on-box copy.
+ *
+ * This is a seam guard, in the same spirit as `runFrozenSkillOptions` and for a
+ * bug of the same family. #4146 wired a run's pins into `pinnedSkillSource`
+ * without teaching the two iteration paths that a harness must not receive
+ * them, so every harness run whose environment carried a skill died at
+ * `prepareChatV2` with `tokensUsed: 0` — while runs with no skills stayed green,
+ * which is why it shipped. Both call sites now ask this one function, so the
+ * two paths cannot drift apart again.
+ */
+export function resolveIterationSkillsSource(args: {
+  harness?: string | undefined;
+  pinnedSkillSource?: EvalPinnedSkillSource;
+}): EvalPinnedSkillSource | { kind: "none" } {
+  if (args.harness) return { kind: "none" };
+  return args.pinnedSkillSource ?? { kind: "none" };
+}
+
+/**
+ * The match options the `toolCalls:match` score definition hashes over.
+ *
+ * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
+ * whatever the case declared, so hashing the sparse authored object would give
+ * two cases that grade identically two different `implementationHash`es — and
+ * would leave a case that declares nothing hashing `{}` while actually being
+ * graded order-agnostic with partial argument matching. The digest is supposed
+ * to answer "would this scorer decide differently?", and only the resolved
+ * options can answer that.
+ */
+/**
+ * The resolved match options to hash into the `toolCalls:match` definition.
+ *
+ * MUST STAY IN LOCKSTEP with what the matcher is actually handed. Today both
+ * this and `evaluateMultiTurnResults` resolve as
+ * `resolveMatchOptions(undefined, test.matchOptions)` at the same call sites,
+ * so the digest honestly describes the options the verdict was produced under.
+ *
+ * If a future path starts threading suite-level `defaultMatchOptions` into the
+ * matcher without threading them here, the two silently diverge: the scorer's
+ * `implementationHash` would describe options the matcher never applied, and
+ * the second pass would rebuild the definition under a hash the first pass
+ * never wrote. Change both, or neither.
+ */
+function scoreMatchOptionsFor(
+  test: Pick<EvalTestCase, "matchOptions">,
+): Record<string, unknown> {
+  return resolveMatchOptions(undefined, test.matchOptions) as unknown as Record<
+    string,
+    unknown
+  >;
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
+  /**
+   * The run's FROZEN grading-engine position, read from
+   * `configSnapshot.gradingEngine` at run start and threaded to every
+   * iteration's finalization.
+   *
+   * ABSENT ⇒ each finalization falls back to the env kill switch alone, which
+   * is `off` unless an operator set it — the pre-B3b behaviour. Threading it
+   * is what makes a per-suite `off` real on the FIRST pass (it was previously
+   * honoured only by the judge second pass, which reads the run row) and what
+   * lets a run reach `enforce` at all.
+   */
+  gradingMode?: GradingEngineMode;
   config: {
     tests: EvalTestCase[];
     environment: {
@@ -365,6 +544,26 @@ export type RunEvalSuiteOptions = {
       }>;
     };
   };
+  /**
+   * The PROJECT ENVIRONMENT this run launched from — a `projectEnvironments`
+   * doc id. Deliberately NOT inside `config.environment`, which is the servers
+   * snapshot, and deliberately not `computerEnvironmentId`, which is a sandbox
+   * IMAGE; the three are unrelated despite the shared word.
+   *
+   * The GRANT BOUNDARY for the run's project secrets, and therefore what a
+   * HARNESS iteration's BROKERED external-account credential check must be
+   * scoped to. Absent for a legacy (non-environment) run, which grants none.
+   */
+  projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
@@ -375,6 +574,13 @@ export type RunEvalSuiteOptions = {
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
+  /**
+   * The REWRITE-arm marker from `configSnapshot.toolDescriptionOverride`.
+   * Applied to every tool-prep path; stamped onto iteration metadata after
+   * prep so eligibility can read `metadata.descriptionExperiment.applied`.
+   */
+  toolDescriptionOverride?:
+    ToolDescriptionOverrideMarker | Record<string, unknown>;
   /**
    * Resolved compat-runtime flag for the suite's host config. When
    * true, widget snapshots captured during this run will have the
@@ -427,6 +633,29 @@ export type RunEvalSuiteOptions = {
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
+  /**
+   * Extra headers stamped on every per-step Convex request of this run.
+   *
+   * The bench worker's carrier for `x-mcpjam-benchmark-grant`. Forwarded to
+   * BOTH backend iteration paths even though a benchmark cell only ever runs an
+   * MCPJam-paid model (`/stream`): one option on one type is what keeps the two
+   * paths from drifting into "the header is attached on one of them".
+   *
+   * Never copied on the way down — the caller may rotate a credential inside
+   * the object between steps.
+   */
+  extraHeaders?: Record<string, string>;
+  /**
+   * The benchmark's write-manifest enforcement, when this run is a hosted
+   * benchmark cell.
+   *
+   * Threaded rather than resolved here for the same reason the grant is: the
+   * manifests are pinned in the definition and verified against the claim
+   * before a cell launches, so the runner receives a decision it must not
+   * re-make. The ledger inside travels by REFERENCE — every iteration writes
+   * into the one the run's cleanup will read.
+   */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -435,6 +664,45 @@ export type EvalIterationOutcome = {
   iterationId?: string;
   policyBlockCount?: number;
 };
+
+/**
+ * D7: narrow a turn's full tool registry down to the subset the model was
+ * actually shown, when progressive discovery gated what it could see.
+ *
+ * `prepared.allTools` (and `selectionToolsForFinish`, captured from it) is
+ * always the COMPLETE registry — prepareChatV2 builds it before any step
+ * runs. When progressive discovery is enabled, `prepareStep` narrows each
+ * step's advertised set to `resolveActiveToolNames(plan, discoveryState)`
+ * and only ever adds to `discoveryState.loadedToolIds` (never removes), so
+ * by the time a turn finishes, `resolveActiveToolNames` recomputed against
+ * that SAME (mutated-in-place) state object gives the full set of names the
+ * model was shown across every step of the turn. Passing the unnarrowed
+ * registry to D7's selection-tool-catalog would let it see — and blame —
+ * metadata for a tool the model never had a chance to read.
+ *
+ * A no-op (returns `allTools` unchanged) when progressive discovery wasn't
+ * enabled for this turn, matching `resolveActiveToolNames`'s own non-plan
+ * behavior of exposing everything.
+ */
+export function narrowToolsToAdvertised(
+  allTools: PrepareChatV2Result["allTools"],
+  progressivePlan: ProgressiveToolPlan,
+  discoveryState: ToolDiscoveryState,
+): PrepareChatV2Result["allTools"] {
+  if (!progressivePlan.enabled) {
+    return allTools;
+  }
+  const advertisedNames = new Set(
+    resolveActiveToolNames(progressivePlan, discoveryState),
+  );
+  const narrowed: PrepareChatV2Result["allTools"] = {};
+  for (const [name, tool] of Object.entries(allTools)) {
+    if (advertisedNames.has(name)) {
+      narrowed[name] = tool;
+    }
+  }
+  return narrowed;
+}
 
 /**
  * True when the provider/backend actually reported token usage. `accumulatedUsage`
@@ -517,17 +785,217 @@ function delay(ms: number): Promise<void> {
 }
 
 type ToolSet = Record<string, any>;
-type ToolCall = { toolName: string; arguments: Record<string, any> };
+
+/**
+ * The REWRITE-arm marker copied from `configSnapshot.toolDescriptionOverride`.
+ * Presence means this run is the rewrite arm; the ORIGINAL arm has none.
+ */
+type ToolDescriptionOverrideMarker = {
+  experimentId: string;
+  toolName: string;
+  description: string;
+  proposalHash: string;
+};
+
+type DescriptionExperimentIterationStamp = {
+  experimentId: string;
+  arm: "rewrite" | "original";
+  toolName: string;
+  proposalHash: string;
+  applied: boolean;
+};
+
+/**
+ * Iteration metadata is `v.any()` on the backend. Widen past scalars so a
+ * nested `descriptionExperiment` object can persist — E2 eligibility reads
+ * `metadata.descriptionExperiment.applied === true` and a JSON-stringified
+ * value would fail that check.
+ */
+type IterationMetadataValue =
+  string | number | boolean | DescriptionExperimentIterationStamp;
+
+type IterationMetadataBase = Record<string, IterationMetadataValue>;
+
+function readToolDescriptionOverrideMarker(
+  raw: unknown,
+): ToolDescriptionOverrideMarker | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  // A marker that is present but unreadable is refused, not ignored: an
+  // ignored marker would run the whole rewrite arm on the ORIGINAL catalog,
+  // spend its trial budget, and report every trial as `overrideNotApplied`.
+  // That is fail-safe for the statistics and a silent full-arm spend for
+  // the customer.
+  if (typeof raw !== "object") {
+    throw new Error(
+      "configSnapshot.toolDescriptionOverride is present but not an object",
+    );
+  }
+  const o = raw as Record<string, unknown>;
+  if (
+    typeof o.toolName !== "string" ||
+    typeof o.description !== "string" ||
+    typeof o.experimentId !== "string" ||
+    typeof o.proposalHash !== "string"
+  ) {
+    throw new Error(
+      "configSnapshot.toolDescriptionOverride is missing toolName, description, experimentId or proposalHash",
+    );
+  }
+  return {
+    toolName: o.toolName,
+    description: o.description,
+    experimentId: o.experimentId,
+    proposalHash: o.proposalHash,
+  };
+}
+
+function descriptionOverridesFromMarker(
+  marker: ToolDescriptionOverrideMarker | undefined,
+): Record<string, string> | undefined {
+  if (!marker) return undefined;
+  return { [marker.toolName]: marker.description };
+}
+
+function applyDescriptionOverridesToToolSet(
+  tools: ToolSet,
+  overrides: Record<string, string> | undefined,
+): number {
+  if (!overrides) return 0;
+  let applied = 0;
+  for (const [name, description] of Object.entries(overrides)) {
+    const tool = tools[name];
+    if (tool && typeof tool === "object") {
+      (tool as { description?: string }).description = description;
+      applied += 1;
+    }
+  }
+  return applied;
+}
+
+function descriptionExperimentStamp(
+  override: ToolDescriptionOverrideMarker,
+  applied: boolean,
+): DescriptionExperimentIterationStamp {
+  return {
+    experimentId: override.experimentId,
+    arm: "rewrite",
+    toolName: override.toolName,
+    proposalHash: override.proposalHash,
+    applied,
+  };
+}
+
+/**
+ * Stamp the rewrite-arm facts on an iteration's metadata base: the structured
+ * stamp the report reads, and `tools_description_overridden`, the exposure
+ * count `buildHostIterationMetadata` would emit if a host policy were present.
+ * Written here so it exists whether or not the run has a host policy — the
+ * verify recipe reads it beside `applied`.
+ */
+function stampDescriptionExperiment(
+  base: IterationMetadataBase,
+  override: ToolDescriptionOverrideMarker,
+  applied: boolean,
+): void {
+  base.descriptionExperiment = descriptionExperimentStamp(override, applied);
+  if (applied) {
+    base.tools_description_overridden = 1;
+  }
+}
+
+function descriptionAppliedOnPreparedTools(
+  allTools: PrepareChatV2Result["allTools"] | undefined,
+  override: ToolDescriptionOverrideMarker,
+): boolean {
+  const prepared = allTools?.[override.toolName];
+  return (
+    prepared != null &&
+    typeof prepared === "object" &&
+    "description" in prepared &&
+    (prepared as { description?: unknown }).description === override.description
+  );
+}
+
+/**
+ * What to tell the author when a box could not be provisioned.
+ *
+ * An eval surface has no separate "notice" channel — a failed setup IS the
+ * message the author reads — so the wording has to carry the whole story:
+ *
+ *   - the DESKTOP refusals (`desktop_pin_conflict`, `desktop_not_advertised`,
+ *     `desktop_unavailable`) already arrive as a sentence written for a human
+ *     ("this run pins a custom environment AND advertises the browser tool…"),
+ *     so they are passed through verbatim. Wrapping them in
+ *     "Could not provision the eval's reproducible sandbox: <409>" would bury
+ *     the one part the author can act on.
+ *   - CAPACITY is a WAIT, not a mistake, and which budget was hit decides what
+ *     the author does about it. A desktop wait is a different sentence — and a
+ *     different remedy — from "this deployment is full".
+ */
+const DESKTOP_SETUP_REFUSAL_CODES = new Set([
+  "desktop_pin_conflict",
+  "desktop_not_advertised",
+  "desktop_unavailable",
+  "runtime_kind_mismatch",
+]);
+
+export function describeEvalSandboxRefusal(refusal: {
+  status: number;
+  error: string;
+  code?: string;
+  resource?: string;
+}): string {
+  if (refusal.code && DESKTOP_SETUP_REFUSAL_CODES.has(refusal.code)) {
+    return refusal.error;
+  }
+  if (refusal.status === 503) {
+    return refusal.resource === "desktop"
+      ? `Waiting on desktop (browser) capacity for this organization: ${refusal.error}`
+      : `Waiting on sandbox capacity: ${refusal.error}`;
+  }
+  return `Could not provision the eval's reproducible sandbox: ${refusal.error}`;
+}
+
+function throwIfDescriptionOverrideOnHarness(
+  override: ToolDescriptionOverrideMarker | undefined,
+  harness: string | undefined,
+): void {
+  if (!override || !harness) return;
+  throw new WebRouteError(
+    400,
+    ErrorCode.VALIDATION_ERROR,
+    "Description overrides are only supported on the emulated engine.",
+    { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" },
+  );
+}
+
+type ToolCall = {
+  toolName: string;
+  arguments: Record<string, any>;
+  /**
+   * The provider's id for this call, when the source part carried one.
+   *
+   * Declared here rather than smuggled in behind a cast: this value is BOTH
+   * read locally (`extractToolCallsExcludingPolicyBlocks` matches blocked
+   * calls by it) and persisted (`updateTestIteration.actualToolCalls`), and
+   * the casts that used to hide it are how it reached a Convex validator that
+   * had never been told about it — an unknown field there is a hard
+   * ArgumentValidationError, so every tool-calling iteration failed to
+   * finalize. Keeping it on the type is what makes the persistence boundary
+   * type-checked again.
+   */
+  toolCallId?: string;
+};
 type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
 function getServerLabelForEvalError(
   serverId: string,
-  environment: RunEvalSuiteOptions["config"]["environment"] | undefined
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
 ): string {
   const binding = environment?.serverBindings?.find(
     (entry) =>
       entry.projectServerId === serverId ||
-      entry.projectServerId?.toLowerCase() === serverId.toLowerCase()
+      entry.projectServerId?.toLowerCase() === serverId.toLowerCase(),
   );
   return binding?.serverName || serverId;
 }
@@ -570,7 +1038,10 @@ function throwSetupPhaseError(args: {
   error: unknown;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): never {
-  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
+  const serverLabel = getServerLabelForEvalError(
+    args.serverId,
+    args.environment,
+  );
   if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
     throw new EvalSetupPhaseError({
       status: 409,
@@ -606,18 +1077,17 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   tasks?: ToolTaskSeamOptions;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   setupObserver?: RunSetupObserver;
+  toolDescriptionOverrides?: Record<string, string>;
 }): Promise<ToolSet> {
-  const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
-  const toolOptions =
-    args.includeAppOnly || hasModelVisiblePolicy || args.tasks !== undefined
-      ? {
-          ...(args.includeAppOnly ? { includeAppOnly: true } : {}),
-          ...(args.modelVisibleMcpToolResults !== undefined
-            ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
-            : {}),
-          ...(args.tasks !== undefined ? { tasks: args.tasks } : {}),
-        }
-      : undefined;
+  // `undefined` ⇒ the no-options overload, keeping a default run byte-identical.
+  // `needsApproval` is deliberately not an input here: an eval run is auto-deny
+  // by construction, so the AI SDK approval flag has nothing to gate.
+  const toolOptions = mcpToolOptionsFor({
+    includeAppOnly: args.includeAppOnly,
+    modelVisibleMcpToolResults: args.modelVisibleMcpToolResults,
+    tasks: args.tasks,
+    toolDescriptionOverrides: args.toolDescriptionOverrides,
+  });
 
   const now = () => Date.now();
   const observer = args.setupObserver;
@@ -646,7 +1116,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         const tools = toolOptions
           ? await args.mcpClientManager.getToolsForAiSdk(
               [serverId],
-              toolOptions
+              toolOptions,
             )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
         const endedAt = now();
@@ -692,7 +1162,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         firstError.push({ error, serverId, phase: "discovery" });
         return null;
       }
-    })
+    }),
   );
 
   if (observer) {
@@ -740,7 +1210,7 @@ export function resolveConfiguredServerIds(args: {
 
   const availableServerIdsSet = new Set(availableServerIds);
   const availableServerIdByLowercase = new Map(
-    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId])
+    availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
   );
   const projectServerIdByName = new Map<string, string>();
   const serverNameByProjectServerId = new Map<string, string>();
@@ -775,10 +1245,10 @@ export function resolveConfiguredServerIds(args: {
 
     const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
       ? trimmedServerRef
-      : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
         (() => {
           const projectServerId = projectServerIdByName.get(
-            trimmedServerRef.toLowerCase()
+            trimmedServerRef.toLowerCase(),
           );
           if (projectServerId) {
             return (
@@ -790,7 +1260,7 @@ export function resolveConfiguredServerIds(args: {
           }
 
           const serverName = serverNameByProjectServerId.get(
-            trimmedServerRef.toLowerCase()
+            trimmedServerRef.toLowerCase(),
           );
           if (serverName) {
             return (
@@ -803,7 +1273,7 @@ export function resolveConfiguredServerIds(args: {
 
           return undefined;
         })() ??
-        trimmedServerRef;
+        trimmedServerRef);
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -885,11 +1355,11 @@ function resolvePinnedServerKey(
   pinned: PinnedToolCall,
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined,
   selectedServers: string[],
-  mcpClientManager: MCPClientManager
+  mcpClientManager: MCPClientManager,
 ): string | undefined {
   const connected = new Set(selectedServers);
   const candidates = [pinned.serverId, pinned.serverName].filter(
-    (ref): ref is string => !!ref
+    (ref): ref is string => !!ref,
   );
   for (const candidate of candidates) {
     const [resolved] = resolveConfiguredServerIds({
@@ -908,12 +1378,12 @@ function resolvePinnedServerKey(
 
 function buildPromptTraceSummaries(
   evaluation: MultiTurnEvaluationResult,
-  turnCheckResults: PredicateResult[] = []
+  turnCheckResults: PredicateResult[] = [],
 ): PromptTraceSummary[] {
   return evaluation.promptSummaries.map((summary) => {
     const perTurn = turnCheckResults.filter(
       (r) =>
-        r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex
+        r.scope?.kind === "turn" && r.scope.promptIndex === summary.promptIndex,
     );
     return {
       promptIndex: summary.promptIndex,
@@ -943,130 +1413,12 @@ function buildPromptTraceSummaries(
           mismatchedArguments: Array.from(mismatchedArguments).filter(
             (key) =>
               JSON.stringify(mismatch.expectedArgs?.[key]) !==
-              JSON.stringify(mismatch.actualArgs?.[key])
+              JSON.stringify(mismatch.actualArgs?.[key]),
           ),
         };
       }),
     };
   });
-}
-
-function extractToolCallsFromConversation(params: {
-  steps?: ReadonlyArray<any>;
-  messages: ModelMessage[];
-}): ToolCall[] {
-  const toolsCalled: ToolCall[] = [];
-
-  if (params.steps && Array.isArray(params.steps)) {
-    for (const step of params.steps) {
-      const stepToolCalls = (step as any).toolCalls || [];
-      for (const call of stepToolCalls) {
-        if (call?.toolName || call?.name) {
-          toolsCalled.push({
-            toolName: call.toolName ?? call.name,
-            arguments: call.args ?? call.input ?? {},
-            ...(typeof call.toolCallId === "string"
-              ? { toolCallId: call.toolCallId }
-              : {}),
-          } as ToolCall);
-        }
-      }
-    }
-  }
-
-  for (const msg of params.messages) {
-    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-      for (const item of (msg as any).content) {
-        if (item?.type === "tool-call") {
-          const name = item.toolName ?? item.name;
-          if (name) {
-            const argumentsValue =
-              item.input ?? item.parameters ?? item.args ?? {};
-            const alreadyAdded = toolsCalled.some(
-              (toolCall) =>
-                toolCall.toolName === name &&
-                JSON.stringify(toolCall.arguments) ===
-                  JSON.stringify(argumentsValue)
-            );
-            if (!alreadyAdded) {
-              toolsCalled.push({
-                toolName: name,
-                arguments: argumentsValue,
-                ...(typeof item.toolCallId === "string"
-                  ? { toolCallId: item.toolCallId }
-                  : {}),
-              } as ToolCall);
-            }
-          }
-        }
-      }
-    }
-
-    if (msg?.role === "assistant" && Array.isArray((msg as any).toolCalls)) {
-      for (const call of (msg as any).toolCalls) {
-        if (call?.toolName || call?.name) {
-          const toolName = call.toolName ?? call.name;
-          const argumentsValue = call.args ?? call.input ?? {};
-          const alreadyAdded = toolsCalled.some(
-            (toolCall) =>
-              toolCall.toolName === toolName &&
-              JSON.stringify(toolCall.arguments) ===
-                JSON.stringify(argumentsValue)
-          );
-          if (!alreadyAdded) {
-            toolsCalled.push({
-              toolName,
-              arguments: argumentsValue,
-              ...(typeof call.toolCallId === "string"
-                ? { toolCallId: call.toolCallId }
-                : {}),
-            } as ToolCall);
-          }
-        }
-      }
-    }
-  }
-
-  return toolsCalled;
-}
-
-function extractToolCallsExcludingPolicyBlocks(
-  params: {
-    steps?: ReadonlyArray<any>;
-    messages: ModelMessage[];
-  },
-  blockedToolCallIds: ReadonlySet<string>
-): ToolCall[] {
-  return extractToolCallsFromConversation(params).filter((toolCall) => {
-    const toolCallId = (toolCall as ToolCall & { toolCallId?: unknown })
-      .toolCallId;
-    return (
-      typeof toolCallId !== "string" || !blockedToolCallIds.has(toolCallId)
-    );
-  });
-}
-
-function toolCallIdentity(toolCall: ToolCall): string {
-  return `${toolCall.toolName}:${JSON.stringify(toolCall.arguments ?? {})}`;
-}
-
-function mergeToolCalls(
-  existingToolCalls: ToolCall[],
-  incomingToolCalls: ToolCall[]
-): ToolCall[] {
-  const seen = new Set(existingToolCalls.map(toolCallIdentity));
-  const merged = [...existingToolCalls];
-
-  for (const toolCall of incomingToolCalls) {
-    const identity = toolCallIdentity(toolCall);
-    if (seen.has(identity)) {
-      continue;
-    }
-    seen.add(identity);
-    merged.push(toolCall);
-  }
-
-  return merged;
 }
 
 function appendPartialToolCallsToPrompt(params: {
@@ -1086,14 +1438,14 @@ function appendPartialToolCallsToPrompt(params: {
   }
 
   const existingToolCalls = Array.isArray(
-    params.toolsCalledByPrompt[params.promptIndex]
+    params.toolsCalledByPrompt[params.promptIndex],
   )
     ? params.toolsCalledByPrompt[params.promptIndex]!
     : [];
 
   params.toolsCalledByPrompt[params.promptIndex] = mergeToolCalls(
     existingToolCalls,
-    partialToolCalls
+    partialToolCalls,
   );
 }
 
@@ -1132,7 +1484,7 @@ function buildTraceSnapshotEvent(params: {
     snapshotKind: params.snapshotKind,
     trace: sanitizeForConvexTransport(trace),
     actualToolCalls: sanitizeForConvexTransport(
-      toStreamToolCalls(params.actualToolCalls)
+      toStreamToolCalls(params.actualToolCalls),
     ),
     usage: {
       inputTokens: params.usage.inputTokens ?? 0,
@@ -1152,7 +1504,7 @@ function buildTraceSnapshotEvent(params: {
  * (already steps-shaped) — and prefers an existing `steps` array if present.
  */
 function snapshotWithStepsForConvex(
-  snapshot: Record<string, unknown>
+  snapshot: Record<string, unknown>,
 ): Record<string, unknown> {
   if (
     !snapshot ||
@@ -1166,8 +1518,8 @@ function snapshotWithStepsForConvex(
     Array.isArray(steps) && steps.length > 0
       ? steps
       : Array.isArray(promptTurns)
-      ? promptTurnsToSteps(promptTurns as PromptTurn[])
-      : undefined;
+        ? promptTurnsToSteps(promptTurns as PromptTurn[])
+        : undefined;
   return resolvedSteps ? { ...rest, steps: resolvedSteps } : rest;
 }
 
@@ -1182,9 +1534,12 @@ async function createIterationDirectly(
       provider: string;
       model: string;
       runs?: number;
+      repetitions?: number;
+      passThreshold?: number;
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       expectedOutput?: string;
+      intent?: string;
       steps?: TestStep[];
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
@@ -1193,7 +1548,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-  }
+  },
 ): Promise<string | undefined> {
   try {
     const result = await convexClient.mutation(
@@ -1201,11 +1556,11 @@ async function createIterationDirectly(
       {
         testCaseId: params.testCaseId,
         testCaseSnapshot: sanitizeForConvexTransport(
-          snapshotWithStepsForConvex(params.testCaseSnapshot)
+          snapshotWithStepsForConvex(params.testCaseSnapshot),
         ),
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
-      }
+      },
     );
 
     return result?.iterationId as string | undefined;
@@ -1225,7 +1580,7 @@ async function persistSetupFailedIteration(args: {
   iterationId: string | undefined;
   runStartedAt: number;
   errorMessage: string;
-  iterationMetadataBase: Record<string, string | number | boolean>;
+  iterationMetadataBase: IterationMetadataBase;
   /**
    * The authored case's stage inputs (`buildStageAuthoredCase`).
    *
@@ -1248,7 +1603,11 @@ async function persistSetupFailedIteration(args: {
     toolsCalled: [],
     usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     messages: [] as ModelMessage[],
-    status: "failed" as const,
+    // The environment never came up, so nothing was asked of the server under
+    // test. `failed` would report this as the server's problem; `setup_failed`
+    // says the harness never got to the question, which is what validity
+    // aggregation needs in order to withhold a verdict instead of inventing one.
+    status: "setup_failed" as const,
     startedAt: args.runStartedAt,
     error: args.errorMessage,
     resultSource: "reported" as const,
@@ -1260,7 +1619,7 @@ async function persistSetupFailedIteration(args: {
         // `traceAbsent`. When setupSignals are present it measures the top
         // two stages instead of blanking the whole chain.
         ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
-        status: "failed",
+        status: "setup_failed",
         error: args.errorMessage,
       }),
       ...(args.setupAudit ?? {}),
@@ -1297,14 +1656,16 @@ async function persistRunSetupFailure(args: {
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
 
-  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+  const listPending = async (): Promise<Array<
+    Record<string, unknown>
+  > | null> => {
     try {
       const details = (await args.convexClient.query(
         "testSuites:getTestSuiteRunDetails" as any,
-        { runId: args.runId }
+        { runId: args.runId },
       )) as { iterations?: Array<Record<string, unknown>> } | null;
       return (details?.iterations ?? []).filter(
-        (row) => row.status === "pending"
+        (row) => row.status === "pending",
       );
     } catch (readError) {
       logger.warn("[evals] Failed to read pending setup iterations", {
@@ -1316,9 +1677,7 @@ async function persistRunSetupFailure(args: {
     }
   };
 
-  const persistPending = async (
-    pending: Array<Record<string, unknown>>
-  ) => {
+  const persistPending = async (pending: Array<Record<string, unknown>>) => {
     await Promise.allSettled(
       pending.map(async (row) => {
         const iterationId =
@@ -1329,11 +1688,10 @@ async function persistRunSetupFailure(args: {
               : undefined;
         const test = args.tests.find(
           (candidate) =>
-            candidate.testCaseId && candidate.testCaseId === row.testCaseId
+            candidate.testCaseId && candidate.testCaseId === row.testCaseId,
         );
         const snapshot = row.testCaseSnapshot as
-          | { query?: string; expectedToolCalls?: unknown[] }
-          | undefined;
+          { query?: string; expectedToolCalls?: unknown[] } | undefined;
         await persistSetupFailedIteration({
           iterationId,
           runStartedAt: args.runStartedAt,
@@ -1364,7 +1722,7 @@ async function persistRunSetupFailure(args: {
           recorder: args.recorder,
           convexClient: args.convexClient,
         });
-      })
+      }),
     );
   };
 
@@ -1381,7 +1739,7 @@ async function persistRunSetupFailure(args: {
     try {
       await args.convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
-        { runId: args.runId, error: args.errorMessage }
+        { runId: args.runId, error: args.errorMessage },
       );
     } catch (cleanupError) {
       logger.warn("[evals] Failed to mark residual setup iterations failed", {
@@ -1444,6 +1802,8 @@ type RunIterationBaseParams = {
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
+  /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
+  toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /**
    * If supplied, the runner skips the upfront `recordIterationStartWithoutRun`
    * call and reuses this id. Used by `streamTestCase` when `runs > 1` so all N
@@ -1461,11 +1821,15 @@ type RunIterationBaseParams = {
   injectOpenAiCompat?: boolean;
   /** Resolved host execution policy from the run's hostConfig snapshot. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
   toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.benchmarkWriteGuard}. */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
   /** Folded run-level connect / tools-list evidence (D6). */
   setupSignals?: StageSetupSignals;
   /** Synthetic connection/discovery spans (timeline only). */
@@ -1496,6 +1860,28 @@ type RunIterationBaseParams = {
    * its environment. Absent on quick-run paths that pre-resolve servers.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /**
+   * The PROJECT ENVIRONMENT this run launched from — a `projectEnvironments`
+   * doc id, and NOT to be confused with either neighbour: `environment` above
+   * is the servers snapshot, and `computerEnvironmentId` is a sandbox IMAGE.
+   *
+   * Carried for the HARNESS path only, where it is the grant boundary for the
+   * run's project secrets: an external-account credential delivered by a
+   * BROKERED secret is only composed onto this iteration's box when THIS
+   * environment selects it, so the check has to be scoped to it.
+   *
+   * Absent on a legacy (non-environment) suite run, which grants no secrets.
+   */
+  projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
@@ -1508,6 +1894,18 @@ type RunIterationBaseParams = {
   /** The run's frozen skills in harness shape (see
    *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /**
+   * The run's resolved MCP Tasks seam (`resolveToolTaskSeam`, surface
+   * `"eval"`), or absent for tasks-off.
+   *
+   * Resolved ONCE per run, at the run boundary, because the `await` driver it
+   * carries is bound to the run's own abort signal — a per-iteration
+   * re-derivation would either lose that binding or build a second driver. The
+   * emulated path consumes it indirectly (the tool set is already built under
+   * it); the HARNESS path needs the seam itself, because `runHarnessTurn`
+   * rebuilds its MCP tools and reads `tasks` off the handler options.
+   */
+  tasks?: ToolTaskSeamOptions;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1522,6 +1920,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
+  /** See {@link RunEvalSuiteOptions.extraHeaders}. */
+  extraHeaders?: Record<string, string>;
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -1553,7 +1953,7 @@ const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
 
 function lookupProviderApiKey(
   modelApiKeys: Record<string, string> | undefined,
-  provider: string
+  provider: string,
 ): string | undefined {
   return modelApiKeys?.[provider] ?? modelApiKeys?.[provider.toLowerCase()];
 }
@@ -1583,7 +1983,7 @@ function resolveEvalModelRuntime(args: {
   const provider = args.modelDefinition.provider;
   if (!apiKey && provider !== "ollama" && provider !== "custom") {
     throw new Error(
-      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`
+      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`,
     );
   }
 
@@ -1599,14 +1999,14 @@ function resolveEvalModelRuntime(args: {
 }
 
 function hasExplicitModelApiKeys(
-  modelApiKeys: Record<string, string> | undefined
+  modelApiKeys: Record<string, string> | undefined,
 ): boolean {
   return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
 }
 
 function resolveOrgTargetForEval(
   test: EvalTestCase,
-  explicitTarget?: ResolveOrgModelConfigTarget
+  explicitTarget?: ResolveOrgModelConfigTarget,
 ): ResolveOrgModelConfigTarget | undefined {
   if (explicitTarget) return explicitTarget;
   const maybeProjectId = (test as { projectId?: unknown }).projectId;
@@ -1656,7 +2056,7 @@ async function resolveOrgByokEvalRuntime(args: {
     target,
     providerKey,
     String(args.modelDefinition.id),
-    { bearerToken: args.convexAuthToken }
+    { bearerToken: args.convexAuthToken },
   );
   if (runtime.runtimeLocation === "cloud") {
     return { kind: "cloud", providerKey: runtime.providerKey, target };
@@ -1671,15 +2071,15 @@ async function resolveOrgByokEvalRuntime(args: {
 // PR6: single hosted wrapper for both modes (emit optional). Owns the browser
 // harness lifecycle (try/finally guarantees Chromium teardown on every exit).
 const runHostedIteration = async (
-  params: RunIterationBackendParams & { emit?: StreamEmit }
+  params: RunIterationBackendParams & { emit?: StreamEmit },
 ): Promise<EvalIterationOutcome> => {
   // First pinned turn's per-call render-budget override (mirrors the local
   // runner's harness creation).
   const pinnedRenderTimeoutMs = resolveEvalTestCase(
-    params.test
+    params.test,
   ).promptTurns.find(
     (t) =>
-      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
   )?.pinnedToolCall?.renderTimeoutMs;
   const browser = await createBrowserSessionContext({
     model: params.test.model,
@@ -1727,7 +2127,7 @@ async function findIterationIdForTimeout(args: {
   try {
     const response = await args.convexClient.query(
       "testSuites:getTestSuiteRunDetails" as any,
-      { runId: args.runId }
+      { runId: args.runId },
     );
     const iterations = response?.iterations ?? [];
     const matching = iterations.find((iteration: any) => {
@@ -1847,6 +2247,8 @@ const executeTestCase = async (params: {
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
   compareRunId?: string;
+  /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
+  toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
    *  stream* runners. Absent ⇒ batch mode. */
   emit?: StreamEmit;
@@ -1854,6 +2256,8 @@ const executeTestCase = async (params: {
   injectOpenAiCompat?: boolean;
   /** Host execution policy for metadata stamping. */
   hostPolicy?: HostExecutionPolicy;
+  /** The run's frozen grading-engine position (see RunEvalSuiteOptions). */
+  gradingMode?: GradingEngineMode;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
@@ -1868,14 +2272,25 @@ const executeTestCase = async (params: {
    * receives its servers pre-resolved via `selectedServers`.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /** The run's PROJECT ENVIRONMENT id (see RunEvalSuiteOptions) — the grant
+   *  boundary a harness iteration's brokered credential check is scoped to. */
+  projectEnvironmentId?: string;
+  /** See {@link RunEvalSuiteOptions.projectEnvironmentUnresolvedReason}. */
+  projectEnvironmentUnresolvedReason?: string;
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
   /** The run's frozen skills in harness shape (see
    *  RunEvalSuiteOptions.pinnedHarnessSkills). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /** The run's resolved Tasks seam — see RunIterationBaseParams.tasks. */
+  tasks?: ToolTaskSeamOptions;
   toolPolicy?: EvalSuiteFileToolPolicy;
   toolAnnotations?: ToolAnnotationsLookup;
   toolPolicyWarnings?: string[];
+  /** See {@link RunEvalSuiteOptions.benchmarkWriteGuard}. */
+  benchmarkWriteGuard?: BenchmarkWriteGuard;
+  /** See {@link RunEvalSuiteOptions.extraHeaders}. */
+  extraHeaders?: Record<string, string>;
 }) => {
   const {
     test,
@@ -1895,20 +2310,27 @@ const executeTestCase = async (params: {
     abortSignal,
     abortRun,
     compareRunId,
+    toolDescriptionOverride,
     emit,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
     setupAudit,
     suiteHostConfig,
     environment,
+    projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    tasks,
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
+    benchmarkWriteGuard,
+    extraHeaders,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1925,7 +2347,7 @@ const executeTestCase = async (params: {
     runner: () => Promise<T>,
     precreatedIterationId: string | undefined,
     runIndex: number,
-    timeoutTest: EvalTestCase = normalizedTest
+    timeoutTest: EvalTestCase = normalizedTest,
   ): Promise<T> => {
     if (abortSignal?.aborted) {
       const reason = abortSignal.reason;
@@ -1985,8 +2407,10 @@ const executeTestCase = async (params: {
         abortSignal,
         convexAuthToken,
         ...(compareRunId ? { compareRunId } : {}),
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
@@ -1998,6 +2422,7 @@ const executeTestCase = async (params: {
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -2008,21 +2433,36 @@ const executeTestCase = async (params: {
             }),
           undefined,
           runIndex,
-          normalizedTest
-        )
+          normalizedTest,
+        ),
       );
     }
     return outcomes;
   }
 
-  const modelDefinition = buildModelDefinition(test);
+  // THE HOST'S MODEL WINS on an external-account harness, exactly as it does on
+  // the chat rails. Resolved here rather than at either iteration runner so
+  // everything downstream of this line agrees on one model: the canonical id
+  // below, the MCPJam-vs-BYOK split, the org-BYOK runtime lookup, the engine's
+  // wire payload and what the iteration reports as the model it ran.
+  //
+  // Without it, admission and execution disagreed. Admission reads the host's
+  // id and accepts a case whose own model is an ordinary one; execution then
+  // carried that case model to `runAssistantTurn`, whose eligibility check saw
+  // a non-sentinel on an external-account harness and refused a run it had
+  // already admitted. A per-case model is normal in evals, so that refusal hit
+  // legitimate Cursor suites.
+  const modelDefinition = resolveEvalCaseModelDefinition({
+    hostConfig: suiteHostConfig,
+    caseModel: buildModelDefinition(test),
+  });
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
-    modelDefinition.provider
+    modelDefinition.provider,
   );
   const isJamModel = isHostedCatalogModel(
     resolvedModelId,
-    modelDefinition.provider
+    modelDefinition.provider,
   );
   const orgByokRuntime = isJamModel
     ? undefined
@@ -2065,6 +2505,7 @@ const executeTestCase = async (params: {
             expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
             isNegativeTest: test.isNegativeTest,
             expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            ...(test.intent !== undefined ? { intent: test.intent } : {}),
             steps: resolvedStepsForPrecreate,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
             matchOptions: test.matchOptions,
@@ -2081,7 +2522,7 @@ const executeTestCase = async (params: {
           {
             runIndex,
             error: error instanceof Error ? error.message : String(error),
-          }
+          },
         );
         precreatedIterationIds.push(undefined);
       }
@@ -2107,6 +2548,7 @@ const executeTestCase = async (params: {
         modelId: resolvedModelId,
         modelDefinition,
         extraBodyFields: jamBillingTarget ? { ...jamBillingTarget } : undefined,
+        ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2114,20 +2556,33 @@ const executeTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
         setupAudit,
         suiteHostConfig,
         environment,
+        // A `projectEnvironments` doc id, not the servers snapshot above and
+        // not a sandbox image — see `RunIterationBaseParams`.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
+        // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
+        // rebuild its MCP tools under the same seam the emulated tool set was
+        // already built with (`getEvalToolsForAiSdkOrThrow`).
+        ...(tasks ? { tasks } : {}),
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2137,7 +2592,7 @@ const executeTestCase = async (params: {
           }),
         precreatedIterationId,
         runIndex,
-        test
+        test,
       );
       outcomes.push(iterationOutcome);
       continue;
@@ -2162,6 +2617,7 @@ const executeTestCase = async (params: {
           providerKey: orgByokRuntime.providerKey,
           ...orgByokRuntime.target,
         },
+        ...(extraHeaders ? { extraHeaders } : {}),
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2169,20 +2625,33 @@ const executeTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
+        gradingMode,
         toolSignals,
         setupSignals,
         setupSpans,
         setupAudit,
         suiteHostConfig,
         environment,
+        // A `projectEnvironments` doc id, not the servers snapshot above and
+        // not a sandbox image — see `RunIterationBaseParams`.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
+        // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
+        // rebuild its MCP tools under the same seam the emulated tool set was
+        // already built with (`getEvalToolsForAiSdkOrThrow`).
+        ...(tasks ? { tasks } : {}),
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2192,7 +2661,7 @@ const executeTestCase = async (params: {
           }),
         precreatedIterationId,
         runIndex,
-        test
+        test,
       );
       outcomes.push(iterationOutcome);
       continue;
@@ -2218,9 +2687,11 @@ const executeTestCase = async (params: {
       runId,
       abortSignal,
       compareRunId,
+      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       precreatedIterationId,
       injectOpenAiCompat,
       hostPolicy,
+      gradingMode,
       toolSignals,
       setupSignals,
       setupSpans,
@@ -2235,6 +2706,7 @@ const executeTestCase = async (params: {
       ...(toolPolicy
         ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
         : {}),
+      ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2244,7 +2716,7 @@ const executeTestCase = async (params: {
         }),
       precreatedIterationId,
       runIndex,
-      test
+      test,
     );
     outcomes.push(iterationOutcome);
   }
@@ -2255,10 +2727,11 @@ const executeTestCase = async (params: {
 // Thin batch wrapper (no `emit`) — preserves the call site in
 // `runEvalSuiteWithAiSdk` and tests with zero churn.
 const runTestCase = (
-  params: Omit<Parameters<typeof executeTestCase>[0], "emit">
+  params: Omit<Parameters<typeof executeTestCase>[0], "emit">,
 ) => executeTestCase(params);
 
 export const runEvalSuiteWithAiSdk = async ({
+  gradingMode,
   suiteId,
   runId,
   config,
@@ -2272,13 +2745,24 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
+  toolDescriptionOverride: toolDescriptionOverrideRaw,
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
+  projectEnvironmentId,
+  projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
   pinnedHarnessSkills,
   toolPolicy,
+  benchmarkWriteGuard,
+  extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  // Resolved inside the setup `try` below: a refused or unreadable override
+  // is a run-setup failure, and the catch there is what marks the precreated
+  // iteration rows failed. Thrown out here, the run would go `failed` while
+  // its rows stayed `pending`.
+  let toolDescriptionOverride: ToolDescriptionOverrideMarker | undefined;
+  let descriptionOverrides: Record<string, string> | undefined;
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
@@ -2298,7 +2782,7 @@ export const runEvalSuiteWithAiSdk = async ({
   ) {
     logger.warn(
       "[evals] readOnly tool policy does not restrict the sandbox bash tool",
-      { suiteId }
+      { suiteId },
     );
   }
 
@@ -2306,12 +2790,12 @@ export const runEvalSuiteWithAiSdk = async ({
   const recorder =
     runId === null
       ? null
-      : providedRecorder ??
+      : (providedRecorder ??
         createSuiteRunRecorder({
           convexClient,
           suiteId,
           runId,
-        });
+        }));
 
   const summary = {
     total: 0,
@@ -2336,7 +2820,7 @@ export const runEvalSuiteWithAiSdk = async ({
 
   const evalTasksSeam = resolveToolTaskSeam({
     tasksPolicy: readTasksPolicy(
-      (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0]
+      (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0],
     ),
     surface: "eval",
     // Driver `timeoutMs` stays at its default — the task drive nests under
@@ -2352,6 +2836,17 @@ export const runEvalSuiteWithAiSdk = async ({
   let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
+    toolDescriptionOverride = readToolDescriptionOverrideMarker(
+      toolDescriptionOverrideRaw,
+    );
+    descriptionOverrides = descriptionOverridesFromMarker(
+      toolDescriptionOverride,
+    );
+    throwIfDescriptionOverrideOnHarness(
+      toolDescriptionOverride,
+      harnessOfHostConfig(suiteHostConfig),
+    );
+
     // When a host policy is present we need the full tool set (including
     // app-only) so `applyVisibilityPolicyAndCountSignals` can:
     //   1. Count `toolsTotalBefore` honestly, and
@@ -2370,23 +2865,26 @@ export const runEvalSuiteWithAiSdk = async ({
       ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       environment: config.environment,
       setupObserver,
+      ...(descriptionOverrides
+        ? { toolDescriptionOverrides: descriptionOverrides }
+        : {}),
     });
     const toolAnnotations: ToolAnnotationsLookup = new Map();
     if (toolPolicy) {
       const uncachedServerIds = serverIds.filter(
-        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId)
+        (serverId) => !mcpClientManager.hasCachedToolAnnotations(serverId),
       );
       if (uncachedServerIds.length > 0) {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
           `TOOL_POLICY_ANNOTATIONS_UNAVAILABLE: tool policy requires a populated annotation cache for every selected server; missing ${uncachedServerIds.join(
-            ", "
+            ", ",
           )}.`,
           {
             reason: "TOOL_POLICY_ANNOTATIONS_UNAVAILABLE",
             serverIds: uncachedServerIds,
-          }
+          },
         );
       }
       try {
@@ -2407,18 +2905,18 @@ export const runEvalSuiteWithAiSdk = async ({
             400,
             ErrorCode.VALIDATION_ERROR,
             error.message,
-            { reason: "TOOL_POLICY_INVALID" }
+            { reason: "TOOL_POLICY_INVALID" },
           );
         }
         throw error;
       }
       for (const serverId of serverIds) {
         for (const [toolName, annotations] of Object.entries(
-          mcpClientManager.getAllToolAnnotations(serverId)
+          mcpClientManager.getAllToolAnnotations(serverId),
         )) {
           toolAnnotations.set(
             toolAnnotationsKey(serverId, toolName),
-            annotations
+            annotations,
           );
         }
       }
@@ -2431,9 +2929,18 @@ export const runEvalSuiteWithAiSdk = async ({
       ? applyVisibilityPolicyAndCountSignals(
           tools as Record<string, unknown>,
           mcpClientManager,
-          hostExecutionPolicy
+          hostExecutionPolicy,
         )
       : undefined;
+    if (descriptionOverrides) {
+      const overridden = applyDescriptionOverridesToToolSet(
+        tools,
+        descriptionOverrides,
+      );
+      if (resolvedToolSignals && overridden > 0) {
+        resolvedToolSignals.toolsDescriptionOverridden = overridden;
+      }
+    }
     const resolvedSetupSignals = setupObserver.buildSignals();
     const resolvedSetupSpans =
       setupObserver.buildSyntheticSpans(runSetupStartedAt);
@@ -2448,7 +2955,7 @@ export const runEvalSuiteWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         {
           runId,
-        }
+        },
       );
 
       if (currentRun?.status === "cancelled") {
@@ -2471,7 +2978,7 @@ export const runEvalSuiteWithAiSdk = async ({
     // exhaust the worker. LLM-only cases are network-bound and stay unbounded.
     // The limiter releases a slot when each case settles, so it can't leak.
     const renderCheckLimit = createConcurrencyLimiter(
-      MAX_CONCURRENT_RENDER_CHECKS
+      MAX_CONCURRENT_RENDER_CHECKS,
     );
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
@@ -2488,12 +2995,14 @@ export const runEvalSuiteWithAiSdk = async ({
         convexClient,
         testCaseId,
         compareRunId,
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         suiteId,
         runId,
         abortSignal: abortController.signal,
         abortRun,
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
+        ...(gradingMode ? { gradingMode } : {}),
         toolSignals: resolvedToolSignals,
         ...(resolvedSetupSignals ? { setupSignals: resolvedSetupSignals } : {}),
         ...(resolvedSetupSpans.length
@@ -2502,6 +3011,12 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
+        // The run's PROJECT ENVIRONMENT id — unrelated to `config.environment`
+        // above (a servers snapshot) despite the shared word.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         ...(toolPolicy
           ? {
               toolPolicy,
@@ -2509,10 +3024,18 @@ export const runEvalSuiteWithAiSdk = async ({
               toolPolicyWarnings: resolvedToolPolicyWarnings,
             }
           : {}),
+        ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
         // BOTH frozen-skill channels, from one place — see
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
         ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
+        // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
+        // built the emulated tool set with, so the harness (which rebuilds its
+        // own MCP tools) cannot end up on a different row of the policy matrix.
+        // Never re-resolved downstream: its `await` driver is bound to THIS
+        // run's abort signal.
+        ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
+        ...(extraHeaders ? { extraHeaders } : {}),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -2524,7 +3047,7 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : runOne(test)
+        : runOne(test),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -2538,7 +3061,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
-            { runId }
+            { runId },
           );
           if (currentRun?.status === "cancelled") {
             abortRun(RUN_CANCELLED_ERROR);
@@ -2573,7 +3096,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           await convexClient.mutation(
             "testSuites:heartbeatTestSuiteRun" as any,
-            { runId }
+            { runId },
           );
         } catch (error) {
           logger.warn("[evals] Failed to heartbeat eval run", {
@@ -2607,8 +3130,8 @@ export const runEvalSuiteWithAiSdk = async ({
             throw error;
           }
           return never();
-        })
-      )
+        }),
+      ),
     );
     const allTestsSettled = Promise.allSettled(testPromises);
 
@@ -2676,7 +3199,7 @@ export const runEvalSuiteWithAiSdk = async ({
           }
         }
         summary.policyBlockedIterations += outcomes.filter(
-          (outcome) => (outcome.policyBlockCount ?? 0) > 0
+          (outcome) => (outcome.policyBlockCount ?? 0) > 0,
         ).length;
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
@@ -2777,24 +3300,56 @@ async function seedAndAnnotateEvalAttachments(args: {
   testCaseId: string | undefined;
   sandboxId: string;
   promptTurns: PromptTurn[];
+  /** See `buildAttachmentsNote`: the tool THIS iteration's reader holds. */
+  readWith?: string;
   signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<string | null> {
   const seeded = await seedEvalCaseAttachments({
     bearer: args.bearer,
     runId: args.runId,
     testCaseId: args.testCaseId,
     sandboxId: args.sandboxId,
+    ...(args.readWith ? { readWith: args.readWith } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
-  if (!seeded.note) return;
+  if (!seeded.note) return null;
   const firstModelTurnIndex = args.promptTurns.findIndex(
-    (t) => !isPinnedTurn(t)
+    (t) => !isPinnedTurn(t),
   );
-  if (firstModelTurnIndex < 0) return;
-  args.promptTurns[firstModelTurnIndex] = {
-    ...args.promptTurns[firstModelTurnIndex],
-    prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
-  };
+  if (firstModelTurnIndex >= 0) {
+    args.promptTurns[firstModelTurnIndex] = {
+      ...args.promptTurns[firstModelTurnIndex],
+      prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
+    };
+  }
+  // RETURNED as well as applied, because `promptTurns` is not what the model
+  // reads. Both runners drive the iteration through `executeSteps`, whose
+  // steps come from `resolveSteps(test)` — and that returns `test.steps`
+  // verbatim whenever the case carries them, so a case authored in the step
+  // model never saw this note at all: the files landed on the box and nothing
+  // told the model where. See `annotateStepsWithAttachments`.
+  return seeded.note;
+}
+
+/**
+ * Put the attachment note on the first PROMPT step, which is what the model
+ * actually reads.
+ *
+ * Returns a new array; steps are persisted and replayed, and mutating the
+ * case's own objects would write the note into the stored case.
+ */
+export function annotateStepsWithAttachments(
+  steps: TestStep[],
+  note: string | null,
+): TestStep[] {
+  if (!note) return steps;
+  const index = steps.findIndex((step) => step.kind === "prompt");
+  if (index < 0) return steps;
+  const target = steps[index]!;
+  if (target.kind !== "prompt") return steps;
+  const annotated = [...steps];
+  annotated[index] = { ...target, prompt: `${target.prompt}\n\n${note}` };
+  return annotated;
 }
 
 // PR6: the single local (BYOK) iteration runner for BOTH quick-run modes.
@@ -2821,9 +3376,11 @@ const runLocalIteration = async ({
   abortSignal,
   emit,
   compareRunId,
+  toolDescriptionOverride,
   precreatedIterationId,
   injectOpenAiCompat,
   hostPolicy,
+  gradingMode,
   toolSignals,
   setupSignals,
   setupSpans,
@@ -2835,26 +3392,28 @@ const runLocalIteration = async ({
   toolPolicy,
   toolAnnotations,
   toolPolicyWarnings,
+  benchmarkWriteGuard,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
-  const toolPolicyGate = toolPolicy
-    ? createToolPolicyGate({
-        policy: toolPolicy,
-        annotations: toolAnnotations ?? new Map(),
-        warnings: toolPolicyWarnings,
-      })
-    : null;
+  const toolPolicyGate = resolveEnforcementGate({
+    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+    ...((testCaseId ?? test.testCaseId)
+      ? { testCaseId: testCaseId ?? test.testCaseId }
+      : {}),
+    runIndex,
+    annotations: toolAnnotations ?? new Map(),
+    ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
+  });
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId }
+        { runId },
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -2866,7 +3425,7 @@ const runLocalIteration = async ({
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions
+              test.matchOptions,
             ),
             passed: false,
           },
@@ -2889,7 +3448,7 @@ const runLocalIteration = async ({
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions
+              test.matchOptions,
             ),
             passed: false,
           },
@@ -2937,9 +3496,13 @@ const runLocalIteration = async ({
     },
     precedence: "override-wins",
   });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
+  });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
@@ -2956,7 +3519,7 @@ const runLocalIteration = async ({
   // First pinned turn's render-budget override; applied to the shared harness.
   const pinnedRenderTimeoutMs = promptTurns.find(
     (t) =>
-      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number"
+      isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
   )?.pinnedToolCall?.renderTimeoutMs;
 
   const modelRuntime = caseNeedsModel
@@ -2969,7 +3532,7 @@ const runLocalIteration = async ({
     : null;
 
   const runStartedAt = Date.now();
-  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  const iterationMetadataBase: IterationMetadataBase = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
   }
@@ -2977,15 +3540,20 @@ const runLocalIteration = async ({
     iterationMetadataBase.compareRunId = compareRunId;
   }
   const resolvedSteps = resolveSteps(test);
+  /** Set by attachment seeding below; applied to the executed steps. */
+  let attachmentsNote: string | null = null;
   const testCaseSnapshot = {
     title: test.title,
     query,
     provider: test.provider,
     model: test.model,
     runs: test.runs,
+    repetitions: test.repetitions,
+    passThreshold: test.passThreshold,
     expectedToolCalls,
     isNegativeTest: test.isNegativeTest,
     expectedOutput,
+    ...(test.intent !== undefined ? { intent: test.intent } : {}),
     steps: resolvedSteps,
     advancedConfig,
     matchOptions: test.matchOptions,
@@ -3012,11 +3580,11 @@ const runLocalIteration = async ({
   const iterationId = precreatedIterationId
     ? precreatedIterationId
     : recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, {
-        ...iterationParamsBase,
-        testCaseSnapshot,
-      });
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, {
+          ...iterationParamsBase,
+          testCaseSnapshot,
+        });
 
   // PR2: shared per-iteration accumulator (mirrors the batch runner). The
   // streaming runner threads it through `driveLocalEvalTurn` and reads it
@@ -3043,6 +3611,7 @@ const runLocalIteration = async ({
     activeTraceCtx: null,
     iterationError: undefined,
     iterationErrorDetails: undefined,
+    stepErrorSource: undefined,
     pinnedSetupFailure: false,
   };
   // PR 4d review fix (CodeRabbit): hoisted so persistence sites in the
@@ -3091,6 +3660,23 @@ const runLocalIteration = async ({
   // here so the finally always sees it.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  // D7: `prepared` (and its `allTools`) is declared inside the try below, so
+  // it is out of scope in the catch's own `buildIterationFinishParams` call.
+  // Captured here, set once `prepared` is assigned, so BOTH the success and
+  // the failure path can attach the tool set the model actually chose
+  // between when selection failed mid-run.
+  let selectionToolsForFinish: PrepareChatV2Result["allTools"] | undefined;
+  // Captured alongside `selectionToolsForFinish` at the same assignment
+  // point, but read lazily at each usage site below (both are live
+  // references into `prepared` — `discoveryState` mutates in place as the
+  // turn's steps run) so the narrowing reflects state AFTER the turn
+  // finishes, not the empty state at prepareChatV2 return time.
+  let selectionDiscoveryForFinish:
+    | {
+        progressivePlan: PrepareChatV2Result["progressivePlan"];
+        discoveryState: PrepareChatV2Result["discoveryState"];
+      }
+    | undefined;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -3103,9 +3689,13 @@ const runLocalIteration = async ({
     let prepared: PrepareChatV2Result | null = null;
     let llmModel: ReturnType<typeof createLlmModel> | null = null;
     if (caseNeedsModel) {
+      throwIfDescriptionOverrideOnHarness(
+        toolDescriptionOverride,
+        resolvedExecution.harness,
+      );
       resolveHostTools(
         { builtInToolIds: resolvedExecution.builtInToolIds },
-        null
+        null,
       );
       prepared = await prepareChatV2({
         mcpClientManager,
@@ -3117,6 +3707,13 @@ const runLocalIteration = async ({
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
+          : {}),
+        ...(descriptionOverridesFromMarker(toolDescriptionOverride)
+          ? {
+              toolDescriptionOverrides: descriptionOverridesFromMarker(
+                toolDescriptionOverride,
+              ),
+            }
           : {}),
         skillsSource,
         // Host progressive-discovery toggle, same conversion as the chat-v2
@@ -3144,12 +3741,27 @@ const runLocalIteration = async ({
       // system-free, and persistence prepends the resolved value at write
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+      if (toolDescriptionOverride) {
+        stampDescriptionExperiment(
+          iterationMetadataBase,
+          toolDescriptionOverride,
+          descriptionAppliedOnPreparedTools(
+            prepared.allTools,
+            toolDescriptionOverride,
+          ),
+        );
+      }
+      selectionToolsForFinish = prepared.allTools;
+      selectionDiscoveryForFinish = {
+        progressivePlan: prepared.progressivePlan,
+        discoveryState: prepared.discoveryState,
+      };
 
       llmModel = createLlmModel(
         modelDefinition,
         modelRuntime!.apiKey,
         modelRuntime!.baseUrls,
-        modelRuntime!.customProviders
+        modelRuntime!.customProviders,
       );
 
       // Reproducible evals: boot a fresh ephemeral sandbox from the suite's
@@ -3166,6 +3778,10 @@ const runLocalIteration = async ({
       const pinnedEnvironmentId = (
         environment as { computerEnvironmentId?: string } | undefined
       )?.computerEnvironmentId;
+      // TERMINAL ONLY, and no `runtimeKind`. This is the local-BYOK path: it
+      // resolves NO built-in tools at all (there is no Convex auth to execute
+      // them with), so a browser can never be advertised here and a desktop
+      // box would be paid for and unused.
       if (pinnedEnvironmentId && runId !== null) {
         // Don't provision unless this server is a fully-configured data plane.
         // Provisioning only needs the user bearer, but EXEC needs E2B_API_KEY
@@ -3174,7 +3790,7 @@ const runLocalIteration = async ({
         // paid box only the backend TTL GC could reap. Fail loudly instead.
         if (!isComputersDataPlaneConfigured()) {
           throw new Error(
-            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
           );
         }
         evalSandbox = await provisionEvalSandbox({
@@ -3185,7 +3801,7 @@ const runLocalIteration = async ({
         });
         if (!evalSandbox.ok) {
           throw new Error(
-            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
+            `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
           );
         }
         // COMP-17: seed the case's pinned attachments into the fresh box before
@@ -3193,10 +3809,25 @@ const runLocalIteration = async ({
         // first turn already sees the files. Fail-honest — a seed failure throws
         // (we're inside the try) and becomes a recorded failed iteration rather
         // than a silent run without the files.
-        await seedAndAnnotateEvalAttachments({
+        // This path is TERMINAL-only (see the comment on the branch), so the
+        // reader is always the `bash` tool injected on the next line.
+        attachmentsNote = await seedAndAnnotateEvalAttachments({
           bearer: convexAuthToken,
           runId: String(runId),
-          testCaseId: test.testCaseId,
+          // The EFFECTIVE id. Today the fallback is unreachable here — the
+          // outer `testCaseId` is the quick/single-case surface, which passes
+          // `runId: null`, and no box is booted without a run — but the two
+          // must not disagree if that ever changes: a seeder handed
+          // `undefined` returns no note and silently seeds nothing.
+          //
+          // MIND THE PRECEDENCE. This matches the persistence sites, which
+          // prefer `test.testCaseId`; the two `resolveEnforcementGate` calls
+          // resolve the same pair the other way round (`testCaseId ??
+          // test.testCaseId`). Neither order is reachable with both ids set,
+          // so nothing diverges today — but a path that ever sets both must
+          // reconcile them rather than pick one, or a case would seed its
+          // attachments under one id and be policy-gated under the other.
+          testCaseId: test.testCaseId ?? testCaseId,
           sandboxId: evalSandbox.value.sandboxId,
           promptTurns,
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -3215,7 +3846,7 @@ const runLocalIteration = async ({
         !Object.hasOwn(browser.computerWidgetTools, toolChoice.toolName)
       ) {
         throw new Error(
-          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`
+          `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
         );
       }
     }
@@ -3232,7 +3863,7 @@ const runLocalIteration = async ({
           promptTurns,
           acc.toolsCalledByPrompt,
           test.isNegativeTest,
-          test.matchOptions
+          test.matchOptions,
         ),
         passed: false,
       },
@@ -3244,86 +3875,92 @@ const runLocalIteration = async ({
     // `step_status` it emits coexists with executeSteps' per-step status (different
     // reducer keys; the editor prefers per-step).
     const makeSinks:
-      | ((turnIndex: number, prompt: string) => LocalEvalTurnSinks)
-      | undefined = emit
-      ? (turnIndex, prompt) => ({
-          emit,
-          getStepIndex: () => acc.activeCompletedStepCount,
-          onTurnStart: () => {
-            emit({ type: "turn_start", turnIndex, prompt });
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "prompt",
-              status: "running",
-            });
-          },
-          onStepSnapshot: ({ stepIndex, messages, spans, usage }) => {
-            emit(
-              buildTraceSnapshotEvent({
+      ((turnIndex: number, prompt: string) => LocalEvalTurnSinks) | undefined =
+      emit
+        ? (turnIndex, prompt) => ({
+            emit,
+            getStepIndex: () => acc.activeCompletedStepCount,
+            onTurnStart: () => {
+              emit({ type: "turn_start", turnIndex, prompt });
+              emit({
+                type: "step_status",
                 turnIndex,
-                stepIndex,
-                snapshotKind: "step_finish",
-                messages: withSystemPrefix(messages),
-                spans,
-                actualToolCalls: extractToolCallsFromConversation({ messages }),
-                usage,
-              })
-            );
-          },
-          onTurnFailure: ({
-            messages,
-            spans,
-            usage,
-            stepIndex,
-            iterationError: turnError,
-          }) => {
-            emit(
-              buildTraceSnapshotEvent({
+                kind: "prompt",
+                status: "running",
+              });
+            },
+            onStepSnapshot: ({ stepIndex, messages, spans, usage }) => {
+              emit(
+                buildTraceSnapshotEvent({
+                  turnIndex,
+                  stepIndex,
+                  snapshotKind: "step_finish",
+                  messages: withSystemPrefix(messages),
+                  spans,
+                  actualToolCalls: extractToolCallsFromConversation({
+                    messages,
+                  }),
+                  usage,
+                }),
+              );
+            },
+            onTurnFailure: ({
+              messages,
+              spans,
+              usage,
+              stepIndex,
+              iterationError: turnError,
+            }) => {
+              emit(
+                buildTraceSnapshotEvent({
+                  turnIndex,
+                  ...(stepIndex != null ? { stepIndex } : {}),
+                  snapshotKind: "failure",
+                  messages: withSystemPrefix(messages),
+                  spans,
+                  actualToolCalls: extractToolCallsFromConversation({
+                    messages,
+                  }),
+                  usage,
+                }),
+              );
+              emit({
+                type: "step_status",
                 turnIndex,
-                ...(stepIndex != null ? { stepIndex } : {}),
-                snapshotKind: "failure",
-                messages: withSystemPrefix(messages),
-                spans,
-                actualToolCalls: extractToolCallsFromConversation({ messages }),
-                usage,
-              })
-            );
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "prompt",
-              status: "fail",
-              detail: turnError,
-            });
-            emit({ type: "error", message: turnError });
-          },
-          onTurnSuccess: ({ messages, spans, usage }) => {
-            emit(
-              buildTraceSnapshotEvent({
+                kind: "prompt",
+                status: "fail",
+                detail: turnError,
+              });
+              emit({ type: "error", message: turnError });
+            },
+            onTurnSuccess: ({ messages, spans, usage }) => {
+              emit(
+                buildTraceSnapshotEvent({
+                  turnIndex,
+                  snapshotKind: "turn_finish",
+                  messages: withSystemPrefix(messages),
+                  spans,
+                  actualToolCalls: extractToolCallsFromConversation({
+                    messages,
+                  }),
+                  usage,
+                }),
+              );
+              emit({ type: "turn_finish", turnIndex });
+              emit({
+                type: "step_status",
                 turnIndex,
-                snapshotKind: "turn_finish",
-                messages: withSystemPrefix(messages),
-                spans,
-                actualToolCalls: extractToolCallsFromConversation({ messages }),
-                usage,
-              })
-            );
-            emit({ type: "turn_finish", turnIndex });
-            emit({
-              type: "step_status",
-              turnIndex,
-              kind: "prompt",
-              status: "ok",
-            });
-          },
-          onPinnedTurn: (ctx) =>
-            emitPinnedTurnSse(
-              { emit, withSystemPrefix, buildTraceSnapshotEvent },
-              { turnIndex, ...ctx }
-            ),
-        })
-      : undefined;
+                kind: "prompt",
+                status: "ok",
+              });
+            },
+            onPinnedTurn: (ctx) =>
+              emitPinnedTurnSse(
+                { emit, withSystemPrefix, buildTraceSnapshotEvent },
+                { turnIndex, ...ctx },
+              ),
+          })
+        : undefined;
 
     // Fail-fast skipped steps (PR6) → persisted to metadata.skippedSteps.
     let stepSkippedSteps: unknown[] = [];
@@ -3337,7 +3974,13 @@ const runLocalIteration = async ({
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
-    const steps = resolveSteps(test);
+    // ANNOTATED for the same reason as the hosted path: `resolveSteps` returns
+    // `test.steps` verbatim when the case carries them, so the note applied to
+    // `promptTurns` above would never reach a step-authored case.
+    const steps = annotateStepsWithAttachments(
+      resolveSteps(test),
+      attachmentsNote,
+    );
     const stepHandlers = buildLocalStepHandlers({
       acc,
       browser,
@@ -3348,7 +3991,7 @@ const runLocalIteration = async ({
           pinned,
           environment,
           selectedServers,
-          mcpClientManager
+          mcpClientManager,
         ),
       prepared,
       llmModel,
@@ -3365,7 +4008,7 @@ const runLocalIteration = async ({
       extractToolCalls: (params) =>
         extractToolCallsExcludingPolicyBlocks(
           params,
-          toolPolicyGate?.blockedToolCallIds() ?? new Set()
+          toolPolicyGate?.blockedToolCallIds() ?? new Set(),
         ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
@@ -3409,13 +4052,13 @@ const runLocalIteration = async ({
     // accounting (a click that fires a tool the case forbade SHOULD fail it).
     const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
       acc.toolsCalledByPrompt,
-      widgetToolCallsByPromptIndex(browser.browserInteractionSteps)
+      widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
     );
     // Per-turn predicate results from step assert execution facts (not a
     // re-evaluation of promptTurns.checks — avoids duplicates vs executeSteps).
     const turnCheckResults = resolveTurnCheckResultsFromStepExecution(
       stepState,
-      steps
+      steps,
     );
     const failOnToolError =
       (advancedConfig as { failOnToolError?: boolean } | undefined)
@@ -3438,10 +4081,10 @@ const runLocalIteration = async ({
     const effectivePredicates = test.successPredicates?.length
       ? test.successPredicates
       : isPinnedOnly({ caseType: test.caseType, promptTurns })
-      ? ([{ type: "widgetRendered" }] as NonNullable<
-          typeof test.successPredicates
-        >)
-      : undefined;
+        ? ([{ type: "widgetRendered" }] as NonNullable<
+            typeof test.successPredicates
+          >)
+        : undefined;
     // Flush the last turn's groups so a trailing turn's unrun checks still fail
     // closed, before the shared verdict reads scripted-check failures. (Flush
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
@@ -3463,7 +4106,7 @@ const runLocalIteration = async ({
         ? acc.accumulatedUsage
         : undefined,
       renderObservations: summarizeRenderObservations(
-        browser.widgetRenderObservations
+        browser.widgetRenderObservations,
       ),
       toolErrors: acc.pinnedToolErrors,
       iterationError: acc.iterationError,
@@ -3477,7 +4120,7 @@ const runLocalIteration = async ({
     });
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
-      turnCheckResults
+      turnCheckResults,
     );
     // Reflect the gated verdict (match AND tool-error gate AND predicates) in
     // the returned evaluation so totals built from `evaluation.passed` agree
@@ -3502,8 +4145,21 @@ const runLocalIteration = async ({
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
       iterationId,
+      // The layer that failed, when this driver could tell — the local twin of
+      // the hosted path's `stepError`. Without it a local-BYOK trial that died
+      // on the model call finalizes uncategorised, which is the very failure
+      // the provider-error work removed on the hosted path.
+      ...(acc.stepErrorSource
+        ? { stepError: { source: acc.stepErrorSource } }
+        : {}),
       // Keys shadow-mismatch telemetry only; never read for the verdict.
       ...(runId !== null ? { runId: String(runId) } : {}),
+      // The run's FROZEN position. Threaded so a per-suite `off` is honoured on
+      // THIS pass (it used to be visible only to the judge second pass, which
+      // reads the run row) and so a run can reach `enforce` at all.
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed,
       evaluation,
       usage: usageFinal,
@@ -3523,9 +4179,10 @@ const runLocalIteration = async ({
       widgetRenderObservations: browser.widgetRenderObservations,
       browserInteractionSteps: browser.browserInteractionSteps,
       // A model-free pinned setup failure (server not connected) records as
-      // "failed"; everything else completes (a failed verdict is still a
-      // completed run). Mirrors the former runIterationWithAiSdk.
-      status: acc.pinnedSetupFailure ? "failed" : "completed",
+      // `setup_failed` — it never reached the question; everything else
+      // completes (a failed verdict is still a completed run). Mirrors the
+      // former runIterationWithAiSdk.
+      status: acc.pinnedSetupFailure ? "setup_failed" : "completed",
       startedAt: runStartedAt,
       // PR 5a (mirror PR 4b): if the per-turn loop set `iterationError`
       // via the failure-detection branch, surface it on the persisted
@@ -3564,7 +4221,41 @@ const runLocalIteration = async ({
       ...(setupSpans?.length ? { setupSpans } : {}),
       ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
+      // D7: the per-iteration tool set the model actually chose between —
+      // `prepared.allTools` (real MCP tools + meta-tools), not the
+      // suite-level `_suiteTools` this runner otherwise ignores. Absent on
+      // a model-free iteration (`prepared` stays null), where there is no
+      // selection stage to explain anyway.
+      // Narrowed to what progressive discovery actually advertised across
+      // the turn, when it was enabled — see `narrowToolsToAdvertised`.
+      ...(selectionToolsForFinish
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  selectionToolsForFinish,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState,
+                )
+              : selectionToolsForFinish,
+          }
+        : {}),
     });
+    // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+    //
+    // At `enforce` the iteration's result is the conjunction of the boolean
+    // pipeline and the gating score rows, computed inside
+    // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+    // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+    // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+    // against — so a strictness catch would persist `failed` on the iteration
+    // while the run counted it a pass, and the pass rate would be inflated by
+    // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+    // during the soak, so this drift is reachable, not theoretical.
+    //
+    // Assigned AFTER the call, never before: the score rows derive the
+    // `toolCalls:match` row from `evaluation.passed`, which must remain the
+    // MATCHER's answer at derivation time.
+    evaluation.passed = finishParams.passed;
 
     await finalizeIterationWithBrowserArtifacts({
       browser,
@@ -3591,7 +4282,7 @@ const runLocalIteration = async ({
             promptTurns,
             acc.toolsCalledByPrompt,
             test.isNegativeTest,
-            test.matchOptions
+            test.matchOptions,
           ),
           passed: false,
         },
@@ -3600,6 +4291,20 @@ const runLocalIteration = async ({
     }
 
     logger.error("[evals] streaming iteration failed", error);
+
+    // A prep failure fires before the stamp is written; the failed rewrite
+    // trial still has to say which experiment it belonged to, or the report
+    // cannot tell it apart from a trial that was never part of one.
+    if (
+      toolDescriptionOverride &&
+      !iterationMetadataBase.descriptionExperiment
+    ) {
+      stampDescriptionExperiment(
+        iterationMetadataBase,
+        toolDescriptionOverride,
+        false,
+      );
+    }
 
     let errorMessage: string | undefined = undefined;
     let errorDetails: string | undefined = undefined;
@@ -3646,7 +4351,7 @@ const runLocalIteration = async ({
       promptTurns,
       acc.toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions
+      test.matchOptions,
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the
@@ -3683,7 +4388,7 @@ const runLocalIteration = async ({
             totalTokens: acc.accumulatedUsage.totalTokens,
           },
           prompts: promptTraceSummaries,
-        })
+        }),
       );
       emit({
         type: "error",
@@ -3697,7 +4402,16 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // Same as the success path: carry the layer when the driver could tell.
+      // This branch is the one a model-call failure most often ends on, so
+      // omitting it here would leave the fix half-applied.
+      ...(acc.stepErrorSource
+        ? { stepError: { source: acc.stepErrorSource } }
+        : {}),
       ...(runId !== null ? { runId: String(runId) } : {}),
+      ...(gradingMode ? { gradingMode } : {}),
+      scoreMatchOptions: scoreMatchOptionsFor(test),
+      ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
       passed: false,
       evaluation,
       usage: {
@@ -3750,6 +4464,24 @@ const runLocalIteration = async ({
       ...(setupSpans?.length ? { setupSpans } : {}),
       ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
+      // D7: the per-iteration tool set the model actually chose between —
+      // `prepared.allTools` (real MCP tools + meta-tools), not the
+      // suite-level `_suiteTools` this runner otherwise ignores. Absent on
+      // a model-free iteration (`prepared` stays null), where there is no
+      // selection stage to explain anyway.
+      // Narrowed to what progressive discovery actually advertised across
+      // the turn, when it was enabled — see `narrowToolsToAdvertised`.
+      ...(selectionToolsForFinish
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  selectionToolsForFinish,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState,
+                )
+              : selectionToolsForFinish,
+          }
+        : {}),
     });
 
     await finalizeIterationWithBrowserArtifacts({
@@ -3805,14 +4537,17 @@ const runHostedIterationWithBrowser = async (
     orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
+    extraHeaders,
     convexClient,
     runId,
     abortSignal,
     emit,
     compareRunId,
+    toolDescriptionOverride,
     precreatedIterationId,
     injectOpenAiCompat,
     hostPolicy,
+    gradingMode,
     toolSignals,
     setupSignals,
     setupSpans,
@@ -3823,33 +4558,38 @@ const runHostedIterationWithBrowser = async (
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
     // the local runner).
     environment,
+    projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    tasks,
     toolPolicy,
     toolAnnotations,
     toolPolicyWarnings,
+    benchmarkWriteGuard,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
-  browser: BrowserSessionContext
+  browser: BrowserSessionContext,
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
-  // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
-  const toolPolicyGate = toolPolicy
-    ? createToolPolicyGate({
-        policy: toolPolicy,
-        annotations: toolAnnotations ?? new Map(),
-        warnings: toolPolicyWarnings,
-      })
-    : null;
+  const toolPolicyGate = resolveEnforcementGate({
+    ...(toolPolicy ? { toolPolicy } : {}),
+    ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+    ...((testCaseId ?? test.testCaseId)
+      ? { testCaseId: testCaseId ?? test.testCaseId }
+      : {}),
+    runIndex,
+    annotations: toolAnnotations ?? new Map(),
+    ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
+  });
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId }
+        { runId },
       );
       if (currentRun?.status === "cancelled") {
         return {
@@ -3861,7 +4601,7 @@ const runHostedIterationWithBrowser = async (
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions
+              test.matchOptions,
             ),
             passed: false,
           },
@@ -3884,7 +4624,7 @@ const runHostedIterationWithBrowser = async (
               resolvedTest.promptTurns,
               [],
               test.isNegativeTest,
-              test.matchOptions
+              test.matchOptions,
             ),
             passed: false,
           },
@@ -3901,6 +4641,8 @@ const runHostedIterationWithBrowser = async (
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  /** Set by attachment seeding below; applied to the executed steps. */
+  let attachmentsNote: string | null = null;
   // PR 4d of the engine consolidation: same resolver shape as
   // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
   // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
@@ -3919,17 +4661,29 @@ const runHostedIterationWithBrowser = async (
     },
     precedence: "override-wins",
   });
+  const skillsSource = resolveIterationSkillsSource({
+    harness: resolvedExecution.harness,
+    pinnedSkillSource,
+  });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
-    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined
+    test.hostConfigOverride?.hostContext as Record<string, unknown> | undefined,
   );
   const temperature = resolvedExecution.temperature;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  /**
+   * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
+   * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
+   * place of the model transcript only under the run's frozen evidence
+   * decision; element-identical to `messageHistory` whenever capture is off,
+   * which is what keeps an off run byte-equivalent.
+   */
+  const traceMessageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
-  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  const iterationMetadataBase: IterationMetadataBase = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
   }
@@ -3949,6 +4703,7 @@ const runHostedIterationWithBrowser = async (
       expectedToolCalls,
       isNegativeTest: test.isNegativeTest,
       expectedOutput,
+      ...(test.intent !== undefined ? { intent: test.intent } : {}),
       steps: resolvedSteps,
       advancedConfig,
       matchOptions: test.matchOptions,
@@ -3961,8 +4716,8 @@ const runHostedIterationWithBrowser = async (
   const iterationId = precreatedIterationId
     ? precreatedIterationId
     : recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
@@ -4008,12 +4763,46 @@ const runHostedIterationWithBrowser = async (
   // `builtInToolIds` resolve via the shared registry, billed against the
   // project target the org-BYOK/jam billing paths derive.
   const builtInTarget = resolveOrgTargetForEval(test, orgModelConfigTarget);
-  const builtInTools = resolveHostTools(
-    { builtInToolIds: resolvedExecution.builtInToolIds },
-    builtInTarget && "projectId" in builtInTarget
-      ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
-      : null
+  // Unattended: nothing here can pause to ask, so the run's DECLARED policy is
+  // the only thing that can authorize browser tools. Absent or malformed ⇒
+  // undefined ⇒ they are not advertised at all (fail-closed).
+  const browserApprovalDelivery = browserApprovalDeliveryFor(
+    resolvedExecution.browserToolPolicy,
+    { source: "evals-runner" },
   );
+  // RESOLVED AFTER THE BOX, not before.
+  //
+  // A browser binds to the run's OWN sandbox, and the binding reaches the
+  // resolver on `ctx` — so the tools cannot be built until the box exists.
+  // This used to run here, unconditionally, which is why it is a thunk rather
+  // than a value: the one call site below is inside the try that turns a
+  // provisioning failure into a cleanly recorded failed iteration.
+  const buildBuiltInTools = (
+    sandboxBinding?: {
+      sandboxId: string;
+      sandboxRowId: string;
+      runtimeKind: "terminal" | "desktop-browser";
+    },
+  ) =>
+    resolveHostTools(
+      { builtInToolIds: resolvedExecution.builtInToolIds },
+      builtInTarget && "projectId" in builtInTarget
+        ? {
+            authHeader: convexAuthToken,
+            projectId: builtInTarget.projectId,
+            ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            // Names THIS iteration, so an unattended browser gets a profile no
+            // other iteration of this suite can reach. The suite's project is
+            // not enough: iterations run concurrently against it.
+            ...(iterationId ? { runKey: iterationId } : {}),
+            // The trusted binding to THIS iteration's box. It reaches the
+            // resolver on `ctx`, never on the host config, so nothing in a
+            // member-readable snapshot can forge one.
+            ...(sandboxBinding ? { sandboxBinding } : {}),
+          }
+        : null,
+    );
+  let builtInTools: ReturnType<typeof resolveHostTools>;
   // ── Harness execution inputs, resolved once per iteration.
   //
   // Both are cheap and harness-gated: `resolveWebAuthorizedHarnessStrategy`
@@ -4074,6 +4863,89 @@ const runHostedIterationWithBrowser = async (
   };
   let prepared: PrepareChatV2Result;
   try {
+    throwIfDescriptionOverrideOnHarness(
+      toolDescriptionOverride,
+      resolvedExecution.harness,
+    );
+
+    // ── THE BOX FIRST, because the browser binds to it ──────────────────────
+    //
+    // Provisioning used to happen after `prepareChatV2`, which was fine while
+    // the only consumer was `bash` (injected out-of-band into `allTools`). A
+    // browser rides the tool REGISTRY, and the registry needs the binding on
+    // `ctx` — so the box has to exist before the tools are resolved.
+    //
+    // Still inside this try, so a provisioning failure records a clean failed
+    // iteration rather than an unhandled throw.
+    const pinnedEnvironmentId = (
+      environment as { computerEnvironmentId?: string } | undefined
+    )?.computerEnvironmentId;
+    const sandboxNeed = needsEphemeralEvalSandbox({
+      pinnedEnvironmentId,
+      harness: resolvedExecution.harness,
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolPolicy: resolvedExecution.browserToolPolicy,
+      // The SAME two gates `resolveHostTools` reads a moment later. Without
+      // them this books a desktop box the resolver then refuses to hand any
+      // tool to — paid, idle, and for the whole iteration.
+      hostedBrowserAvailable: hostedBrowserAdvertisable(),
+      runId,
+    });
+    if (sandboxNeed.needed) {
+      if (!isComputersDataPlaneConfigured()) {
+        throw new Error(
+          sandboxNeed.runtimeKind === "desktop-browser"
+            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            : pinnedEnvironmentId
+              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
+        );
+      }
+      evalSandbox = await provisionEvalSandbox({
+        bearer: convexAuthToken,
+        runId: String(runId),
+        ...(iterationId ? { iterationId: String(iterationId) } : {}),
+        // Absent for a terminal box, so every request that predates desktops
+        // is byte-identical on the wire.
+        ...(sandboxNeed.runtimeKind === "desktop-browser"
+          ? { runtimeKind: "desktop-browser" as const }
+          : {}),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!evalSandbox.ok) {
+        throw new Error(describeEvalSandboxRefusal(evalSandbox));
+      }
+    }
+    const sandboxBinding =
+      evalSandbox?.ok && sandboxNeed.needed
+        ? {
+            sandboxId: evalSandbox.value.sandboxId,
+            sandboxRowId: evalSandbox.value.sandboxRowId,
+            // What ACTUALLY booted, read off the response rather than off the
+            // request: a reuse answers with the row's own kind.
+            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+          }
+        : undefined;
+    // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
+    // terminal binding, so a desktop request answered with a terminal box
+    // would run the iteration with no browser tools at all and score it as an
+    // ordinary result — the transcript reads as a model that never chose to
+    // browse. A control plane that answers this way predates per-run desktops.
+    // Throwing lands in the catch below, which releases the box and records a
+    // failed iteration rather than a misleading passing one.
+    if (
+      sandboxNeed.runtimeKind === "desktop-browser" &&
+      sandboxBinding?.runtimeKind !== "desktop-browser"
+    ) {
+      throw new Error(
+        "This eval declares a browser tool policy, which needs a desktop " +
+          "computer, but the control plane provisioned a terminal one — it " +
+          "does not support per-run desktop boxes yet. Remove the browser " +
+          "tool from this host config, or update the deployment.",
+      );
+    }
+    builtInTools = buildBuiltInTools(sandboxBinding);
+
     prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -4084,6 +4956,13 @@ const runHostedIterationWithBrowser = async (
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
+        : {}),
+      ...(descriptionOverridesFromMarker(toolDescriptionOverride)
+        ? {
+            toolDescriptionOverrides: descriptionOverridesFromMarker(
+              toolDescriptionOverride,
+            ),
+          }
         : {}),
       // Host progressive-discovery toggle, same conversion as the chat-v2
       // routes and the session-sim runner. Only an explicit host value is
@@ -4106,51 +4985,57 @@ const runHostedIterationWithBrowser = async (
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
-    // Pinned env → boot a fresh ephemeral sandbox and add the `bash` tool to
-    // prepared.allTools (the hosted path serializes those to toolDefs for the
-    // backend agent, then executes tool calls inspector-side). A provision
-    // failure throws → the catch below persists a failed iteration.
-    const pinnedEnvironmentId = (
-      environment as { computerEnvironmentId?: string } | undefined
-    )?.computerEnvironmentId;
+    if (toolDescriptionOverride) {
+      stampDescriptionExperiment(
+        iterationMetadataBase,
+        toolDescriptionOverride,
+        descriptionAppliedOnPreparedTools(
+          prepared.allTools,
+          toolDescriptionOverride,
+        ),
+      );
+    }
+    // Seed the case's attachments onto the box whenever anything in this
+    // iteration can READ it — the emulated `bash` tool below, or a harness
+    // running on the box with its own file tools. See
+    // `evalBoxFilesystemIsReachable`; both gates read what ACTUALLY booted
+    // rather than what the need asked for, for the same reason
+    // `sandboxBinding` does.
     if (
-      needsEphemeralEvalSandbox({
-        pinnedEnvironmentId,
+      sandboxBinding &&
+      evalBoxFilesystemIsReachable({
+        runtimeKind: sandboxBinding.runtimeKind,
         harness: resolvedExecution.harness,
-        runId,
       })
     ) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          pinnedEnvironmentId
-            ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-        );
-      }
-      evalSandbox = await provisionEvalSandbox({
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
-      if (!evalSandbox.ok) {
-        throw new Error(
-          `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
-        );
-      }
       // COMP-17: seed the case's pinned attachments before exposing `bash`
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
-      await seedAndAnnotateEvalAttachments({
+      attachmentsNote = await seedAndAnnotateEvalAttachments({
         bearer: convexAuthToken,
         runId: String(runId),
-        testCaseId: test.testCaseId,
-        sandboxId: evalSandbox.value.sandboxId,
+        // The EFFECTIVE id — see the identical note on the local path.
+        testCaseId: test.testCaseId ?? testCaseId,
+        sandboxId: sandboxBinding.sandboxId,
         promptTurns,
+        // Name the tool this iteration's reader actually holds: the `bash`
+        // injected just below on a terminal box, or the harness's own file
+        // tools on a desktop one, which has no shell to offer.
+        readWith:
+          sandboxBinding.runtimeKind === "terminal"
+            ? "the bash tool"
+            : "your file tools",
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
+    }
+    // `bash` is injected OUT-OF-BAND into the prepared tool map (the hosted
+    // path serializes those to toolDefs for the backend agent, then executes
+    // tool calls inspector-side), so it lands here rather than through the
+    // registry — and only for a TERMINAL box, the only class that has a shell
+    // to offer.
+    if (sandboxBinding && sandboxBinding.runtimeKind === "terminal") {
       prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
-        sandboxId: evalSandbox.value.sandboxId,
+        sandboxId: sandboxBinding.sandboxId,
       });
     }
   } catch (error) {
@@ -4158,6 +5043,13 @@ const runHostedIterationWithBrowser = async (
     await releaseEvalSandboxIfAny();
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    if (toolDescriptionOverride) {
+      stampDescriptionExperiment(
+        iterationMetadataBase,
+        toolDescriptionOverride,
+        false,
+      );
+    }
     await persistSetupFailedIteration({
       iterationId,
       runStartedAt,
@@ -4196,7 +5088,7 @@ const runHostedIterationWithBrowser = async (
       promptTurns,
       [],
       test.isNegativeTest,
-      test.matchOptions
+      test.matchOptions,
     );
     failedEvaluation.passed = false;
     return {
@@ -4237,7 +5129,7 @@ const runHostedIterationWithBrowser = async (
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
-      test.matchOptions
+      test.matchOptions,
     ),
     iterationId: undefined,
   });
@@ -4250,6 +5142,10 @@ const runHostedIterationWithBrowser = async (
 
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
+  /** Which layer raised `iterationError`, when the executor classified it. */
+  let iterationStepError:
+    | { source?: "model" | "setup"; code?: string; httpStatus?: number }
+    | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
   // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
   // `prepareChatV2` try.
@@ -4264,7 +5160,7 @@ const runHostedIterationWithBrowser = async (
         extractToolCalls: (messages) =>
           extractToolCallsExcludingPolicyBlocks(
             { messages },
-            toolPolicyGate?.blockedToolCallIds() ?? new Set()
+            toolPolicyGate?.blockedToolCallIds() ?? new Set(),
           ),
         buildTraceSnapshotEvent,
       })
@@ -4280,7 +5176,30 @@ const runHostedIterationWithBrowser = async (
   // Hosted unify: drive the iteration through executeSteps; the handlers wrap
   // driveHostedEvalTurn (which mutates the acc), so the post-loop verdict +
   // finishParams below consume `acc` + the executor's StepExecutionState.
-  const steps = resolveSteps(test);
+  // ANNOTATED, because `resolveSteps` returns `test.steps` verbatim when the
+  // case carries them — so the note `seedAndAnnotateEvalAttachments` put on
+  // `promptTurns` would never reach the model on a step-authored case.
+  const steps = annotateStepsWithAttachments(
+    resolveSteps(test),
+    attachmentsNote,
+  );
+  /**
+   * What the run FROZE about tool-call evidence, as reported by the first
+   * harness turn's proxy-token mint.
+   *
+   * Read from the mint rather than from a flag: the mint reports the decision
+   * the control plane recorded at RUN CREATION, so a flag flipped mid-run
+   * cannot change what this iteration does. Stays undefined on the emulated
+   * path and on any run that never mints — which reads as capture off, the
+   * same as a run from before evidence existed.
+   */
+  let harnessEvidenceDecision:
+    | {
+        captureEnabled: boolean;
+        gradingSource: "narration" | "evidence";
+        turnId: string;
+      }
+    | undefined;
   const hostedHandlers = buildHostedStepHandlers({
     browser,
     prepared,
@@ -4291,6 +5210,7 @@ const runHostedIterationWithBrowser = async (
     evalAuthContext,
     endpointPath,
     extraBodyFields,
+    ...(extraHeaders ? { extraHeaders } : {}),
     toolChoice,
     toolPolicyGate,
     abortSignal,
@@ -4320,6 +5240,19 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The iteration this run's harness turns record evidence against. Sent
+    // only on the harness path with a real iteration row: a quick run has no
+    // run to attach evidence to, and the emulated engine records firsthand
+    // results already. Whether anything is actually recorded is decided
+    // downstream by the run's FROZEN capture decision, which the mint reports.
+    ...(resolvedExecution.harness && iterationId
+      ? {
+          evalIterationId: String(iterationId),
+          onHarnessEvidenceDecision: (decision) => {
+            harnessEvidenceDecision = decision;
+          },
+        }
+      : {}),
     // The sealed policy + the sink that accounts its refusals. Blocks land on
     // the SAME gate the in-process path records into, so `policyBlocks` and the
     // matcher exclusion below cover both origins with no second code path.
@@ -4332,9 +5265,7 @@ const runHostedIterationWithBrowser = async (
                 toolName: block.toolName,
                 reason: block.reason,
                 classification: block.classification,
-                ...(block.toolCallId
-                  ? { toolCallId: block.toolCallId }
-                  : {}),
+                ...(block.toolCallId ? { toolCallId: block.toolCallId } : {}),
               });
             }
           },
@@ -4350,17 +5281,64 @@ const runHostedIterationWithBrowser = async (
     // nowhere else, so supplying only `tools` would hand the runtime a turn
     // with no built-ins and no way to notice.
     ...(builtInTools ? { builtInTools } : {}),
+    // The host's MCP tool-CONSTRUCTION policies, for the same reason and with
+    // the same hazard as `builtInTools` above.
+    //
+    // The `prepareChatV2` call a few dozen lines up builds THIS iteration's
+    // emulated tool set from `hostPolicy`. A harness turn never consumes that
+    // set — `runHarnessTurn` rebuilds the model-facing MCP tools itself — and
+    // reads each policy off these fields and nowhere else, so a policy that
+    // stops here does not exist at all on host-executed delivery.
+    // `driveHostedEvalTurn` gates all three behind `harness`, so an emulated
+    // iteration is unaffected by any of this.
+    //
+    // `tasks` is the run-level seam (`resolveToolTaskSeam`, resolved once in
+    // `runEvalSuiteWithAiSdk` and threaded down) rather than anything derived
+    // here — same object `getEvalToolsForAiSdkOrThrow` built the run's tool set
+    // with. Note the per-iteration `prepareChatV2` above does NOT take it; that
+    // is a pre-existing emulated-path gap, deliberately left alone here because
+    // closing it would change emulated eval behaviour.
+    //
+    // Definedness, not truthiness: `respectToolVisibility: false` IS the
+    // SEP-1865 opt-out.
+    ...(hostPolicy?.modelVisibleMcpToolResults !== undefined
+      ? { modelVisibleMcpToolResults: hostPolicy.modelVisibleMcpToolResults }
+      : {}),
+    ...(hostPolicy?.respectToolVisibility !== undefined
+      ? { respectToolVisibility: hostPolicy.respectToolVisibility }
+      : {}),
+    ...(tasks !== undefined ? { tasks } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
+      : {}),
+    // The run's PROJECT ENVIRONMENT — the grant boundary the harness path
+    // scopes its BROKERED external-account credential check to. Harness-gated
+    // like the rest of this cluster; the emulated path resolves no such
+    // credential and would only carry an unused field.
+    ...(resolvedExecution.harness && projectEnvironmentId
+      ? { environmentId: projectEnvironmentId }
+      : {}),
+    // Replay only: the run HAS an environment and this process cannot name it.
+    // Keeps the refusal honest instead of blaming a selection.
+    ...(resolvedExecution.harness &&
+    !projectEnvironmentId &&
+    projectEnvironmentUnresolvedReason
+      ? { environmentUnresolvedReason: projectEnvironmentUnresolvedReason }
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
       extractToolCallsExcludingPolicyBlocks(
         { messages },
-        toolPolicyGate?.blockedToolCallIds() ?? new Set()
+        toolPolicyGate?.blockedToolCallIds() ?? new Set(),
       ),
+    // The evidence reconciler's exclusion set, read fresh per turn — a
+    // policy-refused call never reached a server, so its absence from the
+    // wire record must not degrade the turn to narration grading.
+    policyBlockedToolCallIds: () =>
+      toolPolicyGate?.blockedToolCallIds() ?? new Set(),
     acc: {
       messageHistory,
+      traceMessageHistory,
       capturedSpans,
       accumulatedUsage,
       toolsCalledByPrompt,
@@ -4372,7 +5350,7 @@ const runHostedIterationWithBrowser = async (
         pinned,
         environment,
         selectedServers,
-        mcpClientManager
+        mcpClientManager,
       ),
     pinnedToolErrors,
     ...(emit
@@ -4380,7 +5358,7 @@ const runHostedIterationWithBrowser = async (
           emitPinnedTurn: (payload: PinnedTurnSsePayload) =>
             emitPinnedTurnSse(
               { emit, withSystemPrefix, buildTraceSnapshotEvent },
-              payload
+              payload,
             ),
         }
       : {}),
@@ -4417,9 +5395,18 @@ const runHostedIterationWithBrowser = async (
   if (result.iterationError) {
     iterationError = result.iterationError;
     iterationErrorDetails = result.iterationErrorDetails;
+    if (result.errorSource) {
+      iterationStepError = {
+        source: result.errorSource,
+        ...(result.errorCode ? { code: result.errorCode } : {}),
+        ...(typeof result.errorHttpStatus === "number"
+          ? { httpStatus: result.errorHttpStatus }
+          : {}),
+      };
+    }
   }
-  // Pinned setup failure (server not connected) — drives status:"failed" below,
-  // mirroring the local runner.
+  // Pinned setup failure (server not connected) — drives `status:"setup_failed"`
+  // below, mirroring the local runner.
   const pinnedSetupFailure = result.setupFailure;
   hostedStepSkippedSteps = stepState.skippedSteps;
   hostedStepResults = buildStepResultRecords(stepState, steps);
@@ -4430,16 +5417,25 @@ const runHostedIterationWithBrowser = async (
   // calls whether authored as an expected tool call or a predicate.
   const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
     toolsCalledByPrompt,
-    widgetToolCallsByPromptIndex(browser.browserInteractionSteps)
+    widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
   );
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
       ?.failOnToolError !== false;
+  // Which transcript the predicate gate reads. EVIDENCE grading gets the
+  // trace transcript (raw results and reconstructed wire-only calls are what
+  // evidence-aware predicates are for); narration grading keeps the model
+  // transcript even when capture enriched the persisted view, so a
+  // capture-on/narration-graded run's verdict is unchanged by enrichment.
+  const gateMessages =
+    harnessEvidenceDecision?.gradingSource === "evidence"
+      ? traceMessageHistory
+      : messageHistory;
   const traceForGate =
-    capturedSpans.length > 0 || messageHistory.length > 0
+    capturedSpans.length > 0 || gateMessages.length > 0
       ? {
           ...(capturedSpans.length > 0 ? { spans: capturedSpans } : {}),
-          messages: messageHistory as ModelMessage[] as Array<{
+          messages: gateMessages as ModelMessage[] as Array<{
             role: string;
             content: unknown;
           }>,
@@ -4448,15 +5444,15 @@ const runHostedIterationWithBrowser = async (
   // Per-turn predicate results from step assert execution (hosted parity).
   const turnCheckResults = resolveTurnCheckResultsFromStepExecution(
     stepState,
-    steps
+    steps,
   );
   const effectivePredicates = test.successPredicates?.length
     ? test.successPredicates
     : isPinnedOnly({ caseType: test.caseType, promptTurns })
-    ? ([{ type: "widgetRendered" }] as NonNullable<
-        typeof test.successPredicates
-      >)
-    : undefined;
+      ? ([{ type: "widgetRendered" }] as NonNullable<
+          typeof test.successPredicates
+        >)
+      : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
@@ -4471,7 +5467,7 @@ const runHostedIterationWithBrowser = async (
     trace: traceForGate,
     usage: hasReportedUsage(accumulatedUsage) ? accumulatedUsage : undefined,
     renderObservations: summarizeRenderObservations(
-      browser.widgetRenderObservations
+      browser.widgetRenderObservations,
     ),
     toolErrors: pinnedToolErrors,
     iterationError,
@@ -4485,7 +5481,7 @@ const runHostedIterationWithBrowser = async (
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,
-    turnCheckResults
+    turnCheckResults,
   );
   // Reflect the gated verdict (match AND tool-error gate AND predicates) in the
   // returned evaluation so totals built from `evaluation.passed` agree with the
@@ -4505,10 +5501,21 @@ const runHostedIterationWithBrowser = async (
   const finishParams = buildIterationFinishParams({
     iterationId,
     ...(runId !== null ? { runId: String(runId) } : {}),
+    ...(gradingMode ? { gradingMode } : {}),
+    scoreMatchOptions: scoreMatchOptionsFor(test),
+    ...(test.isNegativeTest ? { isNegativeTest: true } : {}),
     passed,
     evaluation,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    // The persisted transcript is the TRACE view whenever this run captured
+    // evidence: matched calls keep their narrated output, wire-only calls
+    // appear as reconstructed tool results, and run detail / the judge's
+    // second pass read what the proxy actually saw. Capture off (or a run
+    // that never minted) persists the model transcript, byte-identical to
+    // pre-evidence behaviour.
+    messages: harnessEvidenceDecision?.captureEnabled
+      ? traceMessageHistory
+      : messageHistory,
     // The RESOLVED id, not `test.model`: `modelId` is what `executeTestCase`
     // canonicalized and what the hosted `/stream` call actually billed, so
     // attribution here agrees with the provider request. (This runner is never
@@ -4519,15 +5526,18 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     prompts: promptTraceSummaries,
+    // UVH-IN2: the layer that raised the fatal error, so the chain can say a
+    // provider outage was ours rather than filing it against the server.
+    ...(iterationStepError ? { stepError: iterationStepError } : {}),
     ...(widgetSnapshots ? { widgetSnapshots } : {}),
     // Browser-rendered MCP App eval (PR 14): hosted-path browser artifacts
     // (see the non-stream backend runner).
     widgetRenderObservations: browser.widgetRenderObservations,
     browserInteractionSteps: browser.browserInteractionSteps,
     // A model-free pinned setup failure (server not connected) records as
-    // "failed"; everything else completes (a failed verdict is still a
-    // completed run). Mirrors the local runner.
-    status: pinnedSetupFailure ? "failed" : "completed",
+    // `setup_failed` — it never reached the question; everything else completes
+    // (a failed verdict is still a completed run). Mirrors the local runner.
+    status: pinnedSetupFailure ? "setup_failed" : "completed",
     startedAt: runStartedAt,
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
@@ -4559,7 +5569,33 @@ const runHostedIterationWithBrowser = async (
     ...(setupSpans?.length ? { setupSpans } : {}),
     ...(setupAudit ? { setupAudit } : {}),
     injectOpenAiCompat,
+    // D7: same `prepared.allTools` source the local runner threads through —
+    // this runner always has a model turn (see the `stageCase` comment
+    // above), so `prepared` is always assigned by this point. Narrowed to
+    // what progressive discovery actually advertised, when enabled — see
+    // `narrowToolsToAdvertised`.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState,
+    ),
   });
+  // RE-READ THE DERIVED VERDICT so run totals agree with the persisted row.
+  //
+  // At `enforce` the iteration's result is the conjunction of the boolean
+  // pipeline and the gating score rows, computed inside
+  // `buildIterationFinishParams`. `evaluation.passed` still holds the boolean
+  // one, and THAT is what `runEvalSuiteWithAiSdk` aggregates into
+  // `summary.passed`/`failed`/`passRate` and what `passCriteria` is judged
+  // against — so a strictness catch would persist `failed` on the iteration
+  // while the run counted it a pass, and the pass rate would be inflated by
+  // exactly the cases `enforce` exists to catch. Those catches are EXPECTED
+  // during the soak, so this drift is reachable, not theoretical.
+  //
+  // Assigned AFTER the call, never before: the score rows derive the
+  // `toolCalls:match` row from `evaluation.passed`, which must remain the
+  // MATCHER's answer at derivation time.
+  evaluation.passed = finishParams.passed;
 
   await finalizeIterationWithBrowserArtifacts({
     browser,
@@ -4582,5 +5618,5 @@ const runHostedIterationWithBrowser = async (
 export const streamTestCase = (
   params: Omit<Parameters<typeof executeTestCase>[0], "emit"> & {
     emit: StreamEmit;
-  }
+  },
 ) => executeTestCase(params);

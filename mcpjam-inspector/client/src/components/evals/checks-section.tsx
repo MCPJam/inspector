@@ -272,7 +272,7 @@ export interface CheckRowProps {
   widgetToolNames?: string[];
   toolArgSchemas?: ToolArgSchemas;
   readOnly?: boolean;
-  /** Strip outer card chrome + kind header when nested inside a step row. */
+  /** Strip outer card chrome + kind header when nested in a step or the scorer table. */
   embedded?: boolean;
   /** Scenario predicate still in Global gates list — prompt move to steps. */
   legacyScenarioGate?: boolean;
@@ -371,6 +371,108 @@ export function CheckRow({
   );
 }
 
+/**
+ * The allowed set for `onlyToolsCalled`.
+ *
+ * An EMPTY set is a real claim — "no tool should be called" — not an unset
+ * state, so the row says which one it is rather than leaving a blank list to
+ * be read either way.
+ */
+function OnlyToolsField({
+  value,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const [toolName, setToolName] = useState("");
+  const options = (availableTools ?? []).filter(
+    (tool) => !value.includes(tool),
+  );
+  const addTool = () => {
+    const name = toolName.trim();
+    if (!readOnly && name && !value.includes(name)) {
+      onChange([...value, name]);
+      setToolName("");
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] text-muted-foreground">
+        {value.length === 0
+          ? "No tool should be called."
+          : "Any tool outside this list fails the check."}
+      </p>
+      {value.length > 0 ? (
+        <ul className="flex flex-wrap gap-1">
+          {value.map((tool) => (
+            <li key={tool}>
+              <button
+                type="button"
+                disabled={readOnly}
+                aria-label={`Remove ${tool}`}
+                onClick={() => onChange(value.filter((t) => t !== tool))}
+                className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
+              >
+                {tool}
+                {readOnly ? null : <span aria-hidden>×</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {!readOnly && !availableTools?.length ? (
+        <div className="flex items-center gap-1.5">
+          <Input
+            aria-label="Allowed tool name"
+            value={toolName}
+            onChange={(event) => setToolName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTool();
+              }
+            }}
+            className="h-7 text-xs"
+            placeholder="Tool name"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={!toolName.trim() || value.includes(toolName.trim())}
+            onClick={addTool}
+          >
+            Allow tool
+          </Button>
+        </div>
+      ) : null}
+      {readOnly || options.length === 0 ? null : (
+        <select
+          aria-label="Allow another tool"
+          value=""
+          onChange={(event) => {
+            if (event.target.value) onChange([...value, event.target.value]);
+          }}
+          className="h-7 w-full rounded border border-border bg-background px-1.5 text-xs"
+        >
+          <option value="">Allow another tool…</option>
+          {options.map((tool) => (
+            <option key={tool} value={tool}>
+              {tool}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function CheckFields({
   predicate,
   onChange,
@@ -397,6 +499,18 @@ function CheckFields({
           onChange={onChange}
           availableTools={availableTools}
           toolArgSchemas={toolArgSchemas}
+          readOnly={readOnly}
+        />
+      );
+    case "onlyToolsCalled":
+      // Present everywhere a check can be READ, so a case authored on the
+      // Evaluate spine still edits correctly if it is opened on /evals. Where
+      // it can be ADDED is narrower — see `spineLibraryKinds`.
+      return (
+        <OnlyToolsField
+          value={predicate.toolNames}
+          onChange={(toolNames) => onChange({ ...predicate, toolNames })}
+          availableTools={availableTools}
           readOnly={readOnly}
         />
       );
@@ -582,7 +696,7 @@ function ToolNameField({
   );
 }
 
-function ToolCalledWithFields({
+export function ToolCalledWithFields({
   predicate,
   onChange,
   availableTools,

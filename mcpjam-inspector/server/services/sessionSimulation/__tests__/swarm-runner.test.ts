@@ -53,8 +53,11 @@ import {
   startJourneyRun,
   shutdownRunningJourneyRuns,
   getRunningJourneyStreamHub,
+  classifyRateLimit,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
+import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 
@@ -153,6 +156,10 @@ describe("swarm single-host runner — attempt ordering", () => {
       "anthropic/claude-haiku-4.5"
     );
     expect(adapter.runtime.scenarioId).toBeUndefined();
+    // A legacy host target pins no environment, so there is no grant boundary
+    // to forward — and inventing one would let a harness turn believe a
+    // brokered credential is granted when nothing composed it onto the box.
+    expect(adapter.runtime.environmentId).toBeUndefined();
     expect(adapter.persist).toMatchObject({
       sourceType: "swarm",
       origin: "swarm",
@@ -600,6 +607,87 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     }
   });
 
+  it("a real MCPJam account limit stops the whole run even though its copy has no cap-wording", async () => {
+    // The wire form `runner.ts` builds: "<message> (<code>, HTTP <status>)".
+    // None of MCPJam's limit sentences contain spend/cap/quota/budget, so the
+    // account-wide stop has to key on the denial code instead.
+    // Each envelope under the outcome it really arrives with: only the
+    // `*_rate_limit` codes carry wording `classifyTurnFailure` reads as a
+    // rate-limit, so the billing codes land in `failed`.
+    for (const { envelope, outcome } of [
+      {
+        envelope: "Daily credit limit reached. (user_rate_limit, HTTP 429)",
+        outcome: "rate_limited",
+      },
+      {
+        envelope:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. (org_rate_limit, HTTP 429)",
+        outcome: "rate_limited",
+      },
+      {
+        envelope:
+          "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)",
+        outcome: "failed",
+      },
+      {
+        envelope:
+          "Your plan does not include this model. (billing_feature_not_included, HTTP 403)",
+        outcome: "failed",
+      },
+    ]) {
+      finalizePendingAttemptsMock.mockClear();
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+        if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+          return { outcome, errorMessage: envelope };
+        }
+        return { outcome: "succeeded" };
+      });
+
+      await startJourneyRun(
+        baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+      );
+
+      expect(
+        finalizePendingAttemptsMock,
+        `"${envelope}" should trip the whole-run account-limit stop`
+      ).toHaveBeenCalledTimes(1);
+      expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
+        errorCode: "spend_cap_exceeded",
+      });
+    }
+  });
+
+  it("recognizes every user-owned backend denial code as an account limit", () => {
+    // `isAccountLimit` keeps its own list rather than importing this one: that
+    // one answers who is at fault, this one whether another host could escape
+    // the limit. A code added to the capture policy must not silently keep
+    // burning the run's remaining targets here.
+    for (const code of USER_OWNED_DENIAL_CODES) {
+      expect(
+        isAccountLimit(`Limit reached. (${code}, HTTP 403)`),
+        `${code} should stop the whole run`
+      ).toBe(true);
+    }
+  });
+
+  it("a 429 on the user's own provider key stays a PER-HOST stop", async () => {
+    // BB-172: the user's key really was throttled by their provider. Other
+    // hosts run on a different key, so the run must not halt.
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      if (adapter.chatSessionId === "synth_run-1_host-1_0") {
+        return { outcome: "rate_limited", errorMessage: "429 Too Many Requests" };
+      }
+      return { outcome: "succeeded" };
+    });
+
+    await startJourneyRun(
+      baseOpts({ hosts: [HOST, HOST_2], sessionsPerTarget: 2 })
+    );
+
+    expect(executedForHost("host-2")).toHaveLength(2);
+    expect(finalizePendingAttemptsMock).not.toHaveBeenCalled();
+  });
+
   it("a 'capacity' rate-limit is a PER-HOST provider stop, NOT a whole-run spend-cap (finding 7)", async () => {
     // "capacity" must not be misread as a spend cap: only THIS host stops; the
     // run does not finalize-pending.
@@ -883,6 +971,27 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(terminals.every((a) => typeof a.targetId === "string")).toBe(true);
   });
 
+  it("forwards each target's environment id as the session's secret GRANT BOUNDARY", async () => {
+    // What a harness turn scopes its BROKERED external-account credential check
+    // to. It has to be the TARGET's own environment: two targets sharing one
+    // host can grant different secrets, and `resolveGrantForSandbox` derives
+    // exactly this id for the attempt's box from the run snapshot.
+    fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
+
+    await startJourneyRun(
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerTarget: 1 })
+    );
+
+    const bySession = new Map(
+      runSyntheticHostSessionMock.mock.calls.map((c) => [
+        (c[0] as any).chatSessionId,
+        (c[0] as any).runtime.environmentId,
+      ])
+    );
+    expect(bySession.get("synth_run-1_env_envA_0")).toBe("envA");
+    expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
+  });
+
   it("delivers pinned skill BODIES to the session runtime (authoritative array), and an empty pin set as []", async () => {
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
@@ -1162,5 +1271,38 @@ describe("swarm fan-out runner — bearer re-resolution", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("classifyRateLimit — a halt needs a real spend signal", () => {
+  // `cap`/`quota`/`budget` were word-anchored from the start so "capacity",
+  // "recap" and "escape" could not escalate one host's rate limit into a
+  // whole-run stop. `spend` was not, and "suspended" contains it.
+  it("does not read an account SUSPENSION as an org spend cap", () => {
+    expect(classifyRateLimit("Your account has been suspended")).toBe(
+      "provider_rate_limit",
+    );
+    expect(classifyRateLimit("suspended for non-payment")).toBe(
+      "provider_rate_limit",
+    );
+  });
+
+  it("still escalates real spend-cap wording", () => {
+    expect(classifyRateLimit("organization spend cap reached")).toBe(
+      "org_spend_cap",
+    );
+    expect(classifyRateLimit("monthly budget exceeded")).toBe("org_spend_cap");
+  });
+
+  // The denial code is matched by `isAccountLimit` one line earlier, so
+  // narrowing the prose pattern does not stop it halting the run.
+  it("still escalates the spend_budget_reached denial code", () => {
+    expect(
+      classifyRateLimit("Limit reached. (spend_budget_reached, HTTP 403)"),
+    ).toBe("org_spend_cap");
+  });
+
+  it("defaults an absent message to the narrower per-host stop", () => {
+    expect(classifyRateLimit(undefined)).toBe("provider_rate_limit");
   });
 });

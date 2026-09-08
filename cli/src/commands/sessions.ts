@@ -236,15 +236,19 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option(
           "--session <sessionId>",
-          "Continue this session instead of starting one. Configuration is fixed at the first turn, so the flags below are refused with a session."
+          "Continue this session instead of starting one. Configuration is fixed at the first turn, so the config flags below are refused with a session. The per-turn flags are not: --client, --max-steps and --max-tool-calls apply to whichever turn sends them, and --client in particular must be RE-SENT on every turn of a host-bound conversation — a session started with --client alone refuses a continuation that omits it."
         )
         .option(
           "--model <modelId>",
           'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required to start a session; a bare id is rejected rather than guessed.'
         )
         .option(
+          "--client <hostId>",
+          "Client ID (from `mcpjam cloud clients list`) to run the turn AS. A client that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the REAL runtime; without one the turn runs MCPJam's emulated engine. Per-turn, NOT pinned to the session — pass it on every turn, and check the printed `engine` to see what ran. Continuing a session you started with --client alone REQUIRES it: without it the turn is refused rather than answered by the emulated engine. Alongside --environment it only asserts which host you expect (a mismatch is refused). It cannot be combined with --server: --client cannot be pinned beside a pinned server set, so a later turn that omitted it would run the emulated engine on a session established on the harness. Use --environment, or --client alone (which connects the client's own servers). A harness turn needs --tool-mode auto with no --max-tool-calls."
+        )
+        .option(
           "--environment <environmentId>",
-          "Run against this environment's servers (mutually exclusive with --server)"
+          "Run against this environment's servers (mutually exclusive with --server). An environment pins its own host, so a harness environment runs its harness on every turn, continuations included."
         )
         .option(
           "--server <serverId...>",
@@ -269,6 +273,7 @@ export function registerSessionsCommands(program: Command): void {
       project: options.project,
       sessionId: options.session,
       modelId: options.model,
+      hostId: options.client,
       environmentId: options.environment,
       serverIds: options.server,
       systemPrompt: options.systemPrompt,
@@ -283,7 +288,11 @@ export function registerSessionsCommands(program: Command): void {
         { min: 0, max: 16 }
       ),
       temperature: parseFloatOption(options.temperature),
-    })
+    }),
+    // A Playground turn runs a model, and often tools with it. The 30s program
+    // default expired mid-turn while the turn kept running and spending, which
+    // reads to the caller as "it failed" when it had not.
+    { defaultTimeoutMs: 300_000 }
   );
 
   bindOperation(
@@ -352,6 +361,7 @@ type SendOptions = PlatformOptions & {
   idempotencyKey?: string;
   session?: string;
   model?: string;
+  client?: string;
   environment?: string;
   server?: string[];
   systemPrompt?: string;

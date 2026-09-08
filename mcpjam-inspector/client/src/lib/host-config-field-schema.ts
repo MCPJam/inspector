@@ -629,6 +629,154 @@ const SANDBOX_PERMISSION_FIELDS: ReadonlyArray<HostConfigFieldDef> =
     })
   );
 
+/** Tool Result parts relayed back only to a widget that called the tool. */
+const TOOL_RESULT_CONTENT_KINDS = [
+  ["text", "Text"],
+  ["image", "Image"],
+  ["audio", "Audio"],
+  ["resource", "Embedded resource"],
+  ["resourceLink", "Resource link"],
+] as const;
+const TOOL_RESULT_WIDGET_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    id: "toolResult.structuredContent",
+    section: "apps",
+    subsection: "Widget tool results",
+    label: "Structured content",
+    path: "mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent",
+    description:
+      "Whether the structuredContent half of a tool result reaches a widget that called the tool.",
+    kind: { kind: "boolean" },
+    read: (cfg) =>
+      mcpProfile(cfg)?.apps?.mcpAppsOverrides?.toolResult?.structuredContent,
+  },
+  ...TOOL_RESULT_CONTENT_KINDS.map(
+    ([key, label]): HostConfigFieldDef => ({
+      id: `toolResult.content.${key}`,
+      section: "apps",
+      subsection: "Widget tool results",
+      label,
+      path: `mcpProfile.apps.mcpAppsOverrides.toolResult.content.${key}`,
+      description: `Whether ${label.toLowerCase()} blocks in a tool result reach a widget that called the tool.`,
+      kind: { kind: "boolean" },
+      read: (cfg) =>
+        cfg.mcpProfile?.apps?.mcpAppsOverrides?.toolResult?.content?.[key],
+    })
+  ),
+];
+
+/** Browser APIs observed inside the sandboxed widget iframe. */
+const BROWSER_STORAGE_KEYS = [
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+] as const;
+const BROWSER_STORAGE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  BROWSER_STORAGE_KEYS.map(
+    (key): HostConfigFieldDef => ({
+    id: `sandbox.browserStorage.${key}`,
+    section: "apps",
+    subsection: "Sandbox",
+    label: key === "indexedDB" ? "IndexedDB" : key,
+    path: `mcpProfile.apps.sandbox.browserStorage.${key}`,
+    description: `${key} works inside the sandboxed app iframe (probe-measured browser behavior, not MCP).`,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.browserStorage?.[key],
+    })
+  );
+
+/**
+ * How the client handles `notifications/tools/list_changed`. Two
+ * independently-measured facts: whether it opens the server→client channel at
+ * all, and whether it acts on the notification once one arrives.
+ */
+const TOOL_LIST_CHANGED_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
+  [
+    [
+      "listens",
+      "Opens notification channel",
+      "Client opens the server-to-client notification channel (legacy: standalone GET SSE stream; 2026-07-28: subscriptions/listen).",
+    ],
+    [
+      "refetches",
+      "Re-fetches after list_changed",
+      "Client acts on notifications/tools/list_changed instead of keeping its cached tool list. Independent of the channel: a server can publish the notification on an open tools/call response stream, which reaches a client that never opened one.",
+    ],
+  ] as const
+).map(
+  ([key, label, description]): HostConfigFieldDef => ({
+    id: `toolListChanged.${key}`,
+    section: "protocol",
+    subsection: "Tool list changed",
+    label,
+    path: `mcpProfile.toolListChanged.${key}`,
+    description,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.toolListChanged?.[key],
+  })
+);
+
+/**
+ * `mcpProfile.paginationTraversal` — whether the client walks `nextCursor`
+ * to the end of a paginated list, or stops at page one.
+ *
+ * Rendered as a support chip rather than the literal, because the question a
+ * reader has is binary: will this host see tools past the first page? An
+ * absent value maps to "unknown" through the shared fallback, so a host
+ * nobody probed is never published as failing.
+ */
+const PAGINATION_FIELD: HostConfigFieldDef = {
+  id: "paginationTraversal",
+  section: "protocol",
+  subsection: "Pagination",
+  label: "Follows nextCursor",
+  path: "mcpProfile.paginationTraversal",
+  description:
+    "Client requests further pages of a paginated list instead of treating page one as the whole result.",
+  kind: {
+    kind: "enum",
+    options: ["full", "firstPageOnly"],
+    support: { full: "supported", firstPageOnly: "unsupported" },
+  },
+  read: (cfg) => mcpProfile(cfg)?.paginationTraversal,
+};
+
+/**
+ * `mcpProfile.toolCallCancellation` — whether stopping an in-flight tool call
+ * reaches the server, or only ends the turn inside the host.
+ *
+ * Two independently-measured facts, one per era, because a host can be right
+ * on one and wrong on the other: MCPJam cancelled correctly on 2025 while
+ * never aborting the stream on 2026. Named by era rather than by mechanism —
+ * the reader wants to know "will my server hear the stop on the revision I
+ * speak", not which message carries it.
+ */
+const TOOL_CALL_CANCELLATION_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
+  [
+    [
+      "legacy",
+      "Tool cancellation (2025)",
+      "Client tells the server when the user stops an in-flight tool call on a 2025 connection, by sending notifications/cancelled.",
+    ],
+    [
+      "modern",
+      "Tool cancellation (2026)",
+      "Client tells the server when the user stops an in-flight tool call on a 2026-07-28 connection, by closing that request's response stream.",
+    ],
+  ] as const
+).map(
+  ([key, label, description]): HostConfigFieldDef => ({
+    id: `toolCallCancellation.${key}`,
+    section: "protocol",
+    subsection: "Cancellation",
+    label,
+    path: `mcpProfile.toolCallCancellation.${key}`,
+    description,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.toolCallCancellation?.[key],
+  })
+);
+
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   // Agent · Agent tooling
@@ -854,6 +1002,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
+
   // ============================================================
   // Protocol · Client capabilities supported
   // ============================================================
@@ -1029,6 +1178,15 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => mcpProfile(cfg)?.apps?.sandbox?.permissions?.mode,
   },
   ...SANDBOX_PERMISSION_FIELDS,
+  ...BROWSER_STORAGE_FIELDS,
+
+  // ============================================================
+  // Apps · Widget tool results
+  // ============================================================
+  ...TOOL_RESULT_WIDGET_FIELDS,
+  ...TOOL_LIST_CHANGED_FIELDS,
+  PAGINATION_FIELD,
+  ...TOOL_CALL_CANCELLATION_FIELDS,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

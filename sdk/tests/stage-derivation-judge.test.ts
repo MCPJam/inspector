@@ -65,8 +65,12 @@ const userValue = (rows: StageResultRow[]) =>
   rows.find((row) => row.stage === "userValue")!;
 
 describe("the mirror the backend pins against", () => {
-  test("carries the five judge reasons, in the analyzer version that added them", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(3);
+  test("carries the five judge reasons, at or after the version that added them", () => {
+    // The reasons landed at 3 and the version has moved on twice since (D7's
+    // recategorization, D8's chat-session authoring). What this pins is the
+    // floor: the vocabulary the backend mirror validates against cannot
+    // regress below the version that introduced it.
+    expect(STAGE_ANALYZER_VERSION).toBeGreaterThanOrEqual(3);
     for (const reason of [
       "judgeObserved",
       "judgePartial",

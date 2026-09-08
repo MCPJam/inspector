@@ -248,7 +248,12 @@ export type {
   SkillsDirectoryReadResult,
   SkillIdentityFrontmatter,
 } from "./skills-ext-types.js";
-export { INODE_DIRECTORY_MIME_TYPE } from "./skills-ext-types.js";
+export {
+  INODE_DIRECTORY_MIME_TYPE,
+  DYNAMIC_SKILL_RESOURCES,
+  MAX_SKILL_RESOURCE_ENTRIES,
+  MAX_SKILL_TOTAL_BYTES,
+} from "./skills-ext-types.js";
 export {
   InvalidSkillsPayloadError,
   isInvalidSkillsPayloadError,
@@ -268,7 +273,10 @@ export {
   comparableAdvertisedFrontmatter,
   splitAdvertisedFrontmatter,
   computeSkillVersionHash,
+  checkManifestLimits,
+  enumeratedResources,
   findListedResource,
+  isDynamicResources,
   isListedResource,
   parseDigest,
   sha256HexOfBytes,
@@ -276,12 +284,15 @@ export {
   skillNameFromUri,
   splitSkillMarkdown,
   verifyDigest,
+  verifySize,
   verifySkillMarkdown,
 } from "./skills-integrity.js";
 export type {
   DigestVerification,
   FrontmatterIdentityCheck,
+  ManifestLimitCheck,
   ParsedDigest,
+  SizeVerification,
   SupportedDigestAlgorithm,
 } from "./skills-integrity.js";
 

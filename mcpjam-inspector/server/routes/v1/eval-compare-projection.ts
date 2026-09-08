@@ -143,15 +143,64 @@ const CASE_OUTCOMES = new Set(["passed", "failed", "absent"]);
 function caseSide(value: unknown): Rec {
   const side = isRecord(value) ? value : {};
   const iterationIds = Array.isArray(side.iterationIds)
-    ? side.iterationIds.filter(
-        (id): id is string => typeof id === "string",
-      )
+    ? side.iterationIds.filter((id): id is string => typeof id === "string")
     : [];
   return {
-    outcome: CASE_OUTCOMES.has(str(side.outcome)) ? str(side.outcome) : "absent",
+    outcome: CASE_OUTCOMES.has(str(side.outcome))
+      ? str(side.outcome)
+      : "absent",
     iterationIds,
     representativeIterationId: strOrNull(side.representativeIterationId),
     error: strOrNull(side.error),
+  };
+}
+
+/**
+ * How much of each side's cost was actually observed.
+ *
+ * Travels WITH the cost diff rather than beside it, because the two are only
+ * meaningful together: a 40% drop across full coverage is a regression
+ * signal, and the same 40% with half the compare side unpriced is an
+ * artifact. A CLI gate reads these counts to decide `non_gateable` rather
+ * than passing or failing on a partial sum.
+ */
+function costCoverage(value: unknown): Rec | undefined {
+  // ABSENT STAYS ABSENT. A backend predating cost coverage sends no block at
+  // all, and answering `{ costed: 0, total: 0 }` on its behalf turns "this
+  // platform has no opinion" into the false statement "none of the run was
+  // priced". The SDK type documents absence as the no-opinion value and both
+  // cost gates refuse to judge on it; manufacturing a block here would strip
+  // that distinction before it ever reached them.
+  if (!isRecord(value)) return undefined;
+  const source = value;
+  const side = (raw: unknown): Rec => {
+    const inner = isRecord(raw) ? raw : {};
+    // These are COUNTS. A non-finite, negative or fractional value is not a
+    // count of iterations, and forwarding one would let a gate compare
+    // `costed < total` against nonsense. Zero is the conservative answer:
+    // it reads as "nothing priced", which refuses rather than passes.
+    const count = (raw2: unknown): number => {
+      const n = numOrNull(raw2);
+      return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;
+    };
+    const costed = count(inner.costed);
+    const total = count(inner.total);
+    // `costed > total` is not a coverage reading, it is corrupt data — and it
+    // would slip past `costed < total`, which is how a gate ends up judging
+    // a cost regression on numbers that cannot both be true. Reported as
+    // nothing costed, which the gates already refuse.
+    return { costed: costed <= total ? costed : 0, total };
+  };
+  return { base: side(source.base), compare: side(source.compare) };
+}
+
+/** Per-case metrics. An explicit whitelist, like every projection here. */
+function caseMetrics(value: unknown): Rec {
+  const metrics = isRecord(value) ? value : {};
+  const coverage = costCoverage(metrics.costCoverage);
+  return {
+    estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
+    ...(coverage !== undefined ? { costCoverage: coverage } : {}),
   };
 }
 
@@ -200,9 +249,100 @@ function runSide(value: unknown): Rec {
   };
 }
 
+const SKILL_CHANGE_KINDS = new Set(["added", "removed", "changed"]);
+const SKILL_CHANNELS = new Set(["host", "environment", "plugin", "mcp-server"]);
+
+/**
+ * One side's fingerprint of a skill: hashes plus, when the run recorded one,
+ * the revision number. Whitelisted field by field like everything else here —
+ * the pinned-skill metadata is a wide internal shape and only these four are
+ * public.
+ */
+function skillSide(value: unknown): Rec | null {
+  if (!isRecord(value)) return null;
+  return {
+    contentHash: str(value.contentHash),
+    ...(typeof value.aggregateHash === "string"
+      ? { aggregateHash: value.aggregateHash }
+      : {}),
+    ...(typeof value.versionNumber === "number"
+      ? { versionNumber: value.versionNumber }
+      : {}),
+    ...(typeof value.serverSkillVersionNumber === "number"
+      ? { serverSkillVersionNumber: value.serverSkillVersionNumber }
+      : {}),
+  };
+}
+
+/**
+ * Which skills changed between the two runs — the configuration attribution
+ * that explains a case-level regression.
+ *
+ * `null` passes through as `null` rather than becoming an empty section: the
+ * backend uses it to mean "neither run recorded skills", and flattening that
+ * into `{changes: []}` would tell a public caller no skills were involved.
+ *
+ * The internal shape carries no `_storage` ids (skill bodies and files live in
+ * the pin stores, joined by hash elsewhere), so nothing here needs dropping —
+ * but it is still a whitelist, for the same reason the rest of the file is.
+ */
+function skills(value: unknown): Rec | null {
+  if (!isRecord(value)) return null;
+  const base = isRecord(value.base) ? value.base : {};
+  const compare = isRecord(value.compare) ? value.compare : {};
+  const changes = Array.isArray(value.changes) ? value.changes : [];
+  return {
+    base: { excluded: boolOf(base.excluded), count: countOf(base.count) },
+    compare: {
+      excluded: boolOf(compare.excluded),
+      count: countOf(compare.count),
+    },
+    changes: changes.filter(isRecord).map((row) => {
+      const baseSide = skillSide(row.base);
+      const compareSide = skillSide(row.compare);
+      return {
+        key: str(row.key),
+        name: str(row.name),
+        ...(typeof row.modelRef === "string" ? { modelRef: row.modelRef } : {}),
+        channels: (Array.isArray(row.channels) ? row.channels : [])
+          .filter((c): c is string => typeof c === "string")
+          .filter((c) => SKILL_CHANNELS.has(c)),
+        kind: SKILL_CHANGE_KINDS.has(str(row.kind)) ? str(row.kind) : "changed",
+        ...(typeof row.renamedFrom === "string"
+          ? { renamedFrom: row.renamedFrom }
+          : {}),
+        ...(baseSide ? { base: baseSide } : {}),
+        ...(compareSide ? { compare: compareSide } : {}),
+        ...(typeof row.versionDelta === "string"
+          ? { versionDelta: row.versionDelta }
+          : {}),
+      };
+    }),
+    unchangedCount: countOf(value.unchangedCount),
+  };
+}
+
 export type RunCompareBaseline = {
-  policy: "previous_completed" | "previous_completed_same_environment" | "run";
+  policy:
+    | "previous_completed"
+    | "previous_completed_same_environment"
+    | "run"
+    | "commit_sha";
   baseRunId: string;
+  /** Echoed back for the `commit_sha` policy only. */
+  baseCommitSha?: string;
+  /**
+   * Present ONLY when uniqueness could not be established — the SHA matched
+   * several eligible runs, or the bounded lookup saturated so older eligible
+   * ones may exist beyond it. Absent means unambiguous.
+   */
+  matchCount?: number;
+  /**
+   * `matchCount` is a FLOOR, not a total — including when it reads 1. Always
+   * rendered next to its count: a truncated count shown alone claims a
+   * uniqueness nobody checked.
+   */
+  matchCountTruncated?: boolean;
 };
 
 /**
@@ -219,6 +359,7 @@ export function toRunCompareDto(
   const source = isRecord(diff) ? diff : {};
   const suite = isRecord(source.suite) ? source.suite : {};
   const metrics = isRecord(source.metrics) ? source.metrics : {};
+  const runCostCoverage = costCoverage(metrics.costCoverage);
   // The internal name is `scores`; see the module comment for why it is not
   // that here.
   const passSummary = isRecord(source.scores) ? source.scores : {};
@@ -239,8 +380,12 @@ export function toRunCompareDto(
       wallDurationMs: numericDiff(metrics.wallDurationMs),
       totalTokens: numericDiff(metrics.totalTokens),
       estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
+      ...(runCostCoverage !== undefined
+        ? { costCoverage: runCostCoverage }
+        : {}),
     },
     scoreContract: scoreContract(source.scoreContract),
+    skills: skills(source.skills),
     cases: cases.filter(isRecord).map((row) => ({
       caseKey: str(row.caseKey),
       title: str(row.title),
@@ -250,6 +395,10 @@ export function toRunCompareDto(
       scoreDeltas: scoreDeltas(row.scoreDeltas),
       base: caseSide(row.base),
       compare: caseSide(row.compare),
+      // Absent stays absent. A backend that reports no per-case metrics is
+      // saying nothing; publishing `{ estimatedCostUsd: all-null }` on its
+      // behalf turns that silence into a measured claim of no cost.
+      ...(isRecord(row.metrics) ? { metrics: caseMetrics(row.metrics) } : {}),
     })),
   };
 }

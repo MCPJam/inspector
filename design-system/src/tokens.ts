@@ -30,6 +30,31 @@ export const tokensCss: string = `@theme {
   --destructive: oklch(0.627 0.208 25.331);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.8847 0.0069 97.3627);
+  /* Chrome controls. Sampled from the Production Redesign frame: the pieces
+     that sit ON the linen ground (--secondary / --sidebar, #E9E6DC) rather
+     than on the panel (--background, #FAF9F5). Those two grounds already had
+     tokens, which is why only the controls are new here.
+
+       --chrome-control         #E4DDD0  nav selector + filled nav buttons
+       --chrome-control-border  #D6CFC0  hairline on those controls only
+       --chrome-hover           #E2DCCF  idle tab / ghost hover (no fill at rest)
+       --divider                #DDD8CC  pane hairlines
+
+     --divider is a hair warmer and lighter than --border (#DAD9D4). It is kept
+     apart because --border also draws inputs and cards on the panel, where the
+     linen cast reads as a tint rather than a neutral line. */
+  --chrome-control: oklch(0.8995 0.0191 83.0632);
+  --chrome-control-border: oklch(0.856 0.0218 85.9495);
+  --chrome-hover: oklch(0.8957 0.0187 86.151);
+  /* The hover for a control that is ALREADY filled — the filled nav buttons
+     and the client selector. --chrome-hover above is for things with no fill
+     at rest (idle tabs, ghost buttons); on top of --chrome-control (#E4DDD0)
+     it is a 0.4% step and reads as nothing.
+     It must also clear --chrome-control-border (L 0.856): at the old 0.8515
+     the hover fill and the hairline were 0.0045 L apart, so hovering a
+     secondary button erased its own outline. */
+  --chrome-control-hover: oklch(0.83 0.0235 80.6762);
+  --divider: oklch(0.8829 0.0171 88.0071);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
   /* Semantic status colors */
@@ -50,6 +75,20 @@ export const tokensCss: string = `@theme {
   --diagram-sandbox-foreground: oklch(0.99 0.01 75);
   --diagram-view: oklch(0.6 0.1 290);
   --diagram-view-foreground: oklch(0.99 0.01 290);
+  /* Run-origin accent tokens — the two launch origins the runs table has to
+     tell apart from the API rows they are stamped as: the mcpjam CLI and an
+     MCP client's agent (Slack and Discord included). Role-based; used only by
+     lib/evals/run-origin.ts.
+     Border and background are separate tokens carrying their own alpha, so the
+     badge reads them as plain border-[var(--...)] / bg-[var(--...)] utilities
+     and the tint tracks the theme without a dark: variant. Both stay behind
+     --foreground text, which is what keeps the contrast ratio.
+     No backticks in this file: tokens.ts embeds it verbatim in a template
+     literal, and the parity test compares the two byte for byte. */
+  --run-origin-cli-border: oklch(0.65 0.11 195 / 0.5);
+  --run-origin-cli-bg: oklch(0.65 0.11 195 / 0.1);
+  --run-origin-agent-border: oklch(0.62 0.21 330 / 0.5);
+  --run-origin-agent-bg: oklch(0.62 0.21 330 / 0.1);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -110,6 +149,11 @@ export const tokensCss: string = `@theme {
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* The chrome panel's lift. Mostly hidden BEHIND the panel — only what the
+     blur pushes past the top edge is ever visible — so the depth is in the
+     blur, not the offset. Like every other shadow here it is one value for
+     both themes. */
+  --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -158,6 +202,25 @@ export const tokensCss: string = `@theme {
   --destructive: oklch(0.6368 0.2078 25.3313);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.3618 0.0101 106.8928);
+  /* Chrome controls, dark. Only the light frame was specified, so these keep
+     the RELATIONSHIP rather than the values: a control is one step away from
+     the ground it sits on, and on a dark ground that step is upward. Hover is
+     the exception — it darkens in both themes, which is what the light frame
+     does too (#E2DCCF sits below the #E9E6DC ground).
+
+     The values are existing dark tokens, reused so the chrome cannot drift
+     from the panel: --popover for the raised control, --accent for hover, and
+     --border for both hairlines. */
+  --chrome-control: oklch(0.3085 0.0035 106.6039);
+  --chrome-control-border: oklch(0.3618 0.0101 106.8928);
+  --chrome-hover: oklch(0.213 0.0078 95.4245);
+  /* Lighter than the fill, not darker: on a dark ground a raised control
+     brightens under the pointer. This is the one chrome token here that does
+     NOT reuse --border: --chrome-control-border already is --border's dark
+     value, so sharing it filled a hovered control with exactly its own
+     hairline colour and the outline vanished. A step past it instead. */
+  --chrome-control-hover: oklch(0.3951 0.0106 106.8928);
+  --divider: oklch(0.3618 0.0101 106.8928);
   --input: oklch(0.4336 0.0113 100.2195);
   --ring: oklch(0.6724 0.1308 38.7559);
   /* Semantic status colors */
@@ -177,6 +240,12 @@ export const tokensCss: string = `@theme {
   --diagram-sandbox-foreground: oklch(0.2 0.04 75);
   --diagram-view: oklch(0.8 0.09 290);
   --diagram-view-foreground: oklch(0.2 0.04 290);
+  /* Run-origin accent tokens — lifted, like the diagram hues above, and a
+     little more opaque, so the tints stay legible against the dark canvas. */
+  --run-origin-cli-border: oklch(0.78 0.1 195 / 0.5);
+  --run-origin-cli-bg: oklch(0.78 0.1 195 / 0.15);
+  --run-origin-agent-border: oklch(0.74 0.18 330 / 0.5);
+  --run-origin-agent-bg: oklch(0.74 0.18 330 / 0.15);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -206,5 +275,10 @@ export const tokensCss: string = `@theme {
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* The chrome panel's lift. Mostly hidden BEHIND the panel — only what the
+     blur pushes past the top edge is ever visible — so the depth is in the
+     blur, not the offset. Like every other shadow here it is one value for
+     both themes. */
+  --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
 }
 `;

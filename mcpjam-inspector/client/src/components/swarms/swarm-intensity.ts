@@ -53,7 +53,7 @@ export const SWARM_INTENSITY_PRESETS: Record<
   },
   launch: {
     value: "launch",
-    label: "Launch gate",
+    label: "Launch ready",
     personaCount: 12,
     journeyCount: 5,
     sessionsPerTarget: 2,

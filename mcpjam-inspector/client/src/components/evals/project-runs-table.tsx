@@ -21,7 +21,29 @@ import { cn } from "@/lib/utils";
 import { formatDuration, formatRunId, formatTime } from "./helpers";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { RunSourceBadge } from "./run-source-badge";
+import {
+  apiKeyTail,
+  originsForFilters,
+  runAgentName,
+  RUN_ORIGIN_FILTERS,
+} from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
+import {
+  RunDecisionVerdictBadge,
+  RunDecisionVerdictUnavailable,
+} from "./run-decision-summary-card";
+import {
+  useEvalRunDecisionBadge,
+  useHasBeenVisible,
+} from "@/hooks/use-eval-run-decision-summary";
+import {
+  evalRunDecisionRevision,
+  isTerminalEvalRunStatus,
+} from "@/lib/evals/eval-decision-summary-store";
+import {
+  decisionMeasurementUnitLabel,
+  formatDecisionCounts,
+} from "./run-decision-summary-presentation";
 
 export const PROJECT_RUNS_PAGE_SIZE = 50;
 
@@ -47,6 +69,14 @@ export interface ProjectRunRow {
     passRate: number;
   } | null;
   source: EvalSuiteRun["source"] | null;
+  /**
+   * The DECLARED launcher and the VERIFIED attribution. Both `| null` AND
+   * optional: a backend that predates run provenance sends neither key, so a
+   * reader that assumed the field existed would crash the whole table against
+   * an older deployment.
+   */
+  launcher?: EvalSuiteRun["launcher"] | null;
+  attribution?: EvalSuiteRun["attribution"] | null;
   ciMetadata: EvalSuiteRun["ciMetadata"] | null;
   createdBy: string;
   createdByName: string | null;
@@ -55,17 +85,6 @@ export interface ProjectRunRow {
   completedAt: number | null;
   durationMs: number | null;
 }
-
-const SOURCE_FILTERS: Array<{
-  value: NonNullable<EvalSuiteRun["source"]>;
-  label: string;
-}> = [
-  { value: "sdk", label: "SDK" },
-  { value: "ui", label: "UI" },
-  { value: "api", label: "API" },
-  { value: "schedule", label: "Scheduled" },
-  { value: "github_check", label: "GitHub" },
-];
 
 const ALL_SUITES = "__all__";
 
@@ -97,6 +116,11 @@ function statusMeta(row: ProjectRunRow): {
       };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // A held run's `result` is the truthy "pending", so the fallback above
+      // routes it here by STATUS — which is what stops it reading as a queued
+      // run when its verdict is minutes away.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return { label: "Pending", className: "bg-muted text-muted-foreground" };
   }
@@ -130,16 +154,43 @@ function metricLabel(row: ProjectRunRow): string {
 export function ProjectRunsTable({
   projectId,
   onSelectRun,
+  decisionSummaryEnabled = false,
 }: {
   projectId: string;
   onSelectRun: (args: { suiteId: string; runId: string }) => void;
+  /**
+   * Read D9's canonical verdict and counts for terminal rows, one row at a
+   * time as it scrolls into view.
+   *
+   * OFF by default — only Evaluate opts in — and off means off: no
+   * subscription, no request, and the table renders exactly as it does today.
+   */
+  decisionSummaryEnabled?: boolean;
 }) {
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
 
+  /**
+   * The chip selection, as the backend's `origins` argument.
+   *
+   * SENT TO THE QUERY, not applied to the rows it returns. Filtering the
+   * loaded page was a false negative with real consequences: a suite whose only
+   * GitHub runs were older than the first 50 rows answered "No runs match these
+   * filters", which reads as "we never ran this from CI" rather than "they are
+   * further down". An empty selection sends no argument at all, so an older
+   * backend that does not know it is unaffected.
+   */
+  const origins = useMemo(
+    () => originsForFilters([...sourceFilter]),
+    [sourceFilter],
+  );
+
   const { results, status, loadMore } = usePaginatedQuery(
     "testSuites:listProjectRuns" as any,
-    { projectId } as any,
+    ({
+      projectId,
+      ...(origins.length > 0 ? { origins } : {}),
+    }) as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
 
@@ -157,14 +208,13 @@ export function ProjectRunsTable({
 
   const filtered = useMemo(
     () =>
-      rows.filter((row) => {
-        if (suiteFilter !== ALL_SUITES && row.suiteId !== suiteFilter) {
-          return false;
-        }
-        if (sourceFilter.size === 0) return true;
-        return sourceFilter.has(row.source ?? "ui");
-      }),
-    [rows, sourceFilter, suiteFilter],
+      // Suite only. Origin is decided by the query above, so a row that got
+      // here already matches the chips — re-checking it client-side would be a
+      // second predicate free to disagree with the one that chose the page.
+      rows.filter(
+        (row) => suiteFilter === ALL_SUITES || row.suiteId === suiteFilter,
+      ),
+    [rows, suiteFilter],
   );
 
   const isLoadingFirstPage = status === "LoadingFirstPage";
@@ -188,7 +238,11 @@ export function ProjectRunsTable({
     );
   }
 
-  if (rows.length === 0) {
+  // The project has no runs AT ALL — not "no runs matched". Now that the
+  // origin chips are a query argument, an empty page can also mean the filter
+  // matched nothing, and showing this instead would both lie about the project
+  // and take away the chips the user needs to undo it.
+  if (rows.length === 0 && !isFiltering) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="mx-auto max-w-md p-6 text-center">
@@ -213,7 +267,7 @@ export function ProjectRunsTable({
         <span className="text-xs font-medium text-muted-foreground">
           Source
         </span>
-        {SOURCE_FILTERS.map((filter) => {
+        {RUN_ORIGIN_FILTERS.map((filter) => {
           const active = sourceFilter.has(filter.value);
           return (
             <button
@@ -257,17 +311,13 @@ export function ProjectRunsTable({
       </div>
 
       {/*
-        Say what the filters actually cover. They run over the pages loaded
-        so far, so with more pages outstanding "no SDK runs" would otherwise
-        read as a fact about the project rather than about this page.
+        The "filtering the N runs loaded so far" caveat is GONE, because the
+        limitation it described is: the origin chips are a query argument now,
+        so an empty result really does mean the project has no such runs. The
+        suite dropdown still filters the loaded page — it is built from the
+        rows in hand — which is why `isFiltering` survives below for the empty
+        state's wording.
       */}
-      {isFiltering && canLoadMore ? (
-        <p className="text-[11px] text-muted-foreground">
-          Filtering the {rows.length} most recent runs loaded so far — load more
-          below to widen the search.
-        </p>
-      ) : null}
-
       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/60">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
@@ -296,112 +346,30 @@ export function ProjectRunsTable({
                   colSpan={9}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
-                  No runs match these filters.
+                  {/*
+                    Three different facts, said differently. "No runs match
+                    these filters" was printed for all three, which is how an
+                    unfiltered empty project read as a filtering problem — and,
+                    before the chips became a query argument, how a project WITH
+                    matching runs further down read as having none.
+                  */}
+                  {!isFiltering
+                    ? "No runs yet."
+                    : canLoadMore
+                      ? "No matches on this page — load more to keep looking."
+                      : "No runs match these filters."}
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((row) => {
-                const meta = statusMeta(row);
-                // Run detail is rendered inside its suite, so a row whose
-                // suite no longer resolves has nowhere to go — presenting it
-                // as clickable would promise a navigation that bounces
-                // straight back here. Show the row (the run happened) but
-                // don't pretend it opens.
-                const canOpen = row.suiteName !== null;
-                const open = () =>
-                  onSelectRun({ suiteId: row.suiteId, runId: row._id });
-                return (
-                  <TableRow
-                    key={row._id}
-                    {...(canOpen
-                      ? {
-                          role: "button",
-                          tabIndex: 0,
-                          "aria-label": `Run ${formatRunId(row._id)}`,
-                          onClick: open,
-                          onKeyDown: (event: React.KeyboardEvent) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              open();
-                            }
-                          },
-                        }
-                      : {})}
-                    className={canOpen ? "cursor-pointer" : undefined}
-                  >
-                    <TableCell className="font-mono text-xs">
-                      {formatRunId(row._id)}
-                    </TableCell>
-                    <TableCell className="max-w-[220px] truncate text-xs">
-                      {row.suiteName ?? (
-                        <span
-                          className="text-muted-foreground"
-                          title="This run's suite no longer exists, so its detail view can't be opened."
-                        >
-                          Deleted suite
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <RunSourceBadge source={row.source ?? undefined} />
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                          meta.className,
-                        )}
-                      >
-                        {meta.label}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {row.summary ? (
-                        <span className="flex flex-col leading-tight">
-                          <span>
-                            {Math.round(row.summary.passRate)}%{" "}
-                            <span className="text-[10px]">
-                              ({row.summary.passed}/{row.summary.total})
-                            </span>
-                          </span>
-                          {/*
-                            Rendered, not a `title`: which metric this number
-                            is has to be readable, and a tooltip is invisible
-                            to anyone scanning the column or using a
-                            screen reader.
-                          */}
-                          <span className="text-[10px] opacity-70">
-                            {metricLabel(row)}
-                          </span>
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {formatTime(row.createdAt)}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {row.durationMs != null
-                        ? formatDuration(row.durationMs)
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
-                      {row.createdByName ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      {row.ciMetadata ? (
-                        <CiMetadataDisplay
-                          ciMetadata={row.ciMetadata}
-                          compact
-                          compactMode="chip"
-                          interactive={false}
-                        />
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                );
-              })
+              filtered.map((row) => (
+                <ProjectRunTableRow
+                  key={row._id}
+                  row={row}
+                  projectId={projectId}
+                  decisionSummaryEnabled={decisionSummaryEnabled}
+                  onSelectRun={onSelectRun}
+                />
+              ))
             )}
           </TableBody>
         </Table>
@@ -423,5 +391,207 @@ export function ProjectRunsTable({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * One run row, with its canonical verdict read lazily.
+ *
+ * Extracted into its own component for two reasons that are really the same
+ * reason: a hook cannot live inside a `.map()` callback, and the per-row read
+ * has to be able to say "not yet" — which is what
+ * {@link useHasBeenVisible} gives it. A 50-row page therefore paints without
+ * 50 requests, and "Load more" adds rows that cost nothing until someone
+ * scrolls to them.
+ *
+ * A RUNNING row stays lifecycle-only: `statusMeta` describes where the run is,
+ * which is all there is to say about a run that has not decided anything. And
+ * a row whose summary has not arrived keeps the stored `summary` numbers it
+ * always showed — this never invents an aggregate for a row it could not read,
+ * including the fan-out rows whose stored numbers describe one leg.
+ */
+/**
+ * WHO started this run — the person, and the credential they used.
+ *
+ * The name alone was ambiguous in the one case that matters: a run made with an
+ * API key is attributed to the key's owner, so an automated launch and that
+ * person clicking Run read identically. `attribution.apiKeyId` is minted by the
+ * backend from the credential the request authenticated with — a fact, not a
+ * claim — so the second line can say which key without guessing.
+ *
+ * An MCP run names the calling agent instead, which is the more useful answer
+ * there: "claude-code" tells you what to look at; "via API key ····3f9a" tells
+ * you which key to rotate.
+ */
+function RunByCell({ row }: { row: ProjectRunRow }) {
+  const name = row.createdByName ?? "—";
+  const agent = runAgentName(row);
+  const keyTail = agent ? null : apiKeyTail(row.attribution?.apiKeyId);
+  return (
+    <span className="flex flex-col leading-tight">
+      <span className="truncate">{name}</span>
+      {agent ? (
+        <span className="truncate text-[10px] opacity-70" title={agent}>
+          via {agent}
+        </span>
+      ) : keyTail ? (
+        <span className="text-[10px] opacity-70">via API key {keyTail}</span>
+      ) : null}
+    </span>
+  );
+}
+
+function ProjectRunTableRow({
+  row,
+  projectId,
+  decisionSummaryEnabled,
+  onSelectRun,
+}: {
+  row: ProjectRunRow;
+  projectId: string;
+  decisionSummaryEnabled: boolean;
+  onSelectRun: (args: { suiteId: string; runId: string }) => void;
+}) {
+  const [visibilityRef, hasBeenVisible, onScreen] =
+    useHasBeenVisible<HTMLTableRowElement>();
+  const terminal = isTerminalEvalRunStatus(row.status);
+  const { status: summaryStatus, summary, error } = useEvalRunDecisionBadge({
+    projectId,
+    runId: row._id,
+    enabled: decisionSummaryEnabled && terminal && hasBeenVisible,
+    // Sticky to FETCH, live to REVALIDATE: a row keeps its answer once read,
+    // but only the rows on screen keep asking whether it changed.
+    revalidate: onScreen,
+    revision: evalRunDecisionRevision(row),
+  });
+  // SETTLED without a summary. The lifecycle label is this row's answer only
+  // until the run's own answer is known to be unreadable — after that,
+  // presenting it is presenting a derivation as if it were the verdict.
+  const summaryUnavailable = summaryStatus === "error";
+
+  const meta = statusMeta(row);
+  // Run detail is rendered inside its suite, so a row whose suite no longer
+  // resolves has nowhere to go — presenting it as clickable would promise a
+  // navigation that bounces straight back here. Show the row (the run
+  // happened) but don't pretend it opens.
+  const canOpen = row.suiteName !== null;
+  const open = () => onSelectRun({ suiteId: row.suiteId, runId: row._id });
+
+  const canonicalCounts = summary ? formatDecisionCounts(summary.counts) : null;
+  const canonicalUnit = summary
+    ? decisionMeasurementUnitLabel(summary.counts)
+    : null;
+
+  return (
+    <TableRow
+      ref={decisionSummaryEnabled ? visibilityRef : undefined}
+      {...(canOpen
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": `Run ${formatRunId(row._id)}`,
+            onClick: open,
+            onKeyDown: (event: React.KeyboardEvent) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                open();
+              }
+            },
+          }
+        : {})}
+      className={canOpen ? "cursor-pointer" : undefined}
+    >
+      <TableCell className="font-mono text-xs">{formatRunId(row._id)}</TableCell>
+      <TableCell className="max-w-[220px] truncate text-xs">
+        {row.suiteName ?? (
+          <span
+            className="text-muted-foreground"
+            title="This run's suite no longer exists, so its detail view can't be opened."
+          >
+            Deleted suite
+          </span>
+        )}
+      </TableCell>
+      <TableCell>
+        <RunSourceBadge run={row} />
+      </TableCell>
+      <TableCell>
+        {summary ? (
+          // The run's own verdict replaces the status-derived label outright,
+          // `inconclusive` and "no verdict" included — those are answers this
+          // column could not previously express at all.
+          <RunDecisionVerdictBadge summary={summary} />
+        ) : summaryUnavailable ? (
+          <RunDecisionVerdictUnavailable error={error} />
+        ) : (
+          <span
+            className={cn(
+              "rounded px-1.5 py-0.5 text-[10px] font-medium",
+              meta.className,
+            )}
+          >
+            {meta.label}
+          </span>
+        )}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {canonicalCounts ? (
+          <span className="flex flex-col leading-tight">
+            <span>{canonicalCounts}</span>
+            {/*
+              Rendered, not a `title`: which population this number counts has
+              to be readable, and a tooltip is invisible to anyone scanning the
+              column or using a screen reader.
+            */}
+            <span className="text-[10px] opacity-70">
+              {canonicalUnit ? `counted in ${canonicalUnit}` : null}
+            </span>
+          </span>
+        ) : summary || summaryUnavailable ? (
+          // Either the summary ARRIVED and reported no counts — a legacy run
+          // that recorded none, or a run with no verdict, for which the
+          // contract forbids them outright — or the read settled unreadable.
+          // Absence stays absence either way: the stored aggregate is a
+          // different reading of this run, and printing it beside a canonical
+          // verdict (or beside "we could not read one") puts two answers in
+          // one row.
+          <span className="flex flex-col leading-tight">
+            <span>—</span>
+            <span className="text-[10px] opacity-70">no counts reported</span>
+          </span>
+        ) : row.summary ? (
+          <span className="flex flex-col leading-tight">
+            <span>
+              {Math.round(row.summary.passRate)}%{" "}
+              <span className="text-[10px]">
+                ({row.summary.passed}/{row.summary.total})
+              </span>
+            </span>
+            <span className="text-[10px] opacity-70">{metricLabel(row)}</span>
+          </span>
+        ) : (
+          "—"
+        )}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {formatTime(row.createdAt)}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {row.durationMs != null ? formatDuration(row.durationMs) : "—"}
+      </TableCell>
+      <TableCell className="max-w-[140px] text-xs text-muted-foreground">
+        <RunByCell row={row} />
+      </TableCell>
+      <TableCell>
+        {row.ciMetadata ? (
+          <CiMetadataDisplay
+            ciMetadata={row.ciMetadata}
+            compact
+            compactMode="chip"
+            interactive={false}
+          />
+        ) : null}
+      </TableCell>
+    </TableRow>
   );
 }

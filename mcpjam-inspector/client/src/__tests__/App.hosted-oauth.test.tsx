@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast as sonnerToast } from "sonner";
 import App from "../App";
 import {
   clearHostedOAuthPendingState,
@@ -28,6 +29,14 @@ import {
   writeScenarioSignInReturnPath,
   writeScenarioSession,
 } from "../lib/scenario-session";
+import {
+  readAppSignInReturnPath,
+  writeAppSignInReturnPath,
+} from "../lib/app-signin-return-path";
+
+/** Convex-shaped project ids for the cross-organization switch cases. */
+const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
+const ORG_B_PROJECT_ID = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";
 
 const existingConvexUser = {
   _id: "user-1",
@@ -48,6 +57,7 @@ const {
   mockPlaygroundTabProps,
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
+  mockDbUserState,
   mockHandleOAuthCallback,
   mockHeader,
   mockHostedShellGateState,
@@ -118,13 +128,14 @@ const {
       isLoading: false,
     },
     mockCompleteHostedOAuthCallback: vi.fn(),
+    mockDbUserState: {
+      isEnsuringUser: false,
+      isUserReady: true,
+    },
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        | "ready"
-        | "auth-loading"
-        | "project-loading"
-        | "logged-out",
+        "ready" | "auth-loading" | "project-loading" | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
     mockOAuthFlowTabState: {
@@ -181,7 +192,7 @@ function mockFreshGuestUser() {
           // Fresh guest cookie/user rows have not seen first-run NUX yet.
           hasSeenOnboarding: false,
         }
-      : undefined
+      : undefined,
   );
 }
 
@@ -196,7 +207,7 @@ function mockSeenGuestUser() {
           isAnonymous: true,
           hasSeenOnboarding: true,
         }
-      : undefined
+      : undefined,
   );
 }
 
@@ -235,6 +246,9 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+  // MCPJamLimitDialog (mounted app-wide) reads the guest credit-wall variant.
+  // These tests don't exercise that wall, so control (undefined) is fine.
+  useFeatureFlagVariantKey: () => undefined,
 }));
 
 vi.mock("@/lib/analytics", () => ({
@@ -266,11 +280,8 @@ vi.mock("../hooks/useElectronOAuth", () => ({
 }));
 
 vi.mock("../contexts/db-user-ready-context", () => ({
-  useDbUserBootstrapStatus: vi.fn(() => ({
-    isEnsuringUser: false,
-    isUserReady: true,
-  })),
-  useDbUserReady: vi.fn(() => true),
+  useDbUserBootstrapStatus: vi.fn(() => mockDbUserState),
+  useDbUserReady: vi.fn(() => mockDbUserState.isUserReady),
 }));
 
 vi.mock("../hooks/usePostHogIdentify", () => ({
@@ -283,7 +294,6 @@ vi.mock("../hooks/usePostHogOrgContext", () => ({
 
 vi.mock("../lib/config", () => ({
   HOSTED_MODE: true,
-  NON_PROD_LOCKDOWN: false,
 }));
 
 vi.mock("../lib/theme-utils", () => ({
@@ -434,7 +444,8 @@ vi.mock("../components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  useSidebar: () => ({ isMobile: false }),
+  // `setOpen` is what `SidebarAutoCollapse` drives the open state through.
+  useSidebar: () => ({ isMobile: false, setOpen: () => {} }),
 }));
 vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
@@ -487,7 +498,7 @@ describe("App hosted OAuth callback handling", () => {
     localStorage.clear();
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "completed", completedAt: Date.now() })
+      JSON.stringify({ status: "completed", completedAt: Date.now() }),
     );
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
@@ -505,11 +516,13 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser" ? existingConvexUser : undefined
+      ref === "users:getCurrentUser" ? existingConvexUser : undefined,
     );
     mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = true;
     mockConvexAuthState.isLoading = false;
+    mockDbUserState.isEnsuringUser = false;
+    mockDbUserState.isUserReady = true;
     mockWorkOsAuthState.getAccessToken = vi.fn();
     mockWorkOsAuthState.signIn = vi.fn();
     mockWorkOsAuthState.user = null;
@@ -533,13 +546,15 @@ describe("App hosted OAuth callback handling", () => {
     mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
     mockTrack.mockReset();
+    vi.mocked(sonnerToast.error).mockReset();
+    vi.mocked(sonnerToast.success).mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {})
+      () => new Promise<never>(() => {}),
     );
     mockHandleOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {})
+      () => new Promise<never>(() => {}),
     );
 
     writeScenarioSession({
@@ -587,6 +602,9 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   afterEach(() => {
+    if (vi.isMockFunction(window.history.replaceState)) {
+      vi.mocked(window.history.replaceState).mockRestore();
+    }
     vi.unstubAllGlobals();
   });
 
@@ -595,7 +613,7 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" })
+      screen.queryByRole("button", { name: "Authorize" }),
     ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
@@ -606,7 +624,7 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -619,7 +637,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/oauth-flow");
     mockOAuthFlowTabState.shouldThrow = true;
     mockOAuthFlowTabState.error = new Error(
-      "token exchange failed client_secret=super-secret Bearer access-token"
+      "token exchange failed client_secret=super-secret Bearer access-token",
     );
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", {
@@ -630,13 +648,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      await screen.findByText("OAuth Debugger crashed")
+      await screen.findByText("OAuth Debugger crashed"),
     ).toBeInTheDocument();
     expect(mockTrack).toHaveBeenCalledWith(
       "oauth_debugger_error_boundary",
       expect.objectContaining({
         message: expect.stringContaining("[redacted]"),
-      })
+      }),
     );
     expect(JSON.stringify(mockTrack.mock.calls)).not.toContain("super-secret");
 
@@ -644,7 +662,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
-        expect.not.stringContaining("super-secret")
+        expect.not.stringContaining("super-secret"),
       );
     });
     expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
@@ -669,7 +687,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: "Bearer guest-bearer",
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -706,7 +724,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: undefined,
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -719,7 +737,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(readHostedOAuthResumeMarker("scenario")?.errorMessage).toBe(
-        "Your guest session expired. Reopen the swarm link and try again."
+        "Your guest session expired. Reopen the swarm link and try again.",
       );
     });
     expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
@@ -749,7 +767,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: "Bearer workos-token",
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
     expect(mockGetGuestBearerToken).not.toHaveBeenCalled();
@@ -773,7 +791,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      screen.queryByTestId("hosted-oauth-loading")
+      screen.queryByTestId("hosted-oauth-loading"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
@@ -802,11 +820,11 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("callback-auth-timeout")
+      screen.queryByTestId("callback-auth-timeout"),
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
     expect(readScenarioSignInReturnPath()).toBe(
-      "/user-testing/asana/token-123"
+      "/user-testing/asana/token-123",
     );
   });
 
@@ -834,7 +852,7 @@ describe("App hosted OAuth callback handling", () => {
           guestId: "guest_123",
           token: "guest-token",
           expiresAt: Date.now() + 60_000,
-        })
+        }),
       );
       writeHostedOAuthPendingMarker({
         surface: "project",
@@ -861,7 +879,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Try sign in again" })
+        screen.getByRole("button", { name: "Try sign in again" }),
       );
 
       await act(async () => {
@@ -892,13 +910,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements"
+      ([name]) => name === "billing:getOrganizationEntitlements",
     );
     const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness"
+      ([name]) => name === "billing:getOrganizationPremiumness",
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -924,13 +942,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements"
+      ([name]) => name === "billing:getOrganizationEntitlements",
     );
     const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness"
+      ([name]) => name === "billing:getOrganizationPremiumness",
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -971,7 +989,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
@@ -1031,7 +1049,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
@@ -1091,7 +1109,7 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
 
@@ -1223,6 +1241,9 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   it("preserves the newly selected org when navigating away immediately", async () => {
+    // The switch is carried by the URL, not by hidden state set before it:
+    // navigating to Servers in the same tick inherits the project the switch
+    // just put in the pathname, so it stays a project in the new org.
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a");
@@ -1263,6 +1284,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1288,7 +1322,8 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      // Servers, still scoped to the project the switch landed on.
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
   });
 
@@ -1329,7 +1364,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#settings");
   });
 
-  it("lands on servers when switching active organization from org models", async () => {
+  it("lands on the target org's project when switching from org models", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a/models");
@@ -1370,6 +1405,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1385,19 +1433,224 @@ describe("App hosted OAuth callback handling", () => {
         mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
       return lastCall?.[0] as unknown as {
         activeOrganizationId?: string;
-        onSwitchActiveOrganization?: (organizationId: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
       };
     };
 
     act(() => {
-      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
     });
 
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
+  });
+
+  it("moves the URL out of the old org's project when switching organization", async () => {
+    // The regression this replaces: the handler set the active organization
+    // and asked for `/servers`, which is already the logical path — so the
+    // navigation no-opped, the pathname kept org A's project, and the route
+    // coordinator read it back as "go to org A", silently undoing the switch.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", `/p/${ORG_A_PROJECT_ID}/servers`);
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeProjectId: ORG_A_PROJECT_ID,
+        projects: {
+          [ORG_A_PROJECT_ID]: {
+            id: ORG_A_PROJECT_ID,
+            name: "Org A Project",
+            sharedProjectId: ORG_A_PROJECT_ID,
+            organizationId: "org-a",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    (mockUseQuery as any).mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_A_PROJECT_ID,
+            name: "Org A Project",
+            organizationId: "org-a",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 5,
+          },
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 9,
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
+    });
+
+    // `useAppState` is mocked here, so the route never reaches `ready`; what
+    // this asserts is the pair that used to disagree — the URL names org B's
+    // project, and the coordinator switched the active org to match it.
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+    });
+  });
+
+  it("creating from the switcher navigates rather than pre-selecting", async () => {
+    // Same contract as a project row: the URL performs the switch. Passing
+    // `switchTo` would be the state-then-URL ordering this surface stopped
+    // using, and for a cross-organization create the write is undone on the
+    // next render anyway — `activeProjectId` is derived from the
+    // organization-FILTERED map, which cannot contain the new project yet.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const handleCreateProjectSpy = vi.fn(async () => ORG_B_PROJECT_ID);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-a",
+      isCloudSyncActive: true,
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Payments", "org-b");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Payments", false, {
+      organizationId: "org-b",
+    });
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+  });
+
+  it("creating a local project selects it through the create itself", async () => {
+    // The one case the URL cannot carry: a local-fallback id is a UUID, which
+    // `buildProjectPath` refuses to put in the canonical position. The
+    // selection has to happen inside `handleCreateProject`, atomically with
+    // the create — `handleSwitchProject` afterwards validates against the
+    // project map from the render it was created in, which cannot contain a
+    // project dispatched a moment ago, and answers "Project not found".
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const localProjectId = "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const handleCreateProjectSpy = vi.fn(async () => localProjectId);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: false,
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Scratch");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Scratch", true, {
+      organizationId: undefined,
+    });
+    // Never through `handleSwitchProject`: its stale-map check would reject
+    // the id and leave the user on the project they were already in.
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/servers");
   });
 
   it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
@@ -1405,7 +1658,7 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-3");
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -1541,7 +1794,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1584,9 +1837,461 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/");
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      // The restoration NAVIGATES now rather than writing history behind the
+      // router's back, so the screen follows the URL it just restored: `/`
+      // is Home. (It used to leave the app rendering Servers under a `/` it
+      // had silently rewritten — the mismatch this migration removes.)
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
     expect(readBillingSignInReturnPath()).toBeNull();
+  });
+
+  it("recovers a stale scoped sign-in return without painting the unavailable screen", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/evals?view=runs#case-3`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Default Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Default Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        `/p/${currentProjectId}/evals?view=runs`,
+      );
+      expect(window.location.hash).toBe("#case-3");
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
+    expect(
+      replaceStateSpy.mock.calls.filter(
+        ([, , target]) =>
+          target === `/p/${currentProjectId}/evals?view=runs#case-3`,
+      ),
+    ).toHaveLength(1);
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("opens a valid scoped sign-in return unchanged", async () => {
+    clearScenarioSession();
+    const projectId = "k5700000000000000000000000b";
+    const savedPath = `/p/${projectId}/servers?view=grid#tools`;
+    writeAppSignInReturnPath(savedPath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: projectId,
+      projects: {
+        [projectId]: {
+          id: projectId,
+          name: "Current Project",
+          sharedProjectId: projectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: projectId,
+            name: "Current Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(savedPath);
+    });
+    expect(
+      replaceStateSpy.mock.calls.filter(([, , target]) => target === savedPath),
+    ).toHaveLength(1);
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      expect.anything(),
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("keeps a scoped callback loading until the database user is ready", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockDbUserState.isEnsuringUser = true;
+    mockDbUserState.isUserReady = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Current Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Current Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+    expect(window.location.pathname).toBe("/callback");
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+
+    mockDbUserState.isEnsuringUser = false;
+    mockDbUserState.isUserReady = true;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/p/${currentProjectId}/servers`);
+    });
+  });
+
+  it("does not automatically recover a stale URL outside the callback", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", stalePath);
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Default Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Default Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    render(<App />);
+
+    expect(
+      `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    ).toBe(stalePath);
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      expect.anything(),
+    );
+  });
+
+  it("keeps recovery armed while a cached active project waits for membership", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/playground?model=test#chat`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+
+    let projectsLoaded = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isLoadingRemoteProjects: !projectsLoaded,
+      activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+      projects: projectsLoaded
+        ? {
+            [currentProjectId]: {
+              id: currentProjectId,
+              name: "Default Project",
+              sharedProjectId: currentProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
+        : {
+            [staleProjectId]: {
+              id: staleProjectId,
+              name: "Cached Project",
+              sharedProjectId: staleProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return projectsLoaded
+          ? [
+              {
+                _id: currentProjectId,
+                name: "Default Project",
+                organizationId: "org-1",
+                ownerId: "user-1",
+                servers: {},
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            ]
+          : undefined;
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/callback");
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+
+    projectsLoaded = true;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(`/p/${currentProjectId}/playground?model=test#chat`);
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("preserves the scoped return through a membership timeout and retry", async () => {
+    vi.useFakeTimers();
+    try {
+      clearScenarioSession();
+      const staleProjectId = "k5700000000000000000000000a";
+      const currentProjectId = "k5700000000000000000000000b";
+      const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+      let projectsLoaded = false;
+      writeAppSignInReturnPath(stalePath);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        isLoadingRemoteProjects: !projectsLoaded,
+        activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+        projects: projectsLoaded
+          ? {
+              [currentProjectId]: {
+                id: currentProjectId,
+                name: "Current Project",
+                sharedProjectId: currentProjectId,
+                organizationId: "org-1",
+                servers: {},
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }
+          : {},
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projects:getMyProjects") {
+          return projectsLoaded
+            ? [
+                {
+                  _id: currentProjectId,
+                  name: "Current Project",
+                  organizationId: "org-1",
+                  ownerId: "user-1",
+                  servers: {},
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              ]
+            : undefined;
+        }
+        return undefined;
+      });
+
+      const view = render(<App />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+
+      expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
+      expect(window.location.pathname).toBe("/callback");
+      expect(mockTrack).not.toHaveBeenCalledWith(
+        "project_route_stale_return_recovered",
+        expect.anything(),
+      );
+      expect(mockTrack).not.toHaveBeenCalledWith(
+        "project_route_inaccessible",
+        expect.anything(),
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try sign in again" }),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+      expect(readAppSignInReturnPath()).toBe(stalePath);
+      expect(window.location.pathname).toBe("/");
+
+      view.unmount();
+      projectsLoaded = true;
+      vi.useRealTimers();
+      window.history.replaceState({}, "", "/callback?code=retry-code");
+      render(<App />);
+
+      await waitFor(() => {
+        expect(
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+      });
+      expect(readAppSignInReturnPath()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns a no-project account home without claiming it switched projects", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/playground?model=test#chat`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: "none",
+      projects: {},
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") return [];
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "no-fallback" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
   });
 
   it("keeps a persisted billing resume alive when /billing returns without query params", async () => {
@@ -1597,7 +2302,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1642,8 +2347,8 @@ describe("App hosted OAuth callback handling", () => {
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual"
-      )
+            ?.interval === "annual",
+      ),
     ).toBe(true);
   });
 
@@ -1664,7 +2369,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(replaceStateSpy).toHaveBeenCalledWith(
         {},
         "",
-        "/user-testing/demo/token-123"
+        "/user-testing/demo/token-123",
       );
     });
   });
@@ -1675,7 +2380,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1722,8 +2427,8 @@ describe("App hosted OAuth callback handling", () => {
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual"
-      )
+            ?.interval === "annual",
+      ),
     ).toBe(true);
   });
 
@@ -1733,7 +2438,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1760,7 +2465,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Consume checkout intent
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1774,7 +2479,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay")
+        screen.queryByTestId("billing-handoff-overlay"),
       ).not.toBeInTheDocument();
     });
   });
@@ -1785,7 +2490,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1812,7 +2517,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Start checkout navigation
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1820,7 +2525,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
       expect(
-        screen.getByTestId("start-checkout-navigation")
+        screen.getByTestId("start-checkout-navigation"),
       ).toBeInTheDocument();
     });
 
@@ -1828,7 +2533,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay")
+        screen.queryByTestId("billing-handoff-overlay"),
       ).not.toBeInTheDocument();
     });
     expect(readPersistedCheckoutIntent()).toBeNull();
@@ -1840,7 +2545,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1857,10 +2562,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("billing-handoff-loading")
+      screen.queryByTestId("billing-handoff-loading"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("billing-handoff-overlay")
+      screen.queryByTestId("billing-handoff-overlay"),
     ).not.toBeInTheDocument();
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
   });
@@ -1977,7 +2682,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1991,7 +2696,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      "org-owned"
+      "org-owned",
     );
     expect(window.location.pathname).toBe("/servers");
   });
@@ -2052,7 +2757,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org with no owner fallback
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2137,7 +2842,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete non-current org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2149,12 +2854,12 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
         "org-deleted",
-        "org-owner"
+        "org-owner",
       );
     });
 
     const postDeleteCalls = setActiveOrganizationId.mock.calls.slice(
-      activeOrgCallsBeforeDelete
+      activeOrgCallsBeforeDelete,
     );
     expect(postDeleteCalls).not.toContainEqual(["org-owner"]);
     expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
@@ -2216,7 +2921,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete last org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2230,7 +2935,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      undefined
+      undefined,
     );
     expect(window.location.pathname).toBe("/servers");
   });
@@ -2260,7 +2965,7 @@ describe("App hosted OAuth callback handling", () => {
     // User Testing is flag-gated at the route, not just in the sidebar — the
     // callback can only land back on it for a user who has the flag.
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "sandboxes-enabled"
+      (flag: string) => flag === "sandboxes-enabled",
     );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
@@ -2288,7 +2993,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) => flag === "playground-enabled",
     );
 
     render(<App />);
@@ -2318,7 +3023,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) => flag === "playground-enabled",
     );
 
     render(<App />);
@@ -2367,7 +3072,7 @@ describe("App hosted OAuth callback handling", () => {
         isWorkOsAuthLoading: false,
         isConvexAuthenticated: true,
         hasSeenFirstRunOnboarding: false,
-      })
+      }),
     );
   });
 
@@ -2674,7 +3379,7 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "seen", shownAt: Date.now() })
+      JSON.stringify({ status: "seen", shownAt: Date.now() }),
     );
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2715,7 +3420,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
     );
 
     render(<App />);
@@ -2737,7 +3442,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
     );
 
     render(<App />);
@@ -2813,22 +3518,22 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-        ? [
-            {
-              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-              name: "Slack",
-              hostConfigId: "host-config-slack",
-              modelId: "claude-sonnet-4",
-              serverCount: 0,
-              createdAt: 0,
-              updatedAt: 0,
-            },
-          ]
-        : undefined
+          ? [
+              {
+                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+                name: "Slack",
+                hostConfigId: "host-config-slack",
+                modelId: "claude-sonnet-4",
+                serverCount: 0,
+                createdAt: 0,
+                updatedAt: 0,
+              },
+            ]
+          : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
-      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" })
+      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" }),
     );
     window.history.replaceState({}, "", "/hosts/m17b6q9xw2tv4kz8p3r5s0dc");
 
@@ -2836,7 +3541,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}")
+        JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"),
       ).toEqual({
         project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
       });
@@ -2866,7 +3571,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
+      flag === "xaa" ? true : false,
     );
 
     render(<App />);
@@ -2885,7 +3590,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
+      flag === "xaa" ? true : false,
     );
     const appStateMock = createAppStateMock();
     const currentProjectServers = {
@@ -2923,7 +3628,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: true,
             autoSelectFilteredServer: "when-empty",
           }),
-        })
+        }),
       );
     });
 
@@ -2931,7 +3636,7 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentProjectServers
+      currentProjectServers,
     );
   });
 
@@ -2977,7 +3682,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: true,
             autoSelectFilteredServer: "when-empty",
           }),
-        })
+        }),
       );
     });
 
@@ -2985,11 +3690,11 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentProjectServers
+      currentProjectServers,
     );
     expect(
       (mockOAuthFlowTabState.lastProps as { serverConfigs?: unknown })
-        .serverConfigs
+        .serverConfigs,
     ).toBe(currentProjectServers);
   });
 
@@ -3008,7 +3713,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: false,
             autoSelectFilteredServer: true,
           }),
-        })
+        }),
       );
     });
   });
@@ -3036,7 +3741,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
@@ -3084,7 +3789,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(wsPremiumnessCall?.[1]).toEqual({

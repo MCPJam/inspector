@@ -27,6 +27,11 @@ import type {
 // for internal use and re-exported below so existing import sites are unchanged.
 import { extractMethod } from "@mcpjam/sdk/widget-runtime";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
+import {
+  measureString,
+  probeSerializedSize,
+  truncateRpcPayload,
+} from "@/shared/rpc-log-truncation";
 
 /**
  * The path of an exchange URL — the row label. The query string is dropped on
@@ -74,8 +79,7 @@ function isAutomaticAuthorizationDecisionMessage(
   message: unknown,
 ): message is string {
   return (
-    typeof message === "string" &&
-    message.startsWith("Automatic resolved to ")
+    typeof message === "string" && message.startsWith("Automatic resolved to ")
   );
 }
 
@@ -83,11 +87,79 @@ interface TrafficLogState {
   items: UiLogEvent[];
   mcpServerItems: McpServerRpcItem[];
   addLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
-  addMcpServerLog: (item: Omit<McpServerRpcItem, "id"> & { id?: string }) => void;
+  addMcpServerLog: (
+    item: Omit<McpServerRpcItem, "id"> & { id?: string },
+  ) => void;
   clear: () => void;
 }
 
 const MAX_ITEMS = 1000;
+
+/**
+ * Per-row payload retention cap for the LOCAL rpc stream, mirroring
+ * `MAX_MESSAGE_BYTES` in `server/services/rpc-log-bus.ts`.
+ *
+ * `MAX_ITEMS` bounds the row COUNT and nothing else, which does not bound
+ * memory: 1000 rows of tool results carrying base64 images is how the renderer
+ * reached its own heap ceiling (INSPECTOR-ELECTRON-VJ on /tools and -VT on
+ * /playground, both dying in mark-compact, both `deployment: self_hosted`).
+ *
+ * Scoped to this ingest path rather than to `addMcpServerLog`, because only
+ * here is the size cheap: the SSE frame arrives as TEXT the browser already
+ * holds, so nothing has to be serialized to measure it — `measureString` walks
+ * that text instead, and stops at the cap. That text carries the event envelope
+ * as well as the payload, making the cap slightly conservative. Hosted-mode rows
+ * arrive from a different producer and are bounded there.
+ *
+ * MIRRORING IS THE POINT: raising the server cap alone changes nothing that
+ * reaches the panel, because whatever survives the bus is cut again here. The
+ * two constants have to move together, in both directions.
+ */
+const MAX_PAYLOAD_BYTES = 1024 * 1024;
+
+/**
+ * Total retained payload budget across every row — the browser twin of
+ * `MAX_BUFFERED_BYTES_PER_SERVER` in `server/services/rpc-log-bus.ts`, and the
+ * cap that actually bounds this store.
+ *
+ * `MAX_ITEMS` and `MAX_PAYLOAD_BYTES` do not compose into a memory bound. A
+ * thousand rows each just under the per-row cap is a gigabyte, and every raise
+ * of the per-row cap raises that ceiling with it — the per-row number buys
+ * legible rows, not a bounded heap. The renderer has already died of exactly
+ * this shape (INSPECTOR-ELECTRON-VJ on /tools, -VT on /playground, both in
+ * mark-compact), so the row count is not what is holding it up. This is.
+ */
+const MAX_RETAINED_PAYLOAD_BYTES = 8 * 1024 * 1024;
+
+/**
+ * What each retained row was charged against {@link MAX_RETAINED_PAYLOAD_BYTES}.
+ *
+ * Keyed on the row OBJECT rather than on its id: rows are replaced wholesale by
+ * an upsert and dropped without ceremony by eviction, and a WeakMap needs no
+ * bookkeeping for either — the entry goes when the row does. Charging once at
+ * insert is what keeps eviction from re-measuring a thousand payloads per frame.
+ */
+const retainedPayloadBytes = new WeakMap<McpServerRpcItem, number>();
+
+/**
+ * Trim to both caps, oldest first. `items` is newest-first, so everything from
+ * the cut onwards is the oldest history.
+ *
+ * The newest row is kept even when it alone is over the budget: a list that
+ * evicts itself empty shows a reader nothing at all, which is strictly worse
+ * than one oversized row. Same rule, and the same reason, as the bus.
+ */
+function withinRetentionBudget(items: McpServerRpcItem[]): McpServerRpcItem[] {
+  const capped = items.length > MAX_ITEMS ? items.slice(0, MAX_ITEMS) : items;
+  let bytes = 0;
+  for (let i = 0; i < capped.length; i++) {
+    bytes += retainedPayloadBytes.get(capped[i]) ?? 0;
+    if (bytes > MAX_RETAINED_PAYLOAD_BYTES && i > 0) {
+      return capped.slice(0, i);
+    }
+  }
+  return capped;
+}
 
 export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   items: [],
@@ -117,14 +189,18 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
     // `pluginOrigin` and the streamed copy did not), the later one silently
     // overwrites the earlier with no signal. Enrich at CAPTURE, or give the
     // enriched event its own id.
+    retainedPayloadBytes.set(
+      newItem,
+      probeSerializedSize(newItem.payload, MAX_RETAINED_PAYLOAD_BYTES).bytes,
+    );
     set((state) => ({
-      mcpServerItems: state.mcpServerItems.some(
-        (existing) => existing.id === newItem.id,
-      )
-        ? state.mcpServerItems.map((existing) =>
-            existing.id === newItem.id ? newItem : existing,
-          )
-        : [newItem, ...state.mcpServerItems].slice(0, MAX_ITEMS),
+      mcpServerItems: withinRetentionBudget(
+        state.mcpServerItems.some((existing) => existing.id === newItem.id)
+          ? state.mcpServerItems.map((existing) =>
+              existing.id === newItem.id ? newItem : existing,
+            )
+          : [newItem, ...state.mcpServerItems],
+      ),
     }));
   },
   clear: () => set({ items: [], mcpServerItems: [] }),
@@ -214,7 +290,9 @@ export function ingestOAuthTraceLogs(input: {
 
   const store = useTrafficLogStore.getState();
   trace.steps.forEach((step) => {
-    const timestamp = new Date(step.completedAt ?? step.startedAt).toISOString();
+    const timestamp = new Date(
+      step.completedAt ?? step.startedAt,
+    ).toISOString();
 
     if (isAutomaticAuthorizationDecisionMessage(step.message)) {
       store.addMcpServerLog({
@@ -258,7 +336,9 @@ export function ingestOAuthTraceLogs(input: {
         recovered: step.recovered,
         recoveredAt: step.recoveredAt,
         recoveryMessage: step.recoveryMessage,
-        httpHistory: trace.httpHistory.filter((entry) => entry.step === step.step),
+        httpHistory: trace.httpHistory.filter(
+          (entry) => entry.step === step.step,
+        ),
       },
       kind: "oauth",
       oauthStatus: step.status,
@@ -336,6 +416,9 @@ export function subscribeToRpcStream(): () => void {
         if (data.type !== "rpc") return;
 
         const { serverId, direction, message, timestamp } = data;
+        // `message` stays transient and is collected right after this call;
+        // only the marker is retained. The method is still read off the real
+        // frame, so an oversized row keeps its label and its place in the list.
         useTrafficLogStore.getState().addMcpServerLog({
           ...(eventId ? { id: eventId } : {}),
           serverId: typeof serverId === "string" ? serverId : "unknown",
@@ -343,7 +426,10 @@ export function subscribeToRpcStream(): () => void {
             typeof direction === "string" ? direction.toUpperCase() : "",
           method: extractMethod(message),
           timestamp: timestamp ?? new Date().toISOString(),
-          payload: message,
+          payload:
+            measureString(evt.data, MAX_PAYLOAD_BYTES).utf8 > MAX_PAYLOAD_BYTES
+              ? truncateRpcPayload(message, MAX_PAYLOAD_BYTES)
+              : message,
         });
       } catch {
         // Ignore parse errors

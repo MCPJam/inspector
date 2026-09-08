@@ -56,8 +56,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const provider = () =>
-  createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
+const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
 
 describe("the pnpm guard", () => {
   it("explains itself when pnpm is missing and installing it fails", async () => {
@@ -116,6 +115,98 @@ describe("abort plumbing", () => {
       expect.stringContaining("pnpm"),
       expect.objectContaining({ signal: controller.signal })
     );
+  });
+
+  describe("the session-env delivery stamp", () => {
+    // `lastDeliveredAt` is read before deleting a credential believed dormant,
+    // so it has to mean "something received this", not "a turn got far enough
+    // to hold it". Constructing a provider only puts the values in a local
+    // object — harness setup can still throw before any command runs.
+    const withEnv = (onSessionEnvUsed: () => void) =>
+      createE2BHarnessSandboxProvider({
+        sandboxId: "sbx_1",
+        sessionEnv: { STRIPE_API_KEY: "sk_live_x" },
+        onSessionEnvUsed,
+      });
+
+    it("does NOT fire on construction, only when a command carries the env", async () => {
+      const stamped = vi.fn();
+      const p = withEnv(stamped);
+      // Constructed, and holding the values — but nothing has reached the box.
+      expect(stamped).not.toHaveBeenCalled();
+
+      const session = await p.createSession();
+      await session.run({ command: "stripe customers list" });
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires ONCE across several commands", async () => {
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      await session.run({ command: "one" });
+      await session.run({ command: "two" });
+      await session.run({ command: "three" });
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
+
+    it("actually merges the env into the command it stamps for", async () => {
+      // The stamp must not be able to drift away from the delivery: if this
+      // assertion and the one above ever disagree, the callback is lying.
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      sandboxState.run.mockClear();
+      await session.run({ command: "echo hi" });
+      expect(sandboxState.run).toHaveBeenCalledWith(
+        "echo hi",
+        expect.objectContaining({
+          envs: expect.objectContaining({ STRIPE_API_KEY: "sk_live_x" }),
+        })
+      );
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
+
+    it("never fires when there is no session env at all", async () => {
+      const stamped = vi.fn();
+      const session = await createE2BHarnessSandboxProvider({
+        sandboxId: "sbx_1",
+        onSessionEnvUsed: stamped,
+      }).createSession();
+      await session.run({ command: "echo hi" });
+      expect(stamped).not.toHaveBeenCalled();
+    });
+
+    it("a throwing callback does not break the command", async () => {
+      // Best-effort by contract: failing to RECORD a delivery must never fail
+      // the delivery, and this sits directly in the command path.
+      const session = await withEnv(() => {
+        throw new Error("convex down");
+      }).createSession();
+      await expect(session.run({ command: "echo hi" })).resolves.toBeDefined();
+    });
+
+    it("does NOT fire when E2B rejects before accepting the command", async () => {
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      sandboxState.run.mockRejectedValueOnce(new Error("socket hang up"));
+
+      await expect(session.run({ command: "echo hi" })).rejects.toThrow(
+        "socket hang up"
+      );
+      expect(stamped).not.toHaveBeenCalled();
+    });
+
+    it("fires for a command that ran and exited non-zero", async () => {
+      const stamped = vi.fn();
+      const session = await withEnv(stamped).createSession();
+      sandboxState.run.mockRejectedValueOnce(
+        new FakeCommandExitError(2, "", "bad command")
+      );
+
+      await expect(session.run({ command: "false" })).resolves.toMatchObject({
+        exitCode: 2,
+      });
+      expect(stamped).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("honors a per-command signal on exec", async () => {

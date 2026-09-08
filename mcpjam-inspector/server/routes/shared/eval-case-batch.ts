@@ -20,6 +20,7 @@
  *     written into the random `ui_*` storage `caseKey`.
  */
 import { MAX_BATCH_CREATE_CASES, mintCaseId } from "@mcpjam/sdk/contract";
+import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
 
 /**
  * Cases accepted by one `createTestCases` call.
@@ -42,11 +43,43 @@ export interface CaseBatchWarning {
 /** One case in a batch. The authored fields the backend's item validator takes. */
 export type EvalCaseBatchItem = Record<string, unknown> & {
   title: string;
+  /**
+   * Optional analytics label. `null` is reserved for an explicit clear on an
+   * authoritative write; omitted means no intent was supplied.
+   */
+  intent?: string | null;
   /** Declared identity. Minted by the caller; never derived by the backend. */
   caseId?: string;
   /** Per-item write key, derived caller-side (see utils/idempotency.ts). */
   idempotencyKey?: string;
+  /**
+   * The converter's CLAIM about this case, when it was imported rather than
+   * authored here.
+   *
+   * Named on the type — rather than left to the index signature — because this
+   * is the one field whose absence is silent and permanent: a batch that
+   * dropped it persists a converted case as if a human had written it, and
+   * nothing downstream can tell the difference afterwards. The backend's item
+   * validator owns the bounds; this side owns not losing it.
+   *
+   * CLAIM-ONLY. Approval is a per-run decision the platform derives from the
+   * authenticated launcher and freezes into the run snapshot; it never travels
+   * with a case.
+   */
+  import?: EvalCaseImportClaim;
 };
+
+/**
+ * The claim-only import record a case carries.
+ *
+ * `exact` is CONVERTER-CLAIMED exact — a mapping rule the converter says it
+ * applied — and never an MCPJam verification of semantic equivalence.
+ *
+ * RE-EXPORTED from the suite-file contract rather than restated: a claim a
+ * converter writes into a file is exactly the claim this batch carries, and a
+ * second spelling is only an opportunity for the two to disagree.
+ */
+export type EvalCaseImportClaim = EvalSuiteFileCaseImport;
 
 export interface CaseBatchCommittedEntry {
   /** Index into the ORIGINAL item list, not the chunk that carried it. */
@@ -186,6 +219,15 @@ export async function createEvalCasesInBatches(
     cases: EvalCaseBatchItem[];
     duplicatePolicy?: DuplicatePolicy | string;
     overrideReason?: string;
+    /**
+     * The suite-file sync marker, when this batch IS a `--file` sync.
+     *
+     * A CI-owned suite refuses case creation from the app and from the API;
+     * naming the suite's own declared id is how the file writing itself says
+     * so. Sent on every chunk, because each chunk is its own transaction and
+     * its own authorization.
+     */
+    fileSync?: { declaredSuiteId: string };
   }
 ): Promise<CaseBatchResult> {
   const committed: CaseBatchCommittedEntry[] = [];
@@ -217,6 +259,10 @@ export async function createEvalCasesInBatches(
           ...(args.overrideReason
             ? { overrideReason: args.overrideReason }
             : {}),
+          // Only when present: a platform that predates the CI-owned lock does
+          // not know this argument and rejects the whole call for an unknown
+          // field.
+          ...(args.fileSync ? { fileSync: args.fileSync } : {}),
         }
       );
     } catch (error) {

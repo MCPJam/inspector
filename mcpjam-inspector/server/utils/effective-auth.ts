@@ -235,21 +235,89 @@ export function applyHostParamMirroring<
  * Like the mirroring reader, this cannot fail closed into an error: an
  * unreadable value means "behave conformantly", which is always safe.
  */
+/**
+ * The degraded (`false`) cancellation leaves only, or `undefined` when the host
+ * cancels normally on both eras. Absent leaves are the conforming answer, so a
+ * fully cancelling host must contribute no field at all.
+ */
+/**
+ * The host's tool-cancellation setting as a TURN carries it: only the degraded
+ * (`false`) leaves, or `undefined` when the profile is missing or conforming.
+ *
+ * Callers that resolved a host config should treat `undefined` as an EMPTY
+ * record (`?? {}`) so the turn's value stays authoritative over the
+ * connection's connect-time copy — that copy is exactly the stale value a
+ * mid-session save has to override.
+ */
+export function toolCallCancellationFromMcpProfile(
+  mcpProfile: unknown
+): { legacy?: boolean; modern?: boolean } | undefined {
+  if (!mcpProfile || typeof mcpProfile !== "object") return undefined;
+  const raw = (mcpProfile as { toolCallCancellation?: unknown })
+    .toolCallCancellation;
+  return raw && typeof raw === "object"
+    ? degradedCancellationLeaves(raw as { legacy?: unknown; modern?: unknown })
+    : undefined;
+}
+
+function degradedCancellationLeaves(
+  raw: { legacy?: unknown; modern?: unknown } | undefined
+): { legacy?: boolean; modern?: boolean } | undefined {
+  if (!raw) return undefined;
+  const leaves: { legacy?: boolean; modern?: boolean } = {};
+  if (raw.legacy === false) leaves.legacy = false;
+  if (raw.modern === false) leaves.modern = false;
+  return Object.keys(leaves).length > 0 ? leaves : undefined;
+}
+
 export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
   firstPageOnly: true | undefined;
   supportsMrtr: false | undefined;
+  suppressListenChannel: true | undefined;
+  dropToolListChanged: true | undefined;
+  toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined;
 } {
   const profile =
     mcpProfile !== null && typeof mcpProfile === "object"
       ? (mcpProfile as {
           paginationTraversal?: unknown;
           mrtrSupport?: unknown;
+          toolListChanged?: unknown;
+          toolCallCancellation?: unknown;
+          mcpProtocolVersion?: unknown;
+        })
+      : undefined;
+  // Nested record, so it is narrowed separately; an unreadable value falls
+  // through to `undefined` — conforming — like every knob here.
+  const toolListChanged =
+    profile?.toolListChanged !== null &&
+    typeof profile?.toolListChanged === "object"
+      ? (profile.toolListChanged as {
+          listens?: unknown;
+          refetches?: unknown;
+        })
+      : undefined;
+  // Same narrowing for the sibling per-era record; a non-object reads as
+  // conforming rather than throwing.
+  const toolCallCancellation =
+    profile?.toolCallCancellation !== null &&
+    typeof profile?.toolCallCancellation === "object"
+      ? (profile.toolCallCancellation as {
+          legacy?: unknown;
+          modern?: unknown;
         })
       : undefined;
   return {
     firstPageOnly:
       profile?.paginationTraversal === "firstPageOnly" ? true : undefined,
     supportsMrtr: profile?.mrtrSupport === "none" ? false : undefined,
+    suppressListenChannel:
+      toolListChanged?.listens === false ? true : undefined,
+    dropToolListChanged:
+      toolListChanged?.refetches === false ? true : undefined,
+    // Forwarded, not resolved: the era is only known once the connection
+    // negotiates, so the SDK picks the leaf. Only degraded leaves travel.
+    toolCallCancellation: degradedCancellationLeaves(toolCallCancellation),
   };
 }
 
@@ -264,16 +332,29 @@ export function conformanceKnobsFromMcpProfile(mcpProfile: unknown): {
  * authoritative: it could turn a knob on but never keep it off, and a
  * share-link body could post `firstPageOnly: true` or `supportsMrtr: false`
  * to make a conforming host silently execute as a degraded client — hiding
- * tools from the model, or dropping MRTR rounds mid-conversation.
+ * tools from the model, dropping MRTR rounds mid-conversation, or (with the
+ * `toolListChanged` pair) silencing every server notification.
  *
  * Every other pin is passed through, and an absent-pins body stays absent
  * unless the host actually asks for a non-default knob.
  */
 export function applyHostConformanceKnobs<
-  T extends { firstPageOnly?: boolean; supportsMrtr?: boolean }
+  T extends {
+    firstPageOnly?: boolean;
+    supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  }
 >(
   pins: T | undefined,
-  host: { firstPageOnly: true | undefined; supportsMrtr: false | undefined }
+  host: {
+    firstPageOnly: true | undefined;
+    supportsMrtr: false | undefined;
+    suppressListenChannel: true | undefined;
+    dropToolListChanged: true | undefined;
+    toolCallCancellation: { legacy?: boolean; modern?: boolean } | undefined;
+  }
 ): T | undefined {
   let next = pins;
   if (host.firstPageOnly === true) {
@@ -286,6 +367,27 @@ export function applyHostConformanceKnobs<
     next = { ...((next ?? {}) as T), supportsMrtr: false };
   } else if (next?.supportsMrtr !== undefined) {
     const { supportsMrtr: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.suppressListenChannel === true) {
+    next = { ...((next ?? {}) as T), suppressListenChannel: true };
+  } else if (next?.suppressListenChannel !== undefined) {
+    const { suppressListenChannel: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.dropToolListChanged === true) {
+    next = { ...((next ?? {}) as T), dropToolListChanged: true };
+  } else if (next?.dropToolListChanged !== undefined) {
+    const { dropToolListChanged: _hostOverrides, ...rest } = next;
+    next = rest as T;
+  }
+  if (host.toolCallCancellation !== undefined) {
+    next = {
+      ...((next ?? {}) as T),
+      toolCallCancellation: host.toolCallCancellation,
+    };
+  } else if (next?.toolCallCancellation !== undefined) {
+    const { toolCallCancellation: _hostOverrides, ...rest } = next;
     next = rest as T;
   }
   return next;

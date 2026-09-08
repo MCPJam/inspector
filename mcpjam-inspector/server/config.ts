@@ -27,10 +27,157 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
  * is the emergency/managed-install off switch; default is on for local
  * inspectors (the per-user gate is the consent capability, not this flag).
  */
+/**
+ * The local agent BROWSER's server-side stop, separate from the shell's.
+ *
+ * Default ON like the shell (a self-hosted user asked for this by running the
+ * inspector on their own machine), forced off hosted, and independent of
+ * `MCPJAM_LOCAL_COMPUTER_ENABLED` so an operator can disable one capability
+ * without the other — driving a browser and running shell commands are
+ * different amounts of trust.
+ */
+export const LOCAL_BROWSER_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false";
+
 export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 
-export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
+/**
+ * Local AI SDK harness execution (an official vendor harness running as a
+ * supervised process on the machine that runs this inspector) — server-side
+ * kill switch, enforced independently of any client flag.
+ *
+ * Default OFF, unlike `LOCAL_COMPUTER_ENABLED`. The difference is deliberate:
+ * a local bash command is discrete and separately approved, while a local
+ * harness is a long-lived agent process. It stays off until an operator turns
+ * it on for an attended user AND the compatibility manifest carries
+ * conformance evidence for that harness/runtime/platform/mode tuple — the flag
+ * enables the feature, it does not certify it.
+ *
+ * FORCED off in hosted mode regardless of env: a hosted server must never
+ * start a vendor harness on itself.
+ */
+export const LOCAL_HARNESS_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
+
+/**
+ * Scheduled eval runs — the deployment switch over ENABLING one, enforced on
+ * the write path rather than on the screen.
+ *
+ * Default OFF. Schedule has not been thoroughly tested, and the PostHog flag
+ * `scheduled-evals-enabled` only hides the UI: `PATCH .../eval-suites/:id/
+ * schedule` is reachable by any API-key holder, and the SDK client, the
+ * `set_eval_suite_schedule` MCP tool, `mcpjam cloud eval schedule` and
+ * proposal execution all self-dispatch through it. One switch here is what
+ * makes "not yet tested" true for every writer instead of only the screen.
+ *
+ * GATES ENABLING ONLY, ON THE ROUTE — `enabled: false` passes through
+ * untouched. Precedent is the `trace-destinations` flag: delete, pause and
+ * disable stay ungated so an org that loses the feature can still switch a
+ * live one off. A gate that strands a running schedule with no way to stop it
+ * is the worse failure.
+ *
+ * THE AGENT IS STRICTER, and it is worth being plain about the asymmetry: the
+ * org policy withholds `set_eval_suite_schedule` outright (see
+ * `org-agent-policy.ts`), so the agent loses DISABLE as well as enable. That
+ * set gates by operation name and cannot read an argument, so the choice there
+ * is between an agent that can still enable and one that can do neither. The
+ * route above is what keeps a live schedule stoppable — by a person, through
+ * the API or the CLI.
+ *
+ * NOT the only gate, and not the one that stops a schedule already running:
+ * `SCHEDULED_EVALS_ENABLED` on the Convex deployment refuses every writer
+ * including the UI's direct mutation, and `SCHEDULED_EVALS_WORKER_ENABLED`
+ * stops execution.
+ */
+export const SCHEDULED_EVALS_WRITE_ENABLED =
+  process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+
+/**
+ * WebMCP Inspector (a managed browser the user points at a page, so its WebMCP
+ * tools can be listed and invoked) — server-side kill switch, in BOTH modes.
+ * `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false` is the emergency/managed-install off
+ * switch; default is on.
+ *
+ * This no longer forces off in hosted mode. It used to, because the browser
+ * ran on the machine running this inspector and a hosted replica must never
+ * open one — but a hosted session does not open a browser here at all: it
+ * drives one on the member's own MCPJam computer through browserd. WHERE the
+ * browser runs is now a per-session decision (`transport`), so the deployment
+ * mode is the wrong place to decide it. What hosted mode does still forbid is
+ * a LOCAL browser, and the route refuses that explicitly rather than by being
+ * unreachable.
+ *
+ * Hosted reachability is a second, independent gate — see
+ * `webmcpInspectorHostedEnabled` — and the client-side gate is still the
+ * `webmcp-inspector-enabled` PostHog flag.
+ */
+export const WEBMCP_INSPECTOR_ENABLED =
+  process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
+
+/**
+ * May a hosted replica serve the WebMCP Inspector at all?
+ *
+ * A SEPARATE environment variable from `HOSTED_BROWSER_TOOLS_ENABLED`, and
+ * that separation is the whole point. Both switches lead to the same hosted
+ * browser, but they expose it to different consumers: this one lets a PERSON
+ * drive their own page from the inspector, while `HOSTED_BROWSER_TOOLS_ENABLED`
+ * hands six `browser_*` tools to a MODEL. The inspector's blast radius is one
+ * member's own tab; the catalog's includes co-tenancy with bash and approval
+ * threading on four chat surfaces. Rolling the first out must never imply the
+ * second, and one shared variable would make it imply exactly that.
+ *
+ * READ AT CALL TIME, like `hostedBrowserEnabled`: flipped per-process in
+ * staging and per-test, and a module constant would freeze whatever the
+ * environment said when the module first loaded.
+ */
+export function webmcpInspectorHostedEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return HOSTED_MODE && env.MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED === "1";
+}
+
+/**
+ * Can a WebMCP Inspector SESSION exist on this deployment at all?
+ *
+ * The kill switch and the hosted-reachability switch, composed — the same
+ * question the inspector router answers with a 404, asked by anything that
+ * must not offer a capability the session behind it cannot provide. The chat
+ * routes ask it before advertising a page's tools to a model: a turn that
+ * offered them where no session can exist would strand on a call nothing can
+ * fulfil.
+ *
+ * Lives HERE rather than in the router so a caller can ask without importing
+ * a Hono app.
+ */
+export function webmcpInspectorReachable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!WEBMCP_INSPECTOR_ENABLED) return false;
+  return !HOSTED_MODE || webmcpInspectorHostedEnabled(env);
+}
+
+/**
+ * Is the hosted browser (E2B Desktop + browserd) reachable at all?
+ *
+ * The dark switch the hosted runtime ships behind until the durable backend
+ * exposure gate opens (W7). READ AT CALL TIME, not captured at import: this is
+ * flipped per-process in staging and per-test, and a module constant would
+ * freeze whatever the environment happened to say when the module first
+ * loaded.
+ *
+ * Two callers must agree on it — the built-in tool registry, which decides
+ * whether the MODEL gets browser tools, and the WebMCP Inspector route, which
+ * decides whether a person may run their inspector session on a hosted
+ * browser. Both reserve a desktop computer and both bill for it, so a second
+ * copy of this literal is how one of them stays reachable after the other is
+ * turned off.
+ */
+export function hostedBrowserEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.HOSTED_BROWSER_TOOLS_ENABLED === "1";
+}
 
 /**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
@@ -43,30 +190,6 @@ export const NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN === "true";
  */
 export const EVAL_WIDGET_MODEL_CONTEXT =
   process.env.MCPJAM_EVAL_WIDGET_MODEL_CONTEXT === "true";
-
-export const EMPLOYEE_EMAIL_DOMAINS = (
-  process.env.MCPJAM_EMPLOYEE_EMAIL_DOMAINS ?? ""
-)
-  .split(",")
-  .map((domain) => domain.trim().toLowerCase())
-  .filter((domain) => domain.length > 0);
-
-export function isAllowedEmployeeEmail(
-  email: string | null | undefined
-): boolean {
-  if (!email || EMPLOYEE_EMAIL_DOMAINS.length === 0) {
-    return false;
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const atIndex = normalizedEmail.lastIndexOf("@");
-  if (atIndex === -1) {
-    return false;
-  }
-
-  const emailDomain = normalizedEmail.slice(atIndex + 1);
-  return EMPLOYEE_EMAIL_DOMAINS.includes(emailDomain);
-}
 
 // Exact origins allowed for hosted web routes and CORS
 export const WEB_ALLOWED_ORIGINS = (process.env.WEB_ALLOWED_ORIGINS ?? "")
@@ -92,10 +215,18 @@ export const CORS_ORIGINS =
     ? WEB_ALLOWED_ORIGINS
     : Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
 
-// Hosted web route timeouts (ms)
-export const WEB_CONNECT_TIMEOUT_MS = 10_000;
-export const WEB_CALL_TIMEOUT_MS = 30_000;
-export const WEB_STREAM_TIMEOUT_MS = 120_000;
+// Hosted web route timeouts (ms). Defined in `shared/` so the client can read
+// the same numbers to DESCRIBE what a hosted run does (the eval settings
+// Connection card names the call timeout); every server importer keeps
+// importing them from here.
+export {
+  WEB_CONNECT_TIMEOUT_MS,
+  WEB_CALL_TIMEOUT_MS,
+  WEB_STREAM_TIMEOUT_MS,
+} from "../shared/hosted-web-timeouts.js";
+// Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
+// derived from the call timeout, and a re-export does not bind the name here.
+import { WEB_CALL_TIMEOUT_MS } from "../shared/hosted-web-timeouts.js";
 
 // ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
 // An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.
@@ -185,13 +316,35 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
-// Allowed hosts for token delivery in hosted mode (comma-separated)
-// These hosts will be allowed to receive session tokens in addition to localhost
-export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
-  ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-      h.trim().toLowerCase()
-    )
-  : [];
+// Admin-controlled host allowlist (comma-separated), honored in BOTH hosted
+// and self-hosted modes. In addition to localhost, these hosts may receive the
+// session token / guest bootstrap and are accepted as request Origins: hosted
+// deployments set their canonical app host(s); self-hosted operators set their
+// own LAN host (e.g. 192.168.x.x) to reach the inspector off-localhost.
+//
+// Note the hosted nuance: `GET /api/session-token` short-circuits to 410 in
+// hosted mode (that endpoint is dev/self-hosted only), so an allowlisted hosted
+// host receives the session token via production HTML injection rather than the
+// endpoint, and the guest bearer via `mayServeGuestBootstrap`. Self-hosted
+// hosts use the `/api/session-token` endpoint. Both paths gate on this list.
+/**
+ * Parse a raw `MCPJAM_ALLOWED_HOSTS` value into normalized entries. Exported so
+ * the token gate (`ALLOWED_HOSTS` below, a module-load snapshot) and the origin
+ * gate (which re-reads `process.env` per request) share ONE parser and can't
+ * silently diverge on how entries are split/normalized.
+ */
+export function parseAllowedHosts(raw: string | undefined): string[] {
+  return raw
+    ? raw
+        .split(",")
+        .map((h) => h.trim().toLowerCase())
+        .filter((h) => h.length > 0)
+    : [];
+}
+
+export const ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS,
+);
 
 // Vanity domains whose root path ("/") should land on the host-compare
 // showcase ("Can I use" for MCP hosts). Override via env if more are added.
@@ -199,7 +352,7 @@ export const CANIUSE_LANDING_HOSTS = new Set(
   (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev")
     .split(",")
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0)
+    .filter((h) => h.length > 0),
 );
 
 // Vanity domains whose root path ("/") should land on the conformance-score
@@ -210,5 +363,82 @@ export const SCORE_LANDING_HOSTS = new Set(
   (process.env.SCORE_LANDING_HOSTS ?? "score.mcpjam.com,www.score.mcpjam.com")
     .split(",")
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0)
+    .filter((h) => h.length > 0),
 );
+
+/** A bare DNS hostname: dot-separated labels of letters, digits, and hyphens. */
+const BARE_HOSTNAME =
+  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+/**
+ * The hostnames in a SANDBOX_HOSTS value, lowercased, with anything that is
+ * not one dropped.
+ *
+ * The partition compares against a `Host` header with its port stripped, so an
+ * entry carrying a scheme, a port, or a path can never match it. Kept, such an
+ * entry would leave that hostname serving the whole app while
+ * `resolveSandboxIsolation` still answered "ok" — an isolation nobody checked,
+ * which is the exact failure this file exists to make loud. Dropped, a value
+ * of nothing but malformed entries reports "unset" and the boot check says so.
+ */
+function parseSandboxHosts(raw: string): Set<string> {
+  return new Set(
+    raw
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter((h) => BARE_HOSTNAME.test(h)),
+  );
+}
+
+// DNS names that serve the MCP Apps widget sandbox and nothing else. The
+// sandbox is a second hostname on THIS service rather than a separate deploy,
+// so without a partition the origin whose whole job is holding untrusted
+// widget content also serves the app shell, its bundle, and /api. See
+// middleware/sandbox-host-partition.ts for what the partition allows.
+//
+// Rollback is SANDBOX_HOSTS="" on the service: an empty set partitions nothing.
+export const SANDBOX_HOSTS = parseSandboxHosts(
+  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com",
+);
+
+/**
+ * Whether widget content is isolated from the app, as far as the DEPLOY can
+ * tell.
+ *
+ *   "ok"          — at least one sandbox hostname, none of them the app's own.
+ *   "same-origin" — the app's own host is listed as a sandbox host. Widgets
+ *                   share cookies and storage with the app, and the partition
+ *                   makes that hostname stop serving the app.
+ *   "unset"       — no sandbox hostname is configured, or MCPJAM_HOSTED_ORIGIN
+ *                   could not be parsed to compare against. Either way the
+ *                   isolation is unconfirmed.
+ */
+export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
+
+/**
+ * A browser cannot answer this. A page served at sandbox.mcpjam.com with
+ * SANDBOX_ORIGIN=https://sandbox.mcpjam.com is indistinguishable, from inside
+ * the tab, from an app.mcpjam.com deploy pointing its sandbox at itself — and
+ * only the second is a regression. Which hostname the app was supposed to be
+ * served as is known to the process and to nothing else, which is why the
+ * check lives on the server.
+ */
+export function resolveSandboxIsolation(
+  sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
+  hostedOrigin: string = MCPJAM_HOSTED_ORIGIN,
+): SandboxIsolationStatus {
+  if (sandboxHosts.size === 0) {
+    return "unset";
+  }
+
+  let appHost: string;
+  try {
+    appHost = new URL(hostedOrigin).hostname.toLowerCase();
+  } catch {
+    // A hosted origin we cannot parse (a bare hostname, say) is a comparison
+    // we cannot make. Reporting "ok" would claim an isolation nobody checked.
+    return "unset";
+  }
+
+  return sandboxHosts.has(appHost) ? "same-origin" : "ok";
+}

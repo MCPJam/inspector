@@ -215,9 +215,19 @@ const {
   flagState: { enabled: true },
 }));
 
-vi.mock("react-router", () => ({
-  useNavigate: () => navigateMock,
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router")>()),
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
+}));
+
+// `useAppNavigate`, not react-router's `useNavigate`: app navigation goes
+// through the scoped helper now, which carries the active project into
+// project-owned paths (`/p/<projectId>/hosts/<id>`). The rest of
+// `app-navigation` is the real module — these suites assert against its
+// path builders.
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigateMock,
 }));
 
 vi.mock("convex/react", () => ({

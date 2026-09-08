@@ -39,7 +39,7 @@ function makeCommitGroup(
     timestamp: Date.now(),
     status: "failed",
     suiteMap: new Map(),
-    summary: { total: 0, passed: 0, failed: 0, running: 0 },
+    summary: { total: 0, passed: 0, failed: 0, running: 0, inconclusive: 0 },
     ...overrides,
   };
 }

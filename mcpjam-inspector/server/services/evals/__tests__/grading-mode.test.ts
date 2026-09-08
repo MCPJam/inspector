@@ -5,6 +5,7 @@ import {
   parseGradingEngineMode,
   producesScoreRows,
   resetGradingEngineModeLogForTests,
+  resolveFrozenRunGradingMode,
   resolveGradingEngineMode,
 } from "../grading-mode.js";
 
@@ -148,5 +149,53 @@ describe("startup log", () => {
       envCeiling: "off",
       unrecognizedEnvValue: true,
     });
+  });
+});
+
+// =============================================================================
+// B3b review follow-up: an ABSENT frozen stamp is a DECISION, not a missing
+// opinion.
+//
+// `resolveGradingEngineMode` treats a position with no opinion as
+// unconstrained and falls through to the env ceiling. That is right for an org
+// flag nobody resolved and exactly wrong for a run snapshot: the backend writes
+// no `gradingEngine` key when it resolved `off` (so an `off` run's snapshot
+// stays byte-identical to a pre-B3b one), and the suite ceiling, the org flag
+// and the legacy v2 clamp all live upstream of that stamp.
+//
+// Passing the absence through promotes every `off` run to whatever the process
+// env says the moment an operator raises it — the inverse of the safety the
+// ceilings exist for.
+// =============================================================================
+describe("resolveFrozenRunGradingMode", () => {
+  beforeEach(() => {
+    // The hazard only bites once an operator has raised the process ceiling.
+    process.env[ENV_KEY] = "enforce";
+  });
+
+  test("an absent stamp is off, however high the env ceiling is", () => {
+    expect(resolveFrozenRunGradingMode(undefined)).toBe("off");
+  });
+
+  test("the hazard it exists to close", () => {
+    // The raw resolver, handed the same absence: promoted to the env ceiling.
+    // Kept as a test so the difference between the two entry points stays
+    // visible rather than looking like a redundant wrapper.
+    expect(resolveGradingEngineMode({ runSnapshot: undefined })).toBe(
+      "enforce"
+    );
+    expect(resolveFrozenRunGradingMode(undefined)).toBe("off");
+  });
+
+  test("a stamped position is honoured", () => {
+    expect(resolveFrozenRunGradingMode({ mode: "shadow" })).toBe("shadow");
+    expect(resolveFrozenRunGradingMode({ mode: "enforce" })).toBe("enforce");
+  });
+
+  test("the env ceiling still LOWERS a stamped position", () => {
+    // The run snapshot is the backend's decision; this process's env var is a
+    // second kill switch that can only ever take a position away.
+    process.env[ENV_KEY] = "dual_write";
+    expect(resolveFrozenRunGradingMode({ mode: "enforce" })).toBe("dual_write");
   });
 });

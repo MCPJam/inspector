@@ -112,6 +112,11 @@ export function ConvertPromotableSessionDialog({
           error: null,
           usedServerIds: response.usedServerIds ?? [],
           selectedServers: response.selectedServers ?? [],
+          // Forwarded verbatim. The adapter never decides this from
+          // `sourceType`: a synthetic scenario session IS a scenario session
+          // and would be asked, wrongly, by any client-side rule.
+          requiresContentTransferAcknowledgement:
+            response.requiresContentTransferAcknowledgement === true,
         });
       } catch (error) {
         if (cancelled) {

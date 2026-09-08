@@ -68,10 +68,10 @@ interface PlaygroundTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
     projectId: string,
-    hostContext: ProjectHostContextDraft
+    hostContext: ProjectHostContextDraft,
   ) => Promise<void>;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
@@ -132,15 +132,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // hostId, so this is cheap when no host is picked yet.
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const [previewedHostId] = usePreviewedHostId(
-    props.sharedProjectId ?? props.activeProjectId ?? null
+    props.sharedProjectId ?? props.activeProjectId ?? null,
   );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
   const effectiveHostConfig = previewedHostId
-    ? previewedHost?.config ?? null
-    : props.activeHost ?? null;
+    ? (previewedHost?.config ?? null)
+    : (props.activeHost ?? null);
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
@@ -149,10 +149,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // its properties" everywhere.
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const prefHostCapabilitiesOverride = usePreferencesStore(
-    (state) => state.hostCapabilitiesOverride
+    (state) => state.hostCapabilitiesOverride,
   );
   const prefChatUiOverride = usePreferencesStore(
-    (state) => state.chatUiOverride
+    (state) => state.chatUiOverride,
   );
   const hostStyle = effectiveHostConfig?.hostStyle ?? prefHostStyle;
   const hostCapabilitiesOverride =
@@ -175,7 +175,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     const requiredIds = effectiveHostConfig?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];
     const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const)
+      projectServersList.map((s) => [s._id, s.name] as const),
     );
     return requiredIds
       .map((id) => byId.get(id))
@@ -206,12 +206,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     onConnect: props.onConnect,
     onSaveHostContext: props.onSaveHostContext,
     ensureServersReady: props.ensureServersReady,
-    modelVisibleMcpToolResults:
-      effectiveHostConfig?.modelVisibleMcpToolResults,
+    modelVisibleMcpToolResults: effectiveHostConfig?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering:
       gateMcpToolResultImageRenderingByModelVisibility(
         effectiveHostConfig?.mcpToolResultImageRendering,
-        effectiveHostConfig?.modelVisibleMcpToolResults
+        effectiveHostConfig?.modelVisibleMcpToolResults,
       ),
     onOnboardingChange: props.onOnboardingChange,
     // Playground supports multi-server tool selection — pass the active
@@ -263,7 +262,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   <div
                     className={cn(
                       "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                      themeMode === "dark" && "dark"
+                      themeMode === "dark" && "dark",
                     )}
                     data-host-style={hostStyle}
                     style={shellStyle}
@@ -318,7 +317,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                             // The panel only remounts on the next paint; expand
                             // imperatively once it has a ref to honor the click.
                             requestAnimationFrame(() =>
-                              leftPanelRef.current?.expand()
+                              leftPanelRef.current?.expand(),
                             );
                           }}
                           tooltipText="Show sessions"
@@ -381,7 +380,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           onOpen={() => {
                             setIsRightRailVisible(true);
                             requestAnimationFrame(() =>
-                              rightPanelRef.current?.expand()
+                              rightPanelRef.current?.expand(),
                             );
                           }}
                           tooltipText="Show logs"

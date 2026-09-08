@@ -1,0 +1,282 @@
+/**
+ * The measurement hook.
+ *
+ * It is dark by default and it never changes what the pane shows, so nothing
+ * about it is user-visible — which is exactly why it needs tests: a percentile
+ * that is quietly wrong is worse than no number at all, because it is the
+ * number every later change to this pipeline gets judged against.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  frameStatsEnabled,
+  frameStatsReport,
+  noteFrameTransportRung,
+  notePainted,
+  noteInputSent,
+  resetFrameStats,
+  resetFrameStatsFlagForTests,
+} from "../frame-stats";
+
+const FLAG = "webmcp:frame-stats";
+
+function enable() {
+  localStorage.setItem(FLAG, "1");
+  resetFrameStatsFlagForTests();
+}
+
+describe("frame stats", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    localStorage.clear();
+    resetFrameStatsFlagForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    localStorage.clear();
+    resetFrameStatsFlagForTests();
+  });
+
+  it("records nothing while the flag is unset", () => {
+    expect(frameStatsEnabled()).toBe(false);
+    noteInputSent(1);
+    notePainted({ ts: 999_000, seq: 2 });
+    expect(frameStatsReport()).toEqual({
+      captureToPaint: { n: 0, p50: undefined, p95: undefined },
+      inputToPaint: { n: 0, p50: undefined, p95: undefined },
+      // No samples, so no buckets — rather than four empty ones for rungs this
+      // session never used.
+      byTransport: {},
+    });
+  });
+
+  it("splits the percentiles by the transport that carried them", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+    notePainted({ ts: 999_980, seq: 2 });
+    // The socket dies and the pane falls back; a p95 that mixed the two would
+    // describe neither, and "did the socket help?" is exactly the question
+    // this file exists to answer.
+    noteFrameTransportRung("sse-frames");
+    notePainted({ ts: 999_900, seq: 3 });
+
+    const report = frameStatsReport();
+    // The top-level figures are unchanged — every existing reader asks for
+    // those — and the split rides beside them.
+    expect(report.captureToPaint.n).toBe(3);
+    expect(report.byTransport.ws).toMatchObject({ n: 2, p50: 10, p95: 20 });
+    expect(report.byTransport["sse-frames"]).toMatchObject({ n: 1, p50: 100 });
+    expect(report.byTransport.poll).toBeUndefined();
+  });
+
+  it("measures a polled screenshot, which carries no seq", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("poll");
+    noteInputSent(0);
+    // No `seq`: a screenshot is not part of the frame sequence. It still
+    // closes a capture-to-paint measurement, which is a property of the
+    // picture — and this is the rung somebody opening the report is most
+    // likely to be investigating, since it is the slowest.
+    notePainted({ ts: 999_500, rung: "poll" });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.poll).toMatchObject({ n: 1, p50: 500 });
+    // And it settles no input echo. At a fixed once-a-second cadence, "time
+    // from gesture to next paint" measures the POLL INTERVAL rather than the
+    // input path — a number that would sit in the same percentile as socket
+    // echoes while describing something else entirely.
+    expect(report.inputToPaint.n).toBe(0);
+  });
+
+  it("files a frame under the transport it ARRIVED on", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+
+    noteFrameTransportRung("ws");
+    // The frame came in on the socket, and the ladder moves while it decodes —
+    // which on a real pane is tens of milliseconds of window.
+    noteFrameTransportRung("sse-frames");
+    notePainted({ ts: 999_990, seq: 1, rung: "ws" });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.ws).toMatchObject({ n: 1 });
+    expect(report.byTransport["sse-frames"]).toBeUndefined();
+  });
+
+  it("keeps the active transport when the samples are cleared", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+
+    // This is `window.webmcpFrameStatsReset`, which a person runs mid-session
+    // to start a clean measurement. Clearing the rung with the samples would
+    // file every frame after it under `none` until the transport happened to
+    // change — which on a healthy session is never.
+    resetFrameStats();
+    notePainted({ ts: 999_980, seq: 2 });
+    const report = frameStatsReport();
+    expect(report.captureToPaint.n).toBe(1);
+    expect(report.byTransport.ws).toMatchObject({ n: 1 });
+    expect(report.byTransport.none).toBeUndefined();
+  });
+
+  it("resets the rung as well as the samples, for the test seam only", () => {
+    localStorage.setItem(FLAG, "1");
+    resetFrameStatsFlagForTests();
+    vi.setSystemTime(1_000_000);
+    noteFrameTransportRung("ws");
+    notePainted({ ts: 999_990, seq: 1 });
+
+    // The seam is what every test's `beforeEach` calls. Leaving the rung set
+    // would carry one case's transport into the next, and a case that read
+    // `byTransport` without setting a rung would be describing whatever ran
+    // before it — the quiet kind of test pollution that only shows up as a
+    // reordering failure months later.
+    resetFrameStatsFlagForTests();
+    localStorage.setItem(FLAG, "1");
+    expect(frameStatsEnabled()).toBe(true);
+    notePainted({ ts: 999_980, seq: 2 });
+
+    const report = frameStatsReport();
+    expect(report.byTransport.ws).toBeUndefined();
+    expect(report.byTransport.none).toMatchObject({ n: 1 });
+  });
+
+  it("treats an empty string as set, since presence is the flag", () => {
+    localStorage.setItem(FLAG, "");
+    resetFrameStatsFlagForTests();
+    // `getItem` returns "" — falsy, but present. Keying on truthiness would
+    // make the documented way of turning it on (setting the key) not work.
+    expect(frameStatsEnabled()).toBe(true);
+  });
+
+  it("stays off, rather than throwing, when localStorage is unavailable", () => {
+    // Spied on `window.localStorage` itself, NOT `Storage.prototype`: the test
+    // setup replaces `window.localStorage` with a plain object, so a prototype
+    // spy would decorate a method this code never reaches and the test would
+    // pass with the try/catch deleted.
+    const getItem = vi
+      .spyOn(window.localStorage, "getItem")
+      .mockImplementation(() => {
+        throw new Error("access denied");
+      });
+    try {
+      // A private window or a storage-less embedding. This sits in the paint
+      // path, so it degrades to off rather than taking the pane with it.
+      expect(() => frameStatsEnabled()).not.toThrow();
+      expect(frameStatsEnabled()).toBe(false);
+      expect(getItem).toHaveBeenCalledWith(FLAG);
+      expect(() => notePainted({ ts: 1, seq: 1 })).not.toThrow();
+    } finally {
+      getItem.mockRestore();
+    }
+  });
+
+  it("records capture→paint from the frame's own timestamp", () => {
+    enable();
+    notePainted({ ts: 999_988, seq: 1 });
+    notePainted({ ts: 999_950, seq: 2 });
+    const report = frameStatsReport();
+    expect(report.captureToPaint.n).toBe(2);
+    expect(report.captureToPaint.p50).toBe(12);
+    expect(report.captureToPaint.p95).toBe(50);
+  });
+
+  it("settles an input on the first frame NEWER than the one on screen", () => {
+    enable();
+    noteInputSent(10);
+    vi.setSystemTime(1_000_040);
+    // Not newer than what was on screen when the gesture went: this frame was
+    // already in flight, so it is not the echo.
+    notePainted({ ts: 1_000_040, seq: 10 });
+    expect(frameStatsReport().inputToPaint.n).toBe(0);
+
+    vi.setSystemTime(1_000_070);
+    notePainted({ ts: 1_000_070, seq: 11 });
+    const report = frameStatsReport();
+    expect(report.inputToPaint.n).toBe(1);
+    expect(report.inputToPaint.p50).toBe(70);
+  });
+
+  it("settles every gesture still waiting on one qualifying paint", () => {
+    enable();
+    noteInputSent(5);
+    vi.setSystemTime(1_000_020);
+    noteInputSent(5);
+    vi.setSystemTime(1_000_050);
+    notePainted({ ts: 1_000_050, seq: 6 });
+    expect(frameStatsReport().inputToPaint.n).toBe(2);
+    // …and once settled they are not counted again by a later frame.
+    vi.setSystemTime(1_000_060);
+    notePainted({ ts: 1_000_060, seq: 7 });
+    expect(frameStatsReport().inputToPaint.n).toBe(2);
+  });
+
+  it("drops a gesture whose paint never came, rather than recording it late", () => {
+    enable();
+    noteInputSent(1);
+    // A page that simply did not repaint. Counting the eventual unrelated
+    // frame as a multi-second "echo" would poison the one percentile this
+    // exists to report — and `noteInputSent` cannot expire it, because no
+    // further input is coming.
+    vi.setSystemTime(1_000_000 + 5_000);
+    notePainted({ ts: 1_000_000 + 5_000, seq: 2 });
+    expect(frameStatsReport().inputToPaint.n).toBe(0);
+    expect(frameStatsReport().captureToPaint.n).toBe(1);
+  });
+
+  it("reports p50 and p95 off the collected samples", () => {
+    enable();
+    for (let i = 1; i <= 100; i += 1) {
+      vi.setSystemTime(1_000_000 + i);
+      notePainted({ ts: 1_000_000, seq: i });
+    }
+    const report = frameStatsReport();
+    expect(report.captureToPaint.n).toBe(100);
+    expect(report.captureToPaint.p50).toBe(50);
+    expect(report.captureToPaint.p95).toBe(95);
+  });
+
+  it("clears its samples on reset", () => {
+    enable();
+    notePainted({ ts: 999_990, seq: 1 });
+    expect(frameStatsReport().captureToPaint.n).toBe(1);
+    resetFrameStats();
+    expect(frameStatsReport().captureToPaint.n).toBe(0);
+  });
+
+  it("drops a pending gesture on reset, so it cannot settle on a new session", () => {
+    enable();
+    noteInputSent(2);
+    // The session turns over. `seq` restarts from scratch, so without this the
+    // next page's third frame would settle a gesture aimed at the previous one
+    // and record the gap between two unrelated sessions as an echo.
+    resetFrameStats();
+    vi.setSystemTime(1_000_030);
+    notePainted({ ts: 1_000_030, seq: 3 });
+    expect(frameStatsReport().inputToPaint.n).toBe(0);
+  });
+
+  it("exposes the report on window once enabled", () => {
+    enable();
+    frameStatsEnabled();
+    const hooks = window as unknown as {
+      webmcpFrameStats?: () => unknown;
+      webmcpFrameStatsReset?: () => void;
+    };
+    // The only way anyone reads these numbers: a console call on a live pane.
+    expect(typeof hooks.webmcpFrameStats).toBe("function");
+    expect(typeof hooks.webmcpFrameStatsReset).toBe("function");
+  });
+});

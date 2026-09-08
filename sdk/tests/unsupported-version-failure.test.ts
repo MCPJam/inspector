@@ -80,6 +80,42 @@ describe("readUnsupportedVersionFailure", () => {
     });
   });
 
+  // The legacy-pin refusal: a stateful pin narrows the accept-list, the
+  // server's `initialize` reply names something else, and the upstream client
+  // throws a plain `Error`. Neither shape above matches it, so before this was
+  // recognized the failure was reported as "the server appears to be down".
+  it("reads the version a legacy initialize refusal names", () => {
+    const verdict = readUnsupportedVersionFailure(
+      new Error("Server's protocol version is not supported: 2025-06-18"),
+    );
+
+    expect(verdict).toEqual({ supported: ["2025-06-18"] });
+  });
+
+  // Verbatim from a production connect against mcp.slack.com with a 2025-11-25
+  // pin. The manager folds every transport's failure into one message, so the
+  // clause lands mid-sentence followed by a period — a greedy capture reports
+  // the server as offering "2025-06-18.".
+  it("does not swallow sentence punctuation from the wrapped composite", () => {
+    const verdict = readUnsupportedVersionFailure(
+      new Error(
+        'Failed to connect to MCP server "slack" using HTTP transports. ' +
+          "Streamable HTTP error: Server's protocol version is not supported: 2025-06-18. " +
+          "SSE error: SSE error: Non-200 status code (405).",
+      ),
+    );
+
+    expect(verdict).toEqual({ supported: ["2025-06-18"] });
+  });
+
+  it("ignores a refusal that names no version", () => {
+    expect(
+      readUnsupportedVersionFailure(
+        new Error("Server's protocol version is not supported: banana"),
+      ),
+    ).toBeUndefined();
+  });
+
   it("terminates on a cyclic cause chain", () => {
     const a = new Error("a") as Error & { cause?: unknown };
     const b = new Error("b") as Error & { cause?: unknown };

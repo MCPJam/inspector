@@ -1,12 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 /**
  * The rail's Shell tab is engine-aware: the CLOUD controller
  * (`useComputerTerminal`, which reserves/wakes a real cloud box on open) must
  * never be mounted while the project's computer engine is local. These suites
  * pin exactly that — plus the indicator chip and the local body's three states
- * (unconsented / terminal available / terminal unavailable).
+ * (unconsented / open-terminal prompt / terminal unavailable).
  */
 
 const engineState = vi.hoisted(() => ({
@@ -74,11 +74,54 @@ vi.mock("@/components/computer/ComputerTerminalPane", () => ({
   ComputerTerminalPane: () => <div data-testid="cloud-terminal-pane" />,
 }));
 
+// The bare terminal the LOCAL body mounts (xterm won't run under jsdom).
+vi.mock("@/components/computer/ComputerTerminal", () => ({
+  ComputerTerminal: () => <div data-testid="local-terminal" />,
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (s: { themeMode: string }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
+
+vi.mock("@/lib/local-computer-consent", () => ({
+  mintLocalTerminalNonce: vi.fn(),
+}));
+
 vi.mock("@/stores/harness-workdir-store", () => ({
   useHarnessWorkdir: () => undefined,
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+
+// Both panes are exercised in their own suites; here they only have to say
+// which one the rail mounted and whether it considers it the visible tab.
+vi.mock("@/components/browser/LocalBrowserBody", () => ({
+  LocalBrowserBody: ({ active }: { active?: boolean }) => (
+    <div
+      data-testid="browser-pane"
+      data-engine="local"
+      data-active={String(active)}
+    />
+  ),
+}));
+
+vi.mock("@/components/browser/HostedBrowserBody", () => ({
+  HostedBrowserBody: ({ active }: { active?: boolean }) => (
+    <div
+      data-testid="browser-pane"
+      data-engine="hosted"
+      data-active={String(active)}
+    />
+  ),
+}));
+
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useMintBrowserToken: () => async () => ({
+    token: "tok",
+    expiresAt: Date.now() + 60_000,
+  }),
+}));
 
 import { PlaygroundRightRail } from "../PlaygroundRightRail";
 
@@ -200,14 +243,22 @@ describe("PlaygroundRightRail — local engine body", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("points at the Computer tab's terminal when one is available", () => {
+  it("offers Open terminal and mounts the LOCAL pane on click — never the cloud controller", () => {
     engineState.engine = "local";
     engineState.granted = true;
     engineState.localTerminalAvailable = true;
     renderRail();
+    // Idle until asked: a PTY is a real shell on the user's machine, and both
+    // rail bodies stay mounted, so nothing may spawn one on Playground load.
     expect(
       screen.getByTestId("rail-local-terminal-pointer"),
     ).toBeInTheDocument();
+    expect(screen.queryByTestId("local-terminal")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open terminal/i }));
+    expect(screen.getByTestId("local-terminal")).toBeInTheDocument();
+    expect(screen.queryByTestId("cloud-terminal-pane")).not.toBeInTheDocument();
+    expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
   });
 
   it("degrades honestly when the local terminal isn't available", () => {
@@ -282,5 +333,117 @@ describe("PlaygroundRightRail — no computer attached", () => {
     );
     expect(screen.getByTestId("logger-view")).toBeInTheDocument();
     expect(terminalSpies.useComputerTerminal).not.toHaveBeenCalled();
+  });
+});
+
+describe("PlaygroundRightRail — the Browser tab", () => {
+  const browserHost = {
+    computer: { workdir: "/home/user" },
+    builtInToolIds: ["browser"],
+  } as any;
+
+  function renderWithBrowser() {
+    return render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+  }
+
+  it("tells the pane whether it is the tab being looked at", () => {
+    // Mounted-hidden is not "being watched": the pane heartbeats to defer the
+    // browser's idle reap, and one behind the Logs tab must stop claiming
+    // somebody is looking at it.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    renderWithBrowser();
+
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
+  });
+
+  it("SWAPS the body when the engine changes, keeping the tab", () => {
+    // Both engines have a browser. The tab used to vanish on a switch to
+    // cloud, which left `activeTab` on a hidden pane — all three hidden, and a
+    // rail that looked broken — and, once the hosted pane existed, hid a
+    // browser the person could perfectly well watch.
+    engineState.engine = "local";
+    engineState.selectedEngine = "local";
+    engineState.granted = true;
+    const { rerender } = renderWithBrowser();
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.engine).toBe("local");
+
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    rerender(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+
+    const pane = screen.getByTestId("browser-pane");
+    expect(pane.dataset.engine).toBe("hosted");
+    expect(pane.dataset.active).toBe("true");
+  });
+
+  it("offers no Browser tab at all when the host cannot drive one", () => {
+    // The capability, not the engine: a host without `browser` has nothing for
+    // the model to drive, so a pane would be showing something nothing can use.
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={{ computer: { workdir: "/home/user" } } as any}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated
+      />,
+    );
+    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /browser/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no hosted browser before there is a signed-in user to mint for", () => {
+    // Every hosted call carries a minted browser token. Mounted before auth is
+    // ready the pane can only fail — into an "unreachable" state with nothing
+    // to retry it once auth arrives.
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated={false}
+      />,
+    );
+    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
+  });
+
+  it("keeps a hidden hosted pane from claiming somebody is watching", () => {
+    // On the hosted engine that claim keeps a METERED box awake, and the
+    // person pays for a picture nobody has on screen.
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    renderWithBrowser();
+    expect(screen.getByTestId("browser-pane").dataset.engine).toBe("hosted");
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    expect(screen.getByTestId("browser-pane").dataset.active).toBe("true");
   });
 });

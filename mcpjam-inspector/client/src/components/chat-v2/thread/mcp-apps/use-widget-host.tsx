@@ -15,8 +15,13 @@
 // reads through `environment`/`resolvers` while keeping its derivation in place;
 // pre-resolving them into `WidgetHost.resolveEnvironment` is the Phase-3 target.
 
-import { useMemo, useRef, type ReactNode } from "react";
-import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
+import { useCallback, useMemo, useRef, type ReactNode } from "react";
+import {
+  HOSTED_MODE,
+  SANDBOX_ORIGIN,
+  VIEW_MOUNT_MODE,
+  VIEW_SUBDOMAINS_ENABLED,
+} from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
@@ -32,6 +37,12 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import type { CspViolation } from "@/stores/widget-debug-store";
+import { compareCspPolicies } from "../csp-workbench/csp-header";
+import {
+  CspViolationTelemetryLimiter,
+  reportCspViolationToSentry,
+} from "@/lib/csp-violation-telemetry";
 import {
   resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
@@ -83,7 +94,12 @@ import type {
 // design-system <Dialog> and <CheckoutDialogV2>.
 
 /** WidgetModalProps → the inspector design-system <Dialog> (widget-modal sizing). */
-function WidgetModalChrome({ open, onClose, title, children }: WidgetModalProps) {
+function WidgetModalChrome({
+  open,
+  onClose,
+  title,
+  children,
+}: WidgetModalProps) {
   return (
     <Dialog
       open={open}
@@ -151,8 +167,8 @@ export function useWidgetHost(): WidgetHostImpl {
   const kind: WidgetSurfaceKind = isScenarioSurface
     ? "scenario"
     : widgetSurface === "playground"
-      ? "playground"
-      : "chat";
+    ? "playground"
+    : "chat";
 
   // Read into a ref so the memoized `services` object stays stable while the
   // listResourceTemplates guard still observes the live value (mirrors the
@@ -189,6 +205,8 @@ export function useWidgetHost(): WidgetHostImpl {
       webManagedServers,
       hostedMode: HOSTED_MODE,
       sandboxOrigin: SANDBOX_ORIGIN ?? "",
+      viewMountMode: VIEW_MOUNT_MODE,
+      viewSubdomainsEnabled: VIEW_SUBDOMAINS_ENABLED,
       playgroundCspMode,
     }),
     [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],
@@ -280,7 +298,10 @@ export function useWidgetHost(): WidgetHostImpl {
           profile: activeMcpProfileRef.current,
           hostStyle,
         }),
-      resolveEffectiveHostCapabilities: ({ hostStyle, hostCapabilitiesOverride }) =>
+      resolveEffectiveHostCapabilities: ({
+        hostStyle,
+        hostCapabilitiesOverride,
+      }) =>
         resolveEffectiveHostCapabilities({
           hostStyle,
           profile: activeMcpProfileRef.current,
@@ -304,6 +325,7 @@ export function useWidgetHost(): WidgetHostImpl {
   const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
+  const setWidgetAppliedCsp = useWidgetDebugStore((s) => s.setWidgetAppliedCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
   const setWidgetModelContext = useWidgetDebugStore(
@@ -313,6 +335,45 @@ export function useWidgetHost(): WidgetHostImpl {
   const setSandboxApplied = useWidgetDebugStore((s) => s.setSandboxApplied);
   const appendLifecycle = useWidgetDebugStore((s) => s.appendLifecycle);
   const addTrafficLog = useTrafficLogStore((s) => s.addLog);
+  const cspTelemetryLimiterRef = useRef(new CspViolationTelemetryLimiter());
+  const reportCspViolation = useCallback(
+    (toolCallId: string, serverId: string, violation: CspViolation) => {
+      if (
+        !cspTelemetryLimiterRef.current.shouldReport(
+          toolCallId,
+          serverId,
+          violation,
+        )
+      ) {
+        return;
+      }
+      const applied =
+        violation.mountId === undefined
+          ? undefined
+          : useWidgetDebugStore.getState().widgets.get(toolCallId)?.csp
+              ?.appliedPoliciesByMount?.[String(violation.mountId)];
+      reportCspViolationToSentry({
+        toolCallId,
+        serverId,
+        violation,
+        appliedPolicy: applied?.headerString,
+        appliedMode: applied?.mode,
+        intent: applied?.intent,
+        comparison: compareCspPolicies(
+          applied?.headerString,
+          violation.originalPolicy,
+        ),
+      });
+    },
+    [],
+  );
+  const clearCspViolationsAndTelemetry = useCallback(
+    (toolCallId: string) => {
+      cspTelemetryLimiterRef.current.clearToolCall(toolCallId);
+      clearCspViolations(toolCallId);
+    },
+    [clearCspViolations],
+  );
 
   const debug = useMemo<WidgetDebugSink>(
     () => ({
@@ -321,8 +382,10 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
+      setWidgetAppliedCsp,
       addCspViolation,
-      clearCspViolations,
+      reportCspViolation,
+      clearCspViolations: clearCspViolationsAndTelemetry,
       setWidgetModelContext,
       setWidgetHtml,
       setSandboxApplied,
@@ -335,8 +398,10 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
+      setWidgetAppliedCsp,
       addCspViolation,
-      clearCspViolations,
+      reportCspViolation,
+      clearCspViolationsAndTelemetry,
       setWidgetModelContext,
       setWidgetHtml,
       setSandboxApplied,

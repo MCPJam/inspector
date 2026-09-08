@@ -60,6 +60,14 @@ export type ResultStatus = (typeof RESULT_STATUS)[keyof typeof RESULT_STATUS];
 export const RUN_STATUS = {
   PENDING: "pending",
   RUNNING: "running",
+  /**
+   * Every trial finished; the run is HELD for its gating judge.
+   *
+   * Not terminal, and `result` is still `pending` — the backend's
+   * `finalizeAfterJudge` is what will decide it, within 30 minutes. Anything
+   * that reads this as done reports a run with no verdict as though it had one.
+   */
+  GRADING: "grading",
   COMPLETED: "completed",
   CANCELLED: "cancelled",
   TIMED_OUT: "timed_out",
@@ -110,6 +118,9 @@ export const EVAL_PASSED_BADGE_STRONG_CLASS =
   "bg-green-500/15 text-green-700 dark:text-green-300";
 export const EVAL_FAILED_BADGE_STRONG_CLASS =
   "bg-red-500/15 text-red-700 dark:text-red-300";
+/** Authored Warn/Report severity — not a computed verdict. */
+export const EVAL_WARN_BADGE_STRONG_CLASS =
+  "bg-warning/15 text-warning";
 
 // UI configuration
 export const UI_CONFIG = {

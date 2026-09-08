@@ -9,7 +9,6 @@ import {
   MonitorPlay,
   Wrench,
 } from "lucide-react";
-import { useNavigate } from "react-router";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/state/app-types";
@@ -33,7 +32,7 @@ import type {
   HostCompatReport,
 } from "@/lib/host-compat/types";
 import { track } from "@/lib/analytics";
-import { routePaths } from "@/lib/app-navigation";
+import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
@@ -41,6 +40,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
@@ -123,31 +123,33 @@ export function HostCompatContent({
         toolsData,
         widgetUsage,
         { protocolVersion },
-        catalogState?.catalog
+        catalogState?.catalog,
       ),
-    [toolsData, widgetUsage, protocolVersion, catalogState]
+    [toolsData, widgetUsage, protocolVersion, catalogState],
   );
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
   const visibleReports = useMemo(
     () =>
       filterReportsByFeatureFlags(reports, {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        cursorCli: cursorCliEnabled,
       }),
-    [reports, claudeCodeEnabled, codexEnabled]
+    [reports, claudeCodeEnabled, codexEnabled, cursorCliEnabled],
   );
 
   // Tier-2: render the server's widget live in each host's emulation.
   const live = useLiveRenders(server.name, requirements);
 
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { createHost } = useHostMutations();
   const [, setPreviewedHostId] = usePreviewedHostId(projectId ?? null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Which host's CTA is mid-create (drives its spinner + disables the rest).
   const [creatingTemplateId, setCreatingTemplateId] = useState<string | null>(
-    null
+    null,
   );
   // Findings are collapsed by default — the row shows a terse summary; the
   // full list expands on demand so the tab reads as a scannable list.
@@ -228,7 +230,7 @@ export function HostCompatContent({
       navigate(routePaths.playground);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : `Couldn't open in ${label}`
+        err instanceof Error ? err.message : `Couldn't open in ${label}`,
       );
     } finally {
       setCreatingTemplateId(null);
@@ -383,7 +385,7 @@ export function HostCompatContent({
                 <div className="mt-2 space-y-2.5 pl-6">
                   {LANE_ORDER.map((lane) => {
                     const laneFindings = report.findings.filter(
-                      (f) => f.lane === lane
+                      (f) => f.lane === lane,
                     );
                     if (laneFindings.length === 0) return null;
                     const laneStatus = getCompatDisplayStatus({

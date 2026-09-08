@@ -50,13 +50,13 @@ export function PlaygroundPluginSelector({
   const environmentRow = useProjectEnvironment(projectId, environmentId);
   const pinnedVersionIds = useMemo(
     () => environmentRow?.pluginVersionIds ?? [],
-    [environmentRow]
+    [environmentRow],
   );
   // Skipped (undefined) while the flag is off, auth is unresolved, or the
   // environment pins nothing — a plugin-free environment costs no query.
   const probe = usePluginRuntimePreview(
     projectId,
-    pinnedVersionIds.length > 0 ? pinnedVersionIds : null
+    pinnedVersionIds.length > 0 ? pinnedVersionIds : null,
   );
   const unavailable = probe?.unavailableComponents ?? [];
 
@@ -110,7 +110,7 @@ export function PlaygroundPluginSelector({
               className={cn(
                 "flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border/60 px-1.5 py-0.5 text-[11px] font-normal",
                 plugin.enabled ? "bg-muted/40" : "opacity-55",
-                disabled && "cursor-not-allowed opacity-60"
+                disabled && "cursor-not-allowed opacity-60",
               )}
               data-testid={`playground-plugin-${plugin.pluginVersionId}`}
             >

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { reportCaught } from "@/lib/error-reporting";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -482,7 +483,7 @@ export function ServerDetailModal({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to connect to ${server.name}: ${errorMessage}`);
+      toastServerConnectionFailure(server.name, errorMessage);
     } finally {
       setIsReconnecting(false);
     }

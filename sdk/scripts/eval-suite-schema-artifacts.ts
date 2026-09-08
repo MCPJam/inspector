@@ -17,6 +17,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   evalSuiteFileStructuralSchema,
 } from "../src/contract/suite-file.js";
+import { MAX_INTENT_CHARS } from "../src/contract/stage-intent.js";
 
 const contractDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -68,6 +69,27 @@ export const ELEMENT_LOCATOR_ANY_OF = [
 ];
 
 /**
+ * The authored intent validator accepts only an already-trimmed label. Zod
+ * refinements do not project into JSON Schema, but this one is expressible as
+ * a boundary pattern and matters to third-party validators: accepting a
+ * padded label here would produce a suite file the SDK rejects at load time.
+ * `\\S` guards both ends while `[\\s\\S]` keeps internal whitespace,
+ * including newlines, legal just as `String.prototype.trim()` does.
+ */
+const INTENT_TRIMMED_PATTERN = "^\\S(?:[\\s\\S]*\\S)?$";
+
+function isIntentStringNode(ctx: {
+  path: (string | number)[];
+  jsonSchema: Record<string, unknown>;
+}): boolean {
+  return (
+    ctx.path[ctx.path.length - 1] === "intent" &&
+    ctx.jsonSchema.type === "string" &&
+    ctx.jsonSchema.maxLength === MAX_INTENT_CHARS
+  );
+}
+
+/**
  * The JSON Schema document.
  *
  * Built from the STRUCTURAL schema deliberately: refinements do not project
@@ -105,6 +127,9 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       if (isElementLocatorNode(node)) {
         node.anyOf = ELEMENT_LOCATOR_ANY_OF.map((entry) => ({ ...entry }));
       }
+      if (isIntentStringNode(ctx)) {
+        node.pattern = INTENT_TRIMMED_PATTERN;
+      }
     },
   }) as Record<string, unknown>;
   const { $schema, ...rest } = generated;
@@ -120,9 +145,13 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       "is ACCEPTED (zod io:input), so a file this schema accepts is one the " +
       "SDK validator also accepts structurally. The zod validator remains the " +
       "authoritative superset: it additionally enforces cross-field rules " +
-      "(unique case ids, unique step ids within a case, and a per-case import " +
-      "block requiring top-level provenance) and a serialized-size cap on " +
+      "(unique case ids, unique step ids within a case, a per-case import " +
+      "block requiring top-level provenance, and a per-case import note " +
+      "being required when the claimed status is exact) and a " +
+      "serialized-size cap on " +
       "tool-call arguments, none of which JSON Schema can express. " +
+      "The authored intent label's already-trimmed invariant is encoded as a " +
+      "boundary pattern in the schema. " +
       "Objects the suite file and the step union declare are closed " +
       "(additionalProperties: false). A tool call's own `arguments` object " +
       "and the reused predicate union stay open in both validators: their " +
@@ -171,8 +200,9 @@ export async function buildEvalSuiteSchemaArtifacts(): Promise<
  * The eval suite file's JSON Schema (draft 2020-12).
  *
  * STRUCTURAL contract only. Cross-field rules the zod validator enforces —
- * unique case ids, unique step ids within a case, and a per-case \`import\`
- * block requiring top-level \`provenance\` — do not project into JSON Schema.
+ * unique case ids, unique step ids within a case, a per-case \`import\` block
+ * requiring top-level \`provenance\`, and an \`import.note\` being required when
+ * \`import.status\` is \`"exact"\` — do not project into JSON Schema.
  * Validate with \`evalSuiteFileSchema\` when you have the SDK; use this when you
  * only have a JSON Schema validator.
  */

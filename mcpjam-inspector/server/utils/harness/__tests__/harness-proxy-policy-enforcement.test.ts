@@ -22,6 +22,7 @@ import {
 import { buildIterationFinishParams } from "../../../services/evals/finalize-iteration.js";
 import { buildHarnessToolPolicySnapshots } from "../../../services/evals/tool-policy-gate.js";
 import { buildHarnessProxyMcpJson } from "../mcp-config.js";
+import { getHarnessAdapter } from "../registry.js";
 
 describe("resolveBridgeToolCallTarget", () => {
   const hasServer = (id: string) => id === "srv-b";
@@ -185,29 +186,75 @@ describe("harnessToolPolicyLaunchRefusal", () => {
 
   it("permits a policied harness run on a deployment that can seal", () => {
     expect(
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: true })
+      harnessToolPolicyLaunchRefusal({
+        hasToolPolicy: true,
+        harness: "claude-code",
+      })
     ).toBeNull();
   });
 
   it("refuses rather than running unpoliced when the seal secret is unusable", () => {
     delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
     expect(
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: true })
+      harnessToolPolicyLaunchRefusal({
+        hasToolPolicy: true,
+        harness: "claude-code",
+      })
     ).toBe(HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON);
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
     expect(
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: true })
+      harnessToolPolicyLaunchRefusal({
+        hasToolPolicy: true,
+        harness: "claude-code",
+      })
     ).toBe(HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON);
   });
 
   it("says nothing about non-harness runs or unpolicied harness runs", () => {
     delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
     expect(
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: false })
+      harnessToolPolicyLaunchRefusal({
+        hasToolPolicy: true,
+        harness: undefined,
+      })
     ).toBeNull();
     expect(
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: false, harness: true })
+      harnessToolPolicyLaunchRefusal({
+        hasToolPolicy: false,
+        harness: "claude-code",
+      })
     ).toBeNull();
+  });
+
+  // COMP-39. The seal exists to carry a policy OUT of this process. A
+  // host-executed adapter's MCP calls never leave it — they are gated in-process
+  // by `projectSelectedMcpServersAsHostTools` — so admission must not demand a
+  // token that will never be minted. Before this, a deployment whose terminal
+  // secret was merely too SHORT (nonempty, under the 16-char minimum) refused
+  // every policied Codex eval outright.
+  it("exempts host-executed delivery from the proxy-seal requirement", () => {
+    expect(getHarnessAdapter("codex").mcpDelivery).toBe("host-executed");
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
+    expect(
+      harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: "codex" })
+    ).toBeNull();
+    delete process.env.COMPUTERS_TERMINAL_TOKEN_SECRET;
+    expect(
+      harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: "codex" })
+    ).toBeNull();
+  });
+
+  // …and the exemption is delivery-scoped, never a general softening: the
+  // native path still fails CLOSED on the same deployment.
+  it("keeps NATIVE delivery failing closed on the same weak-secret deployment", () => {
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
+    expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+    expect(
+      harnessToolPolicyLaunchRefusal({
+        hasToolPolicy: true,
+        harness: "claude-code",
+      })
+    ).toBe(HARNESS_TOOL_POLICY_SEAL_UNAVAILABLE_REASON);
   });
 });
 

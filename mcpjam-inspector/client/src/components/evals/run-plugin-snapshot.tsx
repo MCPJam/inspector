@@ -18,6 +18,7 @@
  * an edit changes content under an unchanged name.
  */
 import { shortBundleHash } from "@/components/plugins/plugin-presentation";
+import { RunDescriptionOverrideDisclosure } from "../evaluate/run-description-override-disclosure";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
 
 export type RunPluginVersionRef = {
@@ -30,40 +31,60 @@ export type RunPluginVersionRef = {
 export function RunPluginSnapshot({
   pluginVersions,
   skillsExcluded,
+  toolDescriptionOverride,
 }: {
   pluginVersions?: RunPluginVersionRef[];
   skillsExcluded?: boolean;
+  toolDescriptionOverride?: { toolName: string };
 }) {
   const versions = pluginVersions ?? [];
   // Absence is semantic: a run with no pinned plugins should say nothing, not
   // render an empty "Plugins" row that reads like a failure to load one.
-  if (versions.length === 0) return null;
+  //
+  // `skillsExcluded` is NOT covered by that: it is a fact about the run, not
+  // about plugins, and the common "without skills" arm pins no plugins at all —
+  // so returning early on an empty plugin list used to hide the badge in
+  // exactly the case it exists for.
+  if (versions.length === 0 && !skillsExcluded && !toolDescriptionOverride) {
+    return null;
+  }
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
-      <span className={runDetailMetaLabelClass}>Plugins</span>
-      {versions.map((version) => (
-        <span
-          key={version.pluginVersionId}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
-          title={`Plugin version ${version.pluginVersionId} · bundle ${version.bundleHash}`}
-        >
-          <span className="text-foreground">{version.name}</span>
-          <span className="font-mono text-[10px] text-muted-foreground">
-            {shortBundleHash(version.bundleHash)}
-          </span>
-        </span>
-      ))}
-      {skillsExcluded ? (
-        // A skill-less run and a run whose skills failed to load look identical
-        // in a transcript. Say which this is.
-        <span
-          className="inline-flex items-center rounded-md border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
-          title="This run is the 'without skills' arm of a compare: no skills were pinned from any channel. The plugins' MCP servers were still connected."
-        >
-          skills excluded
-        </span>
+    <>
+      {versions.length > 0 || skillsExcluded ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {versions.length > 0 ? (
+            <span className={runDetailMetaLabelClass}>Plugins</span>
+          ) : null}
+          {versions.map((version) => (
+            <span
+              key={version.pluginVersionId}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
+              title={`Plugin version ${version.pluginVersionId} · bundle ${version.bundleHash}`}
+            >
+              <span className="text-foreground">{version.name}</span>
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {shortBundleHash(version.bundleHash)}
+              </span>
+            </span>
+          ))}
+          {skillsExcluded ? (
+            // A skill-less run and a run whose skills failed to load look identical
+            // in a transcript. Say which this is.
+            <span
+              className="inline-flex items-center rounded-md border border-border/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+              title="This run is the 'without skills' arm of a compare: no skills were pinned from any channel. The plugins' MCP servers were still connected."
+            >
+              skills excluded
+            </span>
+          ) : null}
+        </div>
       ) : null}
-    </div>
+      {toolDescriptionOverride ? (
+        <RunDescriptionOverrideDisclosure
+          toolName={toolDescriptionOverride.toolName}
+        />
+      ) : null}
+    </>
   );
 }

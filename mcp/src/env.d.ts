@@ -18,4 +18,18 @@ interface Env {
    * challenge.
    */
   MCPJAM_NONPROD_LOCKDOWN?: string;
+
+  /**
+   * The BROWSER origin of the app this worker's permalinks point at
+   * (`https://app.mcpjam.com`, `https://staging.mcpjam.com`,
+   * `http://localhost:6274`).
+   *
+   * Named separately from `PLATFORM_API_URL` on purpose: one is where the
+   * worker sends requests, the other is where a HUMAN opens a link, and the
+   * day they diverge (an API subdomain, a proxy) a single variable would send
+   * every recipient to a URL no browser renders. `resolveAppOrigin` falls back
+   * to the API URL's origin, which is right in every environment configured
+   * today, so a deploy that predates this var still mints correct links.
+   */
+  MCPJAM_APP_ORIGIN?: string;
 }

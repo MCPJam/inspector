@@ -50,7 +50,12 @@ import { readJsonObjectBody } from "./adapter.js";
 const environments = new Hono();
 
 // ── Convex row shapes (hand-mirrored from convex/projectEnvironments.ts) ─────
-type SkillSelection = { mode: "explicit"; skillIds: string[] };
+type SkillSelection = {
+  mode: "explicit";
+  skillIds: string[];
+  /** Optional exact authored-skill revisions; absent means Latest at launch. */
+  versionPins?: Array<{ skillId: string; versionId: string }>;
+};
 
 /**
  * A row this API is willing to emit.
@@ -68,6 +73,20 @@ function isNamedEnvironmentRow(row: {
   return typeof row.name === "string" && row.name.trim().length > 0;
 }
 
+/**
+ * Which PROJECT SECRETS a run launched from this environment receives. Ids
+ * only — the DTO carries no name and certainly no value, and the secret rows
+ * behind these ids are readable (metadata-only) through `/v1/projects/:id/secrets`.
+ *
+ * No version pins, unlike `SkillSelection`: a secret has exactly one current
+ * value by definition, and "pin the previous value" is the opposite of what
+ * rotation is for.
+ */
+type SecretSelection = {
+  mode: "explicit";
+  secretIds: string[];
+};
+
 type EnvironmentRow = {
   environmentId: string;
   projectId: string;
@@ -81,6 +100,7 @@ type EnvironmentRow = {
   /** The stored model OVERRIDE. Absent ⇒ the environment inherits its host's. */
   modelId?: string;
   skillSelection?: SkillSelection;
+  secretSelection?: SecretSelection;
   pluginVersionIds?: string[];
   /** Internal (Convex) name for the sandbox-image pin — public DTOs expose it
    *  as `sandboxImageId`, matching the SDK's `PlatformImage` vocabulary. */
@@ -140,6 +160,13 @@ function toEnvironmentDto(row: EnvironmentRow) {
     ...(row.modelId !== undefined ? { modelId: row.modelId } : {}),
     ...(row.skillSelection !== undefined
       ? { skillSelection: row.skillSelection }
+      : {}),
+    // The GRANT, as ids. Which of these a given run actually receives is
+    // decided live at launch against that session's owner (a personal secret
+    // reaches only its owner's sessions), so this is what the environment ASKS
+    // FOR, not a promise about any one run.
+    ...(row.secretSelection !== undefined
+      ? { secretSelection: row.secretSelection }
       : {}),
     ...(row.pluginVersionIds !== undefined
       ? { pluginVersionIds: row.pluginVersionIds }
@@ -216,7 +243,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -243,7 +270,7 @@ type ConvexErrorData = {
  */
 function isMissingConvexFunctionError(error: unknown): boolean {
   const message = String(
-    (error as { message?: unknown } | null)?.message ?? error ?? ""
+    (error as { message?: unknown } | null)?.message ?? error ?? "",
   ).toLowerCase();
   return (
     message.includes("could not find public function") ||
@@ -293,7 +320,7 @@ function translateResolveError(error: unknown): WebRouteError {
       return new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        "Environment not found"
+        "Environment not found",
       );
     }
     const reason = RESOLVE_REASON_BY_CODE[code];
@@ -318,7 +345,7 @@ function translateResolveError(error: unknown): WebRouteError {
  */
 function translateConvexError(
   error: unknown,
-  fallbackMessage = "Environment write rejected by the platform"
+  fallbackMessage = "Environment write rejected by the platform",
 ): WebRouteError {
   return translateConvexWriteError(error, {
     resource: "Environment",
@@ -337,7 +364,7 @@ function translateConvexError(
 async function readEnvironment(
   convexAuthToken: string,
   projectId: string,
-  environmentId: string
+  environmentId: string,
 ): Promise<EnvironmentRow> {
   const readClient = createConvexClient(convexAuthToken);
   let row: EnvironmentRow | null;
@@ -346,7 +373,7 @@ async function readEnvironment(
     // `projectId`: an id from another of the caller's projects throws NOT_FOUND.
     row = (await readClient.query(
       "projectEnvironments:getEnvironment" as any,
-      { projectId, environmentId } as any
+      { projectId, environmentId } as any,
     )) as EnvironmentRow | null;
   } catch (error) {
     throw translateConvexError(error);
@@ -365,14 +392,36 @@ async function readEnvironment(
 /**
  * Mirrors the backend envelope exactly. `skillIds` is `.min(1)` because the
  * backend rejects an empty explicit selection — "no skills" is expressed by
- * clearing the field (`null`), not by an empty list.
+ * clearing the field (`null`), not by an empty list. `versionPins` is an
+ * optional overlay: selected skills without a pin track Latest at launch.
  */
 const skillSelectionSchema = z.strictObject({
   mode: z.literal("explicit"),
   skillIds: z.array(z.string().trim().min(1)).min(1),
+  versionPins: z
+    .array(
+      z.strictObject({
+        skillId: z.string().trim().min(1),
+        versionId: z.string().trim().min(1),
+      }),
+    )
+    .min(1)
+    .optional(),
 });
 
 const pluginVersionIdsSchema = z.array(z.string().trim().min(1)).min(1);
+
+/**
+ * `.min(1)` for the same reason every other selection has it: the backend
+ * rejects an empty selection with "clear the selection instead", so `[]` is a
+ * 400 rather than a silent revoke. Revoking a grant is `null` on PATCH, and
+ * that distinction is worth a validation error — an accidental `[]` that read
+ * as "remove every credential" would break a workflow with no error to look at.
+ */
+const secretSelectionSchema = z.strictObject({
+  mode: z.literal("explicit"),
+  secretIds: z.array(z.string().trim().min(1)).min(1),
+});
 
 const createEnvironmentSchema = z.strictObject({
   name: z.string().trim().min(1),
@@ -386,6 +435,7 @@ const createEnvironmentSchema = z.strictObject({
    */
   modelId: z.string().trim().min(1).optional(),
   skillSelection: skillSelectionSchema.optional(),
+  secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   /** Public name for the internal `computerEnvironmentId` pin; must be a
    *  project-shared image (backend rejects personal drafts). */
@@ -394,10 +444,14 @@ const createEnvironmentSchema = z.strictObject({
 
 /**
  * `.nullable().optional()` on every clearable field (`serverAttachmentId`,
- * `skillSelection`, `pluginVersionIds`, `sandboxImageId`) encodes the backend's
- * tri-state: omitted = unchanged, `null` = clear, value = set. A new clearable
- * field must join BOTH that shape and the `.refine` below, or it silently
- * becomes unclearable / unable to be the only field in a PATCH.
+ * `skillSelection`, `secretSelection`, `pluginVersionIds`, `sandboxImageId`)
+ * encodes the backend's tri-state: omitted = unchanged, `null` = clear, value =
+ * set. A new clearable field must join BOTH that shape and the `.refine` below,
+ * or it silently becomes unclearable / unable to be the only field in a PATCH.
+ *
+ * `secretSelection` is the field where that would hurt most: unclearable means
+ * an environment's credential grant can only ever grow, and revoking it would
+ * require deleting the environment.
  */
 const updateEnvironmentSchema = z
   .strictObject({
@@ -408,6 +462,7 @@ const updateEnvironmentSchema = z
     serverAttachmentId: z.string().trim().min(1).nullable().optional(),
     modelId: z.string().trim().min(1).nullable().optional(),
     skillSelection: skillSelectionSchema.nullable().optional(),
+    secretSelection: secretSelectionSchema.nullable().optional(),
     pluginVersionIds: pluginVersionIdsSchema.nullable().optional(),
     sandboxImageId: z.string().trim().min(1).nullable().optional(),
   })
@@ -419,12 +474,13 @@ const updateEnvironmentSchema = z
       value.serverAttachmentId !== undefined ||
       value.modelId !== undefined ||
       value.skillSelection !== undefined ||
+      value.secretSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
-    }
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `secretSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+    },
   );
 
 /**
@@ -441,6 +497,7 @@ const ensureAdhocEnvironmentSchema = z.strictObject({
   serverAttachmentId: z.string().trim().min(1).optional(),
   modelId: z.string().trim().min(1).optional(),
   skillSelection: skillSelectionSchema.optional(),
+  secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
   sandboxImageId: z.string().trim().min(1).optional(),
 });
@@ -487,12 +544,14 @@ environments.get(
       modelOverrides?: boolean;
       modelMatrix?: boolean;
       ephemeralEnvironmentLaunch?: boolean;
+      skillVersionPins?: boolean;
+      secretGrants?: boolean;
     } = {};
     try {
       capabilities =
         ((await readClient.query(
           "projectEnvironments:getCapabilities" as any,
-          { projectId } as any
+          { projectId } as any,
         )) as typeof capabilities | null) ?? {};
     } catch (error) {
       // ONLY deploy skew is swallowed. An older backend does not export this
@@ -507,7 +566,7 @@ environments.get(
       if (!isMissingConvexFunctionError(error)) {
         throw translateConvexError(
           error,
-          "Environment capabilities could not be read"
+          "Environment capabilities could not be read",
         );
       }
       capabilities = {};
@@ -517,8 +576,15 @@ environments.get(
       modelMatrix: capabilities.modelMatrix === true,
       ephemeralEnvironmentLaunch:
         capabilities.ephemeralEnvironmentLaunch === true,
+      skillVersionPins: capabilities.skillVersionPins === true,
+      // Whether an environment may carry a CREDENTIAL GRANT. Same reason as
+      // its neighbours: a backend that predates `secretSelection` rejects the
+      // unknown field with a validator error that names nothing, so a client
+      // has to ask before offering it. `=== true` for the same reason too —
+      // absence is a no, never an assumption.
+      secretGrants: capabilities.secretGrants === true,
     });
-  }
+  },
 );
 
 // GET /v1/projects/:projectId/environments — list a project's environments.
@@ -541,14 +607,14 @@ environments.get("/projects/:projectId/environments", async (c) => {
   try {
     rows = (await readClient.query(
       "projectEnvironments:listEnvironments" as any,
-      { projectId, includeArchived } as any
+      { projectId, includeArchived } as any,
     )) as EnvironmentRow[] | null | undefined;
   } catch (error) {
     throw translateConvexError(error);
   }
   return v1PageJson(
     c,
-    (rows ?? []).filter(isNamedEnvironmentRow).map(toEnvironmentDto)
+    (rows ?? []).filter(isNamedEnvironmentRow).map(toEnvironmentDto),
   );
 });
 
@@ -564,9 +630,9 @@ environments.get(
       c,
       isNamedEnvironmentRow(row)
         ? toEnvironmentDto(row)
-        : toAdhocEnvironmentDto(row)
+        : toAdhocEnvironmentDto(row),
     );
-  }
+  },
 );
 
 // GET /v1/projects/:projectId/environments/:environmentId/resolve
@@ -584,7 +650,7 @@ environments.get(
     try {
       resolved = (await readClient.query(
         "projectEnvironments:resolveEnvironmentForLaunch" as any,
-        { projectId, environmentId } as any
+        { projectId, environmentId } as any,
       )) as ResolvedEnvironmentRow | null;
     } catch (error) {
       throw translateResolveError(error);
@@ -593,11 +659,11 @@ environments.get(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        "Environment not found"
+        "Environment not found",
       );
     }
     return v1Resource(c, toResolvedDto(resolved));
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/environments — create. Requires project admin.
@@ -605,7 +671,7 @@ environments.post("/projects/:projectId/environments", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     createEnvironmentSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
@@ -623,7 +689,7 @@ environments.post("/projects/:projectId/environments", async (c) => {
         ...(sandboxImageId !== undefined
           ? { computerEnvironmentId: sandboxImageId }
           : {}),
-      } as any
+      } as any,
     )) as EnvironmentRow;
   } catch (error) {
     throw translateConvexError(error);
@@ -656,11 +722,9 @@ environments.post(
     const projectId = c.req.param("projectId");
     const body = parseWithSchema(
       ensureAdhocEnvironmentSchema,
-      await readJsonObjectBody(c)
+      await readJsonObjectBody(c),
     );
-    const convexClient = createConvexClient(
-      await getConvexBearerForRequest(c)
-    );
+    const convexClient = createConvexClient(await getConvexBearerForRequest(c));
 
     // Same boundary rename as create: the public `sandboxImageId` is the
     // internal `computerEnvironmentId`, and the spread must not forward the
@@ -676,7 +740,7 @@ environments.post(
           ...(sandboxImageId !== undefined
             ? { computerEnvironmentId: sandboxImageId }
             : {}),
-        } as any
+        } as any,
       )) as { environment: EnvironmentRow; created: boolean };
     } catch (error) {
       // DEPLOY SKEW, translated rather than surfaced as a 500: a backend that
@@ -687,7 +751,7 @@ environments.post(
           400,
           ErrorCode.VALIDATION_ERROR,
           "This deployment predates ad-hoc environments — create a named environment instead (POST /environments).",
-          { reason: "ADHOC_UNAVAILABLE" }
+          { reason: "ADHOC_UNAVAILABLE" },
         );
       }
       throw translateConvexError(error);
@@ -700,7 +764,7 @@ environments.post(
       environment: toAdhocEnvironmentDto(result.environment),
       created: result.created === true,
     });
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/environments/:environmentId/name
@@ -724,11 +788,9 @@ environments.post(
     const environmentId = c.req.param("environmentId");
     const body = parseWithSchema(
       nameEnvironmentSchema,
-      await readJsonObjectBody(c)
+      await readJsonObjectBody(c),
     );
-    const convexClient = createConvexClient(
-      await getConvexBearerForRequest(c)
-    );
+    const convexClient = createConvexClient(await getConvexBearerForRequest(c));
     let named: EnvironmentRow;
     try {
       named = (await convexClient.mutation(
@@ -741,7 +803,7 @@ environments.post(
           ...(body.description !== undefined
             ? { description: body.description }
             : {}),
-        } as any
+        } as any,
       )) as EnvironmentRow;
     } catch (error) {
       if (isMissingConvexFunctionError(error)) {
@@ -749,7 +811,7 @@ environments.post(
           400,
           ErrorCode.VALIDATION_ERROR,
           "This deployment predates ad-hoc environments, so there is nothing to promote.",
-          { reason: "ADHOC_UNAVAILABLE" }
+          { reason: "ADHOC_UNAVAILABLE" },
         );
       }
       // An already-named row comes back as the backend's CONFLICT, which is
@@ -759,7 +821,7 @@ environments.post(
       throw translateConvexError(error);
     }
     return v1Resource(c, toEnvironmentDto(named));
-  }
+  },
 );
 
 // PATCH /v1/projects/:projectId/environments/:environmentId
@@ -772,7 +834,7 @@ environments.patch(
     const environmentId = c.req.param("environmentId");
     const body = parseWithSchema(
       updateEnvironmentSchema,
-      await readJsonObjectBody(c)
+      await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
 
@@ -795,6 +857,11 @@ environments.patch(
     if (body.modelId !== undefined) updateArgs.modelId = body.modelId;
     if (body.skillSelection !== undefined)
       updateArgs.skillSelection = body.skillSelection;
+    // `null` REVOKES the environment's credential grant; a value replaces it;
+    // omission leaves it alone. The one field here where "unchanged" and
+    // "cleared" have materially different security consequences.
+    if (body.secretSelection !== undefined)
+      updateArgs.secretSelection = body.secretSelection;
     if (body.pluginVersionIds !== undefined)
       updateArgs.pluginVersionIds = body.pluginVersionIds;
     // Boundary rename (public sandboxImageId ↔ internal computerEnvironmentId);
@@ -807,13 +874,13 @@ environments.patch(
     try {
       updated = (await convexClient.mutation(
         "projectEnvironments:updateEnvironment" as any,
-        updateArgs as any
+        updateArgs as any,
       )) as EnvironmentRow;
     } catch (error) {
       throw translateConvexError(error);
     }
     return v1Resource(c, toEnvironmentDto(updated));
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/environments/:environmentId/archive
@@ -826,7 +893,7 @@ environments.post(
     const environmentId = c.req.param("environmentId");
     const body = parseWithSchema(
       revisionBodySchema,
-      await readJsonObjectBody(c)
+      await readJsonObjectBody(c),
     );
     const convexClient = createConvexClient(await getConvexBearerForRequest(c));
     let archived: EnvironmentRow;
@@ -837,13 +904,13 @@ environments.post(
           projectId,
           environmentId,
           expectedRevision: body.expectedRevision,
-        } as any
+        } as any,
       )) as EnvironmentRow;
     } catch (error) {
       throw translateConvexError(error);
     }
     return v1Resource(c, toEnvironmentDto(archived));
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/environments/:environmentId/restore
@@ -857,7 +924,7 @@ environments.post(
     const environmentId = c.req.param("environmentId");
     const body = parseWithSchema(
       revisionBodySchema,
-      await readJsonObjectBody(c)
+      await readJsonObjectBody(c),
     );
     const convexClient = createConvexClient(await getConvexBearerForRequest(c));
     let restored: EnvironmentRow;
@@ -868,13 +935,13 @@ environments.post(
           projectId,
           environmentId,
           expectedRevision: body.expectedRevision,
-        } as any
+        } as any,
       )) as EnvironmentRow;
     } catch (error) {
       throw translateConvexError(error);
     }
     return v1Resource(c, toEnvironmentDto(restored));
-  }
+  },
 );
 
 export default environments;

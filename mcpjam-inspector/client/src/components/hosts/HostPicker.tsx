@@ -9,6 +9,7 @@ import {
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * Pure: place `priorityHostId` first if it exists in the list. The rest
@@ -105,7 +106,7 @@ export function HostPicker({
         )}
         {orderedHosts.map((host) => (
           <SelectItem key={host.hostId} value={host.hostId}>
-            {host.name}
+            {clientDisplayName(host)}
           </SelectItem>
         ))}
       </SelectContent>

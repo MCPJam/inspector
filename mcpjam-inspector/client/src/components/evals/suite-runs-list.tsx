@@ -461,9 +461,21 @@ export function computeEffectiveRunResult(
   | "passed"
   | "failed"
   | "running"
+  | "grading"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending" {
+  // FIRST, before the stored result. A run held for its gating judge carries
+  // `result: "pending"` — which is truthy — so the stored-result branch below
+  // would return "pending" and the row would read as a queued run rather than
+  // one whose verdict is minutes away.
+  if (run.status === "grading") return "grading";
+  // A stored result WINS, and under verdict policy 2 that includes
+  // `inconclusive`. Never re-derive it from the counts: the percent fallback
+  // below is the legacy resolver, and running it over a policy-2 run would
+  // turn "we could not measure this" into a pass or a failure the backend
+  // explicitly declined to declare.
   if (run.result) return run.result;
   if (run.status === "completed" && passRate !== null) {
     return passRate >= (run.passCriteria?.minimumPassRate ?? 100)
@@ -483,12 +495,23 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, not red: the run did not measure enough to decide, which is not
+      // the same claim as a failure.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
       return { label: "Running", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // Amber like `running`, and for the same reason: the run is still
+      // happening. Green or red would claim a verdict that does not exist yet.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return null;
   }

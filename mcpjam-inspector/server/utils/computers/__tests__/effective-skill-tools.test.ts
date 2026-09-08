@@ -25,6 +25,7 @@ function set(overrides: Partial<EffectiveCapabilitySet> = {}) {
     pluginSkills: [],
     standaloneSkills: [],
     serverSkills: [],
+    localSkills: [],
     pluginVersions: [],
     problems: [],
     ...overrides,

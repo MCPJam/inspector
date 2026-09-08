@@ -138,6 +138,18 @@ describe("eval suite JSON Schema — generated, never hand-edited", () => {
 describe("eval suite JSON Schema — agrees with zod on the structural half", () => {
   const validate = compiled();
 
+  it("rejects a padded intent label at the JSON Schema boundary", () => {
+    const candidate = structuredClone(stripAnnotations(data.accept[0]!)) as {
+      cases: Array<Record<string, unknown>>;
+    };
+    candidate.cases[0]!.intent = " refund ";
+
+    // The runtime validator rejects this through caseIntentSchema's trimmed
+    // invariant. The generated JSON Schema must reject it too, otherwise a
+    // schema-only producer can publish a file the SDK refuses to load.
+    expect(validate(candidate)).toBe(false);
+  });
+
   for (const row of data.accept) {
     it(`accepts: ${row.__label}`, () => {
       const ok = validate(stripAnnotations(row));

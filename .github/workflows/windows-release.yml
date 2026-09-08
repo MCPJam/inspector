@@ -74,6 +74,10 @@ jobs:
         shell: powershell
         env:
           NODE_OPTIONS: --max-old-space-size=8192
+          # Sentry `dist` for the bundle this job ships. Must match the
+          # `--dist` the upload below passes, or the installer's UI reports
+          # against artifacts it did not come from.
+          MCPJAM_BUILD_SURFACE: desktop-win
 
       # ONLY dist/client here. The packaged app serves its UI from
       # dist/client via the embedded Hono server (server/app.ts
@@ -105,6 +109,7 @@ jobs:
             npx @sentry/cli sourcemaps inject dist/client
             npx @sentry/cli sourcemaps upload \
               --release="$version" \
+              --dist=desktop-win \
               --org=mcpjam-gh \
               --project=inspector-client \
               dist/client

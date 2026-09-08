@@ -14,6 +14,7 @@
  */
 
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
+import { isAbortError } from "@/shared/abort-errors";
 import { logger } from "./logger.js";
 import { type RuntimeExecutionFields } from "./execution-scope.js";
 
@@ -84,6 +85,32 @@ function getConvexHttpUrl(): string {
   return convexHttpUrl;
 }
 
+function wasAborted(error: unknown, signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true || isAbortError(error);
+}
+
+/**
+ * Gap before the single retry. Without it the second attempt lands inside the
+ * same DNS/socket blip it is meant to outlive, and only doubles the wait. Kept
+ * short because this runs before the turn opens its stream, and abort-aware so
+ * a Stop during the gap is still immediate.
+ */
+const RETRY_DELAY_MS = 250;
+
+function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      resolve();
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function fetchHostRuntimeConfig(args: {
   hostId: string;
   bearer: string;
@@ -141,25 +168,54 @@ export async function fetchHostRuntimeConfig(args: {
     };
   }
   const authorization = `Bearer ${bearerToken}`;
+  const requestInit: RequestInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization,
+    },
+    body: JSON.stringify({ hostId: args.hostId }),
+    signal: args.signal,
+  };
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization,
-      },
-      body: JSON.stringify({ hostId: args.hostId }),
-      signal: args.signal,
-    });
+    response = await fetch(url, requestInit);
   } catch (err) {
-    logger.error("[host-runtime-config] network error", err);
-    return {
-      ok: false,
-      status: 502,
-      error: "Failed to reach host runtime-config endpoint",
-    };
+    // This POST is a read-only config lookup. Retrying a single transport
+    // failure is safe and prevents a transient DNS/socket blip from stopping
+    // a turn before it reaches the engine. Never retry a caller cancellation:
+    // the same signal would reject again and Stop must remain immediate.
+    if (wasAborted(err, args.signal)) {
+      logger.error("[host-runtime-config] network error", err);
+      return {
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+      };
+    }
+
+    logger.warn("[host-runtime-config] transient network error; retrying once", {
+      hostId: args.hostId,
+    });
+    await delay(RETRY_DELAY_MS, args.signal);
+    if (args.signal?.aborted) {
+      return {
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+      };
+    }
+    try {
+      response = await fetch(url, requestInit);
+    } catch (retryError) {
+      logger.error("[host-runtime-config] network error after retry", retryError);
+      return {
+        ok: false,
+        status: 502,
+        error: "Failed to reach host runtime-config endpoint",
+      };
+    }
   }
 
   let payload: any = null;

@@ -43,6 +43,7 @@ function createDoctorResult<TTarget>(target: TTarget): ServerDoctorResult<TTarge
     resources: [],
     resourceTemplates: [],
     prompts: [],
+    skills: [],
     checks: {
       probe: { status: "skipped" as const, detail: "skipped" },
       connection: { status: "ok" as const, detail: "ok" },
@@ -52,6 +53,7 @@ function createDoctorResult<TTarget>(target: TTarget): ServerDoctorResult<TTarge
       resources: { status: "ok" as const, detail: "ok" },
       resourceTemplates: { status: "ok" as const, detail: "ok" },
       prompts: { status: "ok" as const, detail: "ok" },
+      skills: { status: "skipped" as const, detail: "skipped" },
     },
     error: null,
   };

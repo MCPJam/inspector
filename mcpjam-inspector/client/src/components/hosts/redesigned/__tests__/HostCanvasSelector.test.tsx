@@ -13,8 +13,18 @@ const mockUseHostList = vi.fn();
 const mockNavigate = vi.fn();
 const mockSetPreviewedHostId = vi.fn();
 
-vi.mock("react-router", () => ({
-  useNavigate: () => mockNavigate,
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router")>()),
+}));
+
+// `useAppNavigate`, not react-router's `useNavigate`: app navigation goes
+// through the scoped helper now, which carries the active project into
+// project-owned paths (`/p/<projectId>/hosts/<id>`). The rest of
+// `app-navigation` is the real module — these suites assert against its
+// path builders.
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => mockNavigate,
 }));
 
 vi.mock("convex/react", () => ({

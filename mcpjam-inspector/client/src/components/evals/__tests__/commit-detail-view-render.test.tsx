@@ -65,7 +65,7 @@ function makeCommitGroup(): CommitGroup {
     status: "failed",
     runs: [run],
     suiteMap: new Map([[run.suiteId, "Greeting Suite"]]),
-    summary: { total: 1, passed: 0, failed: 1, running: 0 },
+    summary: { total: 1, passed: 0, failed: 1, running: 0, inconclusive: 0 },
   };
 }
 

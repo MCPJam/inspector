@@ -135,6 +135,13 @@ export async function deriveRegistryEntry(
     {
       serverUrl: input.url,
       allowLoopback: input.allowLoopback,
+      // Explicitly strict, in EVERY deployment. The preflight now permits
+      // private targets by default when it runs locally, which is right for
+      // "connect me to my own server" and wrong here: an org registry entry is
+      // shared with everyone in the org, and an address that resolves on one
+      // machine is not a thing to share. See the caller's note in
+      // routes/web/registry.ts.
+      allowPrivateNetwork: false,
       timeoutMs: input.timeoutMs ?? DISCOVERY_TIMEOUT_MS,
     },
     dependencies

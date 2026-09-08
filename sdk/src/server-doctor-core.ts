@@ -30,6 +30,17 @@ export interface ServerDoctorChecks {
   resources: ServerDoctorCheck;
   resourceTemplates: ServerDoctorCheck;
   prompts: ServerDoctorCheck;
+  /**
+   * Skills over MCP (SEP-2640).
+   *
+   * `skipped` when the extension is not mutually declared — the common case,
+   * and not a fault. When it IS active this is the only doctor check that
+   * VERIFIES rather than counts: it fetches a sample of skills through the
+   * verified read path, so a server whose digests do not match its bytes is
+   * reported as broken here rather than discovered later by a host that
+   * refuses to load anything.
+   */
+  skills: ServerDoctorCheck;
 }
 
 export interface ServerDoctorResult<TTarget = unknown> {
@@ -45,6 +56,7 @@ export interface ServerDoctorResult<TTarget = unknown> {
   resources: unknown[];
   resourceTemplates: unknown[];
   prompts: unknown[];
+  skills: unknown[];
   checks: ServerDoctorChecks;
   error: ServerDoctorError | null;
 }
@@ -57,6 +69,7 @@ export interface ConnectedServerDoctorState {
   resources: unknown[];
   resourceTemplates: unknown[];
   prompts: unknown[];
+  skills: unknown[];
   checks: Pick<
     ServerDoctorChecks,
     | "initialization"
@@ -65,6 +78,7 @@ export interface ConnectedServerDoctorState {
     | "resources"
     | "resourceTemplates"
     | "prompts"
+    | "skills"
   >;
   errors: ServerDoctorError[];
 }
@@ -94,6 +108,18 @@ export interface DoctorResourceTemplatesCollectionResult {
   error?: ServerDoctorError;
 }
 
+export interface DoctorSkillsCollectionResult {
+  skills: unknown[];
+  check: ServerDoctorCheck;
+  /**
+   * Absent when skills are simply not served. A verification failure is a
+   * finding about the SERVER, so unlike the other collectors this one reports
+   * it through the check detail rather than as a doctor-level error: the run
+   * succeeded, and what it found is that the skills do not verify.
+   */
+  error?: ServerDoctorError;
+}
+
 interface DoctorProbeCapableConfig {
   url: string;
   accessToken?: string;
@@ -113,6 +139,7 @@ interface BuildConnectedServerDoctorStateInput {
   resourcesResult: DoctorResourcesCollectionResult;
   promptsResult: DoctorPromptsCollectionResult;
   resourceTemplatesResult: DoctorResourceTemplatesCollectionResult;
+  skillsResult: DoctorSkillsCollectionResult;
 }
 
 export function createServerDoctorResult<TTarget>(
@@ -137,6 +164,7 @@ export function createServerDoctorResult<TTarget>(
     resources: [],
     resourceTemplates: [],
     prompts: [],
+    skills: [],
     checks: {
       probe: skippedCheck(options.probeDetail ?? "HTTP probe did not run."),
       connection: skippedCheck("Connection step did not run."),
@@ -146,6 +174,7 @@ export function createServerDoctorResult<TTarget>(
       resources: skippedCheck("Resources were not collected."),
       resourceTemplates: skippedCheck("Resource templates were not collected."),
       prompts: skippedCheck("Prompts were not collected."),
+      skills: skippedCheck("Skills were not collected."),
     },
     error: null,
   };
@@ -167,12 +196,14 @@ export function applyConnectedServerDoctorState<TTarget>(
   result.resources = collected.resources;
   result.resourceTemplates = collected.resourceTemplates;
   result.prompts = collected.prompts;
+  result.skills = collected.skills;
   result.checks.initialization = collected.checks.initialization;
   result.checks.capabilities = collected.checks.capabilities;
   result.checks.tools = collected.checks.tools;
   result.checks.resources = collected.checks.resources;
   result.checks.resourceTemplates = collected.checks.resourceTemplates;
   result.checks.prompts = collected.checks.prompts;
+  result.checks.skills = collected.checks.skills;
 
   if (collected.errors.length > 0) {
     result.error = collected.errors[0] ?? result.error;
@@ -187,6 +218,7 @@ export function buildConnectedServerDoctorState(
     input.resourcesResult.error,
     input.promptsResult.error,
     input.resourceTemplatesResult.error,
+    input.skillsResult.error,
   ].filter((error): error is ServerDoctorError => Boolean(error));
 
   return {
@@ -197,6 +229,7 @@ export function buildConnectedServerDoctorState(
     resources: input.resourcesResult.resources,
     resourceTemplates: input.resourceTemplatesResult.resourceTemplates,
     prompts: input.promptsResult.prompts,
+    skills: input.skillsResult.skills,
     checks: {
       initialization: input.initInfo
         ? okCheck("Initialization info captured.")
@@ -210,6 +243,7 @@ export function buildConnectedServerDoctorState(
       resources: input.resourcesResult.check,
       resourceTemplates: input.resourceTemplatesResult.check,
       prompts: input.promptsResult.check,
+      skills: input.skillsResult.check,
     },
     errors,
   };
@@ -220,6 +254,13 @@ export function buildDoctorProbeConfig(
   options: {
     timeout: number;
     retryPolicy?: RetryPolicy;
+    /**
+     * Transport for every probe request. Deployments that must not let a target
+     * steer the probe at their own network pass a guarded fetch here — the probe
+     * cannot resolve DNS itself without pulling `node:dns` into runtimes that
+     * have no such module.
+     */
+    fetchFn?: typeof fetch;
   }
 ): ProbeMcpServerConfig {
   const accessToken = resolveProbeAccessToken(config);
@@ -232,6 +273,7 @@ export function buildDoctorProbeConfig(
     ...(clientCapabilities ? { clientCapabilities } : {}),
     timeoutMs: options.timeout,
     retryPolicy: options.retryPolicy,
+    ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
   };
 }
 
@@ -312,12 +354,22 @@ export function summarizeProbeCheck(
           probe.transport.selected ?? "unknown transport"
         }.`
       );
-    case "oauth_required":
+    case "oauth_required": {
+      // The probe accepts a 403 that still carries a Bearer challenge, so the
+      // check has to name the status it accepted. Reporting a server that only
+      // ever answers 403 as a clean OAuth requirement hides the reason clients
+      // keying on the status alone never start OAuth against it.
+      const challenge = probe.oauth.nonCompliantChallengeStatus
+        ? ` The challenge arrived on HTTP ${probe.oauth.nonCompliantChallengeStatus}; MCP requires 401 Unauthorized here, so clients that decide to authenticate from the status code alone will not start OAuth against this server.`
+        : "";
       return hasCredentials
         ? okCheck(
-            "Unauthenticated probe requires OAuth; continuing with provided credentials."
+            `Unauthenticated probe requires OAuth; continuing with provided credentials.${challenge}`
           )
-        : errorCheck("Server requires OAuth before it can be connected.");
+        : errorCheck(
+            `Server requires OAuth before it can be connected.${challenge}`
+          );
+    }
     case "reachable":
       return errorCheck(
         "HTTP endpoint was reachable, but the initialize probe did not complete successfully."

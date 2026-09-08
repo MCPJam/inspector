@@ -48,6 +48,9 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "gpt-5.1-codex-mini": "openai/gpt-5.1-codex-mini",
   "gpt-5.5": "openai/gpt-5",
   "openai/gpt-5.5": "openai/gpt-5",
+  "gpt-5.6-luna": "openai/gpt-5", // Map to closest available
+  "gpt-5.6-sol": "openai/gpt-5",
+  "gpt-5.6-terra": "openai/gpt-5",
 
   // DeepSeek models
   "deepseek-chat": "deepseek/deepseek-v3.1",
@@ -179,6 +182,42 @@ export function getFetchErrorCause(error: unknown): string | undefined {
 }
 
 /**
+ * Above this, count locally instead of asking the backend.
+ *
+ * The request body re-escapes `toolsText` inside a JSON envelope, so the call
+ * costs another copy of the tools payload in transient string allocation on top
+ * of the payload itself. In the desktop app that allocation happens in the
+ * ELECTRON MAIN process, where an oversized `JSON.stringify` is a recorded
+ * crash rather than a theoretical one (INSPECTOR-ELECTRON-VG and -V0, both
+ * `Builtin_JsonStringify` -> `Zone::Expand` with the browser process crashing).
+ *
+ * A tool set this large is also well past the point where an exact count
+ * changes any decision made with it, so the char estimate is the better trade.
+ */
+const MAX_BACKEND_TOKENIZER_CHARS = 4 * 1024 * 1024;
+
+/**
+ * High-water marks for `process.vitals`.
+ *
+ * The 4 MB ceiling above was chosen from the crash mechanism, not from a
+ * measured distribution — there is none. `peakChars` says whether real tool
+ * sets ever come near it, and `oversizeSkips` says whether the guard fires at
+ * all. Either the numbers justify the threshold or they move it.
+ *
+ * Monotonic and unbounded in VALUE, fixed in SIZE: two numbers, never a list of
+ * samples. Instrumentation added to diagnose a leak must not retain anything
+ * itself.
+ */
+const tokenizerPeak = { chars: 0, oversizeSkips: 0 };
+
+export function getTokenizerPeak(): {
+  chars: number;
+  oversizeSkips: number;
+} {
+  return { ...tokenizerPeak };
+}
+
+/**
  * Count tokens for tools, using backend tokenizer or char fallback.
  * Shared by mcp/tools and web routes.
  */
@@ -191,10 +230,29 @@ export async function countToolsTokens(
   const mappedModelId = mapModelIdToTokenizerBackend(modelId);
   const useBackendTokenizer = mappedModelId !== null && !!convexHttpUrl;
 
+  // Hoisted so the catch can reuse it. Serializing `tools` a SECOND time on the
+  // failure path doubled the cost of this function's most common outcome — the
+  // backend being unreachable, 15,931 recorded occurrences in
+  // INSPECTOR-ELECTRON-1Q — and did it inside the promise-rejection microtask,
+  // which is exactly where the main-process OOMs above were captured.
+  let toolsText: string | undefined;
+
   try {
-    const toolsText = JSON.stringify(tools);
+    toolsText = JSON.stringify(tools);
+    if (toolsText.length > tokenizerPeak.chars) {
+      tokenizerPeak.chars = toolsText.length;
+    }
 
     if (useBackendTokenizer && mappedModelId) {
+      if (toolsText.length > MAX_BACKEND_TOKENIZER_CHARS) {
+        tokenizerPeak.oversizeSkips++;
+        logger.debug(`${logPrefix} Tools payload too large for backend count`, {
+          chars: toolsText.length,
+          limit: MAX_BACKEND_TOKENIZER_CHARS,
+        });
+        return estimateTokensFromChars(toolsText);
+      }
+
       const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -229,13 +287,9 @@ export async function countToolsTokens(
         cause: getFetchErrorCause(error),
       });
     }
-    // Honor the "falling back to estimate" log above: compute a char-based
-    // estimate from the input. Only return 0 if even stringifying fails
-    // (e.g. circular references in `tools`).
-    try {
-      return estimateTokensFromChars(JSON.stringify(tools));
-    } catch {
-      return 0;
-    }
+    // Honor the "falling back to estimate" log above. `toolsText` is undefined
+    // only when the stringify itself threw (e.g. circular references in
+    // `tools`), and retrying it would throw again.
+    return toolsText === undefined ? 0 : estimateTokensFromChars(toolsText);
   }
 }

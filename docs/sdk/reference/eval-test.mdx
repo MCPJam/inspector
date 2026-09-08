@@ -33,6 +33,7 @@ new EvalTest(options: EvalTestConfig)
 | `test`              | `TestFunction`           | Yes      | The test function to run                                                       |
 | `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0** — see below. |
 | `matchOptions`      | `EvalMatchOptions`       | No       | How `expectedToolCalls` is matched (order, arguments, extras)                   |
+| `intent`            | `string`                 | No       | Analytics grouping label for this case. Forwarded with every result but never affects scoring or the verdict. Must be 1–64 characters, already trimmed (no leading or trailing whitespace). |
 | `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
 
 <Warning>
@@ -509,7 +510,7 @@ test: async (agent) => {
 ```typescript
 test: async (agent) => {
   const result = await agent.run("What is 5 + 5?");
-  return result.getText().includes("10");
+  return result.text.includes("10");
 };
 ```
 
@@ -521,7 +522,7 @@ test: async (agent) => {
   return (
     result.hasToolCall("multiply") &&
     !result.hasError() &&
-    result.getText().length > 0
+    result.text.length > 0
   );
 };
 ```

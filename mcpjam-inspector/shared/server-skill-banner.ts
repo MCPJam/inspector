@@ -20,7 +20,7 @@
  * checked and then says plainly that the content is untrusted third-party
  * input.
  *
- * PIN: modelcontextprotocol/docs @ d7490ec.
+ * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
  */
 
 export interface ServerSkillBannerArgs {

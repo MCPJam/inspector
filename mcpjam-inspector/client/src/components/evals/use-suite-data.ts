@@ -108,6 +108,9 @@ export function useSuiteData(
       .slice()
       .reverse()
       .map((run) => {
+        // Policy-2 inconclusive runs deliberately have no pass/fail verdict.
+        // Do not fall back to their legacy-looking summary counts in charts.
+        if (run.result === "inconclusive") return null;
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );

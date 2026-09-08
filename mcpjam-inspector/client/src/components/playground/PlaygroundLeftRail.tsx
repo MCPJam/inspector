@@ -2,14 +2,21 @@ import { useCallback, useState } from "react";
 import { Hammer, History } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
+import { AddServerModal } from "@/components/connection/AddServerModal";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import {
+  useBrowserTools,
+  type BrowserToolsState,
+} from "@/hooks/useBrowserTools";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { EnvironmentToolsPane } from "./panes/EnvironmentToolsPane";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
+import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -140,10 +147,28 @@ function ToolsBody({
   projectId: string | null;
 }) {
   const state = usePlaygroundStateContext();
+  // The agent browser the previewed host attaches, if any: the six `browser_*`
+  // tools plus whatever the page it has open offers. Resolved HERE, beside the
+  // harness built-ins, and fed into both panes below for the same reason they
+  // are — the zero-server pane is exactly where a browser-only host lands, and
+  // that is the case where the panel used to say "No server connected yet"
+  // about a host driving a real Chromium.
+  const browserTools = useBrowserTools({
+    projectId,
+    hostId: previewedHostId,
+  });
   // When the previewed host runs a harness (e.g. Claude Code), surface its
   // native built-in tools so the panel isn't empty/tool-less. Resolved once
   // here and fed into BOTH the multi-server pane and the zero-server fallback.
-  const { tools: harnessBuiltinTools } = useHarnessBuiltinTools(previewedHostId);
+  const { tools: harnessBuiltinTools, harnessId: previewedHarnessId } =
+    useHarnessBuiltinTools(previewedHostId);
+  // Whether those built-ins execute on the USER'S machine rather than in a
+  // cloud sandbox — the label the panel puts on them, and the one claim about
+  // containment the product must never get wrong.
+  const builtinToolsRunLocally = useLocalHarnessRunsHere({
+    projectId,
+    harnessId: previewedHarnessId,
+  });
   // ENVIRONMENT MODE: the panes below read the browser's own connections,
   // which environment turns never create (the backend connects per message) —
   // so they'd report "No tools found" while tools execute fine in chat. Read
@@ -174,6 +199,8 @@ function ToolsBody({
       <MultiServerToolsPaneInner
         activeServerNames={state.activeServerNames}
         builtinTools={harnessBuiltinTools}
+        builtinToolsRunLocally={builtinToolsRunLocally}
+        browserTools={browserTools}
       />
     );
   }
@@ -181,27 +208,78 @@ function ToolsBody({
   // Zero-server → reuse the existing PlaygroundLeft (empty/onboarding state),
   // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
-    <PlaygroundLeft
-      tools={state.tools}
-      selectedToolName={state.selectedTool}
-      fetchingTools={state.fetchingTools}
-      onRefresh={state.fetchTools}
-      onSelectTool={state.setSelectedTool}
-      formFields={state.formFields}
-      onFieldChange={state.updateFormField}
-      onToggleField={state.updateFormFieldIsSet}
-      isExecuting={state.isExecuting}
-      onExecute={state.executeTool}
-      onSave={state.savedRequestsHook.openSaveDialog}
-      savedRequests={state.savedRequestsHook.savedRequests}
-      highlightedRequestId={state.savedRequestsHook.highlightedRequestId}
-      onLoadRequest={state.savedRequestsHook.handleLoadRequest}
-      onRenameRequest={state.savedRequestsHook.handleRenameRequest}
-      onDuplicateRequest={state.savedRequestsHook.handleDuplicateRequest}
-      onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
-      showLogger={false}
+    <ZeroServerToolsBody
       builtinTools={harnessBuiltinTools}
-      hasConnectedServer={false}
+      builtinToolsRunLocally={builtinToolsRunLocally}
+      browserTools={browserTools}
     />
+  );
+}
+
+/**
+ * Zero-server Tools body. Owns the Add Server modal so the empty state's
+ * "Connect a server" button connects here instead of navigating to Servers and
+ * dropping the user out of the Playground mid-flow. Split out of `ToolsBody`
+ * because that function returns early above, and a hook declared past those
+ * returns would run conditionally.
+ */
+function ZeroServerToolsBody({
+  builtinTools,
+  builtinToolsRunLocally,
+  browserTools,
+}: {
+  builtinTools: HarnessBuiltinToolInfo[];
+  builtinToolsRunLocally: boolean;
+  browserTools: BrowserToolsState;
+}) {
+  const state = usePlaygroundStateContext();
+  const [isAddServerOpen, setIsAddServerOpen] = useState(false);
+  const { onConnect } = state;
+
+  return (
+    <>
+      <PlaygroundLeft
+        tools={state.tools}
+        selectedToolName={state.selectedTool}
+        fetchingTools={state.fetchingTools}
+        onRefresh={state.fetchTools}
+        onSelectTool={state.setSelectedTool}
+        formFields={state.formFields}
+        onFieldChange={state.updateFormField}
+        onToggleField={state.updateFormFieldIsSet}
+        isExecuting={state.isExecuting}
+        onExecute={state.executeTool}
+        onSave={state.savedRequestsHook.openSaveDialog}
+        savedRequests={state.savedRequestsHook.savedRequests}
+        highlightedRequestId={state.savedRequestsHook.highlightedRequestId}
+        onLoadRequest={state.savedRequestsHook.handleLoadRequest}
+        onRenameRequest={state.savedRequestsHook.handleRenameRequest}
+        onDuplicateRequest={state.savedRequestsHook.handleDuplicateRequest}
+        onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
+        showLogger={false}
+        builtinTools={builtinTools}
+        builtinToolsRunLocally={builtinToolsRunLocally}
+        browserTools={browserTools}
+        hasConnectedServer={false}
+        // The Evals embedded chat provides no connect handler; there the
+        // button keeps its Servers navigation.
+        onAddServerRequested={
+          onConnect ? () => setIsAddServerOpen(true) : undefined
+        }
+      />
+      {onConnect && (
+        <AddServerModal
+          isOpen={isAddServerOpen}
+          onClose={() => setIsAddServerOpen(false)}
+          onSubmit={(formData) => {
+            track("connecting_server", {
+              location: "playground_tools_rail",
+            });
+            onConnect(formData);
+            setIsAddServerOpen(false);
+          }}
+        />
+      )}
+    </>
   );
 }

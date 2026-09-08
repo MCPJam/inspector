@@ -437,3 +437,85 @@ describe("LoggerView hosted rpc logs", () => {
     expect(screen.getByText("No logs yet")).toBeInTheDocument();
   });
 });
+
+// A row whose body was dropped at a retention cap still opens, and has to say
+// why it is empty rather than show a bare `_truncated` field the reader has to
+// decode.
+describe("LoggerView truncated payloads", () => {
+  beforeEach(() => {
+    useTrafficLogStore.getState().clear();
+  });
+
+  async function expandRow(label: string) {
+    const user = userEvent.setup();
+    await user.click(screen.getByText(label));
+  }
+
+  it("explains a truncated body and still renders the envelope that survived", async () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "RECEIVE",
+      method: "tools/call",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: {
+        jsonrpc: "2.0",
+        id: 14,
+        result: { _truncated: true },
+        _truncated: true,
+        limitBytes: 256 * 1024,
+      },
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+    await expandRow("tools/call");
+
+    expect(
+      screen.getByText("Payload not recorded — over the 256 KB log limit.")
+    ).toBeInTheDocument();
+    // The id is what correlates the row to its request, so it has to survive
+    // the drop and reach the reader.
+    expect(screen.getByText("14")).toBeInTheDocument();
+  });
+
+  it("shows no notice for an ordinary payload", async () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "tools/list",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+    await expandRow("tools/list");
+
+    expect(screen.queryByText(/Payload not recorded/)).not.toBeInTheDocument();
+  });
+
+  it("opens rows with a null or empty payload without a notice", async () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "notifications/cancelled",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: null,
+    });
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "notifications/initialized",
+      timestamp: "2026-04-10T12:00:01.000Z",
+      payload: {},
+    });
+
+    render(<LoggerView serverIds={["srv-1"]} />);
+    await expandRow("notifications/cancelled");
+    await expandRow("notifications/initialized");
+
+    expect(screen.queryByText(/Payload not recorded/)).not.toBeInTheDocument();
+  });
+});

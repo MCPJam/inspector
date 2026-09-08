@@ -26,6 +26,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
 } from "./platform/types.js";
+import type { StructuredRunVerdict } from "./structured-reporting.js";
 
 /** Whether a run's score evidence verified at ingest. */
 export type ScoreIntegrity = "valid" | "invalid";
@@ -52,7 +53,26 @@ export type GateInput = {
    * than passing: a token cap evaluated against a partial token count is a
    * gate that reports green for the wrong reason.
    */
-  totals?: { tokens?: number; e2eP95Ms?: number };
+  totals?: {
+    tokens?: number;
+    e2eP95Ms?: number;
+    /**
+     * MCPJam-billed cost for the whole run.
+     *
+     * ABSENT means no cost was observed — never that the run was free. A
+     * cost gate treats absence as non-gateable for the same reason the
+     * token cap does: a cap evaluated against a partial figure reports
+     * green for the wrong reason.
+     */
+    costUsd?: number;
+    /**
+     * How much of the run that cost actually covers. Partial coverage makes
+     * a cost gate NON-GATEABLE: summing the priced iterations and skipping
+     * the rest yields a number indistinguishable from a complete one, and
+     * "cheaper" would then be reported for a run we simply priced less of.
+     */
+    costCoverage?: { costed: number; total: number };
+  };
 };
 
 export type GatePolicy = {
@@ -66,10 +86,16 @@ export type GatePolicy = {
   minimumScorerPassRate?: Record<string, number>;
   /** Per-scorer mean of `value` over scored rows, keyed by stable scorerId. */
   minimumMeanScore?: Record<string, number>;
-  // No `maximumCostUsd`: there is no price source yet, and a cost gate that
-  // silently evaluates against zero is worse than no cost gate. The name is
-  // reserved. `maximumCostIncrease` — its comparative twin — is reserved for
-  // the same reason and on the same condition.
+  /**
+   * Absolute ceiling on the run's MCPJam-billed cost, in USD.
+   *
+   * This name was RESERVED until there was a price source, because a cost
+   * gate that silently evaluates against zero is worse than no cost gate.
+   * The platform now stamps cost per iteration with the rates it used, so
+   * the gate has something real to read — and it still refuses to judge on
+   * an absent or partial figure (see `totals.costCoverage`).
+   */
+  maximumCostUsd?: number;
 
   // ── comparative gates ────────────────────────────────────────────────────
   // These need a BASELINE and are evaluated by `evaluateCompareGates`, not by
@@ -81,6 +107,17 @@ export type GatePolicy = {
   noDeterministicRegressions?: boolean;
   /** Fail if p95 e2e latency rose by more than this many ms. */
   maximumP95LatencyIncreaseMs?: number;
+  /**
+   * Fail if the run's cost rose by more than this percentage of the
+   * baseline's. The comparative twin of `maximumCostUsd`, and the one that
+   * answers the question people actually have: "did my change make this more
+   * expensive?"
+   *
+   * A percentage rather than an absolute delta because an absolute one goes
+   * stale on every prompt and model change, which is the failure the old
+   * per-trial token ceiling had.
+   */
+  maximumCostIncreasePercent?: number;
   /** Statistical pass-rate regression. Fractions; see `compare-stats.ts`. */
   passRateRegression?: {
     minSampleSize?: number;
@@ -95,6 +132,7 @@ export type GatePolicy = {
 export const COMPARATIVE_GATE_FIELDS = [
   "noDeterministicRegressions",
   "maximumP95LatencyIncreaseMs",
+  "maximumCostIncreasePercent",
   "passRateRegression",
 ] as const satisfies ReadonlyArray<keyof GatePolicy>;
 
@@ -116,7 +154,18 @@ export type GateStatus =
    */
   | "non_gateable"
   /** The policy itself is wrong (unknown scorer, unstable id, bad range). */
-  | "usage_error";
+  | "usage_error"
+  /**
+   * A real failure that an authorized human overrode, on the record.
+   *
+   * `evaluateGates` NEVER produces this — it is stamped afterwards by
+   * {@link applyGateWaiver}, which is the only writer. Kept distinct from
+   * `passed` for the reason the backend kept its own `waived` verdict
+   * distinct: collapsing the two makes the difference unrecoverable one line
+   * later, and "this gate was overridden" is the single fact the charter
+   * requires every artifact to carry.
+   */
+  | "waived";
 
 export type GateVerdict = {
   /** e.g. `"minimumPassRate"`, `"minimumScorerPassRate:tone"`. */
@@ -128,11 +177,161 @@ export type GateVerdict = {
 };
 
 export type GateReport = {
-  outcome: "passed" | "failed" | "incomplete" | "usage_error";
+  outcome: "passed" | "failed" | "incomplete" | "usage_error" | "waived";
   verdicts: GateVerdict[];
   /** `"unknown"` renders the `undefined` tri-state honestly for a human. */
   scoreIntegrity: ScoreIntegrity | "unknown";
+  /**
+   * The waiver in force over this run, when there is one.
+   *
+   * Present whenever the platform reported an active waiver — INCLUDING on a
+   * report that passed on its own merits, where it changed nothing. A waiver
+   * that exists but is invisible because it happened not to be load-bearing is
+   * still an override somebody granted, and the charter's word is "visible".
+   * Only `outcome` says whether it actually decided anything.
+   */
+  waiver?: GateWaiver;
 };
+
+/**
+ * A gate waiver as every reader of a {@link GateReport} renders it.
+ *
+ * MIRRORS `GateWaiverDto` in mcpjam-backend `convex/lib/gateWaivers.ts`, minus
+ * the fields no report needs. Hand-mirrored, like every other cross-repo type
+ * here: the boundary is stringly-typed, so this is a copy that must be kept
+ * honest by review rather than by the compiler.
+ *
+ * `createdByEmail` is `null` rather than absent when it cannot be resolved — a
+ * deleted user must not make a waiver look authorless.
+ */
+export type GateWaiver = {
+  id: string;
+  /** Unredacted free text the granter wrote. See {@link GATE_WAIVER_REASON_NOTICE}. */
+  reason: string;
+  expiresAt: number;
+  createdAt: number;
+  createdBy: string;
+  createdByEmail: string | null;
+  /**
+   * WHAT was overridden, captured at waive time. `null` on a run decided by
+   * the v2 verdict policy, whose identity the backend records on the audit
+   * event instead — the row's shape cannot hold it, and filling it with a
+   * plausible `minimumPassRate` would be a false record rather than an
+   * incomplete one.
+   */
+  policySnapshot: { minimumPassRate: number } | null;
+};
+
+/**
+ * Said to a human BEFORE their waiver reason is accepted, on every surface
+ * that takes one.
+ *
+ * VERBATIM from `GATE_WAIVER_REASON_NOTICE` in mcpjam-backend
+ * `convex/lib/gateWaivers.ts`. Duplicated rather than imported because the two
+ * repos share no code; if the backend's copy changes, this one is a review
+ * item, not a compile error.
+ */
+export const GATE_WAIVER_REASON_NOTICE =
+  "Stored unredacted and readable by anyone who can see this suite, for as long as the suite exists. Do not paste secrets, tokens, or customer data.";
+
+/**
+ * The platform's caps, mirrored for HELP TEXT ONLY.
+ *
+ * Deliberately not enforced by any client schema here. Every one of the five
+ * `gate_waiver_*` refusals carries copy the platform wrote for the caller, and
+ * a client-side check that fired first would replace that copy with a generic
+ * validation error — reachable on exactly the boundary cases (a 501-character
+ * reason, a 31-day expiry) where the specific message is the useful part.
+ * Documenting the limit and letting the platform enforce it keeps one answer
+ * to each refusal instead of two that drift.
+ *
+ * Mirrors `GATE_WAIVER_MAX_REASON_LENGTH` and `GATE_WAIVER_MAX_DURATION_MS` in
+ * mcpjam-backend `convex/lib/gateWaivers.ts`.
+ */
+export const GATE_WAIVER_MAX_REASON_LENGTH = 500;
+export const GATE_WAIVER_MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a waiver is still in force, computed HERE rather than trusted.
+ *
+ * The platform already filters to active waivers, so this should always agree
+ * with it. It is computed anyway because of a known, measured weakness on the
+ * other side: a Convex query is cached against the DOCUMENTS it read, and the
+ * passage of time is not a document — so a waiver that lapses between two
+ * reads can keep being served as active until something writes to its row.
+ * The backend schedules a write at exactly `expiresAt` to force that, and its
+ * own tests cannot observe whether the invalidation works (a mutant deleting
+ * the write still passes).
+ *
+ * `eval gate` computes its verdict independently of the backend by design.
+ * Re-deciding the waiver's own validity here keeps that independence intact at
+ * the one place where trusting the server would silently convert a time-boxed
+ * waiver into a permanent one — the exact property this workflow exists to
+ * hold.
+ */
+export function isGateWaiverInForce(
+  waiver: GateWaiver,
+  now: number = Date.now()
+): boolean {
+  return waiver.expiresAt > now;
+}
+
+/**
+ * Fold an active waiver into a finished gate report.
+ *
+ * PURE, and deliberately separate from `evaluateGates`: the evaluator answers
+ * "what did the evidence say", and no waiver may ever change that answer. This
+ * answers the different question of whether a human overrode it, and records
+ * the override beside the untouched verdicts rather than in place of them.
+ *
+ * WHAT IS WAIVABLE, AND WHAT IS NOT. Only `failed` — a real, measured verdict
+ * — becomes `waived`:
+ *
+ *   - `incomplete` is NOT waived. Nothing was established, so there is nothing
+ *     to override; flipping exit 3 to 0 would turn a network flake or a
+ *     cancelled run into a green release on the strength of a waiver granted
+ *     for something else entirely. That is fail-open, which is the one thing
+ *     this whole surface is built to refuse.
+ *   - `usage_error` is NOT waived. The policy itself is broken, and a waiver
+ *     overrides an eval verdict, not a typo in the flags that would have
+ *     decided one.
+ *   - `passed` stays `passed`. There was no gate to waive.
+ *
+ * In all four cases the waiver is still ATTACHED, so every artifact names it
+ * even when it changed nothing.
+ */
+export function applyGateWaiver(
+  report: GateReport,
+  waiver: GateWaiver | null | undefined,
+  now: number = Date.now()
+): GateReport {
+  if (!waiver || !isGateWaiverInForce(waiver, now)) return report;
+  if (report.outcome !== "failed") return { ...report, waiver };
+  return {
+    ...report,
+    outcome: "waived",
+    waiver,
+    // PREPENDED, not substituted. The failing verdicts stay exactly as the
+    // evaluator wrote them — a waived report must still say what failed, or
+    // the override becomes the only thing anybody reads.
+    verdicts: [
+      {
+        gate: "waiver",
+        status: "waived",
+        message: formatGateWaiverLine(waiver),
+      },
+      ...report.verdicts,
+    ],
+  };
+}
+
+/** `who`, `why` and `until` on one line — the charter's three facts. */
+export function formatGateWaiverLine(waiver: GateWaiver): string {
+  const who = waiver.createdByEmail ?? waiver.createdBy;
+  return `waived by ${who} until ${new Date(
+    waiver.expiresAt
+  ).toISOString()} — ${waiver.reason}`;
+}
 
 /**
  * Whether score-derived gates may be evaluated at all.
@@ -239,6 +438,15 @@ export function gateInputFromSuiteResult(result: EvalSuiteResult): GateInput {
     totals: {
       tokens: result.aggregate.tokenUsage.total,
       e2eP95Ms: result.aggregate.latency.e2e.p95,
+      // No `costUsd`, and its absence is the correct answer rather than a
+      // gap: a LOCAL run executes on the caller's own provider keys, so
+      // MCPJam never billed it and has no price for it. A cost gate on a
+      // local run therefore reports `non_gateable` — which is exactly what
+      // the reserved-name comment on `maximumCostUsd` demanded, since a gate
+      // that silently evaluated against zero would pass every local run.
+      //
+      // Cost gates belong on PLATFORM runs (`gateInputFromPlatformRun`),
+      // where the platform priced the work it billed.
     },
   };
 }
@@ -256,6 +464,10 @@ export function gateInputFromPlatformRun(
   run: PlatformEvalRun,
   iterations?: { items: PlatformEvalIteration[]; complete: boolean }
 ): GateInput {
+  // Hosted summaries bucket per TEST CASE, not per iteration — a case that ran
+  // five times is one entry, passing only if every run of it passed. That is
+  // the number the dashboard shows for this run, so a pass-rate gate agrees
+  // with what a human reading the same run sees.
   const total = run.summary?.total ?? 0;
   const passed = run.summary?.passed ?? 0;
   const integrity =
@@ -279,10 +491,72 @@ export function gateInputFromPlatformRun(
   // merely smaller — and a token cap evaluated against an undercount passes
   // for the wrong reason. Absent beats approximate: the gate reports
   // non-gateable instead.
+  //
+  // The emptiness check is not redundant: `every` on an EMPTY array is `true`,
+  // so an empty-but-"complete" page would sum to 0 tokens and pass every cap.
+  // A run we saw no iterations of has no token total — the same rule the
+  // latency branch below already applies, shared here so the two cannot drift.
+  //
+  // There is no count-completeness check to add on top: `run.summary.total`
+  // counts TEST CASES, not iterations (a case is one bucket however many times
+  // it ran), so it is not a count these items can be compared against.
   const tokenCounts = usable.map((iteration) => iteration.tokensUsed);
-  const tokens = tokenCounts.every((count) => typeof count === "number")
-    ? (tokenCounts as number[]).reduce((sum, count) => sum + count, 0)
-    : undefined;
+  const tokens =
+    tokenCounts.length > 0 &&
+    tokenCounts.every((count) => typeof count === "number")
+      ? (tokenCounts as number[]).reduce((sum, count) => sum + count, 0)
+      : undefined;
+
+  // Cost is the one total that is legitimately PARTIAL rather than all-or-
+  // nothing, because absence has a meaning here that it does not have for
+  // tokens: an iteration on a BYOK model was never billed by MCPJam, so it has
+  // no cost to contribute and never will. Refusing the whole run for it would
+  // make the gate unusable on any mixed suite.
+  //
+  // So the sum is reported WITH its coverage, and the gate refuses on partial
+  // coverage rather than the adapter refusing to compute. Two things are
+  // excluded from the total outright:
+  //   - a `sdk_runner` cost, which a customer's own runner reported and
+  //     MCPJam neither computed nor verified. Letting it into a platform
+  //     total would let a runner move its own gate.
+  //   - an incomplete iterations page, handled by the `complete` check below,
+  //     exactly as tokens and latency already are.
+  //
+  // THE DENOMINATOR IS THE BILLABLE POPULATION, not every iteration. Counting
+  // a BYOK trial in `total` would make `costed < total` true for every mixed
+  // suite forever, so the gate would answer `non_gateable` and never fire —
+  // which is the same as not having the gate, and the exact outcome the
+  // paragraph above says to avoid. An iteration is out of the denominator
+  // only when its own basis says a platform cost was never possible for it:
+  // `no_pricing` (not an MCPJam-billed model) or a runner-reported figure.
+  // Everything else stays in, including an iteration with no basis at all —
+  // "we do not know why this has no cost" is exactly the case coverage exists
+  // to refuse on.
+  let costUsd: number | undefined;
+  let costedIterations = 0;
+  let billableIterations = 0;
+  for (const iteration of usable) {
+    const usage = iteration.usage;
+    const basis = usage?.costBasis;
+    // ONE predicate, BOTH sides. A never-billable iteration is out of the
+    // numerator and the denominator alike: counting a cost it happens to
+    // carry while excluding it from the population yields `costed > total`,
+    // which is not a coverage reading at all — and `costed < total` is false
+    // for it, so the gate would read that impossible pair as full coverage
+    // and judge a ceiling on money MCPJam never billed.
+    const neverBillable =
+      basis?.source === "sdk_runner" || basis?.reason === "no_pricing";
+    if (neverBillable) continue;
+    billableIterations += 1;
+    const cost = usage?.estimatedCostUsd;
+    if (typeof cost !== "number") continue;
+    costUsd = (costUsd ?? 0) + cost;
+    costedIterations += 1;
+  }
+  const costCoverage =
+    billableIterations > 0
+      ? { costed: costedIterations, total: billableIterations }
+      : undefined;
 
   // Same rule for latency: p95 over a partial set is not this run's p95.
   const durations = usable.map((iteration) => iteration.durationMs);
@@ -311,6 +585,8 @@ export function gateInputFromPlatformRun(
           totals: {
             ...(tokens !== undefined ? { tokens } : {}),
             ...(e2eP95Ms !== undefined ? { e2eP95Ms } : {}),
+            ...(costUsd !== undefined ? { costUsd } : {}),
+            ...(costCoverage !== undefined ? { costCoverage } : {}),
           },
         }
       : {}),
@@ -320,14 +596,31 @@ export function gateInputFromPlatformRun(
 
 // ──────────────────────────────────────────────────────────────── engine ──
 
+/**
+ * Index definitions by the id a policy names them with.
+ *
+ * The value is a LIST because a scorerId is only unique within one case:
+ * `gateInputFromSuiteResult` and `gateInputFromPlatformRun` both merge
+ * definitions across cases, and two cases may grade "tone" with different
+ * thresholds, rubrics or roles. Keeping the last one would resolve a policy to
+ * whichever definition happened to land last in the map, and average rows
+ * minted under two different rules into a single number.
+ *
+ * Byte-identical repeats collapse — the shared built-ins (`legacy:test`,
+ * `tool-match`) appear once per case and are not an ambiguity.
+ */
 function definitionsById(
   config: EvaluationConfigSnapshot | undefined
-): Map<string, ResolvedScoreDefinition> {
-  const byId = new Map<string, ResolvedScoreDefinition>();
+): Map<string, ResolvedScoreDefinition[]> {
+  const byId = new Map<string, Map<string, ResolvedScoreDefinition>>();
   for (const definition of config?.definitions ?? []) {
-    byId.set(definition.scorerId, definition);
+    const variants = byId.get(definition.scorerId) ?? new Map();
+    variants.set(definitionHash(definition), definition);
+    byId.set(definition.scorerId, variants);
   }
-  return byId;
+  return new Map(
+    [...byId].map(([scorerId, variants]) => [scorerId, [...variants.values()]])
+  );
 }
 
 /**
@@ -337,10 +630,13 @@ function definitionsById(
  */
 function resolveScorer(
   scorerId: string,
-  byId: Map<string, ResolvedScoreDefinition>,
+  byId: Map<string, ResolvedScoreDefinition[]>,
   gate: string
-): { ok: true; definition: ResolvedScoreDefinition } | { ok: false; verdict: GateVerdict } {
-  const definition = byId.get(scorerId);
+):
+  | { ok: true; definition: ResolvedScoreDefinition }
+  | { ok: false; verdict: GateVerdict } {
+  const variants = byId.get(scorerId) ?? [];
+  const definition = variants[0];
   if (!definition) {
     return {
       ok: false,
@@ -350,6 +646,24 @@ function resolveScorer(
         message:
           `no scorer "${scorerId}" in this run's evaluation config ` +
           `(available: ${[...byId.keys()].join(", ") || "none"})`,
+      },
+    };
+  }
+  if (variants.length > 1) {
+    // Ambiguous, so neither picked nor merged. Reported as a usage error and
+    // not as `non_gateable`: nothing about the run is missing or unverified,
+    // and the fix is the author's — gate a scorer whose id means one thing.
+    return {
+      ok: false,
+      verdict: {
+        gate,
+        status: "usage_error",
+        message:
+          `scorer "${scorerId}" resolves to ${variants.length} different ` +
+          `definitions in this run (cases graded it with different settings), ` +
+          `so a gate naming it would aggregate rows produced under different ` +
+          `rules. Give the variants distinct ids, or gate on a scorer that is ` +
+          `configured identically everywhere.`,
       },
     };
   }
@@ -369,8 +683,21 @@ function resolveScorer(
   return { ok: true, definition };
 }
 
-function rowsFor(scores: GateScore[], scorerId: string): GateScore[] {
-  return scores.filter((score) => score.scorerId === scorerId);
+/**
+ * The rows minted under EXACTLY the definition the policy resolved to.
+ *
+ * Matched on `definitionHash`, like every other consumer of a score row. A row
+ * carrying a familiar id but a hash this run's snapshot does not contain was
+ * produced under a different configuration, and averaging it in would grade
+ * this run partly on another one's evidence. It drops out instead, and a gate
+ * left with nothing reports `non_gateable` rather than passing on the remainder.
+ */
+function rowsFor(
+  scores: GateScore[],
+  definition: ResolvedScoreDefinition
+): GateScore[] {
+  const hash = definitionHash(definition);
+  return scores.filter((score) => score.definitionHash === hash);
 }
 
 /** `not_applicable` is excluded from EVERY denominator — that is what it means. */
@@ -385,6 +712,27 @@ function threshold(gate: string, value: number): GateVerdict | null {
     status: "usage_error",
     message: `threshold must be a fraction in [0,1], got ${value}`,
   };
+}
+
+/**
+ * Is this cost total unfit to gate on?
+ *
+ * `undefined` coverage counts as UNFIT, and that is the whole point. The
+ * field is optional because a deployment predating cost coverage answers
+ * without it, so absence means "this platform has no opinion" — never "fully
+ * covered". Reading absence as complete is how a gate ends up judging a cost
+ * regression against a partial sum from an older platform and reporting green
+ * for the wrong reason.
+ *
+ * A zero `total` is unfit for the same reason: there is no population the
+ * total could be complete over, so nothing about it is verifiable.
+ */
+export function costCoverageIsUngateable(
+  coverage: { costed: number; total: number } | undefined
+): boolean {
+  if (coverage === undefined) return true;
+  if (coverage.total === 0) return true;
+  return coverage.costed < coverage.total;
 }
 
 export function evaluateGates(
@@ -478,11 +826,46 @@ export function evaluateGates(
           }
         : {
             gate: "maximumTotalTokens",
-            status:
-              observed <= policy.maximumTotalTokens ? "passed" : "failed",
+            status: observed <= policy.maximumTotalTokens ? "passed" : "failed",
             message: `${observed} tokens used`,
             observed,
             threshold: policy.maximumTotalTokens,
+          }
+    );
+  }
+
+  if (policy.maximumCostUsd !== undefined) {
+    const observed = input.totals?.costUsd;
+    const coverage = input.totals?.costCoverage;
+    // Unverifiable coverage is refused BEFORE the comparison, not folded into
+    // it: a total built from some of the run is a smaller number than the
+    // truth, so judging a ceiling against it passes exactly the runs we
+    // understand least.
+    const partial = costCoverageIsUngateable(coverage);
+    verdicts.push(
+      observed === undefined || partial
+        ? {
+            gate: "maximumCostUsd",
+            status: "non_gateable",
+            // "No cost at all" outranks "no coverage": when the run has no
+            // cost, that IS the reason, and reporting the missing coverage
+            // instead answers a question nobody reached.
+            message:
+              observed === undefined
+                ? "no cost is available for this run"
+                : coverage === undefined
+                  ? "this platform does not report how much of the run was " +
+                    "priced, so the total cannot be shown to be complete"
+                  : `only ${coverage.costed} of ${coverage.total} iterations have a cost, ` +
+                    "so the run total is incomplete",
+            threshold: policy.maximumCostUsd,
+          }
+        : {
+            gate: "maximumCostUsd",
+            status: observed <= policy.maximumCostUsd ? "passed" : "failed",
+            message: `$${observed.toFixed(4)} spent`,
+            observed,
+            threshold: policy.maximumCostUsd,
           }
     );
   }
@@ -576,7 +959,7 @@ export function evaluateGates(
       });
       continue;
     }
-    const rows = countable(rowsFor(scores, scorerId));
+    const rows = countable(rowsFor(scores, resolved.definition));
     if (rows.length === 0) {
       verdicts.push({
         gate,
@@ -586,8 +969,7 @@ export function evaluateGates(
       });
       continue;
     }
-    const rate =
-      rows.filter((row) => row.passed === true).length / rows.length;
+    const rate = rows.filter((row) => row.passed === true).length / rows.length;
     verdicts.push({
       gate,
       status: rate >= minimum ? "passed" : "failed",
@@ -632,7 +1014,7 @@ export function evaluateGates(
     // Only `scored` rows carry a value; an errored or skipped scorer has no
     // number to average, and inventing a 0 for it would conflate "crashed"
     // with "graded badly".
-    const values = rowsFor(scores, scorerId)
+    const values = rowsFor(scores, resolved.definition)
       .filter((row) => row.status === "scored" && row.value !== undefined)
       .map((row) => row.value as number);
     if (values.length === 0) {
@@ -697,15 +1079,64 @@ const STATUS_LABEL: Record<GateStatus, string> = {
   failed: "FAIL",
   non_gateable: "N/A ",
   usage_error: "ERR ",
+  // Same width as the others so the verdict table stays aligned, and visibly
+  // NOT "PASS" — a reader scanning the column must be able to see at a glance
+  // that this row is an override rather than a result.
+  waived: "WAIV",
 };
+
+/**
+ * Map a gate's own outcome onto the `StructuredRunReport` verdict vocabulary.
+ *
+ * `incomplete` — a `--wait` timeout, a cancelled run, non-gateable score
+ * integrity, an inconclusive backend result — is the gate's own version of
+ * "not enough was measured", the exact claim `inconclusive` makes for an eval
+ * run. It must map there, never to `failed`: a gate report is `passed: false`
+ * whenever it isn't `passed`, so a renderer that infers the verdict from
+ * `passed` alone (the way `renderStructuredRunHtml` falls back when no
+ * verdict is given) paints an unmeasured gate red — a measured regression
+ * the run never established. `usage_error` is a genuine gate-config defect,
+ * so it reads as a failure like `failed` does.
+ */
+export function gateOutcomeVerdict(
+  outcome: GateReport["outcome"]
+): StructuredRunVerdict {
+  switch (outcome) {
+    case "passed":
+      return "passed";
+    case "incomplete":
+      return "inconclusive";
+    case "failed":
+    case "usage_error":
+      return "failed";
+    // NOT folded into `passed`, even though both exit 0. A renderer that saw
+    // `passed` here would paint an overridden failure green and identical to a
+    // clean run, which is precisely the silent waiver the charter forbids.
+    case "waived":
+      return "waived";
+  }
+}
 
 export function formatGateReport(report: GateReport): string {
   const lines = [
     `Gate: ${report.outcome.toUpperCase()} (score integrity: ${report.scoreIntegrity})`,
   ];
+  // The three required facts, on their own line above the table rather than
+  // only inside a verdict row. Human output is skimmed, and "who, why, until
+  // when" must survive a reader who stops at the header.
+  if (report.waiver) {
+    lines.push(`  Waiver: ${formatGateWaiverLine(report.waiver)}`);
+    lines.push(
+      report.outcome === "waived"
+        ? "  This gate FAILED and was overridden. It is not a clean pass."
+        : "  A waiver is on record for this run; it did not change this outcome."
+    );
+  }
   for (const verdict of report.verdicts) {
     const threshold =
-      verdict.threshold === undefined ? "" : ` [threshold ${verdict.threshold}]`;
+      verdict.threshold === undefined
+        ? ""
+        : ` [threshold ${verdict.threshold}]`;
     lines.push(
       `  ${STATUS_LABEL[verdict.status]} ${verdict.gate}: ${verdict.message}${threshold}`
     );

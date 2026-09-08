@@ -59,9 +59,19 @@ const {
   flagState: { environmentsEnabled: true },
 }));
 
-vi.mock("react-router", () => ({
-  useNavigate: () => navigateMock,
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router")>()),
   useLocation: () => ({ search: locationState.search, pathname: "/x" }),
+}));
+
+// `useAppNavigate`, not react-router's `useNavigate`: app navigation goes
+// through the scoped helper now, which carries the active project into
+// project-owned paths (`/p/<projectId>/hosts/<id>`). The rest of
+// `app-navigation` is the real module — these suites assert against its
+// path builders.
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigateMock,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -132,9 +142,13 @@ vi.mock("@/components/scenarios/ScenarioShareSection", () => ({
 }));
 
 // Share UI calls useConvexAuth; stub so detail chrome specs don't need a provider.
-vi.mock("@/components/scenarios/ScenarioShareBanner", () => ({
-  ScenarioShareBanner: () => <div data-testid="stub-share-banner" />,
+vi.mock("@/components/scenarios/ScenarioShareEmptyPanel", () => ({
   ScenarioShareEmptyPanel: () => <div data-testid="stub-share-empty" />,
+}));
+
+vi.mock("@/components/scenarios/ScenarioShareDialog", () => ({
+  ScenarioShareDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="stub-share-dialog" /> : null,
 }));
 
 // Provider reads Convex for pattern findings; these specs only care that the
@@ -173,9 +187,6 @@ vi.mock("@/components/scenarios/ScenarioUsagePanel", () => ({
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
-    // Default stub leaves empty-state reporting to the page's initial
-    // `insightsEmpty=true`. Specs that need the filled-cohort branch call
-    // `onEmptyChange(false)` themselves.
     return (
       <div data-testid="stub-usage-insights">
         {props.emptyState as never}
@@ -258,11 +269,6 @@ const renderDetail = (
 const renderEdit = (over: Partial<ScenarioSettings> = {}) =>
   renderDetail(over, { editMode: true });
 
-/** Composer lives in the setup dialog — open it before asserting strip props. */
-const openSetup = () => {
-  fireEvent.click(screen.getByTestId("user-testing-edit-setup"));
-};
-
 beforeEach(() => {
   vi.clearAllMocks();
   workbenchMock.mockReset();
@@ -292,8 +298,6 @@ describe("UserTestingScenarioDetail", () => {
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
     expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-    // Empty Insights owns share; the header strip stays off until there is data.
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
@@ -301,54 +305,39 @@ describe("UserTestingScenarioDetail", () => {
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
-  it("shows the header share strip once Insights reports a filled cohort", async () => {
-    renderDetail();
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
-
-    const onEmptyChange = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
-      | ((empty: boolean) => void)
-      | undefined;
-    expect(onEmptyChange).toBeTypeOf("function");
-    await act(async () => {
-      onEmptyChange?.(false);
-    });
-
-    expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
-  });
-
-  it("keeps onEmptyChange stable across the render it triggers", async () => {
-    // Regression for INSPECTOR-CLIENT-236 (infinite render loop).
+  it("puts share behind one header button, with no strip in the page body", () => {
     renderDetail();
 
-    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
-      | ((empty: boolean) => void)
-      | undefined;
-    expect(before).toBeTypeOf("function");
+    // The landing tester-link banner is gone: Share is the only general
+    // entry point, and a second affordance is what this replaced.
+    expect(screen.queryByTestId("user-testing-share-dialog")).toBeNull();
+    expect(screen.queryByTestId("stub-share-dialog")).toBeNull();
 
-    const callsAfterMount = workbenchMock.mock.calls.length;
-    await act(async () => {
-      before?.(false);
-    });
-    // A no-op regression (setter or callback stops updating) would leave
-    // `calls` at the same length, making the identity check below vacuous.
-    expect(workbenchMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
-    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
-    expect(after).toBe(before);
+    fireEvent.click(screen.getByTestId("user-testing-share-button"));
 
-    // Redundant update, same value: the no-op guard must skip the re-render.
-    const callsAfterFirstUpdate = workbenchMock.mock.calls.length;
-    await act(async () => {
-      before?.(false);
-    });
-    expect(workbenchMock.mock.calls.length).toBe(callsAfterFirstUpdate);
+    expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
   });
 
-  it("shows setup and share controls on the Edit route", () => {
+  it("offers the same Share modal on the Edit route", () => {
+    renderEdit();
+
+    fireEvent.click(screen.getByTestId("user-testing-share-button"));
+
+    expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
+  });
+
+  it("shows Settings and its sharing controls on the Edit route", () => {
     renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sharing permissions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ratings" })).toBeInTheDocument();
     expect(screen.getByTestId("stub-share")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
   });
 
@@ -397,7 +386,7 @@ describe("UserTestingScenarioDetail", () => {
     );
   });
 
-  it("offers Edit setup next to Delete when the composer can run", () => {
+  it("edits the environment inline when the composer can run", () => {
     environmentState.row = {
       environmentId: "env-1",
       projectId: "p1",
@@ -410,9 +399,13 @@ describe("UserTestingScenarioDetail", () => {
     };
     renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
 
-    expect(screen.getByTestId("user-testing-edit-setup")).toHaveTextContent(
-      "Edit",
-    );
+    // Chips under an "Environment" heading, not a footer dialog.
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Environment" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
@@ -440,16 +433,50 @@ describe("UserTestingScenarioDetail", () => {
     });
   });
 
-  it("hides Edit setup on a host-backed scenario (composer can't run)", () => {
+  it("hides the Environment section on a host-backed scenario (composer can't run)", () => {
     renderEdit();
 
     expect(
       screen.queryByTestId("user-testing-detail-environment-error"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("user-testing-edit-setup"),
+      screen.queryByTestId("user-testing-environment-section"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
+    // With no Environment section, the header is the only thing left that can
+    // say which client this runs against.
+    expect(screen.getByTestId("user-testing-host-client")).toHaveTextContent(
+      "Client: Cursor",
+    );
+  });
+
+  it("keeps the client out of the header once Environment can show it", () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      name: "Checkout flow",
+      origin: { kind: "manual" },
+      revision: 1,
+      servers: [],
+      hostStyle: "chatgpt",
+      updatedAt: 0,
+    };
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("user-testing-host-client")).toBeNull();
+  });
+
+  it("goes back to the scenario from Edit, not out to the list", () => {
+    renderEdit();
+
+    fireEvent.click(screen.getByTestId("user-testing-detail-back"));
+
+    // Edit is a sub-route and its own Edit button is inert there, so the list
+    // would leave no one-click way back to Insights.
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1");
   });
 
   it("seeds the session pane from a deep-linked session", () => {
@@ -487,7 +514,6 @@ describe("UserTestingScenarioDetail", () => {
       // presence must NOT read as "named".
       renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      openSetup();
       const button = screen.getByTestId("user-testing-save-as-environment");
       fireEvent.click(button);
 
@@ -539,7 +565,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       expect(
         screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
@@ -629,7 +654,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -664,7 +688,6 @@ describe("UserTestingScenarioDetail", () => {
       environmentState.row = { ...namedRow, origin: "adhoc", name: undefined };
       renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -687,7 +710,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -714,7 +736,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() => expect(resolveTargetsMock).toHaveBeenCalled());
@@ -728,7 +749,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() =>
         lastComposerProps().onChange({
           ...composeState,
@@ -748,7 +768,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       // The resolver reuses matching NAMED rows; resolving against a list
       // that hasn't loaded would mint an unnamed twin of one that exists.
       expect(lastComposerProps()).toEqual(
@@ -767,7 +786,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       // A second edit before the first settles: its rollback would clear the
       // in-flight guard out from under the first commit.
@@ -798,7 +816,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       await waitFor(() =>
         expect(rebindScenarioMock).toHaveBeenCalledWith({
@@ -838,7 +855,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       // A collaborator rebinds the scenario to env-9 while our resolve is in
@@ -887,7 +903,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>

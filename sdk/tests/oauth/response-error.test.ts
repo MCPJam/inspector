@@ -2,6 +2,7 @@ import {
   describeAuthenticatedRequestFailure,
   describeTokenRequestFailure,
   extractResponseErrorReason,
+  isAuthenticatedRequestFailure,
 } from "../../src/oauth/state-machines/shared/response-error.js";
 
 describe("extractResponseErrorReason", () => {
@@ -86,6 +87,26 @@ describe("extractResponseErrorReason", () => {
 });
 
 describe("describeAuthenticatedRequestFailure", () => {
+  it("marks its output as a target-server failure", () => {
+    const message = describeAuthenticatedRequestFailure({
+      status: 503,
+      statusText: "Service Temporarily Unavailable",
+      body: "<html><body>temporarily unavailable</body></html>",
+    });
+
+    expect(isAuthenticatedRequestFailure(message)).toBe(true);
+    expect(
+      isAuthenticatedRequestFailure(
+        "Backend debug proxy error: 503 Service Temporarily Unavailable"
+      )
+    ).toBe(false);
+    expect(
+      isAuthenticatedRequestFailure(
+        "Token request failed: 503 Service Temporarily Unavailable"
+      )
+    ).toBe(false);
+  });
+
   it("appends the server's reason to the status line", () => {
     expect(
       describeAuthenticatedRequestFailure({

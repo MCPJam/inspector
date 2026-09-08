@@ -5,9 +5,20 @@ import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+const clientOutDir = path.resolve(rootDir, "dist/client");
+// `sentryVitePlugin` globs its sourcemap paths with no `cwd`, so they resolve
+// against `process.cwd()` — `mcpjam-inspector/` under `npm run build:client -w
+// @mcpjam/inspector` — and not against the Vite root. The relative globs that
+// used to live here (`../dist/client/assets/**`) therefore resolved to the
+// REPO root, one level above the real output, and matched nothing. The plugin
+// reports that as a warning, not an error, so the build stayed green while
+// uploading no maps and deleting none. Absolute, and POSIX-separated because
+// glob does not accept Windows separators in a pattern.
+const clientOutGlobBase = clientOutDir.replace(/\\/g, "/");
 const workspaceNodeModulesDir = path.resolve(rootDir, "../node_modules");
 // The linked local SDK package can advertise ./browser before dist/browser.* exists.
 const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
@@ -42,6 +53,10 @@ const sdkHostCompatEntry = path.resolve(
 // source like its siblings so a clean checkout builds without a prior
 // `npm run build -w @mcpjam/sdk`.
 const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
+const sdkPredicatesEntry = path.resolve(
+  rootDir,
+  "../sdk/src/predicates/index.ts",
+);
 const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
@@ -111,9 +126,24 @@ if (typeof sdkVersion !== "string" || sdkVersion.trim() === "") {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, rootDir, "");
 
+  // Sentry `dist`. Set by whichever pipeline runs this build; a checkout that
+  // names no surface is `local`, and an unrecognised one throws — same
+  // reasoning as the `sdkVersion` guard above. Only the surfaces that build
+  // `dist/client` are accepted; the Electron renderer has its own config.
+  const buildSurface = resolveClientBuildSurface(env.MCPJAM_BUILD_SURFACE);
+
   return {
     root: clientDir,
     envDir: rootDir,
+    // Vite would derive this from the nearest package.json, so every dev server
+    // started from this package shares one dep cache. The OAuth debugger e2e
+    // runs two at once, and the second one's re-optimization answers the first
+    // one's in-flight chunk request with `504 (Outdated Optimize Dep)` — the
+    // page never mounts. `CLIENT_CACHE_DIR` gives each server its own.
+    cacheDir: path.resolve(
+      rootDir,
+      env.CLIENT_CACHE_DIR || "node_modules/.vite",
+    ),
     plugins: [
       react(),
       tailwindcss(),
@@ -125,10 +155,10 @@ export default defineConfig(({ mode }) => {
         // Must match the `release` the SDK inits with (`__APP_VERSION__`).
         // Without this the plugin invents its own release name from git and
         // the uploaded source maps never resolve against runtime events.
-        release: { name: appVersion },
+        release: { name: appVersion, dist: buildSurface },
         sourcemaps: {
-          assets: ["../dist/client/assets/**"],
-          filesToDeleteAfterUpload: ["../dist/client/assets/**/*.map"],
+          assets: [`${clientOutGlobBase}/assets/**`],
+          filesToDeleteAfterUpload: [`${clientOutGlobBase}/assets/**/*.map`],
         },
       }),
     ],
@@ -144,6 +174,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
+        "@mcpjam/sdk/predicates": sdkPredicatesEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,
@@ -247,12 +278,46 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      outDir: path.resolve(rootDir, "dist/client"),
+      outDir: clientOutDir,
       sourcemap: true,
       emptyOutDir: true,
+      // Terser rather than esbuild, for one reason: it is the only one of the
+      // two that can be told never to mint a given identifier name.
+      //
+      // Vite bundles a copy of es-module-lexer 1.7.0 into its own dist. It is
+      // not resolved from node_modules, so `overrides` cannot reach it, and
+      // every vite from 7.3.x through 8.x ships the same wasm. That version
+      // has a scanner bug: inside a `for (...)`, the token `of` followed by
+      // `/` is read as the start of a regex literal rather than as a division,
+      // so the scan runs to end-of-file and the chunk is rejected. A minimal
+      // case — valid JS that it refuses:
+      //
+      //     var of = 2, h = 4; for (of / h; ; ) break;
+      //
+      // `vite:build-import-analysis` lexes every emitted chunk, so one such
+      // sequence anywhere fails the production build with a bare
+      // "Parse error @:1:1" pointing at column 1 of a multi-megabyte file.
+      //
+      // Nothing in this repo writes that code — a minifier does. Both esbuild
+      // and terser hand out `of` as an ordinary two-character name, and in a
+      // bundle this size one of them eventually lands on a variable that is
+      // divided inside a `for`. Which one is luck of the name allocation, so
+      // any commit that shifts the bundle can trigger it or clear it again:
+      // a build that fails on content it has no opinion about.
+      //
+      // esbuild has no reserved-name option for locals (`reserveProps` and
+      // `mangleCache` cover properties only), so the name cannot be withheld
+      // from it. Terser can, and that is the whole of the change: reserving
+      // `of` takes the one name the lexer mishandles out of circulation, and
+      // makes the build deterministic instead of a coin flip.
+      minify: "terser",
+      terserOptions: {
+        mangle: { reserved: ["of"] },
+      },
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_SURFACE__: JSON.stringify(buildSurface),
       __MCPJAM_SDK_VERSION__: JSON.stringify(sdkVersion),
     },
   };

@@ -45,9 +45,7 @@ interface HostContextStoreState {
     savedHostContext: ProjectHostContextDraft | undefined;
     awaitRemoteEcho: boolean;
   }) => void;
-  markSaved: (
-    savedHostContext: ProjectHostContextDraft | undefined,
-  ) => void;
+  markSaved: (savedHostContext: ProjectHostContextDraft | undefined) => void;
   failSave: () => void;
 }
 
@@ -156,73 +154,104 @@ function parseRecordJson(text: string): ProjectHostContextDraft {
   return parsed as ProjectHostContextDraft;
 }
 
-export const useHostContextStore = create<HostContextStoreState>((set, get) => ({
-  ...createInitialState(),
+export const useHostContextStore = create<HostContextStoreState>(
+  (set, get) => ({
+    ...createInitialState(),
 
-  loadProjectHostContext: ({
-    projectId,
-    defaultHostContext,
-    savedHostContext,
-  }) => {
-    const state = get();
-    const normalizedDefaultHostContext = pickProjectHostContext(
-      { version: 1, clientCapabilities: {}, hostContext: defaultHostContext },
-      {},
-    );
-    const normalizedSavedHostContext =
-      savedHostContext === undefined
-        ? undefined
-        : pickProjectHostContext(
-            { version: 1, clientCapabilities: {}, hostContext: savedHostContext },
-            {},
-          );
-    const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
-      state,
+    loadProjectHostContext: ({
       projectId,
-      normalizedSavedHostContext,
-    );
-
-    if (
-      state.isDirty &&
-      state.activeProjectId === projectId &&
-      !shouldApplyPendingRemoteEcho
-    ) {
-      return;
-    }
-
-    const sameProject = state.activeProjectId === projectId;
-    const sameDefault =
-      stableStringifyJson(state.defaultHostContext) ===
-      stableStringifyJson(normalizedDefaultHostContext);
-    const sameSaved =
-      stableStringifyJson(state.savedHostContext) ===
-      stableStringifyJson(normalizedSavedHostContext);
-
-    if (
-      sameProject &&
-      sameDefault &&
-      sameSaved &&
-      !shouldApplyPendingRemoteEcho
-    ) {
-      return;
-    }
-
-    set(
-      resetFromHostContext(
+      defaultHostContext,
+      savedHostContext,
+    }) => {
+      const state = get();
+      const normalizedDefaultHostContext = pickProjectHostContext(
+        { version: 1, clientCapabilities: {}, hostContext: defaultHostContext },
+        {},
+      );
+      const normalizedSavedHostContext =
+        savedHostContext === undefined
+          ? undefined
+          : pickProjectHostContext(
+              {
+                version: 1,
+                clientCapabilities: {},
+                hostContext: savedHostContext,
+              },
+              {},
+            );
+      const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
+        state,
         projectId,
-        normalizedDefaultHostContext,
         normalizedSavedHostContext,
-      ),
-    );
-  },
+      );
 
-  setHostContextText: (text) => {
-    set((state) => {
-      try {
-        const nextHostContext = parseRecordJson(text);
+      if (
+        state.isDirty &&
+        state.activeProjectId === projectId &&
+        !shouldApplyPendingRemoteEcho
+      ) {
+        return;
+      }
+
+      const sameProject = state.activeProjectId === projectId;
+      const sameDefault =
+        stableStringifyJson(state.defaultHostContext) ===
+        stableStringifyJson(normalizedDefaultHostContext);
+      const sameSaved =
+        stableStringifyJson(state.savedHostContext) ===
+        stableStringifyJson(normalizedSavedHostContext);
+
+      if (
+        sameProject &&
+        sameDefault &&
+        sameSaved &&
+        !shouldApplyPendingRemoteEcho
+      ) {
+        return;
+      }
+
+      set(
+        resetFromHostContext(
+          projectId,
+          normalizedDefaultHostContext,
+          normalizedSavedHostContext,
+        ),
+      );
+    },
+
+    setHostContextText: (text) => {
+      set((state) => {
+        try {
+          const nextHostContext = parseRecordJson(text);
+          return {
+            draftHostContext: nextHostContext,
+            hostContextText: text,
+            hostContextError: null,
+            isDirty: computeDirtyState({
+              defaultHostContext: state.defaultHostContext,
+              savedHostContext: state.savedHostContext,
+              draftHostContext: nextHostContext,
+            }),
+          };
+        } catch (error) {
+          return {
+            hostContextText: text,
+            hostContextError:
+              error instanceof Error ? error.message : "Invalid JSON",
+          };
+        }
+      });
+    },
+
+    patchHostContext: (patch) => {
+      set((state) => {
+        const nextHostContext = {
+          ...state.draftHostContext,
+          ...patch,
+        };
         return {
           draftHostContext: nextHostContext,
-          hostContextText: text,
+          hostContextText: stringifyJson(nextHostContext),
           hostContextError: null,
           isDirty: computeDirtyState({
             defaultHostContext: state.defaultHostContext,
@@ -230,92 +259,67 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
             draftHostContext: nextHostContext,
           }),
         };
-      } catch (error) {
-        return {
-          hostContextText: text,
-          hostContextError:
-            error instanceof Error ? error.message : "Invalid JSON",
-        };
-      }
-    });
-  },
+      });
+    },
 
-  patchHostContext: (patch) => {
-    set((state) => {
-      const nextHostContext = {
-        ...state.draftHostContext,
-        ...patch,
-      };
-      return {
-        draftHostContext: nextHostContext,
-        hostContextText: stringifyJson(nextHostContext),
-        hostContextError: null,
+    applyHostTemplate: (hostContext) => {
+      set((state) => {
+        const normalized = pickProjectHostContext(
+          { version: 1, clientCapabilities: {}, hostContext },
+          {},
+        );
+        return {
+          defaultHostContext: normalized,
+          draftHostContext: normalized,
+          hostContextText: stringifyJson(normalized),
+          hostContextError: null,
+          isDirty: computeDirtyState({
+            defaultHostContext: normalized,
+            savedHostContext: state.savedHostContext,
+            draftHostContext: normalized,
+          }),
+        };
+      });
+    },
+
+    resetToBaseline: () => {
+      set((state) =>
+        resetFromHostContext(
+          state.activeProjectId,
+          state.defaultHostContext,
+          state.savedHostContext,
+        ),
+      );
+    },
+
+    beginSave: ({ projectId, savedHostContext, awaitRemoteEcho }) =>
+      set({
+        isSaving: true,
+        pendingProjectId: awaitRemoteEcho ? projectId : null,
+        pendingSavedHostContext: awaitRemoteEcho ? savedHostContext : undefined,
+        isAwaitingRemoteEcho: awaitRemoteEcho,
+      }),
+
+    markSaved: (savedHostContext) =>
+      set((state) => ({
+        savedHostContext,
+        isSaving: false,
+        pendingProjectId: null,
+        pendingSavedHostContext: undefined,
+        isAwaitingRemoteEcho: false,
         isDirty: computeDirtyState({
           defaultHostContext: state.defaultHostContext,
-          savedHostContext: state.savedHostContext,
-          draftHostContext: nextHostContext,
+          savedHostContext,
+          draftHostContext: state.draftHostContext,
         }),
-      };
-    });
-  },
+      })),
 
-  applyHostTemplate: (hostContext) => {
-    set((state) => {
-      const normalized = pickProjectHostContext(
-        { version: 1, clientCapabilities: {}, hostContext },
-        {},
-      );
-      return {
-        defaultHostContext: normalized,
-        draftHostContext: normalized,
-        hostContextText: stringifyJson(normalized),
-        hostContextError: null,
-        isDirty: computeDirtyState({
-          defaultHostContext: normalized,
-          savedHostContext: state.savedHostContext,
-          draftHostContext: normalized,
-        }),
-      };
-    });
-  },
-
-  resetToBaseline: () => {
-    set((state) =>
-      resetFromHostContext(
-        state.activeProjectId,
-        state.defaultHostContext,
-        state.savedHostContext,
-      ),
-    );
-  },
-
-  beginSave: ({ projectId, savedHostContext, awaitRemoteEcho }) =>
-    set({
-      isSaving: true,
-      pendingProjectId: awaitRemoteEcho ? projectId : null,
-      pendingSavedHostContext: awaitRemoteEcho ? savedHostContext : undefined,
-      isAwaitingRemoteEcho: awaitRemoteEcho,
-    }),
-
-  markSaved: (savedHostContext) =>
-    set((state) => ({
-      savedHostContext,
-      isSaving: false,
-      pendingProjectId: null,
-      pendingSavedHostContext: undefined,
-      isAwaitingRemoteEcho: false,
-      isDirty: computeDirtyState({
-        defaultHostContext: state.defaultHostContext,
-        savedHostContext,
-        draftHostContext: state.draftHostContext,
+    failSave: () =>
+      set({
+        isSaving: false,
+        pendingProjectId: null,
+        pendingSavedHostContext: undefined,
+        isAwaitingRemoteEcho: false,
       }),
-    })),
-
-  failSave: () =>
-    set({
-      isSaving: false,
-      pendingProjectId: null,
-      pendingSavedHostContext: undefined,
-      isAwaitingRemoteEcho: false,
-    }),
-}));
+  }),
+);

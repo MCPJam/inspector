@@ -28,6 +28,10 @@ import {
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
+import {
+  describeTruncatedRpcPayload,
+  isTruncatedRpcPayload,
+} from "@/shared/rpc-log-truncation";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
 import {
   isKnownProtocolVersion,
@@ -1085,6 +1089,18 @@ export function LoggerView({
                           />
                         ) : (
                           <div className="space-y-2">
+                            {/*
+                              A body over the retention cap was never kept — by
+                              the server bus, by the store, or by both. Say so
+                              in a sentence, then show what did survive: the
+                              JSON-RPC envelope is preserved, so the frame's
+                              id and method are still worth rendering.
+                            */}
+                            {isTruncatedRpcPayload(it.payload) && (
+                              <p className="text-muted-foreground px-1 text-xs">
+                                {describeTruncatedRpcPayload(it.payload)}
+                              </p>
+                            )}
                             <JsonEditor
                               height="100%"
                               value={normalizePayload(it.payload) as object}

@@ -138,6 +138,80 @@ describe("mapRuntimeError", () => {
     });
   });
 
+  // Regression: prod 500s on /api/web/{tools/list,chat-v2,servers/validate},
+  // 2026-08-24. A customer's authorization server rejected a token refresh with
+  // `{"error":"invalid_grant","error_description":"Request context not
+  // available — authentication or export lookup failed"}`. `parseErrorResponse`
+  // turns that into an `OAuthResponseError` whose message is the description
+  // VERBATIM — no status, no errno, no MCPJam prefix — so every branch here
+  // missed it and it landed on the 500 catch-all. Their authorization server
+  // was reported to them, and to the on-call, as an MCPJam internal error.
+  describe("an OAuth error response from the user's authorization server", () => {
+    const INCIDENT_MESSAGE =
+      "Request context not available — authentication or export lookup failed";
+
+    function oauthResponseError(message: string, code?: string) {
+      const error = new Error(message) as Error & { code?: string };
+      error.name = "OAuthResponseError";
+      error.code = code;
+      return error;
+    }
+
+    it("is never reported as a 500 INTERNAL_ERROR", () => {
+      const mapped = mapRuntimeError(
+        oauthResponseError(INCIDENT_MESSAGE, "invalid_grant"),
+      );
+
+      expect(mapped.status).not.toBe(500);
+      expect(mapped.code).not.toBe(ErrorCode.INTERNAL_ERROR);
+    });
+
+    it("maps to 403 UPSTREAM_AUTH_FAILED", () => {
+      const mapped = mapRuntimeError(
+        oauthResponseError(INCIDENT_MESSAGE, "invalid_grant"),
+      );
+
+      expect(mapped.status).toBe(403);
+      expect(mapped.code).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+      expect(mapped.details?.upstreamAuthRequired).toBe(true);
+    });
+
+    it("attributes the failure away from MCPJam", () => {
+      // What keeps these out of the 5xx budget AND off the pager: the strict
+      // capture policy never pages on a non-`mcpjam` origin.
+      const mapped = mapRuntimeError(
+        oauthResponseError(INCIDENT_MESSAGE, "invalid_grant"),
+      );
+
+      expect(mapped.normalized?.slug).toBe("oauth/invalid_grant");
+      expect(mapped.origin).toBe("user_config");
+    });
+
+    it("classifies from the response shape even when the code is unrecognized", () => {
+      // The authorization server chooses both the prose and the `error` code,
+      // and a vendor-specific code is legal. The status must not depend on
+      // recognizing either — only on the error being an OAuth error RESPONSE.
+      const mapped = mapRuntimeError(
+        oauthResponseError(INCIDENT_MESSAGE, "vendor_specific_failure"),
+      );
+
+      expect(mapped.status).toBe(403);
+      expect(mapped.code).toBe(ErrorCode.UPSTREAM_AUTH_FAILED);
+    });
+
+    it("still reports the same sentence from an unidentified source as ours", () => {
+      // The guard against over-correction. Nothing about these WORDS moved the
+      // failure off 500 — a bare Error carrying the identical text has no
+      // evidence naming an upstream, so it stays an MCPJam internal error and
+      // keeps paging. Matching on the prose instead would have silenced
+      // whatever else ever phrases a failure this way.
+      const mapped = mapRuntimeError(new Error(INCIDENT_MESSAGE));
+
+      expect(mapped.status).toBe(500);
+      expect(mapped.code).toBe(ErrorCode.INTERNAL_ERROR);
+    });
+  });
+
   it("maps ECONN* errno messages to 502", () => {
     expect(
       mapRuntimeError(new Error("connect ECONNREFUSED 127.0.0.1:8080")).status,
@@ -481,6 +555,64 @@ describe("webError origin header", () => {
     expect(res.headers.get("x-mcpjam-error-origin")).toBe(
       (await res.json()).origin,
     );
+  });
+});
+
+/**
+ * The one direction of the hop change that must stay impossible.
+ *
+ * `hop` and `origin` are orthogonal: a hop names WHICH BOUNDARY broke, an
+ * origin names WHOSE PROBLEM it is. The monitor predicate lets a
+ * `user_server_hop` exclude a row, so if a declaration could ever lower a
+ * positively-MCPJam verdict, declaring the hop on the highest-traffic catch in
+ * the server would silence real MCPJam outages — the exact failure the origin
+ * program exists to prevent, arriving through the fix for it.
+ *
+ * These drive the real `mapRuntimeError` promotion and the real
+ * `webErrorFromRoute`, not a stub: the invariant lives in how those two
+ * compose, and a stubbed origin would assert nothing.
+ */
+describe("a declared hop never lowers an origin", () => {
+  async function respondWith(error: unknown, hop: string) {
+    const app = new Hono();
+    let meta: Record<string, unknown> | undefined;
+    app.get("/boom", (c) => {
+      const res = webErrorFromRoute(
+        c,
+        // A boundary the caller owns every throw reaching — how a catch site
+        // says "this hop was ours" through the real promotion path.
+        mapRuntimeError(error, { boundary: "mcpjam_internal" }),
+        { hop },
+      );
+      meta = c.get("webErrorMeta") as Record<string, unknown> | undefined;
+      return res;
+    });
+    const res = await app.request("/boom");
+    return { res, meta, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("keeps origin=mcpjam on a failure declared user_server_hop", async () => {
+    const { meta, body, res } = await respondWith(
+      new Error("kaboom"),
+      "user_server_hop",
+    );
+
+    // The verdict survives on all three surfaces a consumer can read.
+    expect(meta?.origin).toBe("mcpjam");
+    expect(body.origin).toBe("mcpjam");
+    expect(res.headers.get("x-mcpjam-error-origin")).toBe("mcpjam");
+    // Recorded beside it, not instead of it.
+    expect(meta?.hop).toBe("user_server_hop");
+  });
+
+  it("never ships hop in the response envelope", async () => {
+    // Telemetry, not client contract. Left in the extras spread it would
+    // become a response FIELD, the same trap `responseHeaders` is
+    // destructured out for.
+    const { body } = await respondWith(new Error("kaboom"), "user_server_hop");
+
+    expect(body.hop).toBeUndefined();
+    expect("hop" in body).toBe(false);
   });
 });
 

@@ -30,31 +30,39 @@ function mockFetch(impl: (url: string, init: RequestInit) => Response) {
 }
 
 describe("buildBrokerDummyAuth", () => {
-  it("claude-code → dummy anthropic auth pointed at the proxy (no real key)", () => {
+  // Since the @ai-sdk/harness 1.0.x stable line, HarnessAuth is the flat
+  // ENVIRONMENT auth arm (an env-var map), not the canary line's structured
+  // `{ anthropic }` / `{ openaiCompatible }` objects. `toEqual` pins the WHOLE
+  // map: every extra key is a variable the adapter would key credential
+  // forwarding off, so absence is as load-bearing as presence. (The `gateway`
+  // raw-key variant is still gone since COMP-23 — no real credential here.)
+
+  it("claude-code → dummy auth-token env pointed at the proxy (no real key)", () => {
     const auth = buildBrokerDummyAuth(
       "claude-code",
       "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
     );
-    expect(auth.anthropic?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
-    );
-    expect(auth.anthropic?.authToken).toBeTruthy();
-    expect(auth.anthropic?.apiKey).toBe("");
-    // (HarnessAuth has no `gateway` variant since COMP-23 — the raw-key path
-    // is gone at the type level.)
-    expect(auth.openaiCompatible).toBeUndefined();
+    expect(auth).toEqual({
+      ANTHROPIC_AUTH_TOKEN: "mcpjam-broker-dummy",
+      ANTHROPIC_BASE_URL:
+        "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+    });
+    // ANTHROPIC_API_KEY must be ABSENT, not "": the adapter registers an
+    // `x-api-key` egress rewrite for whichever credential variables are
+    // PRESENT, and the CLI never sends that header on the auth-token path.
+    expect("ANTHROPIC_API_KEY" in auth).toBe(false);
   });
 
-  it("codex → dummy openaiCompatible auth pointed at the proxy", () => {
+  it("codex → dummy OpenAI-compatible env pointed at the proxy", () => {
     const auth = buildBrokerDummyAuth(
       "codex",
       "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
     );
-    expect(auth.openaiCompatible?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
-    );
-    expect(auth.openaiCompatible?.apiKey).toBeTruthy();
-    expect(auth.anthropic).toBeUndefined();
+    expect(auth).toEqual({
+      CODEX_API_KEY: "mcpjam-broker-dummy",
+      OPENAI_BASE_URL:
+        "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
+    });
   });
 });
 

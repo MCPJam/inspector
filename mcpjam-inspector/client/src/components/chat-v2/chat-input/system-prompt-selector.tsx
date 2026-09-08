@@ -11,13 +11,20 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import { Slider } from "@mcpjam/design-system/slider";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelDefinition, modelSupportsTemperature } from "@/shared/types";
+import {
+  ModelDefinition,
+  modelDefinitionSupportsTemperature,
+} from "@/shared/types";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -84,11 +91,14 @@ export function SystemPromptSelector({
     multiModelEnabled && selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
+  // Passes the whole row, not just its id, so a hosted model the catalog says
+  // takes no `temperature` greys the slider out here too rather than leaving it
+  // live over a value prepareChatV2 goes on to drop.
   const someSelectedModelsIgnoreTemperature = effectiveSelectedModels.some(
-    (model) => !modelSupportsTemperature(model.id),
+    (model) => !modelDefinitionSupportsTemperature(model)
   );
   const allSelectedModelsIgnoreTemperature = effectiveSelectedModels.every(
-    (model) => !modelSupportsTemperature(model.id),
+    (model) => !modelDefinitionSupportsTemperature(model)
   );
 
   const handleOpenChange = (open: boolean) => {

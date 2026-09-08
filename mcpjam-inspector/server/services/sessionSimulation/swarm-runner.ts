@@ -24,16 +24,20 @@ import {
   releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
+  targetWantsBrowser,
   targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
+import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import {
   humanizeSwarmAttemptErrorMessage,
+  isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -294,22 +298,31 @@ function terminalForOutcome(
 }
 
 /**
- * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
- * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
- * A spend/cap/quota/budget message is the org cap (WHOLE-RUN stop); anything
- * else (a provider 429 / rate limit) is a per-HOST stop. A missing message
- * defaults to the narrower per-host stop — never escalate to a whole-run halt
- * on ambiguous signal.
+ * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
+ * shared core's `rate_limited` bucket and the `failed` attempts whose message
+ * carries an account denial code.
+ * An account-wide limit is the org cap (WHOLE-RUN stop); a provider 429 on one
+ * host's own key is a per-HOST stop. A missing message defaults to the narrower
+ * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * `cap`/`quota`/`budget` are word-anchored so only genuine spend-cap wording
- * matches: "spend cap exceeded" / "quota exceeded" / "budget exhausted" →
- * org cap, but "capacity" / "rate capacity exceeded" / "recap" / "escape" →
- * NOT a spend cap (they stay a per-host provider rate-limit).
+ * The backend's denial code decides it, via the shared {@link isAccountLimit}
+ * the run screen also renders from. `runner.ts` concatenates that code into the
+ * message ("<sentence> (<code>, HTTP <status>)"), and it is the only reliable
+ * signal: no MCPJam limit sentence — "Daily credit limit reached.", "Daily
+ * MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ *
+ * The prose check is kept as a second signal for a backend that words a cap
+ * without a code. `cap`/`quota`/`budget`/`spend` stay word-anchored so
+ * "capacity" / "recap" / "escape" — and "su`spend`ed", which is an account
+ * SUSPENSION and not a cap — remain a per-host provider rate-limit.
+ * `spend_budget_reached` still escalates: `isAccountLimit` matches its code.
  */
-function classifyRateLimit(
+export function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
-  if (message && /spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+  if (!message) return "provider_rate_limit";
+  if (isAccountLimit(message)) return "org_spend_cap";
+  if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
@@ -329,6 +342,53 @@ function bindSessionEmit(
 ): (payload: SwarmStreamPayload) => void {
   return (payload) => {
     hub.emit({ ...envelope, ...payload } as SwarmStreamEvent);
+  };
+}
+
+/**
+ * WHAT this target needs the box FOR, in operator-facing words plus the
+ * `toolId` the UI keys its notice on.
+ *
+ * Until phase 6 the answer was always `bash`, so the copy could hardcode
+ * "shell". A harness-only target reached the same branches next, and a
+ * BROWSER-only target after that — which the two-branch version described as
+ * "the undefined harness", because it fell through to the harness arm with no
+ * harness to name.
+ *
+ * Built from what the target ACTUALLY declares rather than from a first
+ * matching branch, because the combinations are not exclusive: `bash` and
+ * `browser` conflict on a host config only while a deployment has NOT accepted
+ * the co-tenancy boundary (`allowComputerToolCoTenancy`), and a harness can
+ * accompany either. A target that lost its box lost every one of them, so the
+ * sentence names every one of them.
+ *
+ * The `toolId` is the capability that DECIDED the image, because that is the
+ * one the failure is about: a browser forces the desktop image, and the
+ * refusals that reach here (`desktop_pin_conflict`, desktop capacity) are
+ * desktop refusals. Without a browser it stays what it has always been.
+ */
+function describeSandboxConsumer(
+  target: PinnedHostExecutionSpec,
+  hostedBrowserAvailable: boolean,
+): {
+  label: string;
+  toolId: string;
+} {
+  const wantsBash = targetWantsBash(target);
+  const wantsBrowser = targetWantsBrowser(target, hostedBrowserAvailable);
+  const parts: string[] = [];
+  if (wantsBash) parts.push("the shell");
+  if (wantsBrowser) parts.push("the browser");
+  if (target.harness) parts.push(`the ${target.harness} harness`);
+  const label =
+    parts.length === 0
+      ? "the disposable computer"
+      : parts.length === 1
+        ? parts[0]!
+        : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)!}`;
+  return {
+    label,
+    toolId: wantsBrowser ? "browser" : wantsBash ? "bash" : "harness",
   };
 }
 
@@ -502,7 +562,7 @@ async function runJourneyFanOut(
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
         harnessTargetIntent = harnessNeedsBox
-          ? sandboxIntentFor(target)
+          ? sandboxIntentFor(target, hostedBrowserAdvertisable())
           : undefined;
         //
         // AND the same preflight interactive chat runs. Until phase 6 the swarm
@@ -523,10 +583,11 @@ async function runJourneyFanOut(
         //     carries `mcpProfile` verbatim and `swarm-runs.ts` already reads the
         //     policy out of it for the MCP manager — this feeds the same value to
         //     the harness gate.
-        //   - APPROVAL vs MCP TOOLS. Claude Code can gate its native and
-        //     host-executed tools but NOT tools delivered through `.mcp.json`, so
-        //     `requireToolApproval` + selected servers is a hole the adapter
-        //     declares it cannot close (`supportsMcpToolApproval: false`).
+        //   - APPROVAL vs MCP TOOLS. Whether a harness can pause on the surface
+        //     its MCP tools actually run on. Claude Code now can, on all three
+        //     (`supportsMcpToolApproval: true`, via the bridge's `canUseTool`
+        //     under "allow-reads"); Codex cannot pause at all, so
+        //     `requireToolApproval` still refuses a Codex target outright.
         //
         // Deliberately NOT re-derived as a local subset: a rule added to the chat
         // preflight later must apply here too, and the only way to guarantee that
@@ -545,9 +606,12 @@ async function runJourneyFanOut(
                 // this is an admission decision, and over-counting refuses a host
                 // that advertises an approval gate it cannot enforce — the
                 // fail-closed direction.
-                hasSelectedMcpServers:
-                  (target.serverIds ?? []).length > 0 ||
-                  (target.pluginServerIds ?? []).length > 0,
+                hasSelectedMcpServers: hasSelectedMcpServersForAdmission({
+                  ...(target.serverIds ? { serverIds: target.serverIds } : {}),
+                  ...(target.pluginServerIds
+                    ? { pluginServerIds: target.pluginServerIds }
+                    : {}),
+                }),
                 // The RESOLVED definition — the SAME one the turn runs on. The
                 // gate derives eligibility and the canonical id from it, so this
                 // cannot disagree with what `resolveTurnRuntime` decides. Passing
@@ -559,6 +623,11 @@ async function runJourneyFanOut(
                   id: String(modelDefinition.id),
                   provider: modelDefinition.provider,
                 },
+                // The same pinned id under the name the external-account rule
+                // reads. Identical to `model.id` here — a swarm target has no
+                // request body to override it — and passed explicitly so it
+                // STAYS identical if that ever stops being true.
+                hostModelId: modelId,
                 // TRI-STATE, read without throwing, and INVALID counts as ON —
                 // the same call `mcp/chat-v2.ts` makes. `xaaPolicyFromMcpProfile`
                 // (the web route's variant) THROWS a 409 on a malformed profile,
@@ -757,20 +826,20 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
-        const sandboxConsumer = targetWantsBash(target)
-          ? target.harness
-            ? {
-                label: `the shell and the ${target.harness} harness`,
-                toolId: "bash",
-              }
-            : { label: "the shell", toolId: "bash" }
-          : { label: `the ${target.harness} harness`, toolId: "harness" };
+        // Resolved ONCE and shared with `sandboxIntentFor` below: the two
+        // must agree about whether a browser is in play, or the notice
+        // describes a consumer the intent never provisioned for.
+        const hostedBrowserAvailable = hostedBrowserAdvertisable();
+        const sandboxConsumer = describeSandboxConsumer(
+          target,
+          hostedBrowserAvailable,
+        );
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target);
+          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
@@ -846,6 +915,12 @@ async function runJourneyFanOut(
               runId,
               targetId: targetId ?? hostId,
               sessionIdx,
+              // WHICH IMAGE this attempt needs — a browser target boots the
+              // stock desktop one. Absent for everything else, so a terminal
+              // request stays byte-identical on the wire.
+              ...(intent.runtimeKind === "desktop-browser"
+                ? { runtimeKind: "desktop-browser" as const }
+                : {}),
               signal: sessionSignal,
             });
             if (provisioned.ok) {
@@ -974,6 +1049,11 @@ async function runJourneyFanOut(
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
               builtInToolIds: target.builtInToolIds,
+              // The unattended browser's only authorization. Threading it is
+              // what makes `browser` reachable on a swarm target at all: the
+              // runner parses it into an approval delivery, and without one
+              // `buildBrowserTools` advertises nothing.
+              browserToolPolicy: target.browserToolPolicy,
               modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
@@ -1006,6 +1086,16 @@ async function runJourneyFanOut(
               // legacy live-pool). The shared core routes them to prepareChatV2
               // (`skillsSource`) or the harness pinned path — never a live query.
               ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
+              // The target's Project Environment — the GRANT BOUNDARY for its
+              // project secrets, and the same id `resolveGrantForSandbox`
+              // derives for this attempt's box from the run snapshot. Threaded
+              // so a harness turn's BROKERED external-account credential is
+              // checked against what THIS environment selects rather than
+              // against the whole project. Absent for a legacy host target,
+              // which has no environment and so no grant.
+              ...(target.environmentRef?.environmentId
+                ? { environmentId: target.environmentRef.environmentId }
+                : {}),
               // Swarm authorizes via project membership — no scenario access
               // version, no scenario id.
             },
@@ -1200,7 +1290,15 @@ async function runJourneyFanOut(
             modelSource: modelId,
           });
 
-          if (outcome === "rate_limited") {
+          // An account-wide denial arrives under EITHER terminal: only the
+          // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
+          // `rate_limited`, so `wallet_locked` and the billing codes land in
+          // `failed` and would never reach the whole-run stop below.
+          const accountLimitFailure =
+            outcome === "failed" &&
+            !abortedBySpendCap &&
+            isAccountLimit(errorMessage, errorReason);
+          if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage);
             if (cause === "org_spend_cap") {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The

@@ -78,6 +78,33 @@ export function addResourceMismatchWarning(
   );
 }
 
+// The server answered the unauthenticated probe with a Bearer challenge on a
+// status MCP does not allow there (a 403 instead of 401). Same warn-mode
+// bargain as above: the debugger continues discovery off the challenge so users
+// can observe real behavior, but must say the status is non-compliant, because
+// clients keying on the status alone will never start OAuth against it.
+export function addChallengeStatusWarning(
+  state: OAuthFlowState,
+  infoLogs: Array<InfoLogEntry> | undefined,
+  step: OAuthFlowStep,
+  response: { status: number; statusText?: string },
+): Array<InfoLogEntry> {
+  return addInfoLog(
+    { ...state, infoLogs },
+    step,
+    "non-compliant-challenge-status",
+    "Non-compliant challenge status",
+    {
+      Received: `${response.status}${
+        response.statusText ? ` ${response.statusText}` : ""
+      }`,
+      Expected: "401 Unauthorized",
+      Note: "The server sent a WWW-Authenticate Bearer challenge, so the debugger continues OAuth discovery from it. MCP requires 401 here — clients that decide to authenticate from the status code alone, including the official MCP SDK, will not start OAuth against this server.",
+    },
+    { level: "warning" },
+  );
+}
+
 export function toLogErrorDetails(error: unknown): LogErrorDetails {
   if (error instanceof Error) {
     return {

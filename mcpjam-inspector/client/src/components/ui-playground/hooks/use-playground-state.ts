@@ -49,7 +49,6 @@ import type {
   EnsureServersReadyResult,
   ServerWithName,
 } from "@/hooks/use-app-state";
-import { useSidebar } from "@/components/ui/sidebar";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -245,12 +244,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   } = useUIPlaygroundStore();
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
 
-  const { setOpen: setMcpSidebarOpen } = useSidebar();
-
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
-    setMcpSidebarOpen(true);
-  }, [onOnboardingChange, setMcpSidebarOpen]);
+  }, [onOnboardingChange]);
 
   useLayoutEffect(() => {
     // NUX: collapse the tools sidebar for the whole first-run connect + guided
@@ -267,13 +263,17 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     }
   }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
 
+  // Whether the APP sidebar is open is not this surface's call: entering and
+  // leaving Playground is one of the transitions `SidebarAutoCollapse` owns,
+  // and forcing it open here re-expanded the rail a commit after the policy
+  // had collapsed it (this route mounts lazily, after the policy's effect).
+  // Only the playground-local tools sidebar is restored.
   useLayoutEffect(() => {
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
-      setMcpSidebarOpen(true);
     };
-  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
+  }, [onOnboardingChange, setSidebarVisible]);
 
   // Event name `app_builder_tab_viewed` is kept for analytics continuity
   // (the only surface that still mounts this hook is the Playground tab).
@@ -470,13 +470,23 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
           Object.assign(aggregatedTools, dictionary);
           Object.assign(aggregatedMetadata, data.toolsMetadata ?? {});
-          cursor = data.nextCursor;
+          // The response body is untyped, so a non-string `nextCursor` is not
+          // a cursor and must not be forwarded as one. A REPEATED cursor is
+          // not an ending either — the value is opaque, and a server may
+          // legally reissue one constant token for every page; `maxPages`
+          // below is the bound, and hitting it raises a visible error rather
+          // than passing off a partial list as complete.
+          cursor =
+            typeof data.nextCursor === "string" ? data.nextCursor : undefined;
           pages += 1;
 
+          // Presence, not truthiness: MCP 2026-07-28
+          // `server/utilities/pagination` makes `""` a valid cursor that MUST
+          // NOT be read as the end of results.
           if (
             toolName &&
             !aggregatedTools[toolName] &&
-            cursor &&
+            cursor !== undefined &&
             pages >= maxPages
           ) {
             const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
@@ -487,7 +497,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
             );
           }
 
-          if (!toolName || aggregatedTools[toolName] || !cursor) {
+          if (!toolName || aggregatedTools[toolName] || cursor === undefined) {
             break;
           }
         } while (true);
@@ -1052,6 +1062,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     activeServerNames,
 
     // misc
+    // Surfaces that connect a server in place (the Tools rail's empty state)
+    // need the handler, not just the connection status.
+    onConnect,
     hostStyle,
     prefersReducedMotion,
   };
