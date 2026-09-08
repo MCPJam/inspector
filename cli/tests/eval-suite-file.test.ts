@@ -2140,8 +2140,18 @@ describe("eval run --file", () => {
         assert.equal(fixture.batchBodies.length, 1);
         const batch = fixture.batchBodies[0] as {
           cases: Array<{ id: string }>;
+          declaredSuiteId?: string;
         };
         assert.equal(batch.cases[0].id, "c_refund");
+        // A suite with a declared id is CI-owned and refuses case writes; the
+        // sync is the exception, and this marker is how it says so. Without it
+        // the platform refuses and nothing this file declares ever lands.
+        assert.equal(batch.declaredSuiteId, "s_billing");
+        // One marker for the batch, never one per case.
+        assert.equal(
+          (batch.cases[0] as Record<string, unknown>).declaredSuiteId,
+          undefined
+        );
         assert.equal(fixture.runBodies.length, 1);
         const launched = fixture.runBodies[0] as Record<string, unknown>;
         assert.equal(launched.suiteId, "suite-file-1");
@@ -2187,6 +2197,9 @@ describe("eval run --file", () => {
         });
         assert.deepEqual(fixture.suitePatches, [
           {
+            // The suite is CI-owned by virtue of its declared id, so the
+            // file's own write has to name that id or the platform refuses it.
+            declaredSuiteId: "s_billing",
             hosts: [
               {
                 host: "h1",
@@ -2281,6 +2294,8 @@ describe("eval run --file", () => {
         assert.equal(updated.title, "Refunds a duplicate charge");
         assert.equal(updated.isNegative, false);
         assert.equal(updated.checks, null);
+        // The update door needs the same marker the create door does.
+        assert.equal(updated.declaredSuiteId, "s_billing");
       });
     } finally {
       await fixture.close();
