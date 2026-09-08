@@ -11,14 +11,23 @@
  */
 
 import {
+  FRICTION_NOT_MEASURED_REASON_LABELS,
+  FRICTION_SIGNAL_LABELS,
   MAX_MISMATCH_TOOLS,
   NO_TOOL_PATH_KEY,
+  SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+  SUSPECTED_CONDITION_LABELS,
   buildEvalRunRouteFacts,
   evalCaseAggregationKey,
+  evalTrialFrictionSignalsSchema,
+  suspectedConditionVerdictSchema,
   type EvalRunRouteFacts,
   type EvalRunRouteFactsCase,
+  type EvalTrialFrictionSignals,
+  type FrictionSignalKind,
   type RouteFactsCatalog,
   type RouteFactsTrialInput,
+  type SuspectedConditionVerdict,
 } from "@mcpjam/sdk/contract";
 
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
@@ -120,6 +129,7 @@ export function iterationToRouteTrial(
     ...(executionVariant ? { executionVariant } : {}),
   });
   const failureCategory = iteration.metadata?.failureCategory;
+  const friction = readTrialFrictionSignals(iteration);
   return {
     trialKey: iteration._id,
     status: iteration.status,
@@ -137,7 +147,50 @@ export function iterationToRouteTrial(
         ? { caseKey: iteration.testCaseId }
         : {}),
     ...(executionVariant ? { executionVariant } : {}),
+    ...(friction ? { frictionSignals: friction } : {}),
   };
+}
+
+/**
+ * The trial's friction signals, or `undefined`.
+ *
+ * `safeParse`, never a cast: `metadata` is an open record that a reported run
+ * can write into, and a document that does not validate must not become five
+ * rates on the run page. Absent and invalid both read as "this trial supplied
+ * none", which is what keeps the block off the document entirely.
+ */
+export function readTrialFrictionSignals(
+  iteration: EvalIteration,
+): EvalTrialFrictionSignals | undefined {
+  const raw = iteration.metadata?.frictionSignals;
+  if (raw === undefined) return undefined;
+  const parsed = evalTrialFrictionSignalsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * The trial's suspected-condition verdict, or `undefined`.
+ *
+ * `safeParse` for the same reason: a verdict that does not validate must not
+ * become a named server condition on the run page.
+ */
+export function readTrialSuspectedCondition(
+  iteration: EvalIteration,
+): SuspectedConditionVerdict | undefined {
+  const raw = iteration.metadata?.suspectedConditionVerdict;
+  if (raw === undefined) return undefined;
+  const parsed = suspectedConditionVerdictSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** The unverified case: say the verdict is not available, never guess at it. */
+export function suspectedConditionUnavailable(
+  iteration: EvalIteration,
+): boolean {
+  const raw = iteration.metadata?.suspectedConditionVerdict;
+  return (
+    raw !== undefined && readTrialSuspectedCondition(iteration) === undefined
+  );
 }
 
 /**
@@ -170,7 +223,14 @@ export function buildRunRouteFacts(
   }
 }
 
-function iterationsForRow(
+/**
+ * The iterations that belong to one row.
+ *
+ * Exported because the per-trial friction line needs the same join the route
+ * facts use: a second copy of this rule would let the two disagree about which
+ * trials a row is made of.
+ */
+export function iterationsForRow(
   row: EvaluateCaseRow,
   iterations: readonly EvalIteration[],
 ): EvalIteration[] {
@@ -308,6 +368,145 @@ export function routeLineForRow(
     .join("; ");
 }
 
+
+/**
+ * The per-trial line. OBSERVATION WORDS ONLY.
+ *
+ * Every phrase here comes from `FRICTION_SIGNAL_LABELS` or names a call index,
+ * and none of them says "wasted", "unnecessary" or "the server". The signals
+ * are patterns with benign readings, and a line that pre-judged one would make
+ * the reader's first act a defence rather than a look.
+ *
+ * Returns `null` when there is nothing to say — a measured trial with no
+ * signals gets no line at all, because "no friction signals" is noise on the
+ * overwhelming majority of trials.
+ */
+export function frictionLineForTrial(
+  signals: EvalTrialFrictionSignals | undefined,
+): string | null {
+  if (!signals) return null;
+  if (signals.state === "notMeasured") {
+    const reason = signals.notMeasuredReason;
+    return `friction signals: not measured — ${
+      reason ? FRICTION_NOT_MEASURED_REASON_LABELS[reason] : "no reason given"
+    }`;
+  }
+  if (signals.signals.length === 0) return null;
+
+  const parts: string[] = [];
+  for (const signal of signals.signals) {
+    switch (signal.kind) {
+      case "identifierSurfacedUnused":
+        parts.push(
+          `\`${signal.toolName}\` returned ${
+            signal.identifierCount === 1 ? "an identifier" : "identifiers"
+          } (${signal.identifierKeyPaths.join(", ")}) at call ${
+            signal.informationCallIndex
+          } that no later call used`,
+        );
+        break;
+      case "searchRepeatedAfterIdentifier":
+        parts.push(
+          `\`${signal.toolName}\` was called again at ${callList(
+            signal.repeatCallIndexes,
+          )}`,
+        );
+        break;
+      case "identicalRetry":
+        parts.push(
+          `\`${signal.toolName}\` repeated with identical arguments at call ${
+            signal.callIndex
+          }${signal.afterError ? " after an error" : ""}`,
+        );
+        break;
+      case "changedRetry":
+        parts.push(
+          `\`${signal.toolName}\` called again with changed arguments at call ${
+            signal.callIndex
+          }${signal.afterError ? " after an error" : ""}`,
+        );
+        break;
+      case "paginationContinuation":
+        parts.push(
+          `\`${signal.toolName}\` continued pagination at call ${
+            signal.callIndex
+          } (${signal.paginationKeys.join(", ")})`,
+        );
+        break;
+    }
+  }
+  return `${frictionHeading(signals.signals[0]!.kind)}: ${parts.join("; ")}`;
+}
+
+/**
+ * The heading the line opens with, from the FIRST signal's kind.
+ *
+ * Three headings for five kinds: what a reader does next is the same for both
+ * identifier kinds and the same for both retry kinds, and a heading per kind
+ * would be five words that mean three things.
+ */
+export function frictionHeading(kind: FrictionSignalKind): string {
+  switch (kind) {
+    case "identifierSurfacedUnused":
+    case "searchRepeatedAfterIdentifier":
+      return "Possible detour";
+    case "identicalRetry":
+    case "changedRetry":
+      return "Retry";
+    case "paginationContinuation":
+      return "Pagination";
+  }
+}
+
+function callList(indexes: readonly number[]): string {
+  if (indexes.length === 1) return `call ${indexes[0]}`;
+  return `calls ${indexes.slice(0, -1).join(", ")} and ${
+    indexes[indexes.length - 1]
+  }`;
+}
+
+/**
+ * The line under the signal. SUSPECTED, and it never says "caused".
+ *
+ * Four shapes, and the differences between them are the point:
+ *
+ *   - a named condition reads "Suspected condition: X (high confidence)" and
+ *     carries one "Next:" naming a server lever;
+ *   - `unclear` reads "could not attribute" with NO Next — there is nothing to
+ *     act on, and inventing one would send a reader after a condition the
+ *     judge explicitly declined to name;
+ *   - `responseWasClear` reads as itself with no Next either: it is the honest
+ *     negative, and attaching a next step to it would manufacture server work
+ *     out of an answer that named no server problem;
+ *   - `skipped` / `error` / absent produce NO line at all. "We never looked"
+ *     must not read as "we looked and found nothing".
+ */
+export function suspectedConditionLineForTrial(
+  verdict: SuspectedConditionVerdict | undefined,
+): { line: string; next?: string } | null {
+  if (!verdict || verdict.status !== "scored") return null;
+  const condition = SUSPECTED_CONDITION_LABELS[verdict.condition];
+  if (verdict.condition === "unclear") {
+    return { line: "Suspected condition: could not attribute" };
+  }
+  const confidence = SUSPECTED_CONDITION_CONFIDENCE_LABELS[verdict.confidence];
+  const line = `Suspected condition: ${condition} (${confidence})`;
+  if (verdict.condition === "responseWasClear" || !verdict.remediation) {
+    return { line };
+  }
+  return { line, next: verdict.remediation };
+}
+
+/** The words a case-level rate is reported under. One per signal kind. */
+const FRICTION_RATE_LABELS: Record<FrictionSignalKind, string> = {
+  identifierSurfacedUnused: FRICTION_SIGNAL_LABELS.identifierSurfacedUnused,
+  searchRepeatedAfterIdentifier:
+    FRICTION_SIGNAL_LABELS.searchRepeatedAfterIdentifier,
+  identicalRetry: FRICTION_SIGNAL_LABELS.identicalRetry,
+  changedRetry: FRICTION_SIGNAL_LABELS.changedRetry,
+  paginationContinuation: FRICTION_SIGNAL_LABELS.paginationContinuation,
+};
+
 /**
  * Lines for the "Expected vs observed" expander. Name-level only.
  * Substitution only for the one-to-one in-catalog shape. Never writes
@@ -363,6 +562,23 @@ export function mismatchLines(
     lines.push(
       `ended with a question: ${facts.routes.endedWithQuestion.numerator} of ${facts.routes.endedWithQuestion.denominator}`,
     );
+  }
+  // The friction rates, in the same `n of m` grammar. The two identifier
+  // rates carry a SMALLER denominator than the three adjacency ones — a trial
+  // whose results were not retained looked for retries and never looked for an
+  // identifier — so each line states its own `m` rather than borrowing one.
+  const friction = facts.routes.frictionSignals;
+  if (friction) {
+    const kinds = Object.keys(FRICTION_RATE_LABELS) as FrictionSignalKind[];
+    for (const kind of kinds) {
+      const rate = friction[kind];
+      const label = FRICTION_RATE_LABELS[kind].toLowerCase();
+      if (rate.state === "notMeasured") {
+        lines.push(`${label}: not measured`);
+      } else if (rate.numerator > 0) {
+        lines.push(`${label}: ${rate.numerator} of ${rate.denominator}`);
+      }
+    }
   }
   return lines;
 }

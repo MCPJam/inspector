@@ -19,6 +19,8 @@ import type {
   EvalRunRouteFacts,
   EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
+  EvalTrialFrictionSignals,
+  SuspectedConditionVerdict,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
@@ -2961,6 +2963,39 @@ export interface PlatformEvalIteration {
   stageAnalyzerVersion?: number;
   /** The server returned stage rows that failed D1 validation. */
   stageResultsUnverified?: true;
+  /**
+   * Observable patterns in this trial's tool calls — an identifier a result
+   * surfaced that no later call carried, a repeat of the same search, a retry,
+   * a pagination continuation.
+   *
+   * REPORT-ONLY. Nothing here decided this trial's `result`, and every pattern
+   * has a benign reading: an unused identifier can mean the search already
+   * answered the question, and a repeat can be a sensible refinement. Read
+   * `identifierSignals.state` before reading the identifier kinds — a trial
+   * whose results were not retained never looked for them.
+   *
+   * ABSENT means the trial PREDATES the measurement, or its producer could not
+   * derive one. Never render an absent block as zero.
+   */
+  frictionSignals?: EvalTrialFrictionSignals;
+  /** The server returned a friction document that failed validation. */
+  frictionSignalsUnverified?: true;
+  /**
+   * Which server-controlled condition is SUSPECTED of contributing to one of
+   * the patterns above, from an advisory per-trial judge.
+   *
+   * SUSPECTED, and the word is load-bearing: the judge saw one window of one
+   * trial and named a plausible contributor. It is not evidence of cause —
+   * only a controlled rewrite that changes the suspected response and holds
+   * the rest comparable could be that — and nothing here entered this trial's
+   * `result`, its chain, or its `failureCategory`.
+   *
+   * `status` is `scored`, `skipped` or `error`. ABSENT means no judge ran:
+   * the trial predates it, nothing was flagged, or the deployment has it off.
+   */
+  suspectedConditionVerdict?: SuspectedConditionVerdict;
+  /** The server returned a verdict that failed validation. */
+  suspectedConditionUnverified?: true;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */

@@ -145,6 +145,7 @@ import type {
   StageAuthoredCase,
   StageSetupSignals,
   EvalSuiteFileToolPolicy,
+  FrictionResultEntry,
 } from "@mcpjam/sdk/contract";
 import {
   buildHarnessToolPolicySnapshots,
@@ -5147,6 +5148,15 @@ const runHostedIterationWithBrowser = async (
     | { source?: "model" | "setup"; code?: string; httpStatus?: number }
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  /**
+   * Wire results for the friction signals, keyed as the GRADED call array
+   * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
+   * capture never armed, in which case the deriver falls back to the
+   * transcript and reports `resultsUnavailable` for the identifier half.
+   */
+  const evidenceResults = new Map<string, FrictionResultEntry>();
+  /** Set when ANY turn's evidence read came back incomplete. */
+  const evidenceHadHole = { value: false };
   // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
   // `prepareChatV2` try.
   // Per-turn streaming play-by-play for the executeSteps handlers (headless in batch).
@@ -5340,6 +5350,8 @@ const runHostedIterationWithBrowser = async (
       messageHistory,
       traceMessageHistory,
       capturedSpans,
+      evidenceResults,
+      evidenceHadHole,
       accumulatedUsage,
       toolsCalledByPrompt,
     },
@@ -5526,6 +5538,31 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     prompts: promptTraceSummaries,
+    // Where the friction signals read their tool results from. THREE TIERS,
+    // and the middle one is the reason this is threaded at all:
+    //
+    //   capture on + complete  → the wire record, with per-call timing, which
+    //                            is the only thing that can establish
+    //                            availability on a harness run;
+    //   capture on + a hole    → notMeasured, because a partial record would
+    //                            answer "nobody used this identifier" from
+    //                            calls we know are missing;
+    //   capture off            → nothing, so the deriver falls back to the
+    //                            transcript: retries stay measured and the
+    //                            identifier half honestly says it did not look.
+    ...(harnessEvidenceDecision?.captureEnabled
+      ? {
+          frictionEvidence: evidenceHadHole.value
+            ? ({
+                kind: "notMeasured",
+                reason: "evidenceIncomplete",
+              } as const)
+            : ({
+                kind: "harnessEvidence",
+                resultsByToolCallId: evidenceResults,
+              } as const),
+        }
+      : {}),
     // UVH-IN2: the layer that raised the fatal error, so the chain can say a
     // provider outage was ours rather than filing it against the server.
     ...(iterationStepError ? { stepError: iterationStepError } : {}),

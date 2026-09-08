@@ -15985,6 +15985,275 @@
           "stageResultsUnverified": {
             "type": "boolean",
             "enum": [true]
+          },
+          "frictionSignals": {
+            "$ref": "#/components/schemas/EvalTrialFrictionSignals"
+          },
+          "frictionSignalsUnverified": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "The server stored a friction document that failed validation. The signals themselves are withheld rather than partially trusted."
+          },
+          "suspectedConditionVerdict": {
+            "$ref": "#/components/schemas/EvalSuspectedConditionVerdict"
+          },
+          "suspectedConditionUnverified": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "The server stored a suspected-condition verdict that failed validation. The verdict is withheld rather than partially trusted."
+          }
+        }
+      },
+      "EvalSuspectedConditionVerdict": {
+        "type": "object",
+        "description": "Which server-controlled condition is SUSPECTED of contributing to one observed friction pattern, from an advisory per-trial judge. REPORT-ONLY and NEVER a claim about cause: nothing here entered the trial\u2019s `result`, its stage chain or its `failureCategory`, and only a controlled rewrite that changes the suspected response and holds the rest comparable could establish causation. ABSENT means no judge ran \u2014 the trial predates it, nothing was flagged, or the deployment has it off.",
+        "required": [
+          "status",
+          "gradingKey",
+          "signalKind",
+          "informationCallIndex",
+          "observedAtCallIndex",
+          "judgeTemplateVersion",
+          "judgeTemplateHash",
+          "model",
+          "generatedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["scored", "skipped", "error"],
+            "description": "`scored` \u2014 a verdict was produced. `skipped` \u2014 the judge did not reach this trial; `reason` says why. `error` \u2014 the pass threw for this trial. A skipped or errored trial carries NO condition, so \u201cwe never looked\u201d is never rendered as \u201cwe looked and could not say\u201d."
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["spendBlocked", "traceIncomplete", "noEvidence", "cap"],
+            "description": "Present only when `status` is `skipped`. `spendBlocked` \u2014 the internal-LLM spend gate refused the call. `traceIncomplete` \u2014 a referenced trace blob could not be read. `noEvidence` \u2014 the judge\u2019s window could not be built, most often because the information call\u2019s result never reached the trace. `cap` \u2014 the run had more flagged trials than the per-run cap."
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "unclear",
+              "idBuriedInPayload",
+              "idNameCollision",
+              "missingQueryEcho",
+              "silentTruncation",
+              "ambiguousErrorSemantics",
+              "missingUnits",
+              "responseWasClear",
+              "descriptionMisleading"
+            ],
+            "description": "Which server-controlled condition is SUSPECTED of contributing. A CLOSED vocabulary. SUSPECTED, not established: the judge saw one window of one trial and named a plausible contributor, and only a controlled rewrite could turn that into a claim about cause. `unclear` — could not attribute: the judge could not identify a condition from what it was shown, which is also where a low-confidence or unsupported verdict is demoted to. `idBuriedInPayload` — identifier buried in payload: the identifier a later call needed was not where a caller would look for it. `idNameCollision` — identifier name collision: two different identifiers share a name, or one name means different things across tools. `missingQueryEcho` — response does not echo the query: a caller cannot tell a narrowed result from a fresh one. `silentTruncation` — response truncated without saying so. `ambiguousErrorSemantics` — error text does not say whether to retry. `missingUnits` — value has no stated unit. `responseWasClear` — the response was clear: the server's output does not explain the pattern. This is the honest negative and a real answer. `descriptionMisleading` — tool description points the wrong way."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "How sure the judge was. `low` — low confidence: never reaches a reader as a named condition, because a low-confidence verdict is demoted to `unclear` before it is persisted. `medium` — medium confidence. `high` — high confidence."
+          },
+          "remediation": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "ONE sentence naming a lever the SERVER OWNER controls. Absent for `unclear` and `responseWasClear`, which name no server problem to remediate, and absent from any verdict whose remediation named no server lever \u2014 that verdict is demoted to `unclear`."
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Where in the window the judge was pointing. Dropped rather than guessed when it fell outside the window or named the wrong tool; the verdict survives, the pointer does not.",
+            "required": ["callIndex", "toolName"],
+            "properties": {
+              "callIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "fieldPath": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          },
+          "gradingKey": {
+            "type": "string"
+          },
+          "signalKind": {
+            "type": "string",
+            "description": "The friction signal that triggered the judge."
+          },
+          "informationCallIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Where the information was surfaced. The judge saw calls 0 through `observedAtCallIndex` and nothing after."
+          },
+          "observedAtCallIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The call that made the pattern observable, and the judge\u2019s evidence bound."
+          },
+          "judgeTemplateVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "judgeTemplateHash": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EvalFrictionSignal": {
+        "type": "object",
+        "description": "One observed pattern in a trial's tool calls. Identifier kinds carry `informationCallIndex` (where the identifiers appeared) and `observedAtCallIndex` (the later call that made the pattern visible); adjacency kinds carry `callIndex` and `priorCallIndex`. Every index addresses `actualToolCalls` on the same iteration.",
+        "required": ["kind", "toolName"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "identifierSurfacedUnused",
+              "searchRepeatedAfterIdentifier",
+              "identicalRetry",
+              "changedRetry",
+              "paginationContinuation"
+            ],
+            "description": "Which observable pattern this is. A CLOSED vocabulary; a reader that does not know a member must not guess at it. Every member has a benign reading, so none of them is a verdict about the trial. `identifierSurfacedUnused` — Identifiers surfaced, none used later: a result carried identifiers and no later call passed one, which is also what a search that already answered the question looks like. `searchRepeatedAfterIdentifier` — Same tool searched again after identifiers: the tool that surfaced them was called again with a different question, which is also what a sensible refinement looks like. `identicalRetry` — Repeated with identical arguments: the same call ran twice byte for byte, which is what recovery after a transient error looks like. `changedRetry` — Same tool called again with changed arguments: ordinary exploration, and most useful work looks like this. `paginationContinuation` — Pagination continued: only the pagination keys changed, which is a cursor doing its job and is never counted as a repeat."
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "informationCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "observedAtCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "callIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "priorCallIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "afterError": {
+            "type": "boolean",
+            "description": "Whether the call this one repeats returned an error."
+          },
+          "identifierKeyPaths": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "Where in the result the identifiers were found (`results[].id`). KEY PATHS ONLY — an identifier VALUE never leaves the deployment."
+          },
+          "identifierCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "laterCallCount": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "repeatCallIndexes": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "paginationKeys": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EvalTrialFrictionSignals": {
+        "type": "object",
+        "description": "Observable patterns in one trial's tool calls. REPORT-ONLY: nothing here decided the trial's `result`, and every pattern has a benign reading. `state` is `notMeasured` when the trial could not be looked at at all; `identifierSignals.state` is separate because a trial whose tool results were not retained still has measurable retries but cannot be asked whether an identifier went unused. An ABSENT document means the trial predates the measurement — never read it as zero.",
+        "required": [
+          "version",
+          "state",
+          "callCount",
+          "resultAvailableCount",
+          "timedCallCount",
+          "identifierSignals",
+          "signals"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "enum": [1],
+            "description": "Derivation semantics version. Bumped when a counting RULE changes, even if the shape does not."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["measured", "notMeasured"]
+          },
+          "notMeasuredReason": {
+            "type": "string",
+            "enum": [
+              "noToolCalls",
+              "resultsUnavailable",
+              "orderingUnknown",
+              "evidenceIncomplete",
+              "truncated"
+            ],
+            "description": "Present only when `state` is `notMeasured`. `noToolCalls` — no tool calls to look at. `resultsUnavailable` — tool results were not retained. `orderingUnknown` — the calls cannot be placed in a causal order. `evidenceIncomplete` — the evidence for this trial has a known hole. `truncated` — too many tool calls to measure."
+          },
+          "callCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resultAvailableCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timedCallCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "identifierSignals": {
+            "type": "object",
+            "description": "Whether the two identifier-dependent kinds were measured at all. `notMeasured` here beside `state: measured` above is the normal shape for a run whose tool results were not retained: the retries were measured, the identifiers were never looked for.",
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": ["measured", "notMeasured"]
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why the identifier kinds were not measured. `noToolCalls` — no tool calls to look at. `resultsUnavailable` — tool results were not retained. `orderingUnknown` — the calls cannot be placed in a causal order. `evidenceIncomplete` — the evidence for this trial has a known hole. `truncated` — too many tool calls to measure.",
+                "enum": [
+                  "noToolCalls",
+                  "resultsUnavailable",
+                  "orderingUnknown",
+                  "evidenceIncomplete",
+                  "truncated"
+                ]
+              }
+            }
+          },
+          "signals": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "$ref": "#/components/schemas/EvalFrictionSignal"
+            },
+            "description": "Ordered by the call that made each pattern observable. Empty on a `measured` document means nothing fired; empty on a `notMeasured` one means nothing was looked for."
           }
         }
       },

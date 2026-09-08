@@ -29,6 +29,8 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  buildResultsByToolCallIdFromMessages,
+  deriveTrialFrictionSignalsFromCalls,
   deriveStageResults,
   attachStageMeasurements,
   stageDerivationToMetadata,
@@ -38,6 +40,7 @@ import {
   type StagePredicateResultLike,
   type StageResultRow,
   type StageSetupSignals,
+  type FrictionResultEntry,
   type IterationStatus as ContractIterationStatus,
   allGatingScorersPassed,
 } from "@mcpjam/sdk/contract";
@@ -710,6 +713,27 @@ export function buildIterationFinishParams(args: {
    * itself — a caller with no live registry cannot say what the model saw.
    */
   selectionTools?: Record<string, SelectionCatalogToolLike>;
+  /**
+   * Where this iteration's TOOL RESULTS come from, for the friction signals.
+   *
+   * ABSENT ⇒ the map is built from `messages`, which is the emulated engine's
+   * whole record and the harness fallback when capture is off. A harness turn
+   * with capture ON supplies `harnessEvidence` instead, because the wire
+   * results — and the per-call timing the identifier rules need to establish
+   * availability — live on the evidence rows and never reach the transcript.
+   * A harness turn whose evidence read came back with a HOLE supplies
+   * `notMeasured`: a partial evidence set would let "no later call used this
+   * identifier" be answered from calls we know we are missing.
+   *
+   * Threaded rather than derived here because only the runner knows which of
+   * the three it is in.
+   */
+  frictionEvidence?:
+    | {
+        kind: "harnessEvidence";
+        resultsByToolCallId: ReadonlyMap<string, FrictionResultEntry>;
+      }
+    | { kind: "notMeasured"; reason: "evidenceIncomplete" };
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -843,6 +867,42 @@ export function buildIterationFinishParams(args: {
   // `"reported"` either way — the inspector is still the thing reporting the
   // verdict, it has changed what it derives it from.
   const effectivePassed = derived ? passed && derived.passed : passed;
+
+  // FRICTION SIGNALS — observable patterns in this trial's tool calls.
+  //
+  // Deliberately computed AFTER the verdict and passed to nothing that
+  // produces one: not `buildEvalIterationVerdict`, not `buildScoreMetadata`,
+  // not `buildStageMetadata`. They are a report beside the verdict, and the
+  // one way that stays true is for the verdict to be finished before they
+  // exist.
+  //
+  // A throw omits the key rather than failing the finalize. The deriver
+  // already turns every EVIDENCE problem into a `notMeasured` document, so a
+  // throw here means a bug in the deriver — and a trial that loses its
+  // report-only signals is a strictly better outcome than a run that loses
+  // its verdict.
+  let frictionSignals: ReturnType<
+    typeof deriveTrialFrictionSignalsFromCalls
+  > | null = null;
+  try {
+    frictionSignals = deriveTrialFrictionSignalsFromCalls({
+      toolsCalled: evaluation.toolsCalled,
+      resultsByToolCallId:
+        args.frictionEvidence?.kind === "harnessEvidence"
+          ? args.frictionEvidence.resultsByToolCallId
+          : buildResultsByToolCallIdFromMessages(messages),
+      ...(args.frictionEvidence?.kind === "notMeasured"
+        ? { evidenceHole: args.frictionEvidence.reason }
+        : {}),
+    });
+  } catch (error) {
+    logger.warn(
+      `[evals] friction signals could not be derived: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
   return {
     iterationId,
     passed: effectivePassed,
@@ -876,6 +936,7 @@ export function buildIterationFinishParams(args: {
       ...(policyWarnings?.length ? { policyWarnings } : {}),
       ...(toolPolicy ? { toolPolicy } : {}),
       ...stageMetadata,
+      ...(frictionSignals ? { frictionSignals } : {}),
       ...scoreMetadata,
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),

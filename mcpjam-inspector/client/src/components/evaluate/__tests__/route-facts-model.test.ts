@@ -13,7 +13,12 @@ import type { EvaluateCaseRow } from "../evaluate-case-row-model";
 import {
   ROUTE_LINE_MAX_ROUTES,
   buildRunRouteFacts,
+  frictionLineForTrial,
   iterationToRouteTrial,
+  readTrialFrictionSignals,
+  readTrialSuspectedCondition,
+  suspectedConditionLineForTrial,
+  suspectedConditionUnavailable,
   mismatchLines,
   readRunToolCatalog,
   routeFactsForRow,
@@ -33,7 +38,7 @@ const run = (over: Partial<EvalSuiteRun> = {}): EvalSuiteRun =>
     status: "completed",
     createdAt: 1,
     ...over,
-  }) as EvalSuiteRun;
+  } as EvalSuiteRun);
 
 const iteration = (over: Partial<EvalIteration> = {}): EvalIteration =>
   ({
@@ -55,7 +60,7 @@ const iteration = (over: Partial<EvalIteration> = {}): EvalIteration =>
       expectedToolCalls: [{ toolName: "tool_a", arguments: {} }],
     },
     ...over,
-  }) as EvalIteration;
+  } as EvalIteration);
 
 const row = (over: Partial<EvaluateCaseRow> = {}): EvaluateCaseRow =>
   ({
@@ -87,7 +92,7 @@ const row = (over: Partial<EvaluateCaseRow> = {}): EvaluateCaseRow =>
     diagnostic: null,
     failureGroups: [],
     ...over,
-  }) as EvaluateCaseRow;
+  } as EvaluateCaseRow);
 
 describe("readRunToolCatalog", () => {
   it("reads inline server tool names and the hash", () => {
@@ -399,5 +404,356 @@ describe("copy helpers", () => {
     expect(mismatchLines(doc!.cases[0]!, doc!.catalogState)).toContain(
       "catalog not loaded — substitutions were not classified",
     );
+  });
+});
+
+// ── friction signals ─────────────────────────────────────────────────────────
+
+const measuredFriction = (over: Record<string, unknown> = {}) => ({
+  version: 1,
+  state: "measured",
+  callCount: 4,
+  resultAvailableCount: 4,
+  timedCallCount: 0,
+  identifierSignals: { state: "measured" },
+  signals: [],
+  ...over,
+});
+
+describe("readTrialFrictionSignals", () => {
+  it("takes a document that validates", () => {
+    const parsed = readTrialFrictionSignals(
+      iteration({ metadata: { frictionSignals: measuredFriction() } } as never),
+    );
+    expect(parsed).toMatchObject({ state: "measured", callCount: 4 });
+  });
+
+  it("refuses one that does not, rather than half-trusting it", () => {
+    expect(
+      readTrialFrictionSignals(
+        iteration({
+          metadata: {
+            frictionSignals: measuredFriction({
+              identifierSignals: {
+                state: "notMeasured",
+                reason: "resultsUnavailable",
+              },
+              signals: [
+                {
+                  kind: "identifierSurfacedUnused",
+                  informationCallIndex: 0,
+                  observedAtCallIndex: 2,
+                  toolName: "search_issues",
+                  identifierKeyPaths: ["results[].id"],
+                  identifierCount: 1,
+                  laterCallCount: 2,
+                },
+              ],
+            }),
+          },
+        } as never),
+      ),
+    ).toBeUndefined();
+    expect(readTrialFrictionSignals(iteration())).toBeUndefined();
+  });
+
+  it("reaches the trial input, so the rates have something to count", () => {
+    const trial = iterationToRouteTrial(
+      iteration({ metadata: { frictionSignals: measuredFriction() } } as never),
+    );
+    expect(trial.frictionSignals).toMatchObject({ state: "measured" });
+    expect(iterationToRouteTrial(iteration()).frictionSignals).toBeUndefined();
+  });
+});
+
+describe("frictionLineForTrial", () => {
+  it("names the tool, the key path and the calls, in observation words", () => {
+    const line = frictionLineForTrial(
+      measuredFriction({
+        signals: [
+          {
+            kind: "identifierSurfacedUnused",
+            informationCallIndex: 1,
+            observedAtCallIndex: 3,
+            toolName: "search_issues",
+            identifierKeyPaths: ["results[].id"],
+            identifierCount: 2,
+            laterCallCount: 2,
+          },
+          {
+            kind: "searchRepeatedAfterIdentifier",
+            informationCallIndex: 1,
+            observedAtCallIndex: 3,
+            toolName: "search_issues",
+            repeatCallIndexes: [2, 3],
+            identifierKeyPaths: ["results[].id"],
+            identifierCount: 2,
+          },
+        ],
+      }) as never,
+    );
+    expect(line).toBe(
+      "Possible detour: `search_issues` returned identifiers (results[].id) at " +
+        "call 1 that no later call used; `search_issues` was called again at " +
+        "calls 2 and 3",
+    );
+  });
+
+  it("never says wasted, unnecessary, or blames the server", () => {
+    const line =
+      frictionLineForTrial(
+        measuredFriction({
+          signals: [
+            {
+              kind: "identicalRetry",
+              callIndex: 2,
+              priorCallIndex: 1,
+              toolName: "get_issue",
+              afterError: true,
+            },
+          ],
+        }) as never,
+      ) ?? "";
+    expect(line).toBe(
+      "Retry: `get_issue` repeated with identical arguments at call 2 after an error",
+    );
+    for (const word of ["wasted", "unnecessary", "the server", "caused"]) {
+      expect(line.toLowerCase()).not.toContain(word);
+    }
+  });
+
+  it("heads a pagination-only trial as Pagination, not a detour", () => {
+    expect(
+      frictionLineForTrial(
+        measuredFriction({
+          signals: [
+            {
+              kind: "paginationContinuation",
+              callIndex: 1,
+              priorCallIndex: 0,
+              toolName: "list_pages",
+              paginationKeys: ["cursor"],
+            },
+          ],
+        }) as never,
+      ),
+    ).toBe("Pagination: `list_pages` continued pagination at call 1 (cursor)");
+  });
+
+  it("says not measured with the reason, and stays silent when nothing fired", () => {
+    expect(
+      frictionLineForTrial({
+        version: 1,
+        state: "notMeasured",
+        notMeasuredReason: "resultsUnavailable",
+        callCount: 2,
+        resultAvailableCount: 0,
+        timedCallCount: 0,
+        identifierSignals: {
+          state: "notMeasured",
+          reason: "resultsUnavailable",
+        },
+        signals: [],
+      } as never),
+    ).toBe("friction signals: not measured — tool results were not retained");
+    expect(frictionLineForTrial(measuredFriction() as never)).toBeNull();
+    expect(frictionLineForTrial(undefined)).toBeNull();
+  });
+});
+
+describe("mismatchLines — friction rates", () => {
+  const facts = (frictionSignals: unknown): EvalRunRouteFactsCase =>
+    ({
+      caseVariantKey: "k",
+      routes: {
+        population: "trial",
+        totalTrials: 4,
+        includedTrials: 4,
+        exclusions: {},
+        routes: [],
+        tags: {
+          noToolCalled: {
+            state: "notMeasured",
+            value: null,
+            numerator: 0,
+            denominator: 0,
+            exclusions: {},
+          },
+          retried: {
+            state: "notMeasured",
+            value: null,
+            numerator: 0,
+            denominator: 0,
+            exclusions: {},
+          },
+          looping: {
+            state: "notMeasured",
+            value: null,
+            numerator: 0,
+            denominator: 0,
+            exclusions: {},
+          },
+        },
+        loopedOn: [],
+        endedWithQuestion: {
+          state: "notMeasured",
+          value: null,
+          numerator: 0,
+          denominator: 0,
+          exclusions: {},
+        },
+        frictionSignals,
+      },
+      mismatch: { state: "notMeasured" },
+    } as unknown as EvalRunRouteFactsCase);
+
+  const rate = (numerator: number, denominator: number) => ({
+    state: "measured" as const,
+    value: numerator / denominator,
+    numerator,
+    denominator,
+    exclusions: {},
+  });
+
+  it("states each rate's OWN denominator, so the two are never conflated", () => {
+    const lines = mismatchLines(
+      facts({
+        identifierSurfacedUnused: rate(1, 2),
+        searchRepeatedAfterIdentifier: rate(0, 2),
+        identicalRetry: rate(3, 4),
+        changedRetry: rate(0, 4),
+        paginationContinuation: rate(0, 4),
+      }),
+      "loaded",
+    );
+    expect(lines).toContain("identifiers surfaced, none used later: 1 of 2");
+    expect(lines).toContain("repeated with identical arguments: 3 of 4");
+    // A rate that fired on nothing gets no line — "0 of 4" invites a reader to
+    // go looking for something that is not there.
+    expect(lines.join(" ")).not.toContain("0 of 4");
+  });
+
+  it("says not measured rather than zero", () => {
+    const lines = mismatchLines(
+      facts({
+        identifierSurfacedUnused: {
+          state: "notMeasured",
+          value: null,
+          numerator: 0,
+          denominator: 0,
+          exclusions: {},
+        },
+        searchRepeatedAfterIdentifier: {
+          state: "notMeasured",
+          value: null,
+          numerator: 0,
+          denominator: 0,
+          exclusions: {},
+        },
+        identicalRetry: rate(1, 4),
+        changedRetry: rate(0, 4),
+        paginationContinuation: rate(0, 4),
+      }),
+      "loaded",
+    );
+    expect(lines).toContain(
+      "identifiers surfaced, none used later: not measured",
+    );
+  });
+
+  it("adds no friction line at all when the block is absent", () => {
+    // The `endedWithQuestion` line is this fixture's own and is not a friction
+    // rate; a run whose producer predates the measurement gains nothing here.
+    expect(mismatchLines(facts(undefined), "loaded")).toEqual([
+      "ended with a question: not measured",
+    ]);
+  });
+});
+
+describe("the suspected condition (step 2)", () => {
+  const verdict = (over: Record<string, unknown> = {}) => ({
+    status: "scored",
+    condition: "idBuriedInPayload",
+    confidence: "high",
+    remediation: "Surface `results[].id` at the top level of `search_issues`.",
+    gradingKey: "case_a#1",
+    signalKind: "identifierSurfacedUnused",
+    informationCallIndex: 0,
+    observedAtCallIndex: 2,
+    judgeTemplateVersion: 1,
+    judgeTemplateHash: "h",
+    model: "openai/gpt-5.4-mini",
+    generatedAt: 1,
+    ...over,
+  });
+
+  const read = (raw: unknown) =>
+    readTrialSuspectedCondition(
+      iteration({ metadata: { suspectedConditionVerdict: raw } } as never),
+    );
+
+  it("names the condition, the confidence and one server lever", () => {
+    expect(suspectedConditionLineForTrial(read(verdict()))).toEqual({
+      line: "Suspected condition: identifier buried in payload (high confidence)",
+      next: "Surface `results[].id` at the top level of `search_issues`.",
+    });
+  });
+
+  it("unclear reads as could not attribute, with NO next step", () => {
+    const line = suspectedConditionLineForTrial(
+      read(verdict({ condition: "unclear", remediation: undefined })),
+    );
+    expect(line).toEqual({ line: "Suspected condition: could not attribute" });
+    expect(line!.next).toBeUndefined();
+  });
+
+  it("responseWasClear keeps its label and takes no next step", () => {
+    const line = suspectedConditionLineForTrial(
+      read(verdict({ condition: "responseWasClear", remediation: undefined })),
+    );
+    expect(line).toEqual({
+      line: "Suspected condition: the response was clear (high confidence)",
+    });
+  });
+
+  it("renders nothing for skipped, error, or a trial never judged", () => {
+    for (const raw of [
+      verdict({
+        status: "skipped",
+        reason: "cap",
+        condition: undefined,
+        confidence: undefined,
+        remediation: undefined,
+      }),
+      verdict({
+        status: "error",
+        condition: undefined,
+        confidence: undefined,
+        remediation: undefined,
+      }),
+    ]) {
+      expect(suspectedConditionLineForTrial(read(raw))).toBeNull();
+    }
+    expect(suspectedConditionLineForTrial(undefined)).toBeNull();
+  });
+
+  it("refuses a verdict that does not validate, and says it is unavailable", () => {
+    const forged = iteration({
+      metadata: {
+        suspectedConditionVerdict: {
+          status: "scored",
+          condition: "theServerIsBad",
+          confidence: "high",
+        },
+      },
+    } as never);
+    expect(readTrialSuspectedCondition(forged)).toBeUndefined();
+    expect(suspectedConditionUnavailable(forged)).toBe(true);
+    expect(suspectedConditionUnavailable(iteration())).toBe(false);
+  });
+
+  it("never says caused", () => {
+    const line = suspectedConditionLineForTrial(read(verdict()))!;
+    expect(`${line.line} ${line.next}`.toLowerCase()).not.toContain("caused");
   });
 });
