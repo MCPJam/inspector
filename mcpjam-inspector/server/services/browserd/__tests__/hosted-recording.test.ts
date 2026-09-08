@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetHostedRecordings,
   collectHostedRecordingBeforeRelease,
+  collectHostedRecordingThenRelease,
   forgetHostedRecording,
   HOSTED_RECORDING_DIR,
   isCollectableRecordingPath,
@@ -544,6 +545,132 @@ describe("hosted recording — collecting before release", () => {
   });
 });
 
+
+describe("hosted recording — collecting, then releasing", () => {
+  beforeEach(() => __resetHostedRecordings());
+  afterEach(() => __resetHostedRecordings());
+
+  const recording = {
+    bytes: Buffer.from([1]),
+    mime: "video/mp4" as const,
+    durationMs: 1,
+    distinctFrames: 1,
+    fps: 15,
+    truncated: false,
+    startedAtMs: 1,
+  };
+
+  it("collects BEFORE it releases, and hands the recording back", async () => {
+    // The file only exists on the box; after the release there is nothing
+    // left to read. The order is the whole point.
+    const collect = vi.fn(async () => recording);
+    const release = vi.fn(async () => {});
+
+    const got = await collectHostedRecordingThenRelease({
+      sandboxRowId: "row-1",
+      collect,
+      release,
+    });
+
+    expect(got).toBe(recording);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(collect.mock.invocationCallOrder[0]).toBeLessThan(
+      release.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("releases when the collector rejects", async () => {
+    const release = vi.fn(async () => {});
+    const got = await collectHostedRecordingThenRelease({
+      sandboxRowId: "row-1",
+      collect: async () => {
+        throw new Error("daemon gone");
+      },
+      release,
+    });
+    expect(got).toBeNull();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases when the collector throws synchronously", async () => {
+    // A collector is a plain function to the caller; one that throws before
+    // returning a promise must not escape past the release.
+    const release = vi.fn(async () => {});
+    const got = await collectHostedRecordingThenRelease({
+      sandboxRowId: "row-1",
+      collect: () => {
+        throw new Error("sync");
+      },
+      release,
+    });
+    expect(got).toBeNull();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases at the bound when the collector hangs", async () => {
+    // THE RULE, one layer up from the collector's own deadline: the release
+    // path must not rely on a promise the collector makes about itself.
+    vi.useFakeTimers();
+    try {
+      const release = vi.fn(async () => {});
+      const pending = collectHostedRecordingThenRelease({
+        sandboxRowId: "row-1",
+        collect: () => new Promise(() => {}),
+        release,
+        timeoutMs: 60_000,
+      });
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(release).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toBeNull();
+      expect(release).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("swallows a failing release and still returns the recording", async () => {
+    // The caller is a `finally` with nothing left to do about a leaked box;
+    // the recording it DID collect is still evidence worth persisting.
+    const got = await collectHostedRecordingThenRelease({
+      sandboxRowId: "row-1",
+      collect: async () => recording,
+      release: async () => {
+        throw new Error("control plane 503");
+      },
+    });
+    expect(got).toBe(recording);
+  });
+
+  it("releases at once, with no network, for a row that never recorded", async () => {
+    // The common case, through the REAL collector: a run that never touched a
+    // browser tool costs the release path nothing.
+    const release = vi.fn(async () => {});
+    const got = await collectHostedRecordingThenRelease({
+      sandboxRowId: "row-unknown",
+      release,
+    });
+    expect(got).toBeNull();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("collects through the real collector when one is not injected", async () => {
+    const { handle, calls } = fakeHandle();
+    await startHostedRecording(handle, {
+      connect: async () => fakeSandbox().sandbox,
+    });
+    const release = vi.fn(async () => {});
+
+    const got = await collectHostedRecordingThenRelease({
+      sandboxRowId: "row-1",
+      release,
+    });
+
+    expect(calls.at(-1)).toEqual({ action: "stop" });
+    expect(got).toMatchObject({ mime: "video/mp4", distinctFrames: 42 });
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("isCollectableRecordingPath", () => {
   it("accepts exactly a take under the recordings dir", () => {

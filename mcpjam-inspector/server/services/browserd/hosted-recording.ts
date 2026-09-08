@@ -366,6 +366,68 @@ export async function collectHostedRecordingBeforeRelease(
   }
 }
 
+/**
+ * Outer bound on the collect when it stands between a run and its release.
+ *
+ * `collectHostedRecordingBeforeRelease` bounds itself at 45 s, and this sits
+ * above that on purpose: the release path must not rely on a promise the
+ * collector makes about itself. Whatever collector is handed in — the real one,
+ * a future one, a test double that hangs — the box is released by here.
+ */
+export const HOSTED_RECORDING_RELEASE_BOUND_MS = 60_000;
+
+/**
+ * Collect the take, THEN release the box — in that order, and always both.
+ *
+ * The two facts a release site needs to be true, written once so every site
+ * gets them the same way:
+ *
+ *   - the collect runs FIRST, because the file only ever exists on the box and
+ *     after the release there is nothing left to read;
+ *   - the release runs REGARDLESS — a collector that throws, rejects, or hangs
+ *     past the bound yields no video, and the box is released on the same
+ *     schedule it would have been. A box that outlives its run costs money
+ *     until the GC cron reaps it, and no video is worth that.
+ *
+ * Never throws: a failing release is logged at warn (a leaked box is worth a
+ * line) and swallowed, since the caller is a `finally` with nothing left to do
+ * about it.
+ */
+export async function collectHostedRecordingThenRelease(args: {
+  sandboxRowId: string;
+  release: () => Promise<unknown>;
+  /** The collector; the real one unless a test says otherwise. */
+  collect?: (sandboxRowId: string) => Promise<HostedRecording | null>;
+  timeoutMs?: number;
+}): Promise<HostedRecording | null> {
+  const collect = args.collect ?? collectHostedRecordingBeforeRelease;
+  let recording: HostedRecording | null = null;
+  try {
+    // `Promise.resolve().then(...)` so a collector that throws SYNCHRONOUSLY
+    // still lands in the catch below rather than escaping past the release.
+    recording = await withDeadline(
+      Promise.resolve().then(() => collect(args.sandboxRowId)),
+      args.timeoutMs ?? HOSTED_RECORDING_RELEASE_BOUND_MS,
+    );
+  } catch (err) {
+    logger.info("[browser-session] browser.sandbox_recording_collected", {
+      sandboxRowId: args.sandboxRowId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    recording = null;
+  }
+  try {
+    await args.release();
+  } catch (err) {
+    logger.warn("[browser-session] browser.sandbox_release_failed", {
+      sandboxRowId: args.sandboxRowId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return recording;
+}
+
 async function collect(entry: ActiveRecording): Promise<HostedRecording | null> {
   const startedAt = Date.now();
   const stopped = await entry.stop();
