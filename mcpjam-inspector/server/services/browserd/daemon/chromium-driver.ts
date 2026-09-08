@@ -214,6 +214,19 @@ function emptyWebmcpState(): TabWebmcpState {
 const MAX_TRACKED_INVOCATIONS = 256;
 
 /**
+ * How many cancelled-before-it-ran intents to hold, and for how long.
+ *
+ * A Stop can land while its invoke is still QUEUED behind another command on
+ * the same tab, when there is nothing in flight to latch onto. The intent has
+ * to wait somewhere for the command to be dequeued, and a cancel for a command
+ * that never arrives (it failed upstream, or never existed) must not wait
+ * forever — so both a ceiling and a TTL, and eviction never takes a latch that
+ * guards a running invocation.
+ */
+const MAX_PENDING_CANCELS = 64;
+const PENDING_CANCEL_TTL_MS = 60_000;
+
+/**
  * A tab's URL + DOM signal read together. Both are part of the L3 state token,
  * so an observation binds its token to the snapshot the OUTPUT was captured
  * against — never a fresh read — or a change between capture and token (a DOM
@@ -409,43 +422,27 @@ export class ChromiumDriver implements BrowserDriver {
     { tabId: string; invocationId: string }
   >();
   /**
-   * Commands whose cancellation arrived before their invocation had an id.
+   * Commands whose cancellation arrived before their invocation could act on
+   * it, mapped to when that intent expires.
    *
-   * Bounded by the same ceiling as the map beside it: these are dropped on
-   * insert once full, which loses a cancellation rather than the memory — and
-   * a daemon holding 256 in-flight invocations has a different problem.
+   * Three moments a cancel BY ID cannot reach: while the invoke is still
+   * queued behind another command on its tab, while it is dequeued but the
+   * browser has not yet named the invocation, and the gap between. All three
+   * latch here; `webmcpInvoke` consults the latch on entry, so a command
+   * cancelled before it ran never touches the page, and `rememberInvocation`
+   * consults it when the id arrives. Bounded by `MAX_PENDING_CANCELS` and
+   * `PENDING_CANCEL_TTL_MS` (see `latchCancel`); a latch guarding a running
+   * invocation is never evicted and never expires.
    */
-  private readonly pendingCancels = new Set<string>();
+  private readonly pendingCancels = new Map<string, number>();
   /**
    * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
    *
-   * The membership test for `pendingCancels`: a cancellation can only be
-   * latched for something still running, which is what keeps that set bounded
-   * by the number of concurrent invocations rather than by a ceiling. Held
-   * only across the bridge call, and cleared in its `finally`.
+   * Registered at dequeue, cleared in the `finally`. This is what protects a
+   * latch in `pendingCancels` from eviction and expiry: an intent for a
+   * running command is live for as long as the command is.
    */
   private readonly activeInvocations = new Set<string>();
-  /**
-   * Is this command admitted but NOT yet dequeued? Answered by the queue, which
-   * is the only thing that knows; see `attachCommandProbe`.
-   *
-   * The latch above covers a Stop that lands while the invoke is RUNNING. A
-   * Stop can also land while it is still waiting its turn behind another
-   * command on the same tab — the cancel jumps the FIFO by design — and the
-   * driver has never heard of that command yet. Without this, that cancel found
-   * nothing to latch onto and the invoke ran to completion a moment later.
-   */
-  private commandPending: ((commandId: string) => boolean) | undefined;
-
-  /**
-   * Let the queue answer "is this command still queued". Wired by whoever
-   * builds both, after the queue exists; a driver without one simply cannot
-   * latch a cancel for a command it has not dequeued.
-   */
-  attachCommandProbe(probe: (commandId: string) => boolean): void {
-    this.commandPending = probe;
-  }
-
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -923,14 +920,16 @@ export class ChromiumDriver implements BrowserDriver {
     // below is inside the `finally`, so an early return clears it too.
     this.activeInvocations.add(commandId);
     try {
-      // A STOP THAT ARRIVED WHILE THIS WAS STILL QUEUED. The cancel could not
-      // name an invocation — there was none — so it left its intent here, and
-      // the honest answer now is to never ask the page at all.
-      if (this.pendingCancels.has(commandId)) {
+      // CANCELLED BEFORE IT RAN. A Stop that landed while this command was
+      // still queued behind another on its tab found nothing in flight to
+      // attach to, and waited in the latch. Honouring it here — before the
+      // bridge is even resolved — is what makes "Stop stops it" true for a
+      // queued call and not only for a running one.
+      if (this.consumeCancel(commandId)) {
         return {
           ok: false,
           error:
-            "webmcp_cancelled: this call was stopped before the page was asked to run it",
+            "webmcp_cancelled: the call was cancelled before it reached the page; nothing ran",
         };
       }
       return await this.runWebmcpInvoke(tabId, action, permit, commandId);
@@ -1096,24 +1095,17 @@ export class ChromiumDriver implements BrowserDriver {
       //
       // So the intent is remembered against the COMMAND, and the id, when it
       // arrives, is cancelled on sight.
-      // ONLY FOR A COMMAND THAT IS ACTUALLY RUNNING OR QUEUED. A cancel can
-      // also arrive long after its invoke failed early — refused binding, no
-      // bridge, a lease — and that command will never reach `onStarted` to
-      // consume the latch or `finally` to clear it, because both already
-      // happened. Those entries would sit until the ceiling evicted them, and
-      // enough of them would evict the one latch that belonged to a live
-      // invocation. So the question is not "might this start later" but "is it
-      // running now, or admitted and waiting its turn" — the set below answers
-      // the first, and the queue's probe the second.
-      const latched =
-        action.commandId !== undefined &&
-        (this.activeInvocations.has(action.commandId) ||
-          this.commandPending?.(action.commandId) === true);
-      if (latched) this.pendingCancels.add(action.commandId!);
-      return {
-        ok: true,
-        output: { cancelled: false, known: false, latched },
-      };
+      //
+      // WHETHER OR NOT IT IS RUNNING YET. The invoke may still be QUEUED behind
+      // another command on its tab — the ordinary case when a model issues a
+      // page tool beside an observe and the user presses Stop during the
+      // observe. Nothing is in flight to attach to, so the intent waits in the
+      // latch and `webmcpInvoke` honours it at dequeue, before the bridge is
+      // resolved. A cancel for a command that already failed early, or never
+      // existed, is what the latch's ceiling and TTL are for; a latch for a
+      // live invocation is never the one evicted.
+      if (action.commandId) this.latchCancel(action.commandId);
+      return { ok: true, output: { cancelled: false, known: false } };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {
@@ -1176,13 +1168,58 @@ export class ChromiumDriver implements BrowserDriver {
     // A CANCELLATION THAT ARRIVED FIRST. It had no id to name at the time, so
     // it left its intent here; this is the moment the id exists. Reported back
     // rather than acted on, because the caller holds the bridge.
-    const cancelWanted = this.pendingCancels.delete(commandId);
+    const cancelWanted = this.consumeCancel(commandId);
     if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== undefined) this.invocationsByCommand.delete(oldest);
     }
     this.invocationsByCommand.set(commandId, { tabId, invocationId });
     return cancelWanted;
+  }
+
+  /**
+   * Remember that `commandId` was cancelled, whether or not it has started.
+   *
+   * Expired latches for commands that are not running are swept first. At the
+   * ceiling, the oldest latch that guards NO running invocation is evicted; if
+   * every slot guards one, this intent is dropped rather than a live one — a
+   * lost cancellation for a command that may never arrive is the cheaper
+   * mistake.
+   */
+  private latchCancel(commandId: string): void {
+    const now = Date.now();
+    for (const [id, expiresAt] of this.pendingCancels) {
+      if (expiresAt <= now && !this.activeInvocations.has(id)) {
+        this.pendingCancels.delete(id);
+      }
+    }
+    if (
+      this.pendingCancels.size >= MAX_PENDING_CANCELS &&
+      !this.pendingCancels.has(commandId)
+    ) {
+      for (const id of this.pendingCancels.keys()) {
+        if (!this.activeInvocations.has(id)) {
+          this.pendingCancels.delete(id);
+          break;
+        }
+      }
+      if (this.pendingCancels.size >= MAX_PENDING_CANCELS) return;
+    }
+    this.pendingCancels.set(commandId, now + PENDING_CANCEL_TTL_MS);
+  }
+
+  /**
+   * Take the latch for `commandId`, if one is still live.
+   *
+   * A latch for a RUNNING command is live regardless of its timestamp — the
+   * TTL exists for commands that never arrive, not for ones taking their time
+   * inside the bridge.
+   */
+  private consumeCancel(commandId: string): boolean {
+    const expiresAt = this.pendingCancels.get(commandId);
+    if (expiresAt === undefined) return false;
+    this.pendingCancels.delete(commandId);
+    return this.activeInvocations.has(commandId) || expiresAt > Date.now();
   }
 
   /**
@@ -1568,6 +1605,23 @@ export class ChromiumDriver implements BrowserDriver {
       list.splice(dropIndex(list, this.activeTabId), 1);
     }
     return payload();
+  }
+
+  /**
+   * The viewport this tab already has, without ever creating one.
+   *
+   * `viewport()` below opens the tab and attaches a CDP session on a miss.
+   * That is right for a person opening the pane and wrong for the frame-rate
+   * boost after an agent command, which only wants to nudge a picture someone
+   * is ALREADY watching: on a box with no pane open, going through
+   * `viewport()` would attach a screencast and start encoding JPEGs for
+   * nobody, on the same two cores the agent is using.
+   *
+   * Returns the map's promise rather than awaiting it, so a viewport that is
+   * still being created counts as watched — somebody asked for it.
+   */
+  viewportIfWatched(tabId?: string): Promise<TabViewport | null> | null {
+    return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
   }
 
   async viewport(tabId?: string): Promise<TabViewport | null> {

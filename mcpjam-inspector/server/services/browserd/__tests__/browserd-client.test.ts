@@ -283,3 +283,147 @@ describe("BrowserdClient — a body that is not JSON vs a body that failed", () 
     );
   });
 });
+
+/**
+ * R-3. Recording control over the wire.
+ *
+ * A RESULT rather than a throw on every refusal: a box with no ffmpeg (503)
+ * and a box already recording (409) are ordinary states of a run, and a caller
+ * that surfaced either as a failure would be reporting a run working exactly
+ * as designed.
+ */
+describe("BrowserdClient — /v1/record", () => {
+  it("sends a start with the id and fps it was given", async () => {
+    const { client, calls } = makeClient(json(200, { ok: true, id: "run-1", fps: 15 }));
+
+    expect(await client.record({ action: "start", id: "run-1", fps: 15 })).toEqual({
+      ok: true,
+    });
+    expect(calls[0]!.url).toBe("https://box-8791.e2b.dev/v1/record");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      action: "start",
+      id: "run-1",
+      fps: 15,
+    });
+    expect(
+      new Headers(calls[0]!.init.headers).get("authorization"),
+    ).toBe("Bearer boot-bearer");
+  });
+
+  it("omits fps entirely rather than sending a guess", async () => {
+    // The daemon owns the default (15). Sending `undefined` would serialize to
+    // a missing key anyway, but sending a NUMBER here would mean two places
+    // decide the rate and only one of them is tested.
+    const { client, calls } = makeClient(json(200, { ok: true }));
+    await client.record({ action: "start", id: "run-1" });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      action: "start",
+      id: "run-1",
+    });
+  });
+
+  it("reads a finished take back off a stop", async () => {
+    const recording = {
+      path: "/rec/run-1.mp4",
+      bytes: 1_234,
+      durationMs: 9_000,
+      distinctFrames: 42,
+      truncated: true,
+    };
+    const { client, calls } = makeClient(json(200, { ok: true, recording }));
+
+    expect(await client.record({ action: "stop" })).toEqual({
+      ok: true,
+      recording,
+    });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ action: "stop" });
+  });
+
+  it("reads `nothing was recording` as an answer, not an error", async () => {
+    const { client } = makeClient(json(200, { ok: true, recording: null }));
+    expect(await client.record({ action: "stop" })).toEqual({
+      ok: true,
+      recording: null,
+    });
+  });
+
+  it("refuses a half-decoded recording rather than inventing its fields", async () => {
+    // EVERY field, or none. Defaulting a missing `durationMs` to 0 and a
+    // missing `truncated` to false does not degrade gracefully — it invents
+    // the two claims a reader most relies on, and they travel into the trace
+    // page as a stated duration and an absent badge. "This take completed and
+    // ran for no time" is a worse answer than "I could not read that".
+    const complete = {
+      path: "/rec/run-1.mp4",
+      bytes: 5,
+      durationMs: 9_000,
+      distinctFrames: 42,
+      truncated: false,
+    };
+    for (const missing of [
+      "path",
+      "bytes",
+      "durationMs",
+      "distinctFrames",
+      "truncated",
+    ] as const) {
+      const partial: Record<string, unknown> = { ...complete };
+      delete partial[missing];
+      const { client } = makeClient(
+        json(200, { ok: true, recording: partial }),
+      );
+      expect(
+        await client.record({ action: "stop" }),
+        `missing ${missing}`,
+      ).toEqual({ ok: true, recording: null });
+    }
+    // ...and the complete one still reads back whole.
+    const whole = makeClient(json(200, { ok: true, recording: complete }));
+    expect(await whole.client.record({ action: "stop" })).toEqual({
+      ok: true,
+      recording: complete,
+    });
+  });
+
+  it("maps 409 and 503 to results the caller can read", async () => {
+    const active = makeClient(json(409, { error: "record_active" }));
+    expect(await active.client.record({ action: "start", id: "run-2" })).toEqual({
+      ok: false,
+      status: 409,
+      error: "record_active",
+    });
+
+    const missing = makeClient(json(503, { error: "record_unavailable" }));
+    expect(await missing.client.record({ action: "start", id: "run-1" })).toEqual({
+      ok: false,
+      status: 503,
+      error: "record_unavailable",
+    });
+  });
+
+  it("falls back to the bare status when the daemon sent no code", async () => {
+    const { client } = makeClient(new Response("", { status: 502 }));
+    expect(await client.record({ action: "start", id: "run-1" })).toEqual({
+      ok: false,
+      status: 502,
+      error: "http_502",
+    });
+  });
+
+  it("reports the current take on recordStatus, and nothing on a refusal", async () => {
+    const live = makeClient(
+      json(200, { active: true, id: "run-1", fps: 15, distinctFrames: 7 }),
+    );
+    expect(await live.client.recordStatus()).toEqual({
+      active: true,
+      id: "run-1",
+      fps: 15,
+      distinctFrames: 7,
+    });
+    expect(live.calls[0]!.init.method).toBe("GET");
+
+    const refused = makeClient(json(503, { error: "record_unavailable" }));
+    expect(await refused.client.recordStatus()).toEqual({ active: false });
+  });
+});

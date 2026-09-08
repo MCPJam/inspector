@@ -262,18 +262,6 @@ var CommandQueue = class {
   get distinctTrackedCount() {
     return this.commands.size + this.evicted.size;
   }
-  /**
-   * Is this command admitted and not yet settled — queued behind its tab's
-   * FIFO or running right now?
-   *
-   * For the driver's cancellation latch: a `webmcp_cancel` skips the FIFO, so
-   * it can arrive for an invoke the driver has not been handed yet, and only
-   * the queue knows that invoke exists. Reads and cancels are never tracked
-   * (see `isReplayable`), so they answer false.
-   */
-  isPending(commandId) {
-    return this.commands.get(commandId)?.state === "running";
-  }
   lookup(commandId) {
     const entry = this.commands.get(commandId);
     if (!entry) return void 0;
@@ -336,6 +324,259 @@ function constantTimeEquals(a, b) {
   const digestA = createHmac("sha256", AUTH_DIGEST_KEY).update(a, "utf8").digest();
   const digestB = createHmac("sha256", AUTH_DIGEST_KEY).update(b, "utf8").digest();
   return timingSafeEqual(digestA, digestB);
+}
+
+// server/services/browserd/daemon/video-recorder.ts
+import { spawn } from "node:child_process";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+var MIN_RECORD_FPS = 1;
+var MAX_RECORD_FPS = 30;
+var DEFAULT_RECORD_FPS = 15;
+var FRAGMENT_SECONDS = 4;
+var DEFAULT_FINALIZE_GRACE_MS = 2e3;
+function recorderArgs(options) {
+  return [
+    "-loglevel",
+    "error",
+    "-progress",
+    "pipe:2",
+    "-f",
+    "x11grab",
+    "-framerate",
+    String(options.fps),
+    "-video_size",
+    `${options.width}x${options.height}`,
+    "-draw_mouse",
+    "1",
+    "-i",
+    options.display,
+    "-vf",
+    // `max`: the most consecutive frames mpdecimate may drop — the floor
+    // that gives `-force_key_frames` below something to land on.
+    `mpdecimate=max=${options.fps * FRAGMENT_SECONDS}`,
+    "-fps_mode",
+    "vfr",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-tune",
+    "zerolatency",
+    "-threads",
+    "1",
+    "-profile:v",
+    "baseline",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    String(options.fps * FRAGMENT_SECONDS),
+    "-sc_threshold",
+    "0",
+    // Wall clock, not frame count — the only one of the three that survives
+    // decimation. `t` is the frame's presentation time in seconds.
+    "-force_key_frames",
+    `expr:gte(t,n_forced*${FRAGMENT_SECONDS})`,
+    "-crf",
+    "28",
+    "-maxrate",
+    "800k",
+    "-bufsize",
+    "1600k",
+    "-movflags",
+    "+frag_keyframe+empty_moov+default_base_moof",
+    "-fs",
+    String(options.maxBytes),
+    "-f",
+    "mp4",
+    // OVERWRITE. Without it ffmpeg stops at an interactive "File exists?"
+    // prompt on a reused id — with stdin ignored that is a process that writes
+    // nothing and exits, AFTER `start` has already answered `ok`. A take that
+    // reuses an id means the previous one is finished with; replacing it is
+    // the only reading under which the answer stays true.
+    "-y",
+    options.outputPath
+  ];
+}
+function createProgressReader() {
+  let pending = "";
+  return {
+    push(chunk) {
+      const text = pending + chunk;
+      const lastBreak = text.lastIndexOf("\n");
+      if (lastBreak < 0) {
+        pending = text;
+        return void 0;
+      }
+      pending = text.slice(lastBreak + 1);
+      let found;
+      for (const line2 of text.slice(0, lastBreak).split("\n")) {
+        const match = /^frame=\s*(\d+)\s*$/.exec(line2.trim());
+        if (!match) continue;
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) found = value;
+      }
+      return found;
+    }
+  };
+}
+function createVideoRecorder(options) {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+    stdio: [...spawnOptions.stdio]
+  }));
+  const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
+  const statFile = options.statFile ?? (async (path) => stat(path));
+  const now = options.now ?? Date.now;
+  const nonce = options.nonce ?? randomBytes2(4).toString("hex");
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let take;
+  let stopping;
+  let takeSeq = 0;
+  let disposed = false;
+  const start = (args) => {
+    if (disposed) return { ok: false, error: "record_unavailable" };
+    if (take || stopping) return { ok: false, error: "record_active" };
+    takeSeq += 1;
+    const path = join(options.dir, `${args.id}-${nonce}-${takeSeq}.mp4`);
+    let child;
+    try {
+      child = spawnProcess(
+        ffmpegPath,
+        recorderArgs({
+          display: options.display,
+          width: options.width,
+          height: options.height,
+          fps: args.fps,
+          maxBytes: options.maxBytes,
+          outputPath: path
+        }),
+        // stdout ignored: everything this process says rides the progress pipe
+        // on stderr, and the video goes to a file.
+        { stdio: ["ignore", "ignore", "pipe"] }
+      );
+    } catch {
+      return { ok: false, error: "record_unavailable" };
+    }
+    let settleExit = () => {
+    };
+    const exited = new Promise((resolve) => {
+      settleExit = resolve;
+    });
+    const entry = {
+      id: args.id,
+      fps: args.fps,
+      path,
+      startedAtMs: now(),
+      child,
+      distinctFrames: 0,
+      exited,
+      settleExit,
+      endedEarly: false
+    };
+    take = entry;
+    child.on("error", () => {
+      if (take !== entry) return;
+      entry.endedEarly = true;
+      entry.settleExit();
+    });
+    child.on("exit", () => {
+      entry.settleExit();
+      if (take !== entry) return;
+      entry.endedEarly = true;
+    });
+    const progress = createProgressReader();
+    child.stderr.on("data", (chunk) => {
+      const frames = progress.push(String(chunk));
+      if (frames !== void 0) entry.distinctFrames = frames;
+    });
+    return { ok: true };
+  };
+  const stop = async () => {
+    const entry = take;
+    take = void 0;
+    if (!entry) return null;
+    const processGone = entry.exited.then(() => {
+      if (stopping === processGone) stopping = void 0;
+    });
+    stopping = processGone;
+    return runStop(entry);
+  };
+  const runStop = async (entry) => {
+    if (!entry.endedEarly) {
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+      }
+    }
+    await entry.exited;
+    const durationMs = Math.max(0, now() - entry.startedAtMs);
+    let bytes = 0;
+    try {
+      bytes = (await statFile(entry.path)).size;
+    } catch {
+      bytes = 0;
+    }
+    return {
+      path: entry.path,
+      bytes,
+      durationMs,
+      distinctFrames: entry.distinctFrames,
+      truncated: entry.endedEarly
+    };
+  };
+  return {
+    start,
+    stop,
+    status() {
+      if (!take) return { active: false };
+      return {
+        active: !take.endedEarly,
+        id: take.id,
+        fps: take.fps,
+        startedAtMs: take.startedAtMs,
+        distinctFrames: take.distinctFrames
+      };
+    },
+    async finalize(args) {
+      disposed = true;
+      const entry = take;
+      if (!entry) return;
+      take = void 0;
+      if (entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+        return;
+      }
+      const graceMs = args?.graceMs ?? DEFAULT_FINALIZE_GRACE_MS;
+      let timer;
+      await Promise.race([
+        entry.exited,
+        new Promise((resolve) => {
+          timer = setTimer(() => {
+            try {
+              entry.child.kill("SIGKILL");
+            } catch {
+            }
+            resolve();
+          }, graceMs);
+        })
+      ]);
+      clearTimer(timer);
+    },
+    dispose() {
+      disposed = true;
+      const entry = take;
+      take = void 0;
+      if (!entry || entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGKILL");
+      } catch {
+      }
+    }
+  };
 }
 
 // server/services/browserd/daemon/lease.ts
@@ -545,8 +786,15 @@ function handoffNoteFor(kind) {
 
 // server/services/browserd/daemon/request-handler.ts
 var MAX_INPUT_EVENTS = 64;
-var INPUT_BOOST_INTERVAL_MS = 33;
-var INPUT_BOOST_WINDOW_MS = 1500;
+var ACTIVITY_BOOST_INTERVAL_MS = 33;
+var ACTIVITY_BOOST_WINDOW_MS = 1500;
+var MOTION_ACTIONS = /* @__PURE__ */ new Set([
+  "navigate",
+  "back",
+  "reload",
+  "act"
+]);
+var RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 var BrowserdRequestHandler = class {
   queue;
   driver;
@@ -558,6 +806,7 @@ var BrowserdRequestHandler = class {
   contextMode;
   startedBy;
   setVideoTier;
+  recorder;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -590,6 +839,7 @@ var BrowserdRequestHandler = class {
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
     this.setVideoTier = deps.setVideoTier;
+    this.recorder = deps.recorder;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -687,6 +937,12 @@ var BrowserdRequestHandler = class {
       }
       return this.handlePolicy(req);
     }
+    if (req.path === "/v1/record") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleRecord(req);
+    }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -714,6 +970,98 @@ var BrowserdRequestHandler = class {
     }
     this.setVideoTier?.(tier);
     return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
+  }
+  /**
+   * Start or stop a recording.
+   *
+   * EVERY argument is validated before any spawn. A recording id becomes a
+   * filename and an fps becomes an x11grab rate: getting either wrong after
+   * the process is running means a file in the wrong place or an encoder at a
+   * rate the box cannot sustain, and neither is visible from the 200 that
+   * would come back. `fps` and `id` are echoed on every answer — including the
+   * refusals — so a caller never has to remember what it asked for to make
+   * sense of what it got.
+   */
+  async handleRecord(req) {
+    if (req.method === "GET") {
+      const status = this.recorder?.status() ?? { active: false };
+      return { status: 200, body: { ...status, bootId: this.bootId } };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    const { action, id, fps } = parsed;
+    if (action !== "start" && action !== "stop") {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    if (action === "stop") {
+      if (!this.recorder) {
+        return {
+          status: 503,
+          body: { error: "record_unavailable", bootId: this.bootId }
+        };
+      }
+      const result = await this.recorder.stop();
+      return {
+        status: 200,
+        body: { ok: true, recording: result, bootId: this.bootId }
+      };
+    }
+    const resolvedFps = fps === void 0 ? DEFAULT_RECORD_FPS : fps;
+    if (typeof resolvedFps !== "number" || !Number.isInteger(resolvedFps) || resolvedFps < MIN_RECORD_FPS || resolvedFps > MAX_RECORD_FPS) {
+      return {
+        status: 400,
+        body: { error: "invalid_fps", fps, bootId: this.bootId }
+      };
+    }
+    if (typeof id !== "string" || !RECORD_ID_PATTERN.test(id)) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_id", id, bootId: this.bootId }
+      };
+    }
+    if (!this.recorder) {
+      return {
+        status: 503,
+        body: {
+          error: "record_unavailable",
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    const started = this.recorder.start({ id, fps: resolvedFps });
+    if (!started.ok) {
+      return {
+        status: started.error === "record_active" ? 409 : 503,
+        body: {
+          error: started.error,
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: 200,
+      body: { ok: true, id, fps: resolvedFps, bootId: this.bootId }
+    };
   }
   async handleInput(req) {
     let parsed;
@@ -819,7 +1167,34 @@ var BrowserdRequestHandler = class {
       });
     }
     const outcome = await this.queue.submit(parsed.command);
+    await this.boostAfterMotion(parsed.command, outcome);
     return this.mapOutcome(outcome);
+  }
+  /**
+   * Raise the frame rate for a moment after a command that moved the page.
+   *
+   * The seam is HERE rather than in the driver because this is where the
+   * command's fate is known: a `navigate` the lease refused, or one the queue
+   * de-duplicated, never touched the page, and boosting after it would spend a
+   * box's cores on a picture nothing changed. It runs for every source —
+   * a chat-driven scroll and a person's own `manual` command are the same
+   * motion to whoever is watching.
+   *
+   * `viewportIfWatched` and never `viewport`: on a box where nobody has the
+   * pane open there is no viewport, and building one here would attach a CDP
+   * screencast and start encoding JPEGs for an audience of nobody — on the
+   * same two cores the agent is using. A driver too old to answer the question
+   * (or a fake that does not implement it) simply gets no boost.
+   */
+  async boostAfterMotion(command, outcome) {
+    if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    if (outcome.status !== "ok") return;
+    if (!outcome.result.ok) return;
+    try {
+      const viewport = await this.driver.viewportIfWatched?.(command.tabId);
+      viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
+    } catch {
+    }
   }
   /**
    * Watch a tab.
@@ -964,7 +1339,7 @@ var BrowserdRequestHandler = class {
       args.holder
     );
     if (args.events.length > 0) {
-      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+      viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
     return { ok: true };
   }
@@ -1772,7 +2147,6 @@ function buildBrowserdStack(driver, config) {
     guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
-  driver.attachCommandProbe?.((commandId) => queue.isPending(commandId));
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
@@ -1783,7 +2157,8 @@ function buildBrowserdStack(driver, config) {
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
     ...config.contextMode ? { contextMode: config.contextMode } : {},
     ...config.startedBy ? { startedBy: config.startedBy } : {},
-    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {}
+    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
+    ...config.recorder ? { recorder: config.recorder } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -1805,7 +2180,7 @@ function buildBrowserdStack(driver, config) {
 }
 
 // server/services/browserd/daemon/video-encoder.ts
-import { spawn } from "node:child_process";
+import { spawn as spawn2 } from "node:child_process";
 var NAL_AUD = 9;
 var NAL_IDR = 5;
 var MAX_RING_BYTES = 3 * 1024 * 1024;
@@ -1863,6 +2238,10 @@ function ffmpegArgs(options) {
     "0",
     "-x264-params",
     "aud=1:repeat-headers=1",
+    // Before the tier args and the output, so a tier that ever grows its own
+    // rate-control flags cannot end up on the far side of it.
+    "-threads",
+    "1",
     ...tier,
     "-f",
     "h264",
@@ -1931,7 +2310,7 @@ function containsIdr(bytes) {
   return false;
 }
 function createVideoEncoder(options) {
-  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn2(command, [...args], {
     stdio: [...spawnOptions.stdio]
   }));
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
@@ -3623,6 +4002,8 @@ function emptyWebmcpState() {
   };
 }
 var MAX_TRACKED_INVOCATIONS = 256;
+var MAX_PENDING_CANCELS = 64;
+var PENDING_CANCEL_TTL_MS = 6e4;
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3716,41 +4097,27 @@ var ChromiumDriver = class {
    */
   invocationsByCommand = /* @__PURE__ */ new Map();
   /**
-   * Commands whose cancellation arrived before their invocation had an id.
+   * Commands whose cancellation arrived before their invocation could act on
+   * it, mapped to when that intent expires.
    *
-   * Bounded by the same ceiling as the map beside it: these are dropped on
-   * insert once full, which loses a cancellation rather than the memory — and
-   * a daemon holding 256 in-flight invocations has a different problem.
+   * Three moments a cancel BY ID cannot reach: while the invoke is still
+   * queued behind another command on its tab, while it is dequeued but the
+   * browser has not yet named the invocation, and the gap between. All three
+   * latch here; `webmcpInvoke` consults the latch on entry, so a command
+   * cancelled before it ran never touches the page, and `rememberInvocation`
+   * consults it when the id arrives. Bounded by `MAX_PENDING_CANCELS` and
+   * `PENDING_CANCEL_TTL_MS` (see `latchCancel`); a latch guarding a running
+   * invocation is never evicted and never expires.
    */
-  pendingCancels = /* @__PURE__ */ new Set();
+  pendingCancels = /* @__PURE__ */ new Map();
   /**
    * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
    *
-   * The membership test for `pendingCancels`: a cancellation can only be
-   * latched for something still running, which is what keeps that set bounded
-   * by the number of concurrent invocations rather than by a ceiling. Held
-   * only across the bridge call, and cleared in its `finally`.
+   * Registered at dequeue, cleared in the `finally`. This is what protects a
+   * latch in `pendingCancels` from eviction and expiry: an intent for a
+   * running command is live for as long as the command is.
    */
   activeInvocations = /* @__PURE__ */ new Set();
-  /**
-   * Is this command admitted but NOT yet dequeued? Answered by the queue, which
-   * is the only thing that knows; see `attachCommandProbe`.
-   *
-   * The latch above covers a Stop that lands while the invoke is RUNNING. A
-   * Stop can also land while it is still waiting its turn behind another
-   * command on the same tab — the cancel jumps the FIFO by design — and the
-   * driver has never heard of that command yet. Without this, that cancel found
-   * nothing to latch onto and the invoke ran to completion a moment later.
-   */
-  commandPending;
-  /**
-   * Let the queue answer "is this command still queued". Wired by whoever
-   * builds both, after the queue exists; a driver without one simply cannot
-   * latch a cancel for a command it has not dequeued.
-   */
-  attachCommandProbe(probe) {
-    this.commandPending = probe;
-  }
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -4063,10 +4430,10 @@ var ChromiumDriver = class {
   async webmcpInvoke(tabId, action, permit, commandId) {
     this.activeInvocations.add(commandId);
     try {
-      if (this.pendingCancels.has(commandId)) {
+      if (this.consumeCancel(commandId)) {
         return {
           ok: false,
-          error: "webmcp_cancelled: this call was stopped before the page was asked to run it"
+          error: "webmcp_cancelled: the call was cancelled before it reached the page; nothing ran"
         };
       }
       return await this.runWebmcpInvoke(tabId, action, permit, commandId);
@@ -4164,12 +4531,8 @@ var ChromiumDriver = class {
     }
     const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
-      const latched = action.commandId !== void 0 && (this.activeInvocations.has(action.commandId) || this.commandPending?.(action.commandId) === true);
-      if (latched) this.pendingCancels.add(action.commandId);
-      return {
-        ok: true,
-        output: { cancelled: false, known: false, latched }
-      };
+      if (action.commandId) this.latchCancel(action.commandId);
+      return { ok: true, output: { cancelled: false, known: false } };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {
@@ -4211,13 +4574,53 @@ var ChromiumDriver = class {
   }
   /** Remember which invocation a command started, evicting oldest-first. */
   rememberInvocation(commandId, invocationId, tabId) {
-    const cancelWanted = this.pendingCancels.delete(commandId);
+    const cancelWanted = this.consumeCancel(commandId);
     if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== void 0) this.invocationsByCommand.delete(oldest);
     }
     this.invocationsByCommand.set(commandId, { tabId, invocationId });
     return cancelWanted;
+  }
+  /**
+   * Remember that `commandId` was cancelled, whether or not it has started.
+   *
+   * Expired latches for commands that are not running are swept first. At the
+   * ceiling, the oldest latch that guards NO running invocation is evicted; if
+   * every slot guards one, this intent is dropped rather than a live one — a
+   * lost cancellation for a command that may never arrive is the cheaper
+   * mistake.
+   */
+  latchCancel(commandId) {
+    const now = Date.now();
+    for (const [id, expiresAt] of this.pendingCancels) {
+      if (expiresAt <= now && !this.activeInvocations.has(id)) {
+        this.pendingCancels.delete(id);
+      }
+    }
+    if (this.pendingCancels.size >= MAX_PENDING_CANCELS && !this.pendingCancels.has(commandId)) {
+      for (const id of this.pendingCancels.keys()) {
+        if (!this.activeInvocations.has(id)) {
+          this.pendingCancels.delete(id);
+          break;
+        }
+      }
+      if (this.pendingCancels.size >= MAX_PENDING_CANCELS) return;
+    }
+    this.pendingCancels.set(commandId, now + PENDING_CANCEL_TTL_MS);
+  }
+  /**
+   * Take the latch for `commandId`, if one is still live.
+   *
+   * A latch for a RUNNING command is live regardless of its timestamp — the
+   * TTL exists for commands that never arrive, not for ones taking their time
+   * inside the bridge.
+   */
+  consumeCancel(commandId) {
+    const expiresAt = this.pendingCancels.get(commandId);
+    if (expiresAt === void 0) return false;
+    this.pendingCancels.delete(commandId);
+    return this.activeInvocations.has(commandId) || expiresAt > Date.now();
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle
@@ -4483,6 +4886,22 @@ var ChromiumDriver = class {
       list.splice(dropIndex(list, this.activeTabId), 1);
     }
     return payload();
+  }
+  /**
+   * The viewport this tab already has, without ever creating one.
+   *
+   * `viewport()` below opens the tab and attaches a CDP session on a miss.
+   * That is right for a person opening the pane and wrong for the frame-rate
+   * boost after an agent command, which only wants to nudge a picture someone
+   * is ALREADY watching: on a box with no pane open, going through
+   * `viewport()` would attach a screencast and start encoding JPEGs for
+   * nobody, on the same two cores the agent is using.
+   *
+   * Returns the map's promise rather than awaiting it, so a viewport that is
+   * still being created counts as watched — somebody asked for it.
+   */
+  viewportIfWatched(tabId) {
+    return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
   }
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;
@@ -5139,7 +5558,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 import { execFileSync } from "node:child_process";
 import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
@@ -5160,7 +5579,7 @@ async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner)
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
-      await unlink(join(userDataDir, name));
+      await unlink(join2(userDataDir, name));
       result.removed.push(name);
     } catch (err) {
       if (isNotFound(err)) continue;
@@ -5178,7 +5597,7 @@ function isNotFound(err) {
 async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
   let target;
   try {
-    target = await readlink(join(userDataDir, "SingletonLock"));
+    target = await readlink(join2(userDataDir, "SingletonLock"));
   } catch {
     return { live: false };
   }
@@ -5476,12 +5895,16 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/main.ts
+import { mkdirSync } from "node:fs";
+
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
 function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
   const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
   const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
@@ -5518,6 +5941,11 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
@@ -5528,11 +5956,24 @@ function readDeviceScaleFactor(env) {
   if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
   return raw;
 }
+function readRecordMaxBytes(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+}
 function defaultMintToken(path) {
-  const token = randomBytes2(32).toString("hex");
+  const token = randomBytes3(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;
+}
+function announcedFeatures(config, env = process.env) {
+  const features = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
 }
 function extraArgsFor(config) {
   const args = [];
@@ -5583,10 +6024,6 @@ function displayHeight(config) {
     BROWSERD_OBSERVATION_VIEWPORT.height * config.deviceScaleFactor
   );
 }
-function videoFeatures(config) {
-  if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
-  return config.kiosk ? ["h264"] : [];
-}
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
@@ -5599,12 +6036,28 @@ async function main() {
   });
   const lease = new HandoffLease();
   const driver = new ChromiumDriver(context, { lease });
-  const features = videoFeatures(config);
+  const features = announcedFeatures(config);
   const video = features.includes("h264") ? createVideoEncoder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
     height: displayHeight(config)
   }) : void 0;
+  const recorder = features.includes("record") ? createVideoRecorder({
+    display: process.env.DISPLAY || ":0",
+    width: displayWidth(config),
+    height: displayHeight(config),
+    dir: config.recordDir,
+    maxBytes: config.recordMaxBytes
+  }) : void 0;
+  if (recorder) {
+    try {
+      mkdirSync(config.recordDir, { recursive: true });
+    } catch (error) {
+      log(
+        `could not create ${config.recordDir}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -5617,6 +6070,7 @@ async function main() {
     startedBy: config.startedBy,
     features,
     ...video ? { video } : {},
+    ...recorder ? { recorder } : {},
     displaySize: {
       width: displayWidth(config),
       height: displayHeight(config)
@@ -5627,6 +6081,8 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     stack.closeStreams();
+    await recorder?.finalize({ graceMs: 2e3 }).catch(() => {
+    });
     video?.dispose();
     stack.server.close();
     await driver.close().catch(() => {

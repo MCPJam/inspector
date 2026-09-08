@@ -79,6 +79,66 @@ const DEFAULT_TIMEOUT_MS = 75_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 
 /**
+ * What `/v1/record` is asked to do.
+ *
+ * ONE method for both actions, mirroring the route, so a `SessionClient` that
+ * can start a recording can always also stop one. Splitting them cost nothing
+ * at the daemon and everything at the seam below, where a client is rebuilt
+ * method by method and a forwarded `start` with a forgotten `stop` is a run
+ * that records forever and collects nothing.
+ */
+export type BrowserdRecordArgs =
+  | {
+      action: "start";
+      /** Names the file in the daemon's recording dir. A plain filename. */
+      id: string;
+      /** 1..30; the daemon defaults to 15 when omitted. */
+      fps?: number;
+    }
+  | { action: "stop" };
+
+/** What one finished take left on the box. */
+export interface BrowserdRecording {
+  path: string;
+  bytes: number;
+  durationMs: number;
+  /** Frames written AFTER decimation — small on a static page, by design. */
+  distinctFrames: number;
+  /** The take ended before anything asked it to (the size cap, or a crash). */
+  truncated: boolean;
+}
+
+/**
+ * A RESULT rather than a throw, like `setQuality`.
+ *
+ * A box with no ffmpeg, or one already recording, is a normal answer on this
+ * route — and a caller that surfaced either as a failure would be reporting a
+ * run working exactly as designed.
+ */
+export type BrowserdRecordResult =
+  | {
+      ok: true;
+      /**
+       * What a `stop` found on disk; `null` when nothing was recording, and
+       * absent on a `start`. Present-and-null is a real answer here: a take
+       * that hit its size cap five minutes ago has already ended, and a
+       * collector on a teardown path needs to read that rather than treat it
+       * as an error.
+       */
+      recording?: BrowserdRecording | null;
+    }
+  | { ok: false; status: number; error: string };
+
+/** What the daemon says is recording right now. */
+export interface BrowserdRecordState {
+  active: boolean;
+  id?: string;
+  fps?: number;
+  startedAtMs?: number;
+  distinctFrames?: number;
+}
+
+/**
  * How long a frame stream may be completely silent before it is written off.
  *
  * Comfortably more than the daemon's 10s heartbeat: a stream that has gone
@@ -274,6 +334,58 @@ export class BrowserdClient {
       ok: false,
       status: res.status,
       error: typeof body.error === "string" ? body.error : `http_${res.status}`,
+    };
+  }
+
+  /**
+   * Start or stop the display recording on the box.
+   *
+   * A RESULT rather than a throw, like `setQuality` above: a daemon with no
+   * ffmpeg answers 503 and one already recording answers 409, and both are
+   * ordinary states of a run rather than failures of it. The caller decides
+   * (it logs and carries on without a video).
+   */
+  async record(args: BrowserdRecordArgs): Promise<BrowserdRecordResult> {
+    const res = await this.request(
+      "/v1/record",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          args.action === "start"
+            ? {
+                action: "start",
+                id: args.id,
+                ...(args.fps === undefined ? {} : { fps: args.fps }),
+              }
+            : { action: "stop" },
+        ),
+      },
+      true,
+    );
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: await this.errorOf(res) };
+    }
+    if (args.action === "start") return { ok: true };
+    const body = await this.json(res);
+    return { ok: true, recording: decodeRecording(body.recording) };
+  }
+
+  /** What is recording right now. `{active:false}` on any answer it cannot read. */
+  async recordStatus(): Promise<BrowserdRecordState> {
+    const res = await this.request("/v1/record", { method: "GET" }, true);
+    if (!res.ok) return { active: false };
+    const body = await this.json(res);
+    return {
+      active: body.active === true,
+      ...(typeof body.id === "string" ? { id: body.id } : {}),
+      ...(typeof body.fps === "number" ? { fps: body.fps } : {}),
+      ...(typeof body.startedAtMs === "number"
+        ? { startedAtMs: body.startedAtMs }
+        : {}),
+      ...(typeof body.distinctFrames === "number"
+        ? { distinctFrames: body.distinctFrames }
+        : {}),
     };
   }
 
@@ -492,6 +604,12 @@ export class BrowserdClient {
     });
   }
 
+  /** The daemon's own error code, or the bare status when it sent none. */
+  private async errorOf(res: Response): Promise<string> {
+    const body = await this.json(res);
+    return typeof body.error === "string" ? body.error : `http_${res.status}`;
+  }
+
   private async json(res: Response): Promise<Record<string, unknown>> {
     try {
       return asRecord(await res.json());
@@ -512,4 +630,34 @@ export class BrowserdClient {
       throw error;
     }
   }
+}
+
+/**
+ * Decode the `recording` a stop answered with.
+ *
+ * Field by field, and `null` for anything that does not carry the whole shape:
+ * a partially-decoded recording would flow into the evidence pipe as a video
+ * with a zero duration and no frame count, which reads on the trace page as a
+ * broken take rather than as a daemon that answered something unexpected.
+ */
+function decodeRecording(value: unknown): BrowserdRecording | null {
+  if (typeof value !== "object" || value === null) return null;
+  const raw = value as Record<string, unknown>;
+  // EVERY field, or none. Defaulting a missing `durationMs` to 0 and a missing
+  // `truncated` to `false` does not degrade gracefully — it INVENTS the two
+  // claims a reader most relies on, and they travel into the trace page as a
+  // stated duration and an absent badge. "This take completed and ran for no
+  // time" is a worse answer than "this daemon said something I cannot read".
+  if (typeof raw.path !== "string") return null;
+  if (typeof raw.bytes !== "number") return null;
+  if (typeof raw.durationMs !== "number") return null;
+  if (typeof raw.distinctFrames !== "number") return null;
+  if (typeof raw.truncated !== "boolean") return null;
+  return {
+    path: raw.path,
+    bytes: raw.bytes,
+    durationMs: raw.durationMs,
+    distinctFrames: raw.distinctFrames,
+    truncated: raw.truncated,
+  };
 }

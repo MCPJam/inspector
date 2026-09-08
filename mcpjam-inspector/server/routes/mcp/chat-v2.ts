@@ -159,11 +159,6 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -1379,9 +1374,6 @@ chatV2.post("/", async (c) => {
           }
         : trace;
 
-    // Filled by the resolver when browser tools are advertised; merged into
-    // the engines' single `uiToolApprovals` slot below.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
     let advertisedPageTools: MintedDeclaredTool[] = [];
     // The generation those tools belong to; moves with them on each refresh.
     let advertisedPageToolsBinding = pageToolsSnapshot;
@@ -1427,13 +1419,10 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             localComputerRequested: localPrefEligible,
-            // This route THREADS the classification below, so it may advertise
-            // interactive browser tools; surfaces that thread nothing get none
-            // (see built-in-tools/browser.ts).
+            // A person is watching this route, so browser tools may be
+            // advertised and keep a signed-in profile; surfaces that attest
+            // nothing get none (see built-in-tools/browser.ts).
             browserApprovalDelivery: { kind: "attested" },
-            onBrowserApprovals: (approvals) => {
-              browserToolApprovals = approvals;
-            },
             ...(pageToolsSnapshot
               ? { browserPageTools: pageToolsSnapshot }
               : {}),
@@ -1702,25 +1691,6 @@ chatV2.post("/", async (c) => {
         ? (guardPageToolRefresh(refresh, reservedAgainstPageTools) as never)
         : undefined;
     };
-    // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
-    // NAME and never read a tool's own `needsApproval`, so page tools reach them
-    // approval-less unless we hand over their classification here. Page tools
-    // always gate; an empty set (no page tools, incl. every hosted-mode turn
-    // where WEBMCP_INSPECTOR_ENABLED is off) leaves all other tools on the
-    // existing `requireToolApproval` path unchanged. Without this the turn
-    // strands — the client defers the call awaiting an approval pill the server
-    // never sends. `uiTools` are ignored on this route (see above), so the page
-    // classification is the whole of this turn's `uiToolApprovals`.
-    const pageToolApprovals = classifyPageToolApprovals(
-      validatedPageTools.map((entry) => entry.alias),
-    );
-    // Browser tools are name-classified for the same reason page tools are,
-    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
-    // rather than one overwriting the other.
-    const uiToolApprovals = mergeUiToolApprovalClassifications(
-      pageToolApprovals,
-      browserToolApprovals,
-    );
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
@@ -1773,6 +1743,22 @@ chatV2.post("/", async (c) => {
           }),
       },
     );
+    /**
+     * The tool set for an engine that CAN grow it mid-turn.
+     *
+     * The two by-name WebMCP verbs were kept at build time
+     * (`browserRetireInvokeVerb: false` above) because which engine runs is
+     * only known here. Two of them — local-org and direct BYOK — never consume
+     * `refreshTools`, so the verbs are their only way to reach a page the model
+     * navigated to after the turn started. Dropped ONLY on the two hosted paths
+     * that pass `refreshTools` below, which is the safe direction: an extra
+     * tool costs a line in the list, a missing one costs the page. Both go
+     * together (see `withoutLegacyWebmcpVerbs`). Mirrors `web-chat-turn.ts`.
+     */
+    const refreshingEngineTools = (): ToolSet =>
+      pageToolRefresh
+        ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+        : (allTools as ToolSet);
     const scopeStepUpEngineResume = scopeStepUpResumeRequest
       ? buildLocalScopeStepUpResume({
           request: scopeStepUpResumeRequest,
@@ -1861,12 +1847,7 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        // WITHOUT the by-name WebMCP verbs when this engine refreshes: it gets
-        // the page's tools as real tools, so the generic pair is a strictly
-        // worse way to reach the same page. Kept everywhere else.
-        tools: pageToolRefresh
-          ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
-          : (allTools as ToolSet),
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader,
@@ -1874,7 +1855,6 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
@@ -2148,10 +2128,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        // Same rule as the free-model call above.
-        tools: pageToolRefresh
-          ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
-          : (allTools as ToolSet),
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,
@@ -2160,7 +2137,6 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.

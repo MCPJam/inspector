@@ -840,7 +840,13 @@ const EVALUATED_KEYWORDS = new Set([
   "multipleOf",
   "minLength",
   "maxLength",
-  "pattern",
+  // NOT `pattern`. A regular expression is page-authored code, and this
+  // validator runs on the SERVER against a value the same page can steer the
+  // model into sending: `^(a+)+$` with a 30-character input is seconds of
+  // synchronous backtracking on a hosted replica, for every user on it. So the
+  // keyword is reported as unsupported and the value passes, which is the
+  // lenient rule this validator already follows for everything it cannot
+  // check safely. The page's own handler still sees its declared contract.
   "minItems",
   "maxItems",
   "uniqueItems",
@@ -1013,8 +1019,31 @@ interface ValidationState {
   budget: number;
 }
 
+/**
+ * Ceiling on any schema-authored value quoted into a validation message.
+ *
+ * These messages are read by the model, and they sit in OUR half of a tool
+ * result rather than inside the page-content fence — so every literal a page
+ * can put in its schema (an enum member, a `const`, a property name, a `$ref`)
+ * is a place it can write a sentence addressed to the model, at whatever
+ * length it likes. Sanitized and capped here, at the one place they are
+ * quoted, so no message can carry more than a short quoted value.
+ */
+const QUOTED_LITERAL_MAX_CHARS = 96;
+
+/** A schema-authored value, quoted for a message: JSON-encoded, then bounded. */
+function literal(value: unknown): string {
+  const encoded = JSON.stringify(value) ?? String(value);
+  return sanitizeDeclaredText(encoded, QUOTED_LITERAL_MAX_CHARS);
+}
+
+/** A schema-authored NAME (a property, a path segment), bounded the same way. */
+function quotedName(name: string): string {
+  return sanitizeDeclaredText(name, QUOTED_LITERAL_MAX_CHARS);
+}
+
 function at(path: string): string {
-  return path ? `\`${path}\`` : "the input";
+  return path ? `\`${quotedName(path)}\`` : "the input";
 }
 
 /**
@@ -1062,7 +1091,7 @@ function checkSchema(
   if (typeof schema.$ref === "string") {
     const resolved = resolveRef(schema.$ref, state.root);
     if (resolved) checkSchema(resolved, value, path, state, depth + 1);
-    else state.unsupported.add(`$ref ${schema.$ref}`);
+    else state.unsupported.add(`$ref ${literal(schema.$ref)}`);
     // A `$ref` alongside sibling keywords is 2020-12 behaviour; keep checking
     // them rather than returning, so `{$ref, minimum}` is fully evaluated.
   }
@@ -1113,7 +1142,7 @@ function checkType(
   if (!types || types.length === 0) return;
   if (types.some((entry) => typeMatches(entry, value))) return;
   state.errors.push(
-    `${at(path)} must be ${types.join(" or ")}, but got ${describeValue(value)}.`,
+    `${at(path)} must be ${types.map(quotedName).join(" or ")}, but got ${describeValue(value)}.`,
   );
 }
 
@@ -1142,7 +1171,7 @@ function checkConstAndEnum(
 ): void {
   if ("const" in schema && !jsonEqual(schema.const, value)) {
     state.errors.push(
-      `${at(path)} must be ${JSON.stringify(schema.const)}, but got ${describeValue(value)}.`,
+      `${at(path)} must be ${literal(schema.const)}, but got ${describeValue(value)}.`,
     );
   }
   const options = schema.enum;
@@ -1156,7 +1185,7 @@ function checkConstAndEnum(
     state.errors.push(
       `${at(path)} must be one of ${options
         .slice(0, 24)
-        .map((option) => JSON.stringify(option))
+        .map((option) => literal(option))
         .join(
           ", ",
         )}${options.length > 24 ? ", …" : ""}, but got ${describeValue(value)}.`,
@@ -1180,24 +1209,11 @@ function checkString(
       `${at(path)} must be at most ${schema.maxLength} characters.`,
     );
   }
-  if (typeof schema.pattern === "string") {
-    let pattern: RegExp | null = null;
-    try {
-      // JSON Schema's dialect is ECMA-262's, so this is the right engine. A
-      // pattern it cannot compile is the page's problem to report, not a
-      // reason to refuse the call.
-      pattern = new RegExp(schema.pattern, "u");
-    } catch {
-      try {
-        pattern = new RegExp(schema.pattern);
-      } catch {
-        state.unsupported.add(`pattern ${schema.pattern}`);
-      }
-    }
-    if (pattern && !pattern.test(value)) {
-      state.errors.push(`${at(path)} must match ${schema.pattern}.`);
-    }
-  }
+  // `pattern` is deliberately NOT evaluated — see `EVALUATED_KEYWORDS`. Compiling
+  // and running a page's regular expression here is running page code on the
+  // server against page-steered input, and one catastrophic pattern would
+  // stall the event loop for everyone. The keyword loop above has already
+  // reported it as unsupported.
 }
 
 function checkNumber(
@@ -1301,7 +1317,7 @@ function checkObject(
     // model forgot would pass as present.
     if (typeof key === "string" && !Object.hasOwn(value, key)) {
       state.errors.push(
-        `${at(path)} is missing the required property \`${key}\`.`,
+        `${at(path)} is missing the required property \`${quotedName(key)}\`.`,
       );
     }
   }

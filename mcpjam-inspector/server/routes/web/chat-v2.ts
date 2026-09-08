@@ -12,7 +12,6 @@ import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
-import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
   listCloudRuntimeSkills,
@@ -1675,9 +1674,6 @@ chatV2.post("/", async (c) => {
     });
     const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
 
-    // Filled by the resolver when browser tools are advertised; forwarded to
-    // the turn runner, which merges it into the engines' one approval slot.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
     let advertisedPageTools: MintedDeclaredTool[] = [];
     // Filled by `runWebChatTurn` once `prepareChatV2` has decided which names
     // are spoken for. Only the persisted record reads it — the model's own set
@@ -1736,12 +1732,9 @@ chatV2.post("/", async (c) => {
           ? { onSecretEnvDelivered: markSecretsDelivered }
           : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
-        // This surface threads the classification (below), so it may advertise
-        // interactive browser tools.
+        // A person is watching this surface, so it may advertise interactive
+        // browser tools and keep a signed-in profile.
         browserApprovalDelivery: { kind: "attested" },
-        onBrowserApprovals: (approvals) => {
-          browserToolApprovals = approvals;
-        },
         ...(pageToolsSnapshot
           ? { browserPageTools: pageToolsSnapshot }
           : {}),
@@ -1932,7 +1925,6 @@ chatV2.post("/", async (c) => {
           pageTools: validatedPageTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
-          ...(browserToolApprovals ? { browserToolApprovals } : {}),
           // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
           // step and the tools it needs exist only from the next; a
           // turn-start-only set would mean a turn per page.

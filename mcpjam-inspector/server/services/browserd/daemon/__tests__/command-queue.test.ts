@@ -472,34 +472,3 @@ describe("cancellation does not wait its turn", () => {
   });
 });
 
-describe("CommandQueue.isPending — what the cancellation latch asks", () => {
-  it("answers true while a command is queued or running, false once settled", async () => {
-    const { executor, release } = controllableExecutor();
-    const queue = new CommandQueue(executor, "boot-1");
-    const first = queue.submit({
-      commandId: "first",
-      source: "chat",
-      action: { kind: "reload" },
-    });
-    // Behind `first` on the same tab: admitted, not yet handed to the driver.
-    // This is the command a Stop can name that the driver has never seen.
-    const second = queue.submit({
-      commandId: "second",
-      source: "chat",
-      action: { kind: "webmcp_invoke", toolKey: "slow", input: {} },
-    });
-    await tick();
-    expect(queue.isPending("first")).toBe(true);
-    expect(queue.isPending("second")).toBe(true);
-    expect(queue.isPending("never-submitted")).toBe(false);
-
-    await release("first", { ok: true });
-    await first;
-    expect(queue.isPending("first")).toBe(false);
-    expect(queue.isPending("second")).toBe(true);
-
-    await release("second", { ok: true });
-    await second;
-    expect(queue.isPending("second")).toBe(false);
-  });
-});

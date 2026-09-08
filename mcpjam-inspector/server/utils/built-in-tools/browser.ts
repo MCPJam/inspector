@@ -5,21 +5,22 @@
  * SERVER-EXECUTED, like `bash` and unlike the `page_*`/`ui_*` namespaces: the
  * model calls a tool, this server sends a command to the daemon and returns
  * the result. Nothing here is client-fulfilled, so no new namespace enters
- * `isClientFulfilledToolName`; the approval classification rides the existing
- * name-keyed `uiToolApprovals` slot purely as policy.
+ * `isClientFulfilledToolName`; each tool carries its own `needsApproval`, like
+ * every other family.
  *
  * TWO THINGS ARE STRUCTURAL, not conventions to remember:
  *
  *   1. FAIL-CLOSED ADVERTISEMENT. `buildBrowserTools` returns nothing unless
- *      the caller ATTESTS how approval reaches the user. Approval on the
- *      hosted engines is classified by NAME from `uiToolApprovals`, and five
- *      `prepareChatV2` call sites (Slack agent, chat-session-turn, the
- *      session-simulation runner, and evals-runner twice) plus the
- *      `runAssistantTurn` eval path thread NOTHING — a browser tool reaching
- *      them would classify as FREE and drive a real browser with no gate. So
- *      the attestation is a parameter, not a lint rule: a surface that has not
- *      thought about approval gets no browser tools, and no edit to those five
- *      call sites is required for them to be safe.
+ *      the caller ATTESTS how approval reaches the user. Not because anything
+ *      has to be threaded back any more — the tools declare their own floors,
+ *      and an unthreaded surface would now gate correctly — but because
+ *      `approvalDelivery` is the one thing this file cannot work out for
+ *      itself: whether A PERSON IS WATCHING. That answer decides the browser's
+ *      context mode (a persistent, signed-in profile or a blank ephemeral
+ *      one), the owner key, and whether an unattended run's policy is
+ *      mandatory. A surface that has not said which kind of run it is has not
+ *      chosen any of those, and defaulting them is how an eval comes to run
+ *      against whatever profile the last playground session left signed in.
  *
  *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
  *      implementation result carries the capture as base64 in an ordinary
@@ -43,12 +44,11 @@ import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   BROWSER_BUILT_IN_TOOL_ID,
+  BROWSER_OBSERVATION_TOOL_NAMES,
   BROWSER_TOOL_NAMES,
-  classifyBrowserToolApprovals,
-  mergeUiToolApprovalClassifications,
   type BrowserUnattendedPolicy,
-  type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
+import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { webmcpPageToolsMode } from "../../config.js";
 import { logger } from "../logger.js";
@@ -56,6 +56,7 @@ import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
+  DEFAULT_QUEUE_KEY,
   isPointInViewport,
   type BrowserAction,
   type BrowserActTarget,
@@ -63,7 +64,10 @@ import {
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
-import { sanitizeDeclaredText } from "@/shared/declared-tools";
+import {
+  safeDeclaredOrigin,
+  sanitizeDeclaredText,
+} from "@/shared/declared-tools";
 import type {
   DeclaredToolProvider,
   MintedDeclaredTool,
@@ -93,8 +97,8 @@ const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
  * How approval reaches the user for this turn — the thing a surface must
  * attest before it gets interactive browser tools.
  *
- * `attested`: the caller threads the returned classification into the
- * engine's `uiToolApprovals`, so a gated call actually pauses and asks.
+ * `attested`: a person is there. Gated calls actually pause and ask, so the
+ * turn keeps a persistent (signed-in) browser and every tool asks first.
  *
  * `unattended`: nobody is watching (eval, swarm, journey), so there is no
  * approval at all — and therefore a DECLARED policy is mandatory. The policy
@@ -258,22 +262,12 @@ const LEGACY_WEBMCP_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 const EMPTY_PAGE_TOOLS = {
   tools: {} as ToolSet,
-  approvals: {
-    requiredNames: new Set<string>(),
-    freeNames: new Set<string>(),
-  } as UiToolApprovalClassification,
   minted: [] as MintedDeclaredTool[],
   notices: [] as Array<{ rawName: string; reason: string }>,
 };
 
 export interface BrowserToolsResult {
   tools: ToolSet;
-  /**
-   * The approval classification for the names actually built. The caller
-   * MERGES this into the engine's single `uiToolApprovals` slot — see
-   * `mergeUiToolApprovalClassifications`.
-   */
-  approvals: UiToolApprovalClassification;
   /**
    * The page tools advertised at turn start, in advertised order.
    *
@@ -335,7 +329,6 @@ export interface BrowserPageToolsRefresh {
    * installs these itself.
    */
   tombstones?: ToolSet;
-  approvals?: UiToolApprovalClassification;
 }
 
 /** What a daemon reply means once both layers have been read. */
@@ -805,8 +798,9 @@ export function buildBrowserTools(
     opts.onToolSuppressed?.({
       id: BROWSER_BUILT_IN_TOOL_ID,
       reason:
-        "browser tools need an approval path: an interactive surface must thread the " +
-        "approval classification, and an unattended run must declare a toolPolicy.",
+        "browser tools need to know whether a person is watching: an " +
+        "interactive surface must attest that approval reaches someone, and " +
+        "an unattended run must declare a toolPolicy instead.",
     });
     return undefined;
   }
@@ -934,11 +928,25 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  // Local is forced to ask, exactly as `bash` is (bash.ts:131). The browser is
-  // driving a real, signed-in Chromium on someone's own machine, where the
-  // blast radius of an unreviewed click is their accounts rather than a
-  // disposable box.
-  const needsApproval = delivery.kind === "attested" || engine === "local";
+  // Floors, one per shape of run. Local is forced to ask, exactly as `bash` is
+  // — the browser is driving a real, signed-in Chromium on someone's own
+  // machine, where the blast radius of an unreviewed click is their accounts
+  // rather than a disposable box. An attested (interactive) run has someone to
+  // ask, so it always does. What is left is an unattended run on a disposable
+  // box: nobody to ask, so the declared policy is the answer, and the
+  // interactive tools it might have freed were never built (see `names`).
+  //
+  // NOT the switch, on any branch: `requireToolApproval` cannot lower a floor,
+  // and there is no reading of this family where it should.
+  const interactiveFloor: ApprovalFloor =
+    delivery.kind === "attested" || engine === "local" ? "always" : "never";
+  // Observation is the one thing a read-only policy may free, and only there:
+  // a policy cannot make clicking a button on a live logged-in page safe, but
+  // it can say this run only looks.
+  const observationFloor: ApprovalFloor = readOnly ? "never" : interactiveFloor;
+  const needsApproval = needsApprovalFor(interactiveFloor, false);
+  const observationNeedsApproval = needsApprovalFor(observationFloor, false);
+
   /**
    * The tab the model is actually working in.
    *
@@ -1002,6 +1010,24 @@ export function buildBrowserTools(
           : action,
     };
     const client = handle.client as unknown as CommandSender;
+    // A PAGE TOOL KEEPS RUNNING WHEN THE REQUEST IS ABORTED. Dropping the HTTP
+    // connection stops us waiting; it does not stop the browser, which has
+    // already admitted the command and is inside the page's own handler. So an
+    // abort has to become an actual `webmcp_cancel` — and the only id we hold
+    // before the invoke settles is our own `commandId`, which is why the daemon
+    // accepts one. Without this the user pressed Stop and the form submitted
+    // anyway.
+    const disarm =
+      action.kind === "webmcp_invoke" && args.signal
+        ? armWebmcpCancel(
+            client,
+            handle,
+            commandId,
+            args.tabId,
+            args.signal,
+            command.source,
+          )
+        : undefined;
     // THE COMMAND IS BUILT BEFORE THE LOCK, AND SENT INSIDE IT.
     //
     // Both halves matter. Building first means two acts emitted in ONE model
@@ -1017,24 +1043,6 @@ export function buildBrowserTools(
     // skips the lock — taking it again would deadlock the turn on itself.
     const release = recovering ? undefined : await state.acquire(args.signal);
     try {
-      // A PAGE TOOL KEEPS RUNNING WHEN THE REQUEST IS ABORTED. Dropping the
-      // HTTP connection stops us waiting; it does not stop the browser, which
-      // has already admitted the command and is inside the page's own handler.
-      // So an abort has to become an actual `webmcp_cancel` — and the only id
-      // we hold before the invoke settles is our own `commandId`, which is why
-      // the daemon accepts one. Without this the user pressed Stop and the form
-      // submitted anyway.
-      const disarm =
-        action.kind === "webmcp_invoke" && args.signal
-          ? armWebmcpCancel(
-              client,
-              handle,
-              commandId,
-              args.tabId,
-              args.signal,
-              command.source,
-            )
-          : undefined;
       let response;
       try {
         response = await client.sendCommand(command, handle.bootId, {
@@ -1088,8 +1096,8 @@ export function buildBrowserTools(
       if (!args.raw) {
         state.rememberToken(args.tabId, outcome.stateToken, handle.bootId);
         // The MODEL's own commands move the target the refresher follows. A
-        // command that resolved a tab tells us which one it is working in, and
-        // that is the page whose tools it should be offered next step.
+        // command that resolved a tab tells us which one it is working in,
+        // and that is the page whose tools it should be offered next step.
         if (outcome.stateToken?.tabId) modelTabId = outcome.stateToken.tabId;
         else if (args.tabId) modelTabId = args.tabId;
       }
@@ -1101,22 +1109,27 @@ export function buildBrowserTools(
 
   // What an observation says about the page's tools. Computed once: it is a
   // property of the TURN (which engine, which mode), not of a call.
+  // Both gated on `canBindPageTools`, like the verbs: a turn that kept the
+  // listing verb must be told to use it, not that the page's tools are
+  // "available directly" when none were built.
   const presented = (outcome: CommandOutcome & { tabId: string }) =>
     present(outcome, {
-      firstClass: firstClassPageTools,
-      dynamic: opts.dynamicPageTools === true,
+      firstClass: firstClassPageTools && canBindPageTools,
+      dynamic: opts.dynamicPageTools === true && canBindPageTools,
     });
 
   const tools: ToolSet = {};
+  // The verb names actually built, in order — what a page tool may not be
+  // called (`reservedNames`) and what the refresher reserves against.
   const built: string[] = [];
   const add = (name: string, definition: ToolSet[string]) => {
     if (!names.includes(name)) return;
+    built.push(name);
     // Attached HERE, once, rather than on each tool: every one of these
     // returns a `presented()` shape and so may carry a capture, and a tool added
     // later that forgot the mapping would silently go back to sending the
     // model an unreadable base64 string.
     tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
-    built.push(name);
   };
 
   add(
@@ -1350,7 +1363,7 @@ export function buildBrowserTools(
           .describe('With mode "a11y": zoom into a CSS selector instead.'),
         tabId: z.string().optional(),
       }),
-      needsApproval: needsApproval && !readOnly,
+      needsApproval: observationNeedsApproval,
       execute: async (
         { mode, filter, rootRef, rootSelector, tabId },
         { abortSignal },
@@ -1377,9 +1390,7 @@ export function buildBrowserTools(
         "List the WebMCP tools the current page offers, if any. Pages that expose tools " +
         "let you act through their own API instead of clicking; most pages offer none.",
       inputSchema: z.object({ tabId: z.string().optional() }),
-      // Looking, not acting — but it reads a page's own words, so it gates
-      // exactly as `browser_observe` does rather than for free.
-      needsApproval: needsApproval && !readOnly,
+      needsApproval: observationNeedsApproval,
       execute: async ({ tabId }, { abortSignal }) =>
         presented(
           await send(
@@ -1499,10 +1510,6 @@ export function buildBrowserTools(
 
   return {
     tools,
-    approvals: mergeUiToolApprovalClassifications(
-      classifyBrowserToolApprovals(built, { readOnly }),
-      page.approvals,
-    ),
     ...(page.minted.length > 0 ? { pageTools: page.minted } : {}),
     ...(page.notices.length > 0 ? { pageToolNotices: page.notices } : {}),
     ...(refresher
@@ -1724,7 +1731,6 @@ function createPageToolRefresher(args: {
       return {
         ...(Object.keys(add).length > 0 ? { add } : {}),
         ...(retire.length > 0 ? { retire, tombstones } : {}),
-        approvals: rebuilt.approvals,
       };
     },
   };
@@ -1739,23 +1745,37 @@ function tombstoneTool(gone: MintedDeclaredTool): ToolSet[string] {
         type: "object",
         properties: {},
       } as never),
-      execute: async () => ({
-        error:
-          `webmcp_tool_gone: the page no longer offers "${gone.rawName}"` +
-          `${gone.origin ? ` (it was on ${gone.origin})` : ""}; ` +
-          "re-read the page and decide again",
-        // Attributed like every other page-tool result, so the card for a
-        // call that landed on a tombstone still says which page's tool it was
-        // for rather than rendering an anonymous error under a minted name.
-        pageTool: {
-          rawName: gone.rawName,
-          ...(gone.origin !== undefined ? { origin: gone.origin } : {}),
-          ...(gone.frameId !== undefined ? { frameId: gone.frameId } : {}),
-          ...(gone.registrationSeq !== undefined
-            ? { registrationSeq: gone.registrationSeq }
-            : {}),
-        },
-      }),
+      execute: async () => {
+        // Both quoted values are the PAGE's: the name it registered and the
+        // frame it registered it from. Bounded and sanitized before they
+        // become part of a sentence in our own voice, and the origin reduced
+        // to scheme + host so a path cannot smuggle text either.
+        const rawName = sanitizeDeclaredText(
+          gone.rawName,
+          PAGE_TOOL_NAME_MAX_CHARS,
+        );
+        const origin = gone.origin
+          ? safeDeclaredOrigin(gone.origin)
+          : "unknown";
+        return {
+          error:
+            `webmcp_tool_gone: the page no longer offers "${rawName}"` +
+            `${origin !== "unknown" ? ` (it was on ${origin})` : ""}; ` +
+            "re-read the page and decide again",
+          // Attributed like every other page-tool result (and fenced for the
+          // model, like every other `pageTool`), so the card for a call that
+          // landed on a tombstone still says which page's tool it was for
+          // rather than rendering an anonymous error under a minted name.
+          pageTool: {
+            rawName: gone.rawName,
+            ...(gone.origin !== undefined ? { origin: gone.origin } : {}),
+            ...(gone.frameId !== undefined ? { frameId: gone.frameId } : {}),
+            ...(gone.registrationSeq !== undefined
+              ? { registrationSeq: gone.registrationSeq }
+              : {}),
+          },
+        };
+      },
     }),
     toModelOutput: toBrowserModelOutput,
   };
@@ -1781,16 +1801,11 @@ function buildPageToolsFor(args: {
   snapshot?: BrowserPageToolsSnapshot;
 }): {
   tools: ToolSet;
-  approvals: UiToolApprovalClassification;
   minted: MintedDeclaredTool[];
   notices: Array<{ rawName: string; reason: string }>;
 } {
   const empty = {
     tools: {} as ToolSet,
-    approvals: {
-      requiredNames: new Set<string>(),
-      freeNames: new Set<string>(),
-    },
     minted: [] as MintedDeclaredTool[],
     notices: [] as Array<{ rawName: string; reason: string }>,
   };
@@ -1829,7 +1844,6 @@ function buildPageToolsFor(args: {
   });
   return {
     tools: built.tools,
-    approvals: built.approvals,
     minted: built.minted,
     notices,
   };
@@ -1911,6 +1925,18 @@ export function describeBrowserTools(
       throw new Error(
         "describeBrowserTools builds definitions only; nothing may execute",
       );
+    },
+    // The STEADY state: a page is open and declares no tools of its own. That
+    // is the shape the model sees on every turn but a session's first, and the
+    // one a pane describing the toolset should show. Without a snapshot the
+    // builder keeps the listing verb (a first turn has no page to have read),
+    // which would describe a toolset one tool larger than the usual one.
+    pageTools: {
+      tools: [],
+      bootId: "describe",
+      tabId: DEFAULT_QUEUE_KEY,
+      navCounter: 0,
+      canBind: true,
     },
   });
   if (!built) return [];
@@ -2033,8 +2059,18 @@ function resultUrl(output: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Which verbs only LOOK at the page.
+ *
+ * Reads the shared set rather than repeating its members. This used to be a
+ * private list, which was harmless only while `classifyBrowserToolApprovals`
+ * kept the shared one honest — that classifier is gone, and two lists of the
+ * same six names drift the moment a seventh verb is added. The one that would
+ * be forgotten is this one, and forgetting it means an unattended read-only
+ * run silently gets an interactive tool.
+ */
 function isObservational(name: string): boolean {
-  return name === "browser_observe" || name === "browser_webmcp_tools";
+  return BROWSER_OBSERVATION_TOOL_NAMES.has(name);
 }
 
 /**
@@ -2143,6 +2179,14 @@ const PAGE_DERIVED_KEYS = [
   "tools",
   "webmcpTools",
   "result",
+  // A page tool's argument-validation messages quote the page's OWN schema —
+  // enum members, property names — so the messages are the page's words even
+  // though the check was ours.
+  "validation",
+  // Attribution for a page-tool result: the page's raw tool name and origin.
+  // Kept on the result for the card that renders it, but a page picks its own
+  // tool name, and a name is a place to write a sentence.
+  "pageTool",
 ] as const;
 
 /**

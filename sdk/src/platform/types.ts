@@ -19,6 +19,8 @@ import type {
   EvalRunRouteFacts,
   EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
+  EvalTrialFrictionSignals,
+  SuspectedConditionVerdict,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
@@ -2961,6 +2963,68 @@ export interface PlatformEvalIteration {
   stageAnalyzerVersion?: number;
   /** The server returned stage rows that failed D1 validation. */
   stageResultsUnverified?: true;
+  /**
+   * Observable patterns in this trial's tool calls — an identifier a result
+   * surfaced that no later call carried, a repeat of the same search, a retry,
+   * a pagination continuation.
+   *
+   * REPORT-ONLY. Nothing here decided this trial's `result`, and every pattern
+   * has a benign reading: an unused identifier can mean the search already
+   * answered the question, and a repeat can be a sensible refinement. Read
+   * `identifierSignals.state` before reading the identifier kinds — a trial
+   * whose results were not retained never looked for them.
+   *
+   * ABSENT means the trial PREDATES the measurement, or its producer could not
+   * derive one. Never render an absent block as zero.
+   */
+  frictionSignals?: EvalTrialFrictionSignals;
+  /** The server returned a friction document that failed validation. */
+  frictionSignalsUnverified?: true;
+  /**
+   * Which server-controlled condition is SUSPECTED of contributing to one of
+   * the patterns above, from an advisory per-trial judge.
+   *
+   * SUSPECTED, and the word is load-bearing: the judge saw one window of one
+   * trial and named a plausible contributor. It is not evidence of cause —
+   * only a controlled rewrite that changes the suspected response and holds
+   * the rest comparable could be that — and nothing here entered this trial's
+   * `result`, its chain, or its `failureCategory`.
+   *
+   * `status` is `scored`, `skipped` or `error`. ABSENT means no judge ran:
+   * the trial predates it, nothing was flagged, or the deployment has it off.
+   */
+  suspectedConditionVerdict?: SuspectedConditionVerdict;
+  /** The server returned a verdict that failed validation. */
+  suspectedConditionUnverified?: true;
+}
+
+/**
+ * What an iteration's replay recording says about itself.
+ *
+ * `source` names the recorder, because the two differ in ways a reader can
+ * see: `"widget"` is the local harness recording one Chromium context with
+ * Playwright (a `.webm`, and it reports nothing else), `"hosted"` is an
+ * unattended run on a hosted browser, recorded off the whole display to an
+ * `.mp4` at a fixed rate.
+ *
+ * `distinctFrames` is the count AFTER identical frames were dropped, so a
+ * static ten-minute run holds a handful against six hundred seconds. That is
+ * the honest number; do not read it as a frame rate or as evidence of a fault.
+ */
+export interface PlatformEvalReplayVideoMeta {
+  source: "hosted" | "widget";
+  /** The rate the recorder was asked for, not the rate it wrote. */
+  fps?: number;
+  durationMs?: number;
+  /** Frames actually written, after identical ones were dropped. */
+  distinctFrames?: number;
+  /**
+   * The recording stopped at its size limit before the run ended.
+   *
+   * The file is a complete, playable PREFIX — not a corrupt file, and not the
+   * whole run. Report it as such rather than as the run's full duration.
+   */
+  truncated?: boolean;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -2976,8 +3040,22 @@ export interface PlatformEvalStepEvidence {
   }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
-  /** Resolved iteration replay `.webm` URL (same on every step of the run). */
+  /** Resolved iteration replay video URL (same on every step of the run). */
   videoUrl?: string;
+  /**
+   * What that recording says about itself. Present only beside `videoUrl`.
+   *
+   * `truncated` is the field a caller cannot work out from the file: a run on
+   * a hosted browser is recorded at a fixed rate and the recorder stops itself
+   * at a size limit, so what lands is a complete, playable PREFIX of the run.
+   * Seeking to a `videoOffsetMs` past that cut gets silence and no reason for
+   * it unless this is read first.
+   *
+   * Every field but `source` is optional, and the local widget harness reports
+   * none of them: it records with Playwright, which says nothing about the
+   * file it wrote. Absent metadata means "not reported", never "zero".
+   */
+  videoMeta?: PlatformEvalReplayVideoMeta;
   /** Playback offset of this step within the replay video, when known. */
   videoOffsetMs?: number;
   /** "scripted" (authored) vs "computer_use" (model-driven) interaction. */

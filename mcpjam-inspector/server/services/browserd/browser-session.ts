@@ -32,6 +32,9 @@ import type {
   BrowserdSandbox,
 } from "./boot-browserd";
 import type {
+  BrowserdRecordArgs,
+  BrowserdRecordResult,
+  BrowserdRecordState,
   BrowserdCommandResponse,
   BrowserdLeaseState,
   BrowserdStatus,
@@ -95,6 +98,16 @@ export interface SessionClient {
     ttlMs?: number;
     kind?: "human" | "script";
   }): Promise<{ took: boolean; lease: BrowserdLeaseState }>;
+  /**
+   * Start or stop the daemon's recording of the display.
+   *
+   * Optional like the lease pair above: a client that only sends commands is
+   * still a `SessionClient`, and a daemon that never advertised `"record"` is
+   * never asked. Never throws for a refusal — a box with no ffmpeg is an
+   * ordinary answer, not a failure of the run.
+   */
+  record?(args: BrowserdRecordArgs): Promise<BrowserdRecordResult>;
+  recordStatus?(): Promise<BrowserdRecordState>;
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -109,6 +122,15 @@ export interface SessionSandbox {
    * which is "boot a daemon yourself".
    */
   readTextFile?(path: string): Promise<string | undefined>;
+  /**
+   * Read a binary file — a recording — out of the sandbox.
+   *
+   * OPTIONAL for the same reason `readTextFile` is, and THROWING unlike it: a
+   * missing token means "boot a daemon yourself" and a missing recording means
+   * a run has lost its evidence, which the collector must be able to tell
+   * apart from a run that was never recorded.
+   */
+  readBinaryFile?(path: string): Promise<Uint8Array>;
   /** The daemon runner `bootBrowserd` drives. */
   browserd: BrowserdSandbox;
   /** Reap any daemon from a previous boot (idempotent; never throws for
@@ -853,6 +875,16 @@ function withActivityTouches(
     ...(client.lease ? { lease: () => client.lease!() } : {}),
     ...(client.leaseAction
       ? { leaseAction: (args) => client.leaseAction!(args) }
+      : {}),
+    // FORWARDED EXPLICITLY, like everything above it. This function rebuilds
+    // the client method by method (a `BrowserdClient` INSTANCE keeps its
+    // methods on the prototype, so a spread would drop all of them), which
+    // means a capability added to the client and not added here silently stops
+    // existing at every hosted call site — and for recording that is a run
+    // that quietly leaves no evidence, with nothing to see in a log.
+    ...(client.record ? { record: (args) => client.record!(args) } : {}),
+    ...(client.recordStatus
+      ? { recordStatus: () => client.recordStatus!() }
       : {}),
   };
 }

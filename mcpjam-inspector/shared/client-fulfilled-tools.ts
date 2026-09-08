@@ -33,6 +33,8 @@
  * consume these so the two paths can never drift apart.
  */
 
+import { needsApprovalFor, type ApprovalFloor } from "./tool-approval";
+
 export const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
 /**
@@ -68,6 +70,9 @@ export function isPageToolAlias(name: string): boolean {
   return PAGE_TOOL_ALIAS_REGEX.test(name);
 }
 
+/** Floor: always. The switch is not consulted, which is the point. */
+const PAGE_TOOL_APPROVAL_FLOOR: ApprovalFloor = "always";
+
 /**
  * Whether a model-requested WebMCP page-tool call must pause for approval.
  *
@@ -91,7 +96,7 @@ export function isPageToolAlias(name: string): boolean {
  * every page tool into an auto-run.
  */
 export function pageToolCallNeedsApproval(): boolean {
-  return true;
+  return needsApprovalFor(PAGE_TOOL_APPROVAL_FLOOR, false);
 }
 
 /**
@@ -128,20 +133,18 @@ export interface UiToolAnnotations {
  * Whether a UI tool call must pause for the user's approval this turn.
  *
  * Single source of truth for BOTH sides of the approval handshake: the
- * server (per-tool `needsApproval` in `buildUiTools`, and every engine's
- * approval gate via `classifyUiToolApprovals`) and the client (the
+ * server (per-tool `needsApproval` in `buildUiTools`) and the client (the
  * executor's defer-before-execute gate). They must agree because the client
  * decides "defer" when the tool-call chunk arrives — BEFORE the server's
  * approval-request chunk reaches it. If they disagree, turns strand.
  *
- * Two modes, keyed off the turn's `requireToolApproval` flag:
- *   - strict (flag on)  — every mutating UI tool gates.
- *   - default (flag off) — only DESTRUCTIVE UI tools gate. Actions the user
- *     watches happen in their own app don't need a confirmation click; the
- *     ones they can't undo by looking at the screen do.
- *
- * Read-only tools (`ui_snapshot_app`) never gate in either mode: they
- * observe, so pausing them buys no safety and costs a click.
+ * The entry's floor decides, and the switch then raises the `setting` rows:
+ *   - DESTRUCTIVE actions gate in both modes. The ones a user cannot undo by
+ *     looking at the screen are exactly the ones a default-off flag must not
+ *     be able to wave through.
+ *   - READ-ONLY tools (`ui_snapshot_app`) never gate: they observe, so pausing
+ *     buys no safety and costs a click.
+ *   - Everything else follows the switch.
  *
  * Entries WITHOUT `annotations` keep the legacy `readOnly`-only semantics —
  * an old client's snapshot must not suddenly start gating differently.
@@ -151,93 +154,42 @@ export function uiToolCallNeedsApproval(opts: {
   annotations?: UiToolAnnotations;
   requireToolApproval: boolean;
 }): boolean {
-  const { annotations, requireToolApproval } = opts;
-  if (!annotations) {
-    return requireToolApproval && !opts.readOnly;
-  }
+  return needsApprovalFor(
+    uiToolApprovalFloor(opts),
+    opts.requireToolApproval === true,
+  );
+}
+
+/**
+ * Which floor one UI catalog entry sits at, read off its annotations.
+ *
+ * Split out from the predicate so the ANSWER and the SWITCH are separable: the
+ * entry's own nature decides the floor, and `requireToolApproval` then decides
+ * only the `setting` rows. Same values as the flag-and-annotation ladder this
+ * replaces, in the same order.
+ */
+export function uiToolApprovalFloor(opts: {
+  readOnly: boolean;
+  annotations?: UiToolAnnotations;
+}): ApprovalFloor {
+  const { annotations } = opts;
+  // Legacy `readOnly`-only entries: an old client's snapshot must not suddenly
+  // start gating differently, so a mutating one follows the switch and a
+  // read-only one never gates.
+  if (!annotations) return opts.readOnly ? "never" : "setting";
   // Destructive wins over everything, including a contradictory
   // `readOnlyHint: true`. The validator rejects `readOnlyHint` disagreeing
   // with `readOnly`, but nothing stops "read-only AND destructive" — and
   // resolving that contradiction in favor of "don't ask" is the one reading
   // that can silently delete something.
-  if (annotations.destructiveHint === true) return true;
+  if (annotations.destructiveHint === true) return "always";
   // Read-only never gates. Honor BOTH signals: a partial annotation object
   // (e.g. `{destructiveHint: false}`) leaves `readOnlyHint` undefined, and
   // ignoring the legacy flag there would gate a snapshot for no reason.
-  if (opts.readOnly || annotations.readOnlyHint === true) return false;
-  if (requireToolApproval) return true;
-  // Protocol default: absent destructiveHint means destructive.
-  return annotations.destructiveHint !== false;
-}
-
-/**
- * Per-turn approval classification for the UI tools a turn advertised.
- *
- * Every validated entry lands in exactly one set, so an engine can answer
- * "does this UI tool call need approval?" without re-deriving policy — and
- * without the `requireToolApproval && …` shape that silently drops
- * destructive gating when the flag is off (the flag is off by default).
- *
- * `freeNames` is NOT redundant with "not in requiredNames": engines must
- * distinguish a UI tool that is deliberately approval-free from a name they
- * don't know about (a real MCP tool), which still follows the flag.
- */
-export interface UiToolApprovalClassification {
-  requiredNames: ReadonlySet<string>;
-  freeNames: ReadonlySet<string>;
-}
-
-export function classifyUiToolApprovals(
-  entries:
-    | ReadonlyArray<{
-        name: string;
-        readOnly: boolean;
-        annotations?: UiToolAnnotations;
-      }>
-    | undefined,
-  requireToolApproval: boolean,
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const entry of entries ?? []) {
-    const target = uiToolCallNeedsApproval({
-      readOnly: entry.readOnly,
-      annotations: entry.annotations,
-      requireToolApproval,
-    })
-      ? requiredNames
-      : freeNames;
-    target.add(entry.name);
-  }
-  return { requiredNames, freeNames };
-}
-
-/**
- * Per-turn approval classification for a turn's WebMCP `page_*` tools.
- *
- * Page tools are client-fulfilled (the browser runs them) and ALWAYS gate — see
- * `pageToolCallNeedsApproval`. The hosted engines classify by name via
- * `toolCallNeedsApproval` and never read a tool's own `needsApproval`, so a turn
- * that advertises page tools MUST hand them this classification. Without it,
- * every page alias falls through to the `requireToolApproval` default (off by
- * default), the server emits no approval request, and the turn strands: the
- * client has already deferred the call awaiting an approval pill that never
- * comes. (The BYOK `streamText` path is unaffected — it honors the per-tool
- * `needsApproval` that `buildPageTools` bakes in.)
- *
- * Page aliases are collision-free by construction, so the advertised names are
- * exactly the turn's validated aliases. Routing through `pageToolCallNeedsApproval`
- * keeps this the single source of truth rather than hard-coding "always gate".
- */
-export function classifyPageToolApprovals(
-  aliases: readonly string[] | undefined,
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const alias of aliases ?? []) {
-    (pageToolCallNeedsApproval() ? requiredNames : freeNames).add(alias);
-  }
-  return { requiredNames, freeNames };
+  if (opts.readOnly || annotations.readOnlyHint === true) return "never";
+  // Protocol default: absent destructiveHint means destructive, so an
+  // unannotated future tool asks in both modes rather than in neither.
+  return annotations.destructiveHint === false ? "setting" : "always";
 }
 
 /**
@@ -255,9 +207,8 @@ export const BROWSER_BUILT_IN_TOOL_ID = "browser";
  * The six hosted-browser tool names, split by what they DO to the page.
  *
  * Verbs rather than one `browser` mega-tool precisely so this split can
- * exist: approval is classified BY NAME on the hosted engines, so an
- * unattended read-only run can be allowed to look at a page while anything
- * that changes it still gates.
+ * exist: an unattended read-only run is built with only the tools that look,
+ * and `buildBrowserTools` reads this set to decide which those are.
  */
 export const BROWSER_OBSERVATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "browser_observe",
@@ -316,62 +267,4 @@ export interface BrowserUnattendedPolicy {
   mode: "allow_all" | "read_only" | "allowlist";
   originAllowlist?: readonly string[];
   toolAllowlist?: readonly string[];
-}
-
-/**
- * Per-turn approval classification for the hosted `browser_*` tools.
- *
- * Shaped after `classifyPageToolApprovals`, not `classifyUiToolApprovals`,
- * and for the same reason: there is nothing trustworthy to classify ON. A
- * page is third-party code, the browser is signed into things, and the page's
- * own WebMCP annotations are claims by the party whose code would run —
- * which Chromium does not even carry through for imperative registrations.
- *
- * So: EVERYTHING gates by default, interactive and observational alike. The
- * single relaxation is an explicit `readOnly` policy — a caller stating, out
- * of band, that this run only looks — and even then only observation tools
- * are freed. `browser_act` and friends can never be freed by policy, because
- * a policy cannot make clicking a button on a live logged-in page safe.
- */
-export function classifyBrowserToolApprovals(
-  names: readonly string[] | undefined,
-  policy?: { readOnly?: boolean },
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const name of names ?? []) {
-    const freeable =
-      policy?.readOnly === true && BROWSER_OBSERVATION_TOOL_NAMES.has(name);
-    (freeable ? freeNames : requiredNames).add(name);
-  }
-  return { requiredNames, freeNames };
-}
-
-/**
- * Combine per-namespace classifications into the ONE `uiToolApprovals` slot
- * the engines read.
- *
- * Needed because that slot is single-valued while a turn can advertise page
- * tools AND ui tools AND browser tools; before this, each surface filled the
- * slot with its own namespace and the others silently fell through to the
- * `requireToolApproval` default (off by default), which strands a turn: the
- * client defers the call awaiting an approval pill the server never sends.
- *
- * REQUIRED WINS. A name classified as required by any contributor stays
- * required even if another says free — the merge must never be the reason
- * something stops gating, and a name should never appear in both sets.
- */
-export function mergeUiToolApprovalClassifications(
-  ...classifications: ReadonlyArray<UiToolApprovalClassification | undefined>
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const classification of classifications) {
-    for (const name of classification?.requiredNames ?? []) {
-      requiredNames.add(name);
-    }
-    for (const name of classification?.freeNames ?? []) freeNames.add(name);
-  }
-  for (const name of requiredNames) freeNames.delete(name);
-  return { requiredNames, freeNames };
 }
