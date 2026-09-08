@@ -394,6 +394,41 @@ describe("the durable ledger sink", () => {
     }
   });
 
+  it("a mirror cannot resurrect a session that was terminated", async () => {
+    // Both are read-modify-writes over one file. Without a shared lock they
+    // interleave: the mirror reads an OPEN record, terminate writes `closedAt`,
+    // and the mirror writes its own copy back — un-closing a session somebody
+    // had just ended, and letting its history keep growing afterwards.
+    const created = await open();
+    if (!created.ok) throw new Error("no session");
+    const closed = await leaveAgentSession({
+      projectId: PROJECT,
+      sessionId: created.session.sessionId,
+      actorId: AGENT.id,
+      terminate: true,
+    });
+    expect(closed?.closedAt).toBeDefined();
+
+    // The caller's snapshot is the PRE-close record, which is exactly what a
+    // trace read holds when a terminate lands while it is queueing.
+    const { session, written } = await mirrorLedger({
+      session: created.session,
+      ledger: ledgerWith("boot-1", [{ id: "c1" }]),
+      bootId: "boot-1",
+    });
+    expect(written).toBe(0);
+    expect(session.closedAt).toBeDefined();
+
+    // On disk too: nothing was appended and the record is still closed.
+    const after = await readSession(PROJECT, created.session.sessionId);
+    expect(after?.closedAt).toBeDefined();
+    const trace = await readLedger({
+      projectId: PROJECT,
+      sessionId: created.session.sessionId,
+    });
+    expect(trace.entries).toHaveLength(0);
+  });
+
   it("survives two sessions writing one shared artifact at once", async () => {
     // The store is the PROJECT's; the mirror serializes per SESSION. Two
     // sessions copying the same unclaimed row hold different locks and can

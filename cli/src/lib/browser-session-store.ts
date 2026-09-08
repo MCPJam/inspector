@@ -134,10 +134,22 @@ export async function forgetSessionIf(
   projectId: string,
   sessionId: string,
 ): Promise<boolean> {
-  if (readBrowserState(filePath).sessions?.[projectId] !== sessionId) {
-    return false;
-  }
-  await forgetSession(filePath, projectId);
+  // ONE read-modify-write, not a check followed by a separate delete. Reading,
+  // comparing, and then calling `forgetSession` — which re-reads and removes
+  // whatever it finds — left a gap in which a concurrent `open` could remember
+  // a NEW session and have it deleted anyway: the very failure this exists to
+  // prevent, moved down one level.
+  //
+  // This narrows the window to a single read and write, which is what every
+  // other function here does. It is not an inter-process lock; two CLI
+  // processes writing this file at the same instant can still lose one
+  // another's edit, and the recovery for that is the same as for a corrupt
+  // file — pass `--session` explicitly, or open again.
+  const state = readBrowserState(filePath);
+  if (state.sessions?.[projectId] !== sessionId) return false;
+  const sessions = { ...state.sessions };
+  delete sessions[projectId];
+  await writeBrowserState(filePath, { ...state, sessions });
   return true;
 }
 

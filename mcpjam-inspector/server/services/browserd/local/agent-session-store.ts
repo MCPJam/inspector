@@ -366,6 +366,22 @@ export async function leaveAgentSession(args: {
   terminate?: boolean;
   now?: () => number;
 }): Promise<AgentSessionRecord | undefined> {
+  // THE SAME LOCK THE MIRROR TAKES. Both are read-modify-writes over one
+  // session file, and without a shared lock they interleave: the mirror reads
+  // an open record, this writes `closedAt`, and the mirror then writes its own
+  // copy back — un-closing a session somebody had just ended.
+  return withKeyedLock(`browser-ledger:${args.sessionId}`, () =>
+    leaveAgentSessionLocked(args),
+  );
+}
+
+async function leaveAgentSessionLocked(args: {
+  projectId: string;
+  sessionId: string;
+  actorId: string;
+  terminate?: boolean;
+  now?: () => number;
+}): Promise<AgentSessionRecord | undefined> {
   const now = args.now ?? Date.now;
   const session = await readSession(args.projectId, args.sessionId);
   if (!session) return undefined;
@@ -426,6 +442,12 @@ async function mirrorLedgerLocked(args: {
     args.session.projectId,
     args.session.sessionId,
   )) ?? args.session;
+  if (session.closedAt) return { session, written: 0 };
+  // A FINISHED session stops growing, decided HERE rather than on the caller's
+  // snapshot. The caller read the record before it queued for this lock, so a
+  // `terminate` landing in between would otherwise still copy the live ring
+  // into a history that had ended — and then write this function's `next`,
+  // built from the pre-close read, back over the record and clear `closedAt`.
   const dir = sessionDir(session.projectId, session.sessionId);
   await ensureDir(dir);
   const artifactsDir = artifactsRoot(session.projectId);
