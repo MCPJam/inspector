@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import {
+  baseSuite,
+  noopNav,
   openSettingsRow,
   renderSettingsSheet,
+  withDataRouter,
 } from "./settings-sheet-harness";
+import { SuiteIterationsView } from "../suite-iterations-view";
+import type { EvalSuite } from "../types";
 import { QUALITY_GATE_REASON_HINT } from "../suite-quality-gate-section";
 
 const mocks = vi.hoisted(() => ({
@@ -231,5 +237,85 @@ describe("quality-gate review requires a reason without a deadlock", () => {
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
     expect(reviewOpener()).toBeEnabled();
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A REVIEW DIALOG MUST NOT OUTLIVE THE SUITE OR THE LOCK IT WAS OPENED UNDER.
+ *
+ * `SuiteIterationsView` stays mounted across suite switches — no `key` at any
+ * of its three call sites — so `reviewOpen` is state that survives a change of
+ * suite, and the settings draft is rebased onto whatever arrives.
+ *
+ * Withholding the dialog from render while `editingDisabled` hid it without
+ * closing it: on the next unlocked suite the gate passed again and the dialog
+ * came back, over that suite's changes, asking someone to confirm a save they
+ * never started. Hiding is not closing.
+ */
+function SwitchableSheet({ suites }: { suites: EvalSuite[] }) {
+  const [index, setIndex] = useState(0);
+  return (
+    <>
+      <button data-testid="advance" onClick={() => setIndex((i) => i + 1)}>
+        advance
+      </button>
+      <SuiteIterationsView
+        suite={suites[index]}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        organizationId="org-1"
+        projectId="project-1"
+        route={{ type: "suite-edit", suiteId: suites[index]._id }}
+        navigation={noopNav}
+      />
+    </>
+  );
+}
+
+describe("the review dialog does not outlive its suite", () => {
+  it("closes when the suite locks, and stays closed on the next suite", async () => {
+    const user = userEvent.setup();
+    const unlocked = { ...baseSuite, _id: "suite-1" };
+    // Same id: the lock ARRIVING on the suite being edited, which is a CI run
+    // stamping the row underneath an open review.
+    const locked = { ...unlocked, source: "sdk" as const };
+    const other = { ...baseSuite, _id: "suite-2", name: "Another Suite" };
+
+    const { container } = render(
+      withDataRouter(<SwitchableSheet suites={[unlocked, locked, other]} />),
+    );
+
+    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
+    await user.click(
+      screen.getByRole("switch", { name: "Any gating scorer errored" }),
+    );
+    fireEvent.click(reviewOpener());
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    // The lock arrives on the suite being reviewed.
+    fireEvent.click(screen.getByTestId("advance"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // And moving on to an unlocked suite must not resurrect it. This is the
+    // half a render-time gate alone gets wrong: `reviewOpen` would still be
+    // true, and `!editingDisabled` is true again here.
+    fireEvent.click(screen.getByTestId("advance"));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

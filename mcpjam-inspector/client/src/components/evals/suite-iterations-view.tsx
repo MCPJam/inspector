@@ -889,6 +889,25 @@ export function SuiteIterationsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveSettingsKey]);
 
+  /*
+   * THE REVIEW DIALOG BELONGS TO ONE SUITE AND ONE MOMENT.
+   *
+   * Withholding it from render was not enough. `reviewOpen` is plain state,
+   * this component STAYS MOUNTED across suite switches (no `key` at any of the
+   * three call sites), and the draft is rebased onto whatever suite arrives.
+   * So a review left open on a suite that then locked would REOPEN itself on
+   * the next unlocked suite, over that suite's changes — asking someone to
+   * confirm a save they never started.
+   *
+   * Closed on either change, because they are one rule: the dialog asks
+   * "commit THESE changes to THIS suite", and either half moving makes it a
+   * different question. The render gate stays as well — it covers the frame
+   * between the lock arriving and this effect running.
+   */
+  useEffect(() => {
+    setReviewOpen(false);
+  }, [suite._id, editingDisabled]);
+
   // S6 — the run a rubric edit can be backtested against (see the helper).
   const backtestableRun = useMemo(() => pickBacktestableRun(runs), [runs]);
 
