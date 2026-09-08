@@ -1289,13 +1289,24 @@ computers.post("/local-browser/close", async (c) => {
     }
     const closed = outcome.result;
     if (!closed.closed && closed.reason === "lease_held") {
-      // Somebody took the browser between the check above and here.
+      // Somebody took the browser between the read above and the claim inside
+      // `closeLocalBrowserSession`. The BROWSER is safe either way — that claim
+      // is atomic and is held through disposal, so a leased browser is never
+      // torn down — but this session has already been closed by the
+      // `leaveAgentSession` above, and saying only "left running" would let a
+      // caller believe nothing had changed.
+      //
+      // So the answer carries the session, and says both halves. Re-opening the
+      // session here to undo the close would be a third write racing the same
+      // two writers; telling the truth about what happened is the smaller and
+      // more honest fix.
       return c.json(
         {
           error: "lease_held",
+          session,
           detail:
-            "somebody took this browser while the session was closing; it was " +
-            "left running",
+            "somebody took this browser while the session was closing; the " +
+            "session is closed and the browser was left running",
         },
         423,
       );
