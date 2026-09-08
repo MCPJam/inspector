@@ -39,7 +39,10 @@ import {
   selectGradedToolCalls,
   type TurnEvidenceResult,
 } from "./harness-evidence-turn.js";
-import { evidenceToolCallId } from "./harness-evidence-merge.js";
+import {
+  evidenceToolCallId,
+  type CanonicalMcpCall,
+} from "./harness-evidence-merge.js";
 import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
@@ -398,19 +401,22 @@ export function collectEvidenceResults(
   }
   const results = acc.evidenceResults;
   if (!results) return;
+  // `outcomeKind` travels with the result, because it is the ONLY place the
+  // failure of a JSON-RPC call is recorded: that response is the error
+  // envelope (`{code, message}`) and carries no `isError` anywhere, so a
+  // reader looking at the payload alone would take it for a success and mine
+  // it for identifiers.
+  const entry = (call: CanonicalMcpCall): FrictionResultEntry => ({
+    raw: call.response,
+    ...(call.outcomeKind !== "success" ? { isError: true } : {}),
+    startedAtMs: call.startedAtMs,
+    settledAtMs: call.settledAtMs,
+  });
   for (const [toolCallId, call] of merge.matchedByToolCallId) {
-    results.set(toolCallId, {
-      raw: call.response,
-      startedAtMs: call.startedAtMs,
-      settledAtMs: call.settledAtMs,
-    });
+    results.set(toolCallId, entry(call));
   }
   for (const call of merge.wireOnlyCalls) {
-    results.set(evidenceToolCallId(call.requestId), {
-      raw: call.response,
-      startedAtMs: call.startedAtMs,
-      settledAtMs: call.settledAtMs,
-    });
+    results.set(evidenceToolCallId(call.requestId), entry(call));
   }
 }
 

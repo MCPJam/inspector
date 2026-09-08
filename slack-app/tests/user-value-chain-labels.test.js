@@ -68,7 +68,10 @@ for (const [name, vocabulary, fork, upstream] of FORKS) {
   });
 }
 
-test('the fork covers exactly the vocabularies the chain sentence reads', () => {
+test('every registered vocabulary has decided whether it is forked', () => {
+  // This pins the WHOLE registry, not the subset the chain sentence renders,
+  // which is why the exemptions below are spelled out rather than filtered.
+  //
   // `stageStates` and `verdictDecisionReasons` are deliberately NOT forked:
   // the chain sentence names a location and a reason, and a state would only
   // ever read "failed" there.

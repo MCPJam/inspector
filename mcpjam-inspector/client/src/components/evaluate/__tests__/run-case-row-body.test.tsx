@@ -637,7 +637,7 @@ describe("RunCaseRowBody — the suspected condition", () => {
     expect(line.textContent).not.toContain("Next:");
   });
 
-  it("an unverified verdict says so rather than guessing", async () => {
+  it("an unrecognized condition reads as not available", async () => {
     render(
       <RunCaseRowBody
         row={row({ failureGroups: [] })}

@@ -166,6 +166,54 @@ describe("collectEvidenceResults", () => {
     expect(acc.evidenceHadHole.value).toBe(true);
   });
 
+  it("a JSON-RPC failure carries its outcome, not just its payload", () => {
+    // The error envelope has no `isError` anywhere in it, so the payload
+    // alone reads as a success and the identifier walk would mine it. The
+    // merge is the only place that knows, and it says so.
+    const acc = {
+      evidenceResults: new Map<string, FrictionResultEntry>(),
+      evidenceHadHole: { value: false },
+    };
+    collectEvidenceResults(
+      acc,
+      evidence({
+        wireOnlyCalls: [
+          wireCall({
+            requestId: "req-9",
+            outcomeKind: "jsonrpc_error",
+            response: { code: -32603, message: "boom" },
+          }),
+          wireCall({ requestId: "req-10" }),
+        ],
+      }),
+    );
+    expect(acc.evidenceResults.get("evidence:req-9")).toMatchObject({
+      isError: true,
+    });
+    // A success carries no flag at all, so the payload keeps deciding.
+    expect(acc.evidenceResults.get("evidence:req-10")).not.toHaveProperty(
+      "isError",
+    );
+  });
+
+  it("a call_tool_error is also an error", () => {
+    const acc = {
+      evidenceResults: new Map<string, FrictionResultEntry>(),
+      evidenceHadHole: { value: false },
+    };
+    collectEvidenceResults(
+      acc,
+      evidence({
+        wireOnlyCalls: [
+          wireCall({ requestId: "req-11", outcomeKind: "call_tool_error" }),
+        ],
+      }),
+    );
+    expect(acc.evidenceResults.get("evidence:req-11")).toMatchObject({
+      isError: true,
+    });
+  });
+
   it("a turn with no merge at all is a no-op, not a hole", () => {
     const acc = {
       evidenceResults: new Map<string, FrictionResultEntry>(),

@@ -1,6 +1,6 @@
 ---
 name: user-value-chain-glossary
-description: Defines every member of MCPJam's user-value chain vocabulary — the six stages, the five stage states, the twenty-nine stage reasons, the seven failure categories, the four verdicts and the stage-analytics exclusion classes — plus the population rules that decide what a count means. Use when reading a `decisionSummary`, a stage chain, or stage analytics returned by MCPJam's eval tools and you need to know what a wire value means or whether a number can be compared.
+description: Defines every member of MCPJam's user-value chain vocabulary — the six stages, the five stage states, the twenty-nine stage reasons, the seven failure categories, the four verdicts, the stage-analytics exclusion classes, the five friction signals and the nine suspected conditions — plus the population rules that decide what a count means. Use when reading a `decisionSummary`, a stage chain, a trial's `frictionSignals` or `suspectedConditionVerdict`, or stage analytics returned by MCPJam's eval tools and you need to know what a wire value means or whether a number can be compared.
 ---
 
 # The user-value chain, member by member
@@ -19,8 +19,10 @@ supports that claim, and who should investigate next.
 **Source of truth.** Every word below is copied from
 `sdk/src/contract/decision-labels.ts` (the label maps),
 `sdk/src/contract/chain.ts` (stages, states, categories),
-`sdk/src/contract/stage-derivation.ts` (`STAGE_REASONS`) and
-`sdk/src/contract/stage-analytics.ts` (exclusion classes, parity). A test in
+`sdk/src/contract/stage-derivation.ts` (`STAGE_REASONS`),
+`sdk/src/contract/stage-analytics.ts` (exclusion classes, parity) and
+`sdk/src/contract/friction-signals.ts` (friction signals, suspected
+conditions). A test in
 `mcp/tests/` asserts this file names every member of
 `DECISION_LABEL_VOCABULARIES` and quotes each label verbatim, so drift here
 fails the build rather than misinforming you.
@@ -180,6 +182,89 @@ These are the audit trail an `inconclusive` run is explained by.
 | `casePassRateMetThreshold` | the case met its pass threshold |
 | `casePassRateBelowThreshold` | a case did not meet its pass threshold |
 | `allMeasuredCasesMetThreshold` | every measured case met its threshold |
+
+## The five friction signals
+
+REPORT-ONLY, and **signals, not verdicts**. Each names an observable pattern in
+one trial's tool calls, derived from stored evidence. None of them enters a
+verdict, a score, a gate or a failure category, and none of them says the
+server did anything wrong.
+
+**Every one has a benign reading**, listed below because it is the first thing
+a reader owes the pattern. An unused identifier can mean the first result
+already answered the question; a repeat can be a sensible refinement; a retry
+is usually recovery working. Read a signal as "look here", never as "this was
+wasted" — the contract deliberately does not reach that verdict.
+
+| Wire value | Words | What was observed | A benign reading |
+| --- | --- | --- | --- |
+| `identifierSurfacedUnused` | Identifiers surfaced, none used later | A result carried identifier-shaped values, and no call made after they were available carried one in its arguments. | The result already answered the request, so there was nothing left to look up. |
+| `searchRepeatedAfterIdentifier` | Same tool searched again after identifiers | The same tool was called again after it had surfaced identifiers, and the repeat did not carry one. | The agent was refining a query rather than re-treading it. |
+| `identicalRetry` | Repeated with identical arguments | One tool was called twice with byte-identical canonical arguments. | Recovery after a transient error — retry working, not failing. |
+| `changedRetry` | Same tool called again with changed arguments | One tool was called again with different arguments. | Ordinary iteration toward an answer. |
+| `paginationContinuation` | Pagination continued | Consecutive calls to one tool differing only in a pagination key. | The result set was genuinely longer than one page. |
+
+**Two indexes, not one.** The two identifier signals carry
+`informationCallIndex` (the call whose result surfaced the identifiers) and
+`observedAtCallIndex` (the last call this trial can honestly claim came after
+it). The three adjacency signals carry `priorCallIndex` and `callIndex`
+instead. All four index the trial's `actualToolCalls` array by position.
+
+**Availability is a contract, not an array position.** An identifier signal may
+only claim "this was available before that call" when the trial can establish
+it: message order is causal for the emulated engine, but a harness run's graded
+array APPENDS wire-only calls, so a higher index proves nothing there and the
+claim requires wire timing. A trial that cannot establish it reports
+`identifierSignals: notMeasured` and keeps its retry and pagination signals,
+which never depended on ordering.
+
+**No identifier VALUE ever leaves the deriver.** A signal reports key PATHS
+(`results[].id`) and counts — never the ids themselves.
+
+## Why a trial's friction was not measured
+
+Facts about the EVIDENCE, never about the run. A trial whose results were not
+retained did nothing wrong, and "not measured" is the opposite of "nothing
+found" — reading one as the other inverts what the document says.
+
+`state: "notMeasured"` withholds the whole document. `identifierSignals.state`
+can be `notMeasured` on its own, and such a trial still reports its adjacency
+signals.
+
+| Wire value | Words | …because |
+| --- | --- | --- |
+| `noToolCalls` | no tool calls to look at | The trial made none, so there is no sequence to read. |
+| `resultsUnavailable` | tool results were not retained | At least one call's result was not stored, so what a later call could have used is unknown. |
+| `orderingUnknown` | the calls cannot be placed in a causal order | The trial mixes ordering modes, or carries a call that cannot be placed against the others — so "later" cannot be established. |
+| `evidenceIncomplete` | the evidence for this trial has a known hole | A gap the producer knows about. The call count stays honest; the signals are withheld. |
+| `truncated` | too many tool calls to measure | The trial exceeded the per-trial call cap. |
+
+## The nine suspected conditions
+
+An ADVISORY LLM reading of one flagged trial, naming a plausible
+server-controlled condition behind the pattern plus one remediation that names
+a server lever.
+
+**"Suspected" is load-bearing and stays in the name.** The judge names a
+plausible contributor from one window of one trial. Only a controlled rewrite —
+change the condition, re-run, see the pattern move — turns that into a claim
+about cause. Nothing here is confirmed, and none of these lines says "caused".
+
+| Wire value | Words | What is suspected |
+| --- | --- | --- |
+| `unclear` | could not attribute | The judge could not name a condition. **"Could not attribute", never "no problem found"** — those are opposite readings of the same verdict, and only the first is what it said. |
+| `idBuriedInPayload` | identifier buried in payload | The identifier a later call would need sits deep in the response rather than where a reader meets it. |
+| `idNameCollision` | identifier name collision | Two different identifiers share a name, so the right one is not determined by the field. |
+| `missingQueryEcho` | response does not echo the query | The response does not restate what was asked, so a caller cannot tell which request it answers. |
+| `silentTruncation` | response truncated without saying so | The response was cut short and does not say it was. |
+| `ambiguousErrorSemantics` | error text does not say whether to retry | The error leaves retry-or-not undetermined. |
+| `missingUnits` | value has no stated unit | A number arrives without the unit needed to use it. |
+| `responseWasClear` | the response was clear | The honest NEGATIVE, and a real answer: the server's output does not explain the pattern. |
+| `descriptionMisleading` | tool description points the wrong way | The tool's own description sent the model somewhere the tool does not go. |
+
+Confidence arrives alongside as `low`, `medium` or `high`. A `low`-confidence
+verdict is demoted to `unclear` before it is persisted, so a named condition
+reaching a reader is always `medium` or `high`.
 
 ## Two derivations, two jobs
 

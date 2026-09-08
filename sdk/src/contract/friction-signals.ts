@@ -274,6 +274,19 @@ export type FrictionResultEntry = {
    * the bare `CallToolResult` a wire-only call carries. Both are read.
    */
   raw: unknown;
+  /**
+   * Whether the call FAILED, when the producer knows it from something the
+   * payload does not carry.
+   *
+   * A JSON-RPC failure's `raw` is the error envelope — `{code, message}` — and
+   * has no `isError` anywhere in it, so `frictionResultIsError` reads it as a
+   * successful result and the identifier walk would mine an error for
+   * identifiers. The harness merge classifies every call
+   * (`outcomeKind`) and is the only place that knows; it passes the answer
+   * here rather than expecting this module to re-derive it from a shape that
+   * does not state it.
+   */
+  isError?: boolean;
   /** Wire timing, when the producer had it. Both or neither. */
   startedAtMs?: number;
   settledAtMs?: number;
@@ -647,32 +660,45 @@ function collectIdentifierCandidates(
   keyPath: string,
   depth: number,
   keyNamed: boolean,
-  out: IdentifierCandidate[]
+  out: IdentifierCandidate[],
+  walk: { truncated: boolean }
 ): void {
-  if (out.length >= MAX_IDENTIFIER_CANDIDATES) return;
+  if (out.length >= MAX_IDENTIFIER_CANDIDATES) {
+    walk.truncated = true;
+    return;
+  }
   if (Array.isArray(value)) {
-    if (depth >= IDENTIFIER_WALK_DEPTH) return;
+    if (depth >= IDENTIFIER_WALK_DEPTH) {
+      if (value.length > 0) walk.truncated = true;
+      return;
+    }
     const limit = Math.min(value.length, IDENTIFIER_WALK_ARRAY_ITEMS);
+    if (limit < value.length) walk.truncated = true;
     for (let index = 0; index < limit; index += 1) {
       collectIdentifierCandidates(
         value[index],
         `${keyPath}[]`,
         depth + 1,
         keyNamed,
-        out
+        out,
+        walk
       );
     }
     return;
   }
   if (isRecord(value)) {
-    if (depth >= IDENTIFIER_WALK_DEPTH) return;
+    if (depth >= IDENTIFIER_WALK_DEPTH) {
+      if (Object.keys(value).length > 0) walk.truncated = true;
+      return;
+    }
     for (const key of Object.keys(value).sort()) {
       collectIdentifierCandidates(
         value[key],
         joinKeyPath(keyPath, key),
         depth + 1,
         keyNamesAnIdentifier(key),
-        out
+        out,
+        walk
       );
     }
     return;
@@ -694,19 +720,36 @@ function collectIdentifierCandidates(
 export function extractResultIdentifiers(result: FrictionCallResult): {
   values: string[];
   keyPaths: string[];
+  /**
+   * Whether the walk stopped short of the whole payload — a candidate cap, a
+   * depth limit, or an array longer than the per-array budget.
+   *
+   * LOAD-BEARING, not diagnostic. The identifier rules fire on the ABSENCE of
+   * a candidate in a later call's arguments, so a candidate set that is
+   * incomplete produces false signals: an identifier the walk never reached,
+   * used by a later call, reads as "nothing was used". A truncated walk
+   * therefore withholds this call's identifier signals rather than reporting
+   * what it happened to see.
+   */
+  truncated: boolean;
 } {
   const candidates: IdentifierCandidate[] = [];
+  const walk = { truncated: false };
   if (result.structuredContent !== undefined) {
     collectIdentifierCandidates(
       result.structuredContent,
       "",
       0,
       false,
-      candidates
+      candidates,
+      walk
     );
   } else {
     for (const part of result.textParts) {
-      if (candidates.length >= MAX_IDENTIFIER_CANDIDATES) break;
+      if (candidates.length >= MAX_IDENTIFIER_CANDIDATES) {
+        walk.truncated = true;
+        break;
+      }
       if (!looksLikeJsonDocumentString(part)) continue;
       let parsed: unknown;
       try {
@@ -714,7 +757,7 @@ export function extractResultIdentifiers(result: FrictionCallResult): {
       } catch {
         continue;
       }
-      collectIdentifierCandidates(parsed, "", 0, false, candidates);
+      collectIdentifierCandidates(parsed, "", 0, false, candidates, walk);
     }
   }
 
@@ -727,6 +770,7 @@ export function extractResultIdentifiers(result: FrictionCallResult): {
   return {
     values: [...values].sort(),
     keyPaths: [...keyPaths].sort(),
+    truncated: walk.truncated,
   };
 }
 
@@ -888,7 +932,16 @@ export function buildFrictionCallRecords(args: {
       toolName,
       ...(toolCallId ? { toolCallId } : {}),
       arguments: record.arguments,
-      ...(entry ? { result: normalizeFrictionResult(entry.raw) } : {}),
+      ...(entry
+        ? {
+            result: {
+              ...normalizeFrictionResult(entry.raw),
+              // OR, never overwrite: the payload's own `isError` still counts
+              // when the producer said nothing.
+              ...(entry.isError === true ? { isError: true } : {}),
+            },
+          }
+        : {}),
       resultAvailable: entry !== undefined,
       ...(timed
         ? {
@@ -1069,6 +1122,10 @@ export function deriveTrialFrictionSignals(
       if (!result || result.isError) continue;
       const identifiers = extractResultIdentifiers(result);
       if (identifiers.values.length === 0) continue;
+      // An incomplete candidate set cannot support a claim about what a later
+      // call did NOT use. Withheld for this call only — the trial keeps its
+      // adjacency signals and its other calls' identifier signals.
+      if (identifiers.truncated) continue;
 
       // Positions, not `record.index`: the canonical-argument array is built
       // by position, and only the OUTPUT speaks in call indexes.
@@ -1092,11 +1149,27 @@ export function deriveTrialFrictionSignals(
         withoutPaginationKeys(information.arguments)
       );
 
-      if (later.length >= 2) {
+      // THE OBSERVATION INDEX, and why it can fail to exist.
+      //
+      // `later` is "later in the ordering that established availability",
+      // which for a TIMED trial is time, not array position — and the graded
+      // array appends wire-only calls, so a call that ran first can sit last.
+      // When the information call is one of those appended calls, every call
+      // later IN TIME can sit at a LOWER array index than it does.
+      //
+      // The signal reports an ARRAY index because that is what a reader
+      // clicks and what the judge slices (`slice(0, observedAt + 1)`), and an
+      // array prefix that ends before the information call cannot express
+      // "observed after it". So the signal is DROPPED for that trial rather
+      // than emitted invalid: an invalid one fails the document's own
+      // validator, and the throw would cost the trial its adjacency signals
+      // too — which never depended on timing and are perfectly good.
+      const observedAt = observationIndexAfter(records, later, information);
+      if (later.length >= 2 && observedAt !== undefined) {
         signals.push({
           kind: "identifierSurfacedUnused",
           informationCallIndex: information.index,
-          observedAtCallIndex: records[later[later.length - 1]!]!.index,
+          observedAtCallIndex: observedAt,
           toolName: information.toolName,
           ...(information.toolCallId
             ? { toolCallId: information.toolCallId }
@@ -1115,18 +1188,29 @@ export function deriveTrialFrictionSignals(
             informationArguments
         );
       });
-      if (repeats.length > 0) {
+      const repeatObservedAt = observationIndexAfter(
+        records,
+        repeats,
+        information
+      );
+      if (repeats.length > 0 && repeatObservedAt !== undefined) {
+        // Only the repeats the observation index can actually cover: a repeat
+        // at a lower array index than the information call is real but
+        // unaddressable in this shape, and naming it would contradict the
+        // document's own "a repeat cannot fall after the observation index".
+        const addressable = repeats
+          .map((other) => records[other]!.index)
+          .filter((index) => index > information.index)
+          .sort((left, right) => left - right);
         signals.push({
           kind: "searchRepeatedAfterIdentifier",
           informationCallIndex: information.index,
-          observedAtCallIndex: records[repeats[repeats.length - 1]!]!.index,
+          observedAtCallIndex: repeatObservedAt,
           toolName: information.toolName,
           ...(information.toolCallId
             ? { toolCallId: information.toolCallId }
             : {}),
-          repeatCallIndexes: repeats
-            .slice(0, MAX_REPEAT_CALL_INDEXES)
-            .map((other) => records[other]!.index),
+          repeatCallIndexes: addressable.slice(0, MAX_REPEAT_CALL_INDEXES),
           identifierKeyPaths: keyPaths,
           identifierCount,
         });
@@ -1142,8 +1226,66 @@ export function deriveTrialFrictionSignals(
     state: "measured",
     ...counts,
     identifierSignals,
-    signals: signals.slice(0, MAX_FRICTION_SIGNALS),
+    signals: capSignals(signals),
   });
+}
+
+/**
+ * Cap the signal list WITHOUT losing a kind.
+ *
+ * A plain `slice(0, 24)` would drop whole kinds: a trial that paginated
+ * thirty times and surfaced one unused identifier at the end would keep
+ * twenty-four `paginationContinuation` rows and lose the one signal anybody
+ * wanted. Worse, the case-level rates count the KIND SET of each trial
+ * (`route-facts.ts`), so a kind cut by the cap reads as "did not fire" while
+ * the trial stays in the denominator — a rate that silently understates.
+ *
+ * So the first pass reserves one slot per kind that fired, earliest first,
+ * and the remaining slots fill in order. The result is re-sorted, because the
+ * document's ordering invariant is by observation index and reservation
+ * breaks it.
+ */
+function capSignals(signals: readonly FrictionSignal[]): FrictionSignal[] {
+  if (signals.length <= MAX_FRICTION_SIGNALS) return [...signals];
+  const keptPositions = new Set<number>();
+  const seenKinds = new Set<FrictionSignalKind>();
+  for (const [position, signal] of signals.entries()) {
+    if (seenKinds.has(signal.kind)) continue;
+    seenKinds.add(signal.kind);
+    keptPositions.add(position);
+    if (keptPositions.size >= MAX_FRICTION_SIGNALS) break;
+  }
+  for (const [position] of signals.entries()) {
+    if (keptPositions.size >= MAX_FRICTION_SIGNALS) break;
+    keptPositions.add(position);
+  }
+  return [...keptPositions]
+    .sort((left, right) => left - right)
+    .map((position) => signals[position]!)
+    .sort(compareSignals);
+}
+
+/**
+ * The array index a signal can honestly point at as "where this became
+ * observable", or `undefined` when no such index exists.
+ *
+ * The highest array index among the observing calls, and only when it is
+ * AFTER the information call. See the call site for why that can fail on a
+ * timed trial, and why the answer there is to drop one signal rather than
+ * emit an invalid document.
+ */
+function observationIndexAfter(
+  records: readonly FrictionCallRecord[],
+  positions: readonly number[],
+  information: FrictionCallRecord
+): number | undefined {
+  let highest: number | undefined;
+  for (const position of positions) {
+    const index = records[position]!.index;
+    if (index <= information.index) continue;
+    if (highest === undefined || index > highest) highest = index;
+  }
+  return highest;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   FRICTION_NOT_MEASURED_REASONS,
   FRICTION_SIGNAL_KINDS,
   FRICTION_SIGNALS_VERSION,
+  IDENTIFIER_WALK_ARRAY_ITEMS,
   MAX_FRICTION_CALLS,
   MAX_FRICTION_SIGNALS,
   MIN_IDENTIFIER_LENGTH,
@@ -848,5 +849,246 @@ describe("a call whose tool name could not be read", () => {
     // The adjacency pair, which never needed that name, survives.
     expect(kindsOf(doc)).toEqual(["identicalRetry"]);
     expect(doc.state).toBe("measured");
+  });
+});
+
+// ── review findings, each pinned by the case that reproduces it ──────────────
+
+describe("a timed information call that ran FIRST but sits LAST", () => {
+  /**
+   * Cursor Bugbot and cubic both found this, and they were right.
+   *
+   * The graded array appends wire-only calls, so on a harness trial the call
+   * that surfaced the identifiers can sit at the HIGHEST index and the
+   * earliest time. Every call later in TIME is then at a LOWER index, and an
+   * `observedAtCallIndex` below `informationCallIndex` fails the document's
+   * own validator — which threw, and cost the trial its adjacency signals
+   * too.
+   */
+  const appendedInformationCall = (): FrictionCallRecord[] => [
+    record({
+      index: 0,
+      toolName: "get_issue",
+      arguments: { title: "x" },
+      ordering: "timed",
+      startedAtMs: 5_000,
+      settledAtMs: 5_500,
+    }),
+    record({
+      index: 1,
+      toolName: "get_issue",
+      arguments: { title: "x" },
+      ordering: "timed",
+      startedAtMs: 6_000,
+      settledAtMs: 6_500,
+    }),
+    // Appended by the evidence merge, settled before either of them.
+    record({
+      index: 2,
+      toolName: "search_issues",
+      arguments: { q: "open" },
+      ordering: "timed",
+      startedAtMs: 1_000,
+      settledAtMs: 1_500,
+      result: normalizeFrictionResult(idsResult("ISSUE-41", "ISSUE-42")),
+    }),
+  ];
+
+  test("does not throw, and keeps the adjacency signals", () => {
+    const doc = deriveTrialFrictionSignals(appendedInformationCall());
+    expect(doc.state).toBe("measured");
+    // The retry between calls 0 and 1 never depended on timing and survives.
+    expect(kindsOf(doc)).toEqual(["identicalRetry"]);
+  });
+
+  test("emits no identifier signal it could not address", () => {
+    const doc = deriveTrialFrictionSignals(appendedInformationCall());
+    expect(only(doc, "identifierSurfacedUnused")).toEqual([]);
+    expect(only(doc, "searchRepeatedAfterIdentifier")).toEqual([]);
+    // And the document validates, which is the property that broke.
+    expect(evalTrialFrictionSignalsSchema.safeParse(doc).success).toBe(true);
+  });
+
+  test("every index it DOES emit is addressable in the array", () => {
+    // Same trial with the search first in time AND first in the array: the
+    // signal is expressible, so it fires.
+    const doc = deriveTrialFrictionSignals([
+      record({
+        index: 0,
+        toolName: "search_issues",
+        arguments: { q: "open" },
+        ordering: "timed",
+        startedAtMs: 1_000,
+        settledAtMs: 1_500,
+        result: normalizeFrictionResult(idsResult("ISSUE-41")),
+      }),
+      record({
+        index: 1,
+        toolName: "get_issue",
+        arguments: { title: "x" },
+        ordering: "timed",
+        startedAtMs: 2_000,
+        settledAtMs: 2_500,
+      }),
+      record({
+        index: 2,
+        toolName: "get_issue",
+        arguments: { title: "y" },
+        ordering: "timed",
+        startedAtMs: 3_000,
+        settledAtMs: 3_500,
+      }),
+    ]);
+    expect(only(doc, "identifierSurfacedUnused")[0]).toMatchObject({
+      informationCallIndex: 0,
+      observedAtCallIndex: 2,
+    });
+  });
+});
+
+describe("a wire failure is not a result to mine", () => {
+  test("the producer's outcome flag beats a payload that never says isError", () => {
+    // A JSON-RPC error envelope carries no `isError` anywhere, so the payload
+    // alone reads as a success. The harness merge knows better and says so.
+    const jsonRpcError = { code: -32603, message: "ISSUE-41 blew up" };
+    const [row] = buildFrictionCallRecords({
+      toolsCalled: [
+        {
+          toolName: "search_issues",
+          toolCallId: "evidence:req-1",
+          arguments: {},
+        },
+      ],
+      resultsByToolCallId: new Map<string, FrictionResultEntry>([
+        ["evidence:req-1", { raw: jsonRpcError, isError: true }],
+      ]),
+    });
+    expect(row!.result!.isError).toBe(true);
+    expect(normalizeFrictionResult(jsonRpcError).isError).toBe(false);
+  });
+
+  test("and an errored information call surfaces no identifiers", () => {
+    const doc = deriveTrialFrictionSignals(
+      buildFrictionCallRecords({
+        toolsCalled: [
+          {
+            toolName: "search_issues",
+            toolCallId: "c0",
+            arguments: { q: "open" },
+          },
+          {
+            toolName: "get_issue",
+            toolCallId: "c1",
+            arguments: { title: "x" },
+          },
+          {
+            toolName: "get_issue",
+            toolCallId: "c2",
+            arguments: { title: "y" },
+          },
+        ],
+        resultsByToolCallId: new Map<string, FrictionResultEntry>([
+          // Id-shaped values in an error envelope, which must not be mined.
+          [
+            "c0",
+            {
+              raw: { code: -32603, message: "x", data: { id: "ISSUE-41" } },
+              isError: true,
+            },
+          ],
+          ["c1", { raw: {} }],
+          ["c2", { raw: {} }],
+        ]),
+      })
+    );
+    expect(only(doc, "identifierSurfacedUnused")).toEqual([]);
+  });
+});
+
+describe("a walk that did not see the whole payload says nothing", () => {
+  test("an over-long array withholds this call's identifier signals", () => {
+    // More entries than the per-array budget: an identifier past the budget
+    // that a later call DID use would otherwise read as unused.
+    const many = {
+      structuredContent: {
+        results: Array.from(
+          { length: IDENTIFIER_WALK_ARRAY_ITEMS + 5 },
+          (_, i) => ({
+            id: `ISSUE-${1000 + i}`,
+          })
+        ),
+      },
+    };
+    const extracted = extractResultIdentifiers(normalizeFrictionResult(many));
+    expect(extracted.truncated).toBe(true);
+
+    const doc = deriveTrialFrictionSignals([
+      record({
+        index: 0,
+        toolName: "search_issues",
+        arguments: { q: "open" },
+        result: normalizeFrictionResult(many),
+      }),
+      record({ index: 1, toolName: "get_issue", arguments: { title: "x" } }),
+      record({ index: 2, toolName: "get_issue", arguments: { title: "y" } }),
+    ]);
+    expect(only(doc, "identifierSurfacedUnused")).toEqual([]);
+    // Withheld for THAT call only — the trial is still measured and its
+    // adjacency signals are untouched.
+    expect(doc.identifierSignals).toEqual({ state: "measured" });
+    expect(kindsOf(doc)).toEqual(["changedRetry"]);
+  });
+
+  test("a payload the walk saw whole is not truncated", () => {
+    expect(
+      extractResultIdentifiers(normalizeFrictionResult(idsResult("ISSUE-41")))
+        .truncated
+    ).toBe(false);
+  });
+});
+
+describe("the cap keeps one signal of every kind that fired", () => {
+  test("a kind that fired late is not cut, so a rate cannot understate it", () => {
+    // Thirty pagination continuations, then one unused identifier. A plain
+    // slice would keep 24 paginations and lose the signal anybody wanted —
+    // and `route-facts.ts` counts the KIND SET, so the case-level identifier
+    // rate would read zero on a trial where it fired.
+    const records: FrictionCallRecord[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      records.push(
+        record({
+          index,
+          toolName: "list_pages",
+          arguments: { q: "open", cursor: `c${index}` },
+          result: normalizeFrictionResult({ structuredContent: { ok: true } }),
+        })
+      );
+    }
+    records.push(
+      record({
+        index: 30,
+        toolName: "search_issues",
+        arguments: { q: "open" },
+        result: normalizeFrictionResult(idsResult("ISSUE-41")),
+      })
+    );
+    records.push(
+      record({ index: 31, toolName: "get_issue", arguments: { title: "x" } })
+    );
+    records.push(
+      record({ index: 32, toolName: "get_issue", arguments: { title: "y" } })
+    );
+
+    const doc = deriveTrialFrictionSignals(records);
+    expect(doc.signals).toHaveLength(MAX_FRICTION_SIGNALS);
+    expect(new Set(kindsOf(doc))).toEqual(
+      new Set([
+        "paginationContinuation",
+        "identifierSurfacedUnused",
+        "changedRetry",
+      ])
+    );
+    // Still ordered by the call that made each observable, and still valid.
+    expect(evalTrialFrictionSignalsSchema.safeParse(doc).success).toBe(true);
   });
 });
