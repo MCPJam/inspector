@@ -262,6 +262,11 @@ export type FrictionCallRecord = {
   result?: FrictionCallResult;
   /** Whether a result was retained for this call at all. */
   resultAvailable: boolean;
+  /**
+   * Position of the retained `tool-result` item in the graded transcript, when
+   * the producer retained one.
+   */
+  resultMessageIndex?: number;
   startedAtMs?: number;
   settledAtMs?: number;
   ordering: FrictionOrdering;
@@ -290,6 +295,8 @@ export type FrictionResultEntry = {
   /** Wire timing, when the producer had it. Both or neither. */
   startedAtMs?: number;
   settledAtMs?: number;
+  /** Position of this result in the transcript, when known. */
+  resultMessageIndex?: number;
 };
 
 // ── output schemas ───────────────────────────────────────────────────────────
@@ -849,6 +856,12 @@ export function availableBefore(
   j: FrictionCallRecord
 ): boolean {
   if (k.ordering === "messageOrder" && j.ordering === "messageOrder") {
+    if (
+      typeof k.resultMessageIndex === "number" &&
+      typeof j.resultMessageIndex === "number"
+    ) {
+      return k.resultMessageIndex < j.resultMessageIndex;
+    }
     return k.index < j.index;
   }
   if (k.ordering === "timed" && j.ordering === "timed") {
@@ -869,13 +882,15 @@ export function availableBefore(
  * Only `tool-result` items that carry `result` — the RAW `CallToolResult` —
  * are taken. An item with a model-visible `output` and no `result` says what
  * the model saw and not what the server returned, and the identifier rules ask
- * the second question. Entries carry no timing, so their calls are
- * `messageOrder`.
+ * the second question. Entries carry message-order provenance via
+ * `resultMessageIndex`, so their calls are `messageOrder` with a safe relation
+ * when that ordering metadata is present.
  */
 export function buildResultsByToolCallIdFromMessages(
   messages: readonly unknown[]
 ): Map<string, FrictionResultEntry> {
   const out = new Map<string, FrictionResultEntry>();
+  let resultMessageIndex = 0;
   for (const message of messages) {
     if (!isRecord(message) || message.role !== "tool") continue;
     const content = message.content;
@@ -887,7 +902,11 @@ export function buildResultsByToolCallIdFromMessages(
         continue;
       }
       if (!("result" in item)) continue;
-      out.set(item.toolCallId, { raw: item });
+      out.set(item.toolCallId, {
+        raw: item,
+        resultMessageIndex,
+      });
+      resultMessageIndex += 1;
     }
   }
   return out;
@@ -943,6 +962,9 @@ export function buildFrictionCallRecords(args: {
           }
         : {}),
       resultAvailable: entry !== undefined,
+      ...(typeof entry?.resultMessageIndex === "number"
+        ? { resultMessageIndex: entry.resultMessageIndex }
+        : {}),
       ...(timed
         ? {
             startedAtMs: entry.startedAtMs as number,

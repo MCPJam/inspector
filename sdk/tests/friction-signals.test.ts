@@ -292,6 +292,29 @@ describe("availableBefore", () => {
     expect(availableBefore(messageOrder(1), messageOrder(0))).toBe(false);
   });
 
+  test("message-order uses result message order when available", () => {
+    const earlierByMessage = record({
+      index: 2,
+      resultMessageIndex: 1,
+      toolName: "t",
+      ordering: "messageOrder",
+    });
+    const laterByMessage = record({
+      index: 0,
+      resultMessageIndex: 3,
+      toolName: "t",
+      ordering: "messageOrder",
+    });
+    const laterInMessageOrderArrayFirst = record({
+      index: 9,
+      resultMessageIndex: 2,
+      toolName: "t",
+      ordering: "messageOrder",
+    });
+    expect(availableBefore(earlierByMessage, laterByMessage)).toBe(true);
+    expect(availableBefore(laterInMessageOrderArrayFirst, laterByMessage)).toBe(true);
+  });
+
   test("timed order compares settled against started, not indexes", () => {
     const early = timed(3, 100, 200);
     const late = timed(1, 300, 400);
