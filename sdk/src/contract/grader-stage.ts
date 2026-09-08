@@ -69,6 +69,9 @@ export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
   toolCalledWith: "selection",
   toolCalledAtLeastOnce: "selection",
   toolNeverCalled: "selection",
+  // Which tools were allowed to be called is a SELECTION claim, same as the
+  // forbidden-tool check it generalizes.
+  onlyToolsCalled: "selection",
   firstToolWas: "selection",
   // ── User value: did the person get what they asked for ──────────────────
   responseContains: "userValue",

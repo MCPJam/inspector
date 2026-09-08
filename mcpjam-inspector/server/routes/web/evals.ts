@@ -49,6 +49,7 @@ import {
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
+  passCriteriaSchema,
   prepareEvalRun,
   type PreparedEvalRun,
   runEvalTestCaseWithManager,
@@ -118,11 +119,12 @@ const hostedReplayRunSchema = z.object({
   runId: z.string().min(1),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   notes: z.string().optional(),
-  passCriteria: z
-    .object({
-      minimumPassRate: z.number(),
-    })
-    .optional(),
+  // The SHARED pass-criteria schema, so a replay is bounded and speaks the same
+  // vocabulary as every other write. As a bare `z.object` this both STRIPPED
+  // `minimumPassRatePercent` silently — a replay losing the very override it
+  // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
+  // and the gate it produced could never fail.
+  passCriteria: passCriteriaSchema.optional(),
 });
 
 const hostedTraceRepairStartSchema = z.discriminatedUnion("scope", [

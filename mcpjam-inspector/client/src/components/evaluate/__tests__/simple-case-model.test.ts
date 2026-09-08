@@ -9,15 +9,14 @@ import {
   caseHasOwnAssertion,
   deriveCaseKind,
   displayCaseKind,
-  EXCLUDED_FROM_MORE_CHECKS,
   inAppStepLabel,
   initialToolsChoice,
   isPromptFirst,
   isSimpleCaseShape,
   isToolCalledWithAssert,
+  isStepCheckAssert,
   leftoverSteps,
   matchOptionsForKind,
-  MORE_CHECK_GROUPS,
   readSimpleCase,
   readStepChecks,
   resolveToolsQuestion,
@@ -395,33 +394,15 @@ describe("matchOptionsForKind carries argument matching over", () => {
   });
 });
 
-describe("More checks groups partition the predicate catalog", () => {
-  it("files every predicate kind exactly once, or excludes it on purpose", () => {
-    const filed = new Map<string, string[]>();
-    for (const group of MORE_CHECK_GROUPS) {
-      for (const kind of group.kinds) {
-        filed.set(kind, [...(filed.get(kind) ?? []), group.id]);
-      }
-    }
-    for (const kind of Object.keys(PREDICATE_KIND_LABELS)) {
-      const groups = filed.get(kind) ?? [];
-      const excluded = EXCLUDED_FROM_MORE_CHECKS.has(
-        kind as Parameters<typeof EXCLUDED_FROM_MORE_CHECKS.has>[0],
-      );
-      expect(
-        { kind, groups, excluded },
-        `predicate kind "${kind}" must be in exactly one More checks group or excluded on purpose`,
-      ).toSatisfy(
-        (entry: { groups: string[]; excluded: boolean }) =>
-          (entry.groups.length === 1 && !entry.excluded) ||
-          (entry.groups.length === 0 && entry.excluded),
-      );
-    }
-    for (const kind of EXCLUDED_FROM_MORE_CHECKS) {
-      expect(kind in PREDICATE_KIND_LABELS).toBe(true);
-    }
-  });
-});
+/*
+ * The partition guard moved. It used to pin `MORE_CHECK_GROUPS` — the form's
+ * own three-way grouping — against the predicate catalog. That grouping is
+ * gone; the equivalent invariant now lives in `case-scorecard-model.test.ts`
+ * as "offers every predicate kind exactly once, or the route owns it", over
+ * the shared scorer library. The guard is the same: a kind added to the
+ * catalog fails until somebody files it, rather than silently disappearing
+ * from the only place it can be authored.
+ */
 
 describe("inAppStepLabel", () => {
   it("names a role locator by its accessible name, never by the role object", () => {
@@ -763,4 +744,90 @@ describe("isPromptFirst", () => {
       ]),
     ).toBe(false);
   });
+});
+
+describe("an advisory tool assert is not the route", () => {
+  const advisoryTool = {
+    id: "a1",
+    kind: "assert",
+    assertion: {
+      type: "toolCalledWith",
+      toolName: "get_me",
+      args: { args: {} },
+      role: "advisory",
+      severity: "warn",
+    },
+  } as unknown as TestStep;
+  const gatingTool = {
+    id: "a2",
+    kind: "assert",
+    assertion: { type: "toolCalledWith", toolName: "get_me", args: { args: {} } },
+  } as unknown as TestStep;
+
+  it("routes only on a gating tool assert", () => {
+    // `deriveExpectedToolCalls` and `stepsToPromptTurns` both skip an advisory
+    // `toolCalledWith`, so it never becomes a matcher expectation. Reading it
+    // as the route would show a Gate route on a case the backend does not
+    // route at all.
+    expect(isToolCalledWithAssert(gatingTool)).toBe(true);
+    expect(isToolCalledWithAssert(advisoryTool)).toBe(false);
+  });
+
+  it("files the advisory one as a step scorer instead, so it stays visible", () => {
+    expect(isStepCheckAssert(advisoryTool)).toBe(true);
+    expect(isStepCheckAssert(gatingTool)).toBe(false);
+    expect(readStepChecks([prompt("p1", "go"), advisoryTool])).toHaveLength(1);
+  });
+
+  it("keeps it out of the tool list the route question renders", () => {
+    expect(readSimpleCase([prompt("p1", "go"), advisoryTool]).tools).toEqual([]);
+    expect(readSimpleCase([prompt("p1", "go"), gatingTool]).tools).toHaveLength(1);
+  });
+
+  it("does not strand it in the leftover list", () => {
+    // `leftoverSteps` is the complement of what the form renders; a step that
+    // is neither the route nor a step check would vanish from every editor.
+    expect(leftoverSteps([prompt("p1", "go"), advisoryTool])).toEqual([]);
+  });
+});
+
+describe("readSimpleCase on an empty draft", () => {
+  it("reads a case with no steps at all instead of throwing", () => {
+    // A brand-new case has nothing until the first keystroke; the narrowing
+    // helpers dereference `.kind`, so an unguarded `steps[0]` crashes the pane.
+    expect(readSimpleCase([])).toMatchObject({ prompt: "", tools: [] });
+  });
+});
+
+describe("writeSimpleCase on an empty draft", () => {
+  it("mints the first prompt instead of throwing", () => {
+    const next = writeSimpleCase([], {
+      prompt: "hi",
+      tools: [],
+      noTool: false,
+    });
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ kind: "prompt", prompt: "hi" });
+  });
+});
+
+it("no-tool authoring removes advisory toolCalledWith assertions too", () => {
+  const steps = [
+    prompt("p", "hi"),
+    toolCalledWith("gate", "search"),
+    {
+      id: "report",
+      kind: "assert" as const,
+      assertion: {
+        type: "toolCalledWith" as const,
+        toolName: "search",
+        args: { args: {} },
+        role: "advisory" as const,
+        severity: "info" as const,
+      },
+    },
+  ];
+  expect(
+    writeSimpleCase(steps, { prompt: "hi", tools: [], noTool: true }),
+  ).toEqual([steps[0]]);
 });

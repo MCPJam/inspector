@@ -45,6 +45,7 @@ import {
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /**
  * Source-agnostic identity of the session being promoted. `sessionId` is the
@@ -221,7 +222,7 @@ export function ConvertSessionDialogCore({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview]
   );
 
@@ -380,7 +381,13 @@ export function ConvertSessionDialogCore({
     !isSubmitting &&
     (destinationMode === "new"
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
-      : Boolean(selectedSuiteId) &&
+      : // The RESOLVED entry, not the id. `availableSuites` filters out
+        // CI-owned suites, and a suite can become CI-owned (or the list can
+        // reload without it) while this dialog is open — leaving a
+        // `selectedSuiteId` pointing at a suite the picker no longer offers.
+        // Submitting that sends a case write the backend answers with
+        // `CI_OWNED_SUITE_READ_ONLY`, after the click.
+        Boolean(selectedSuiteEntry) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 
   const requiresContentTransferAck =

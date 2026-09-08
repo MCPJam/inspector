@@ -196,6 +196,11 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   request_eval_run_judge: { command: "cloud eval judge" },
+  list_eval_github_repos: { command: "cloud eval github list" },
+  connect_eval_github_repo: { command: "cloud eval github connect" },
+  // The pre-rename spellings, still advertised and still bound — to the
+  // `checks` subgroup they shipped under, which stays registered as a
+  // deprecated alias of `github`.
   list_eval_check_repos: { command: "cloud eval checks list" },
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },

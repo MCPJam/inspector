@@ -97,7 +97,8 @@ function request(
   method: string,
   path: string,
   body?: Record<string, unknown>,
-  token = "tok"
+  token = "tok",
+  extraHeaders: Record<string, string> = {}
 ): Promise<Response> {
   return Promise.resolve(
     app.request(path, {
@@ -105,6 +106,7 @@ function request(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        ...extraHeaders,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
@@ -1381,6 +1383,112 @@ describe("v1 write routes", () => {
       );
     });
 
+    it("forwards a declared launcher and CI envelope from the headers", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", serverIds: ["s1"] },
+        "tok",
+        {
+          "x-mcpjam-launcher": JSON.stringify({
+            kind: "cli",
+            client: "mcpjam-cli",
+            version: "8.2.0",
+          }),
+          "x-mcpjam-ci": JSON.stringify({
+            provider: "github_actions",
+            commitSha: "a1b2c3",
+            branch: "main",
+            runId: "99.2",
+            job: "evals",
+            // Keys the run row has no column for. Dropped rather than stuffed
+            // somewhere: provenance that half-fits its schema is worse than
+            // provenance that fits.
+            repository: "acme/widgets",
+            workflow: "CI",
+          }),
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        // STAMPED, and unchanged by anything the caller declared.
+        source: "api",
+        launchContext: {
+          launcher: { kind: "cli", client: "mcpjam-cli", version: "8.2.0" },
+          ciMetadata: {
+            provider: "github_actions",
+            commitSha: "a1b2c3",
+            branch: "main",
+            // GitHub's own spelling, mapped to the run row's.
+            pipelineId: "99.2",
+            jobId: "evals",
+          },
+        },
+      });
+      expect(
+        prepareEvalRunMock.mock.calls[0][1].launchContext.ciMetadata
+      ).not.toHaveProperty("repository");
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+
+    it("ignores an unusable launcher header instead of failing the launch", async () => {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockResolvedValue({
+        suiteId: "suite_1",
+        runId: "run_1",
+        caseUpsert: { committed: [], failed: [] },
+        recorder: { finalize: vi.fn() },
+        execute: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", serverIds: ["s1"] },
+        "tok",
+        {
+          // `ui` is stamped by the server; a caller declaring it is trying to
+          // restate a value it does not get to set.
+          "x-mcpjam-launcher": JSON.stringify({ kind: "ui" }),
+          "x-mcpjam-ci": "{not json",
+        }
+      );
+
+      // A LABEL must never cost someone their run. The claim is dropped; the
+      // launch proceeds and the stamped source is what it always was.
+      expect(res.status).toBe(202);
+      const prepareArgs = prepareEvalRunMock.mock.calls[0][1];
+      expect(prepareArgs.source).toBe("api");
+      expect(prepareArgs.launchContext).toBeUndefined();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+    });
+
     it("forces suiteRerun on a bare suiteId rerun even when the caller sends false", async () => {
       const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
       createAuthorizedManagerMock.mockResolvedValue({
@@ -1857,6 +1965,57 @@ describe("v1 write routes", () => {
         expect(disconnectAllServers).toHaveBeenCalledTimes(expected)
       );
     }
+
+    it("applies ONE launch context to every target of a fan-out", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        },
+        "tok",
+        {
+          "x-mcpjam-launcher": JSON.stringify({
+            kind: "github_action",
+            client: "mcpjam-cli",
+          }),
+          "x-mcpjam-ci": JSON.stringify({
+            provider: "github_actions",
+            commitSha: "abc123",
+            runId: "42.1",
+            job: "evals",
+          }),
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      // One fan-out is one launch by one process. Siblings that badged
+      // differently would make one comparison look like two things.
+      for (const call of prepareEvalRunMock.mock.calls) {
+        expect(call[1]).toMatchObject({
+          source: "api",
+          launchContext: {
+            launcher: { kind: "github_action", client: "mcpjam-cli" },
+            ciMetadata: {
+              provider: "github_actions",
+              commitSha: "abc123",
+              pipelineId: "42.1",
+              jobId: "evals",
+            },
+          },
+        });
+      }
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
 
     it("sends the SAME approvals to every target of a fan-out", async () => {
       hostSuiteQueries();

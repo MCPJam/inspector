@@ -1258,17 +1258,24 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
     }
   });
 
-  test("the derivation routes exactly the three kinds it routed before", () => {
+  test("the derivation routes exactly the kinds it is meant to route", () => {
     // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is now
     // COMPUTED from the map, so a mistake in the derivation would silently
     // widen or narrow what the analyzer routes — and the 93 behavioural tests
     // above would still pass if it only widened. Naming the set makes either
     // direction a failure.
+    //
+    // `onlyToolsCalled` joined the set deliberately: a tool outside the
+    // allowed set is the same observed fact as a forbidden tool, so it routes
+    // to `unexpectedToolCall` beside `toolNeverCalled`. Widening this list is
+    // a decision, never a side effect — every other addition still fails here
+    // first.
     const routed = (PREDICATE_KINDS as readonly string[])
       .filter((kind) => isSelectionPredicateKind(kind))
       .sort();
     expect(routed).toEqual([
       "firstToolWas",
+      "onlyToolsCalled",
       "toolCalledAtLeastOnce",
       "toolNeverCalled",
     ]);

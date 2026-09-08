@@ -89,6 +89,17 @@ interface SuiteHeaderProps {
   aggregate?: SuiteAggregate | null;
   testCases?: EvalCase[];
   readOnlyConfig?: boolean;
+  /**
+   * The suite's configuration lives in a repository, so it cannot be edited
+   * here — see `isCiOwnedSuite`.
+   *
+   * DISTINCT FROM `readOnlyConfig`, which also hides Run: that prop means "this
+   * surface does not offer suite controls at all" (desktop CI), while this one
+   * means "this suite refuses edits, and running it is the point". Merging them
+   * would take Run away from every CI-owned suite — exactly the thing the lock
+   * is supposed to keep working.
+   */
+  configLocked?: boolean;
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
@@ -156,6 +167,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runs = [],
     testCases = [],
     readOnlyConfig = false,
+    configLocked = false,
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
@@ -182,6 +194,22 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||
     (unifiedSuiteDashboard && viewMode === "overview");
+
+  /**
+   * The AUTHORING half of the case toolbar — Generate and New case.
+   *
+   * Split from `showTestCaseCtas` rather than folded into it, because that flag
+   * also gates **Run all**, which is a run control and must survive the lock:
+   * running a CI-owned suite from the app is the point. Both buttons here start
+   * flows that end in a `case.create` the platform refuses with
+   * `CI_OWNED_SUITE_READ_ONLY`, so offering them is offering work that cannot
+   * land.
+   *
+   * This is the Evals path specifically. Evaluate hides Add case through
+   * `SuiteDetailOverview`; the unified dashboard renders its case tools from
+   * this header instead, so the same rule has to be stated twice.
+   */
+  const showCaseAuthoringCtas = showTestCaseCtas && !configLocked;
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -289,7 +317,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     return (
       <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
         <div className="min-w-0" data-setting-key="name">
-          {isEditingName ? (
+          {/*
+            The name is the ONE setting that lives outside the sheet's
+            `fieldset[disabled]`, so it needs its own lock. It became reachable
+            when the sheet started rendering for a CI-owned suite — the settings
+            are that suite's documentation and a reader has to be able to open
+            them — and an editable name there would feed `settingsDraftName`,
+            put the suite in the commit flow, and end in the 409 the rest of
+            the sheet exists to avoid offering.
+          */}
+          {configLocked ? (
+            <h2
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold leading-8 tracking-tight"
+              title={nameValue}
+            >
+              {nameValue}
+            </h2>
+          ) : isEditingName ? (
             <input
               type="text"
               value={editedName}
@@ -647,12 +691,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (casesSidebarHidden &&
       Boolean(onShowCasesSidebar) &&
       runsViewMode === "runs") ||
-    Boolean(onSetupCi && !readOnlyConfig);
+    Boolean(onSetupCi && !readOnlyConfig && !configLocked);
 
   const overviewHasCaseTools =
     overviewRunAllCta != null ||
-    (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
-    (showTestCaseCtas && Boolean(onCreateTestCase));
+    (showCaseAuthoringCtas && Boolean(onGenerateTestCases)) ||
+    (showCaseAuthoringCtas && Boolean(onCreateTestCase));
 
   const overviewSuiteNavButtons =
     overviewHasSuiteNav ? (
@@ -669,7 +713,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Cases
           </Button>
         ) : null}
-        {onSetupCi && !readOnlyConfig ? (
+        {onSetupCi && !readOnlyConfig && !configLocked ? (
           <Button
             size="sm"
             variant="outline"
@@ -718,7 +762,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewGenerateButton =
-    showTestCaseCtas && onGenerateTestCases ? (
+    showCaseAuthoringCtas && onGenerateTestCases ? (
       <div className="inline-flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -770,7 +814,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewNewCaseButton =
-    showTestCaseCtas && onCreateTestCase ? (
+    showCaseAuthoringCtas && onCreateTestCase ? (
       <Button
         type="button"
         size="sm"
@@ -798,7 +842,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && hasServersConfigured ? (
+        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -917,7 +961,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 autoFocus
                 className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
               />
-            ) : readOnlyConfig ? (
+            ) : readOnlyConfig || configLocked ? (
               <h2
                 className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
                 title={suite.name}

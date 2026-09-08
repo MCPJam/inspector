@@ -352,6 +352,15 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // paths that need the user's bearer attached. Scoped path-by-path — not all
   // of `/api/v1/` — so unrelated public-API routes don't get the UI bearer.
   "/api/v1/harness/",
+  // The Tools panel and the Raw request preview reading MCPJam's own built-in
+  // tool definitions (`/api/v1/built-in-tools/browser/definitions`), so neither
+  // has to keep a hand-written copy of schemas built at turn time. Same shape
+  // and same reason as the harness catalog above: `requireVerifiedAuth`-gated,
+  // so without this entry the fetch ships no `Authorization` at all and 401s —
+  // and because the panel soft-fails an unreachable catalog to "no tools", the
+  // symptom is a Browser section that silently never appears rather than an
+  // error anyone can see.
+  "/api/v1/built-in-tools/",
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",

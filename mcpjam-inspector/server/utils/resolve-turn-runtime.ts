@@ -129,7 +129,7 @@ export interface ResolvedTurnRuntime {
 export function classifyTurnFailure(
   message: string,
 ): "rate_limited" | "failed" {
-  return /rate.?limit|too many requests|(?:^|[^\w.:])429\b|spend|\bquota\b|\bbudget\b|\bcap\b/i.test(
+  return /rate.?limit|too many requests|(?:^|[^\w.:])429\b|\bspend\b|spend_budget_reached|\bquota\b|\bbudget\b|\bcap\b/i.test(
     message,
   )
     ? "rate_limited"

@@ -550,6 +550,17 @@ export type DescribeContext = {
    * their own tokens or bill their own provider keys must pass it.
    */
   credentialOwner?: "user" | "mcpjam";
+  /**
+   * Which boundary the error came back across. Omit when unknown.
+   *
+   * Only `"mcpServer"` changes anything, and only for a 429: the status
+   * arrives in the same shape from an LLM provider and from the MCP server
+   * under test (`StreamableHTTPError` carries it on `.code`), so without this
+   * a server throttling us is reported as the user's provider quota — and the
+   * advice sends them to the wrong dashboard. Callers that know they are
+   * talking to an MCP server should say so.
+   */
+  surface?: "provider" | "mcpServer";
 };
 
 /**
@@ -593,6 +604,26 @@ function applyOriginContext(
   return entry;
 }
 
+/**
+ * A 429 that came back from the MCP server is the SERVER's rate limit, not the
+ * user's LLM provider quota.
+ *
+ * `resolveSlug` cannot tell them apart: both arrive as a bare status on
+ * `.code` / `.statusCode`, so the status alone maps to `provider/quota`. Only
+ * the caller knows which boundary it crossed, so the correction is applied
+ * here rather than by widening the classifier — every caller that does not
+ * pass a surface keeps exactly the behaviour it had.
+ */
+function retargetQuotaForSurface(
+  slug: string,
+  context: DescribeContext | undefined,
+): string {
+  if (slug === "provider/quota" && context?.surface === "mcpServer") {
+    return "server/rate_limited";
+  }
+  return slug;
+}
+
 export function describeError(
   error: unknown,
   context?: DescribeContext,
@@ -600,7 +631,9 @@ export function describeError(
   // Crash-safe: every branch is wrapped so the describer never throws.
   try {
     const rawMessage = redactString(getErrorMessage(error));
-    const { slug, rawCode } = resolveSlug(error);
+    const resolved = resolveSlug(error);
+    const slug = retargetQuotaForSurface(resolved.slug, context);
+    const rawCode = resolved.rawCode;
     const entry = applyOriginContext(
       maybePromoteRawMessage(lookupCatalog(slug), slug, rawMessage),
       slug,
