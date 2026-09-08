@@ -16,6 +16,7 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
+import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
@@ -68,7 +69,7 @@ function asBillingRouteError(error: unknown): WebRouteError | null {
     402,
     ErrorCode.BILLING_LIMIT_REACHED,
     message,
-    data as Record<string, unknown>
+    data as Record<string, unknown>,
   );
 }
 
@@ -166,7 +167,7 @@ export type SuiteRunRecorder = {
 };
 
 function isSuiteRunEnvironmentSnapshot(
-  value: unknown
+  value: unknown,
 ): value is SuiteRunEnvironmentSnapshot {
   if (!value || typeof value !== "object") {
     return false;
@@ -205,7 +206,7 @@ export const createSuiteRunRecorder = ({
         // Query all iterations for this run
         const response = await convexClient.query(
           "testSuites:getTestSuiteRunDetails" as any,
-          { runId }
+          { runId },
         );
 
         const iterations = response?.iterations || [];
@@ -238,7 +239,7 @@ export const createSuiteRunRecorder = ({
               testCaseId,
               testCaseSnapshot,
               iterationNumber,
-            }
+            },
           );
           return undefined;
         }
@@ -265,7 +266,7 @@ export const createSuiteRunRecorder = ({
 
         logger.error(
           "[evals] Failed to record iteration start:",
-          new Error(errorMessage)
+          new Error(errorMessage),
         );
         return undefined;
       }
@@ -331,7 +332,7 @@ export const createSuiteRunRecorder = ({
 
           logger.error(
             "[evals] Failed to finalize suite run:",
-            new Error(errorMessage)
+            new Error(errorMessage),
           );
         }
       } finally {
@@ -400,6 +401,8 @@ export const startSuiteRunWithRecorder = async ({
   toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  launcher,
+  ciMetadata,
 }: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -535,6 +538,23 @@ export const startSuiteRunWithRecorder = async ({
    * backend refusing a run they did approve.
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
+  /**
+   * The launching client's DECLARED label, read off `x-mcpjam-launcher` at the
+   * `/v1` boundary. Display only — `source` above is the stamped, unforgeable
+   * half, and nothing downstream branches on this.
+   *
+   * Must be declared here or a reconstruction of the mutation args below would
+   * silently drop it, which is the failure every neighbouring field's comment
+   * warns about.
+   */
+  launcher?: RunLauncher;
+  /**
+   * The CI envelope this launch is running inside, read off `x-mcpjam-ci`.
+   * Forwarded to `startTestSuiteRun.ciMetadata` so a CLI run in Actions is
+   * findable by commit sha through `by_suite_commitSha` — until now only an
+   * SDK-reported run was.
+   */
+  ciMetadata?: RunCiMetadata;
 }) => {
   let response: any;
   try {
@@ -573,15 +593,21 @@ export const startSuiteRunWithRecorder = async ({
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
-        ...(toolDescriptionOverride
-          ? { toolDescriptionOverride }
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+        ...(ephemeralEnvironment === true
+          ? { ephemeralEnvironment: true }
           : {}),
-        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         ...(importApprovals && importApprovals.length
           ? { importApprovals }
           : {}),
+        // Forwarded ONLY when present. `startTestSuiteRun`'s validator is
+        // exact, so sending `launcher: undefined` to a backend that predates
+        // the field would fail the launch over a cosmetic label — the same
+        // deploy-skew rule the header transport was chosen for.
+        ...(launcher ? { launcher } : {}),
+        ...(ciMetadata ? { ciMetadata } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
-      }
+      },
     );
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
@@ -658,7 +684,7 @@ export const startSuiteRunWithRecorder = async ({
     try {
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
-        { runId, error: cause }
+        { runId, error: cause },
       );
     } catch (cleanupError) {
       logger.warn("[evals] Failed to mark setup iterations failed", {
@@ -687,7 +713,7 @@ export const startSuiteRunWithRecorder = async ({
       500,
       ErrorCode.INTERNAL_ERROR,
       "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
-      { runId, cause }
+      { runId, cause },
     );
   }
 
@@ -698,7 +724,7 @@ export const startSuiteRunWithRecorder = async ({
   // needs before calling getToolsForAiSdk. Falling back to the raw request
   // refs is only for older backend responses without configSnapshot.
   const snapshotEnvironment = isSuiteRunEnvironmentSnapshot(
-    (response?.configSnapshot as any)?.environment
+    (response?.configSnapshot as any)?.environment,
   )
     ? ((response?.configSnapshot as any)
         .environment as SuiteRunEnvironmentSnapshot)
@@ -737,7 +763,7 @@ export const startSuiteRunWithRecorder = async ({
   }
 
   const resolvePredicatesForCase = (
-    tc: Record<string, any>
+    tc: Record<string, any>,
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,

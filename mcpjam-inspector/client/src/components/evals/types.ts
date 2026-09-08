@@ -626,7 +626,12 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
+  | "timeline"
+  | "chat"
+  | "raw"
+  | "tools"
+  | "browser"
+  | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -935,8 +940,35 @@ export type EvalSuiteRun = {
   verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
-    "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
+    | "user_cancelled"
+    | "run_timeout"
+    | "iteration_timeout"
+    | "stale_worker";
   source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
+  /**
+   * What the launching client DECLARED itself to be — the display half of run
+   * origin, and the only thing that tells a CLI run, a GitHub Action and an
+   * MCP agent apart: all three are honestly `source: "api"`.
+   *
+   * SELF-REPORTED, so `resolveRunOrigin` prefers the verified `attribution`
+   * below wherever the two disagree. Optional because an older backend does not
+   * send it — read defensively.
+   */
+  launcher?: {
+    kind: "cli" | "mcp" | "github_action";
+    client?: string;
+    version?: string;
+  };
+  /**
+   * The VERIFIED channel, minted onto the credential rather than sent by the
+   * caller. Narrow by design: `surface` answers "which channel" and `apiKeyId`
+   * renders as "via API key ····last4"; the audit correlation ids stay behind
+   * the audit surface.
+   */
+  attribution?: {
+    surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+    apiKeyId?: string | null;
+  };
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;
@@ -1001,7 +1033,11 @@ export type EvalSuiteRun = {
       testCaseId?: string;
       title: string;
       status:
-        "new_failure" | "still_failing" | "fixed" | "new_case" | "removed_case";
+        | "new_failure"
+        | "still_failing"
+        | "fixed"
+        | "new_case"
+        | "removed_case";
       summary: string;
     }>;
   };
@@ -1028,7 +1064,10 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        "server_design" | "agent_behavior" | "test_design" | "unknown";
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -1044,7 +1083,10 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        "server_design" | "agent_behavior" | "test_design" | "unknown";
+        | "server_design"
+        | "agent_behavior"
+        | "test_design"
+        | "unknown";
     }>;
   };
   // Goal-completion judge (advisory LLM-as-judge): grades each case's final
@@ -1161,7 +1203,10 @@ export type EvalRunDiffSide = {
 
 /** Delivery channel a pinned skill reached the run through. */
 export type EvalRunSkillChannel =
-  "host" | "environment" | "plugin" | "mcp-server";
+  | "host"
+  | "environment"
+  | "plugin"
+  | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export type EvalRunSkillSide = {

@@ -49,6 +49,10 @@ import {
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import {
+  readLaunchContext,
+  type LaunchContext,
+} from "../../utils/launch-context.js";
+import {
   caseIntentSchema,
   caseIntentUpdateSchema,
   descriptionExperimentReportSchema,
@@ -1062,7 +1066,9 @@ async function assertEphemeralEnvironmentLaunchable(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Environment ${row.name ?? environmentId} is archived and cannot be launched.`,
+      `Environment ${
+        row.name ?? environmentId
+      } is archived and cannot be launched.`,
       { reason: "ENVIRONMENT_ARCHIVED", environmentId },
     );
   }
@@ -1427,6 +1433,21 @@ function toRunDto(run: RunDoc) {
     result: run.result,
     summary: run.summary ?? null,
     source: run.source ?? "ui",
+    // ORIGIN, in the two layers `source` deliberately does not carry.
+    //
+    // `launcher` is what the launching client DECLARED (`cli`, `mcp`,
+    // `github_action` — the three things the server cannot see for itself);
+    // `attribution` is the VERIFIED channel, minted onto the credential rather
+    // than sent by the caller. Where they disagree the verified one wins, which
+    // is the whole reason both are on the wire instead of one merged field.
+    //
+    // Both OMITTED rather than nulled when the platform has none: a run
+    // predating the fields declared nothing, and `null` would say "we asked and
+    // there was no launcher" about a run nobody ever asked.
+    ...(run.launcher ? { launcher: toRunLauncherDto(run.launcher) } : {}),
+    ...(run.attribution
+      ? { attribution: toRunAttributionDto(run.attribution) }
+      : {}),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(typeof run.runGroupId === "string"
@@ -1488,6 +1509,48 @@ function toRunDto(run: RunDoc) {
     ...toImportEligibilityProjection(run.importEligibility),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
+  };
+}
+
+/**
+ * The declared launcher, field by field.
+ *
+ * Projected rather than spread: the platform's validator is closed today, but a
+ * future field on it would otherwise appear on this public DTO without anyone
+ * deciding it should — and a published response shape is harder to take back
+ * than it is to add to.
+ */
+function toRunLauncherDto(launcher: {
+  kind?: unknown;
+  client?: unknown;
+  version?: unknown;
+}) {
+  return {
+    kind: String(launcher.kind ?? ""),
+    ...(typeof launcher.client === "string" ? { client: launcher.client } : {}),
+    ...(typeof launcher.version === "string"
+      ? { version: launcher.version }
+      : {}),
+  };
+}
+
+/**
+ * The verified channel, NARROWED.
+ *
+ * The stored envelope also carries `agentActionId` and `requestId`, which are
+ * audit-correlation keys. They stay behind the audit surface: "which channel"
+ * and "which API key" answer the caller's question about a run, and the join
+ * keys into somebody's Slack approval thread do not.
+ */
+function toRunAttributionDto(attribution: {
+  surface?: unknown;
+  apiKeyId?: unknown;
+}) {
+  return {
+    surface: String(attribution.surface ?? ""),
+    ...(typeof attribution.apiKeyId === "string"
+      ? { apiKeyId: attribution.apiKeyId }
+      : {}),
   };
 }
 
@@ -2346,221 +2409,226 @@ const createCasesBatchSchema = z.strictObject({
  * settings-sheet row the shared manifest marks `api:` is genuinely accepted
  * here. Nothing else should import it — the route is the only writer.
  */
-export const updateSuiteSchema = z.strictObject({
-  name: z.string().min(1).optional(),
-  description: z.string().optional(),
-  // The LEGACY server bag (kept as rollback/compat data). Unrelated to
-  // `environmentIds` below, which is the project-environment attachment list.
-  environment: z
-    .object({
-      // Optional so a caller can set the computer image WITHOUT restating the
-      // server list. Omitting it preserves the suite's current servers (and
-      // their bindings) rather than clearing them.
-      servers: z.array(z.string().min(1)).optional(),
-      // Sandbox-image name or id; `null` clears the pin (runs fall back to the
-      // provider's default base image). Enumerate the choices with
-      // `list_sandbox_images`.
-      computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
-    })
-    .optional(),
-  // Project-environment attachments, in attach order: a non-empty array
-  // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
-  // is rejected rather than silently treated as a clear — mirroring the
-  // `testSuites:setSuiteEnvironments` contract exactly, so the API can't grow a
-  // second, subtly different meaning for the same value.
-  environmentIds: z
-    .union([
-      z
-        .array(z.string().min(1))
-        .min(
-          1,
-          "environmentIds must be non-empty — pass null to clear the suite's environments.",
-        ),
-      z.null(),
-    ])
-    .optional(),
-  executionConfig: z
-    .object({
-      model: z.string().min(1).optional(),
-      systemPrompt: z.string().optional(),
-      temperature: z.number().optional(),
-    })
-    .optional(),
-  hosts: z
-    .array(
-      z.object({
-        host: z.string().min(1),
+export const updateSuiteSchema = z
+  .strictObject({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    // The LEGACY server bag (kept as rollback/compat data). Unrelated to
+    // `environmentIds` below, which is the project-environment attachment list.
+    environment: z
+      .object({
+        // Optional so a caller can set the computer image WITHOUT restating the
+        // server list. Omitting it preserves the suite's current servers (and
+        // their bindings) rather than clearing them.
         servers: z.array(z.string().min(1)).optional(),
-      }),
-    )
-    .optional(),
-  settings: z
-    .object({
-      minimumAccuracy: z.number().min(0).max(100).optional(),
-      // Suite-level FLOOR on per-case iterations: every case runs at least
-      // this many times (`max(case.iterations, minimumIterations)`). `null`
-      // clears it — the platform's `minIterations` has exactly that contract,
-      // so the public field does not invent a second way to say "no floor".
-      minimumIterations: z
-        .union([z.number().int().min(1).max(10), z.null()])
-        .optional(),
-      matchOptions: publicMatchOptionsSchema.nullable().optional(),
-      checks: z.array(publicCheckSchema).nullable().optional(),
-      judge: z
-        .object({
-          enabled: z.boolean().optional(),
-          model: z.string().min(1).optional(),
-          // The flag the grader actually gates on. Without it a suite can be
-          // `enabled` forever and never grade a run.
-          autoRun: z.boolean().optional(),
-          threshold: z.number().min(0).max(1).optional(),
-          /**
-           * Presentation severity on the goal-completion slot. Legal only
-           * with an advisory role; the platform refuses it beside gating.
-           */
-          severity: z.literal("warn").optional(),
-          /**
-           * Reserved C1 slot. Accepted here only so a write is an explicit
-           * 400 rather than a silent strip — groundedness is not authorable
-           * while execution is unwired.
-           */
-          groundedness: z.unknown().optional(),
-          // The suite's own grading criteria, handed to the judge alongside
-          // each case's expected output. `null` CLEARS them; an empty array is
-          // refused because a rubric that asks nothing is not the absence of
-          // one — it still changes what the judge was asked. The limits mirror
-          // the platform's own so a rejection arrives before the write rather
-          // than taking the settings beside it down with it.
-          rubric: z
-            .union([
-              z.object({
-                criteria: z
-                  .array(
-                    z.object({
-                      id: z
-                        .string()
-                        .regex(
-                          /^[A-Za-z0-9_-]{1,64}$/,
-                          "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
-                        ),
-                      label: z.string().trim().min(1).max(200),
-                      description: z.string().max(1000).optional(),
-                      required: z.boolean().optional(),
-                    }),
-                  )
-                  .min(1)
-                  .max(25),
-              }),
-              z.null(),
-            ])
-            .optional(),
-        })
-        .superRefine((judge, ctx) => {
-          if (judge.groundedness !== undefined) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["groundedness"],
-              message:
-                "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
-            });
-          }
-        })
-        .optional(),
-      // ── The v2 verdict policy ────────────────────────────────────────────
-      //
-      // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
-      // above, and `evalSuiteFileValiditySchema` in the contract), because they
-      // describe the same stored object. A caller that read a suite file and a
-      // caller that read this API must be able to send each other's values.
-      //
-      // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
-      // the legacy `minimumAccuracy: 80` is the same number in the other unit
-      // — which is exactly why the two cannot be sent together (see the
-      // refinement below). Nothing on this path divides by 100.
-      repetitions: z.number().int().min(1).max(100).optional(),
-      passThreshold: z.number().min(0).max(1).optional(),
-      validity: z
-        .object({
-          minEligibleTrials: z.number().int().min(1).optional(),
-          minCompletionRate: z.number().min(0).max(1).optional(),
-          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
-        })
-        .strict()
-        .optional(),
-      // Live quality-gate policy. `null` CLEARS it. Comparative conditions
-      // require a baseline; `previous_completed` is reserved until a later
-      // capability advertises it. See the top-level refine for the required
-      // revision precondition and reason.
-      qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
-    })
-    .superRefine((settings, ctx) => {
-      // The two policies are alternatives, not layers. A body carrying both a
-      // percent and a fraction is a caller who believes one of them will be
-      // ignored, and whichever one we picked would be wrong for half of them.
-      const v2Fields = [
-        settings.repetitions,
-        settings.passThreshold,
-        settings.validity,
-      ];
-      if (
-        settings.minimumAccuracy !== undefined &&
-        v2Fields.some((value) => value !== undefined)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["minimumAccuracy"],
-          message:
-            "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
-        });
-      }
-    })
-    .optional(),
-  /**
-   * The suite revision this edit was composed against.
-   *
-   * Optional, and omitting it means "apply regardless" — the same
-   * last-write-wins this route has always had. Supplying it turns the PATCH
-   * into a compare-and-set: a suite someone else edited in between is refused
-   * with 409 having changed NOTHING, rather than applying half a caller's
-   * intent over a document it no longer describes. Read the current number
-   * from `revisionNumber` on the suite detail.
-   */
-  expectedRevisionNumber: z.number().int().min(0).optional(),
-  /**
-   * Why this edit is being made. Required (nonblank, ≤500) whenever
-   * `settings.qualityGate` is present — the same rule the platform enforces
-   * on `applySuiteSettings`. Omitted for every other field.
-   */
-  revisionNote: z.string().max(500).optional(),
-}).superRefine((body, ctx) => {
-  if (body.settings?.qualityGate === undefined) return;
-  if (body.expectedRevisionNumber === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expectedRevisionNumber"],
-      message:
-        "expectedRevisionNumber is required when settings.qualityGate is present.",
-    });
-  }
-  const note = body.revisionNote?.trim() ?? "";
-  if (note.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["revisionNote"],
-      message: "revisionNote is required when settings.qualityGate is present.",
-    });
-  }
-  if (body.settings.qualityGate !== null) {
-    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
-    if (!parsed.ok) {
+        // Sandbox-image name or id; `null` clears the pin (runs fall back to the
+        // provider's default base image). Enumerate the choices with
+        // `list_sandbox_images`.
+        computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
+      })
+      .optional(),
+    // Project-environment attachments, in attach order: a non-empty array
+    // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
+    // is rejected rather than silently treated as a clear — mirroring the
+    // `testSuites:setSuiteEnvironments` contract exactly, so the API can't grow a
+    // second, subtly different meaning for the same value.
+    environmentIds: z
+      .union([
+        z
+          .array(z.string().min(1))
+          .min(
+            1,
+            "environmentIds must be non-empty — pass null to clear the suite's environments.",
+          ),
+        z.null(),
+      ])
+      .optional(),
+    executionConfig: z
+      .object({
+        model: z.string().min(1).optional(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
+      })
+      .optional(),
+    hosts: z
+      .array(
+        z.object({
+          host: z.string().min(1),
+          servers: z.array(z.string().min(1)).optional(),
+        }),
+      )
+      .optional(),
+    settings: z
+      .object({
+        minimumAccuracy: z.number().min(0).max(100).optional(),
+        // Suite-level FLOOR on per-case iterations: every case runs at least
+        // this many times (`max(case.iterations, minimumIterations)`). `null`
+        // clears it — the platform's `minIterations` has exactly that contract,
+        // so the public field does not invent a second way to say "no floor".
+        minimumIterations: z
+          .union([z.number().int().min(1).max(10), z.null()])
+          .optional(),
+        matchOptions: publicMatchOptionsSchema.nullable().optional(),
+        checks: z.array(publicCheckSchema).nullable().optional(),
+        judge: z
+          .object({
+            enabled: z.boolean().optional(),
+            model: z.string().min(1).optional(),
+            // The flag the grader actually gates on. Without it a suite can be
+            // `enabled` forever and never grade a run.
+            autoRun: z.boolean().optional(),
+            threshold: z.number().min(0).max(1).optional(),
+            /**
+             * Presentation severity on the goal-completion slot. Legal only
+             * with an advisory role; the platform refuses it beside gating.
+             */
+            severity: z.literal("warn").optional(),
+            /**
+             * Reserved C1 slot. Accepted here only so a write is an explicit
+             * 400 rather than a silent strip — groundedness is not authorable
+             * while execution is unwired.
+             */
+            groundedness: z.unknown().optional(),
+            // The suite's own grading criteria, handed to the judge alongside
+            // each case's expected output. `null` CLEARS them; an empty array is
+            // refused because a rubric that asks nothing is not the absence of
+            // one — it still changes what the judge was asked. The limits mirror
+            // the platform's own so a rejection arrives before the write rather
+            // than taking the settings beside it down with it.
+            rubric: z
+              .union([
+                z.object({
+                  criteria: z
+                    .array(
+                      z.object({
+                        id: z
+                          .string()
+                          .regex(
+                            /^[A-Za-z0-9_-]{1,64}$/,
+                            "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
+                          ),
+                        label: z.string().trim().min(1).max(200),
+                        description: z.string().max(1000).optional(),
+                        required: z.boolean().optional(),
+                      }),
+                    )
+                    .min(1)
+                    .max(25),
+                }),
+                z.null(),
+              ])
+              .optional(),
+          })
+          .superRefine((judge, ctx) => {
+            if (judge.groundedness !== undefined) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["groundedness"],
+                message:
+                  "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+              });
+            }
+          })
+          .optional(),
+        // ── The v2 verdict policy ────────────────────────────────────────────
+        //
+        // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
+        // above, and `evalSuiteFileValiditySchema` in the contract), because they
+        // describe the same stored object. A caller that read a suite file and a
+        // caller that read this API must be able to send each other's values.
+        //
+        // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
+        // the legacy `minimumAccuracy: 80` is the same number in the other unit
+        // — which is exactly why the two cannot be sent together (see the
+        // refinement below). Nothing on this path divides by 100.
+        repetitions: z.number().int().min(1).max(100).optional(),
+        passThreshold: z.number().min(0).max(1).optional(),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(1).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional(),
+        // Live quality-gate policy. `null` CLEARS it. Comparative conditions
+        // require a baseline; `previous_completed` is reserved until a later
+        // capability advertises it. See the top-level refine for the required
+        // revision precondition and reason.
+        qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
+      })
+      .superRefine((settings, ctx) => {
+        // The two policies are alternatives, not layers. A body carrying both a
+        // percent and a fraction is a caller who believes one of them will be
+        // ignored, and whichever one we picked would be wrong for half of them.
+        const v2Fields = [
+          settings.repetitions,
+          settings.passThreshold,
+          settings.validity,
+        ];
+        if (
+          settings.minimumAccuracy !== undefined &&
+          v2Fields.some((value) => value !== undefined)
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["minimumAccuracy"],
+            message:
+              "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
+          });
+        }
+      })
+      .optional(),
+    /**
+     * The suite revision this edit was composed against.
+     *
+     * Optional, and omitting it means "apply regardless" — the same
+     * last-write-wins this route has always had. Supplying it turns the PATCH
+     * into a compare-and-set: a suite someone else edited in between is refused
+     * with 409 having changed NOTHING, rather than applying half a caller's
+     * intent over a document it no longer describes. Read the current number
+     * from `revisionNumber` on the suite detail.
+     */
+    expectedRevisionNumber: z.number().int().min(0).optional(),
+    /**
+     * Why this edit is being made. Required (nonblank, ≤500) whenever
+     * `settings.qualityGate` is present — the same rule the platform enforces
+     * on `applySuiteSettings`. Omitted for every other field.
+     */
+    revisionNote: z.string().max(500).optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.settings?.qualityGate === undefined) return;
+    if (body.expectedRevisionNumber === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["settings", "qualityGate"],
-        message: parsed.message,
+        path: ["expectedRevisionNumber"],
+        message:
+          "expectedRevisionNumber is required when settings.qualityGate is present.",
       });
     }
-  }
-});
+    const note = body.revisionNote?.trim() ?? "";
+    if (note.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["revisionNote"],
+        message:
+          "revisionNote is required when settings.qualityGate is present.",
+      });
+    }
+    if (body.settings.qualityGate !== null) {
+      const parsed = parseSuiteGatePolicyForAuthoring(
+        body.settings.qualityGate,
+      );
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["settings", "qualityGate"],
+          message: parsed.message,
+        });
+      }
+    }
+  });
 
 /**
  * Body for `POST …/eval-runs/:runId/judge`. STRICT: this endpoint spends, so an
@@ -2749,7 +2817,7 @@ function buildCaseMutationArgs(
   if (body.models !== undefined) {
     args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
-    args.models = isModelFreeStepsCase ? [] : (opts.defaultModels ?? []);
+    args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
   }
 
   // On create, a null override is meaningless (nothing to clear) — omit it so
@@ -2762,11 +2830,11 @@ function buildCaseMutationArgs(
       body.matchOptions === null
         ? null
         : // Create sets a fresh override from the provided fields; update merges
-          // the partial patch onto the case's existing override so unmentioned
-          // fields aren't reset.
-          opts.forCreate
-          ? toInternalMatchOptions(body.matchOptions)
-          : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
+        // the partial patch onto the case's existing override so unmentioned
+        // fields aren't reset.
+        opts.forCreate
+        ? toInternalMatchOptions(body.matchOptions)
+        : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null
@@ -2887,7 +2955,8 @@ function translateConvexWriteError(
       return new WebRouteError(
         403,
         ErrorCode.FORBIDDEN,
-        prose ?? "You do not have permission to change the quality-gate policy.",
+        prose ??
+          "You do not have permission to change the quality-gate policy.",
       );
     }
     if (
@@ -3137,6 +3206,13 @@ async function launchEvalRun(params: {
    * protocol pins, timeouts and advertised capabilities entirely.
    */
   hostConfig?: Record<string, unknown>;
+  /**
+   * The launching client's DECLARED label and CI envelope, read off
+   * `x-mcpjam-launcher` / `x-mcpjam-ci`. Absent for anything that did not send
+   * them, which is every existing caller — a run then badges by `source`
+   * exactly as it does today.
+   */
+  launchContext?: LaunchContext;
   onSettled: () => void;
 }): Promise<LaunchedEvalRun> {
   const {
@@ -3233,7 +3309,16 @@ async function launchEvalRun(params: {
       projectId,
       suiteRerun,
       convexAuthToken,
+      // STAMPED, and untouched by any of this. `source` is the audit field
+      // precisely because a caller cannot set it; the declared label below
+      // sits beside it rather than replacing it.
       source: "api",
+      ...(params.launchContext?.launcher
+        ? { launcher: params.launchContext.launcher }
+        : {}),
+      ...(params.launchContext?.ciMetadata
+        ? { ciMetadata: params.launchContext.ciMetadata }
+        : {}),
       // Reuse this exact resolution (and its revision) rather than letting
       // the shared path resolve again — the run must be pinned to the
       // revision whose servers the manager just connected.
@@ -3497,7 +3582,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   const suiteRerun =
     Boolean(body.suiteId) && body.tests.length === 0
       ? true
-      : (body.suiteRerun ?? false);
+      : body.suiteRerun ?? false;
 
   // Fail unknown models now, with a pointer to valid ids, rather than
   // letting the detached run die later with an opaque stream error.
@@ -3572,6 +3657,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       environmentLaunch,
       serverIds,
       serverNames,
+      launchContext: readLaunchContext(c),
       onSettled: releaseSlotOnce,
     });
 
@@ -3779,7 +3865,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          `Environment ${target.environmentId} is not attached to this suite. Attached environments: ${await describeAttachedEnvironments(
+          `Environment ${
+            target.environmentId
+          } is not attached to this suite. Attached environments: ${await describeAttachedEnvironments(
             convexAuthToken,
             projectId,
             attachedEnvironmentIds,
@@ -3802,7 +3890,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
           ErrorCode.VALIDATION_ERROR,
           attachedHosts.length === 0
             ? `Host ${target.namedHostId} is not attached to this suite, which has no hosts at all. Attach it first (PATCH the suite with hosts), then retry.`
-            : `Host ${target.namedHostId} is not attached to this suite. Attached hosts: ${attachedHosts
+            : `Host ${
+                target.namedHostId
+              } is not attached to this suite. Attached hosts: ${attachedHosts
                 .map((candidate) => `"${candidate.name}" (${candidate.id})`)
                 .join(", ")}.`,
           {
@@ -3885,6 +3975,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   const runGroupId = deriveRunGroupId(body.suiteId, body.idempotencyKey);
   const callerContext = callerContextFromHono(c);
   const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+  const launchContext = readLaunchContext(c);
   const matchOptionsOverride = normalizeRunMatchOptionsOverride(
     body.matchOptionsOverride,
   );
@@ -3948,6 +4039,10 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
         serverNames: servers.serverNames,
+        // One header pair, read once outside the loop, stamped on every
+        // sibling: a fan-out is ONE launch by one client, so targets that
+        // disagreed about their launcher would be lying about at least one.
+        launchContext,
         onSettled: () => releaseRunGroupSlotRef(slot),
       });
       startedCount += 1;
@@ -4375,8 +4470,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       baseRunId
         ? "The requested baseline run was not found, is not completed, or belongs to another suite."
         : baseCommitSha
-          ? "No completed run in this suite was recorded against that commit SHA."
-          : "No earlier completed run in this suite to compare against.",
+        ? "No completed run in this suite was recorded against that commit SHA."
+        : "No earlier completed run in this suite to compare against.",
       // A SHA that resolved to nothing is deliberately THIS, not one of the
       // two 400 baseline codes: exit 3 must keep meaning "we looked and
       // established nothing", distinct from "you asked for something
@@ -4401,11 +4496,11 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       (baselineSource.policy === undefined && Boolean(baseCommitSha))
         ? "commit_sha"
         : baselineSource.policy === "run" ||
-            (baselineSource.policy === undefined && Boolean(baseRunId))
-          ? "run"
-          : baselineSource.policy === "previous_completed_same_environment"
-            ? "previous_completed_same_environment"
-            : "previous_completed",
+          (baselineSource.policy === undefined && Boolean(baseRunId))
+        ? "run"
+        : baselineSource.policy === "previous_completed_same_environment"
+        ? "previous_completed_same_environment"
+        : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
     // Echoed for `commit_sha` only. Read from the BACKEND's answer, falling
     // back to what the request asked for, so a mixed-version deployment that
@@ -5103,7 +5198,8 @@ evals.get(
     const assembled = assembleStepResults(
       steps,
       iteration.metadata as
-        { stepResults?: any[]; skippedSteps?: any[] } | undefined,
+        | { stepResults?: any[]; skippedSteps?: any[] }
+        | undefined,
       envelope as Parameters<typeof assembleStepResults>[2],
     );
     // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
@@ -5621,12 +5717,15 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
 
   const parsed = suiteGateReportSchema.safeParse(payload);
   if (!parsed.success) {
-    logger.warn("[v1 evals] run quality-gate report failed contract validation", {
-      projectId,
-      runId,
-      issue: parsed.error.issues[0]?.message ?? "unknown",
-      path: parsed.error.issues[0]?.path?.join(".") ?? "",
-    });
+    logger.warn(
+      "[v1 evals] run quality-gate report failed contract validation",
+      {
+        projectId,
+        runId,
+        issue: parsed.error.issues[0]?.message ?? "unknown",
+        path: parsed.error.issues[0]?.path?.join(".") ?? "",
+      },
+    );
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
@@ -5874,7 +5973,8 @@ async function readBackDescriptionExperimentArms(
         { experimentId },
       )) as Record<string, unknown> | null;
       const recorded = current?.arms as
-        { original?: unknown; rewrite?: unknown } | undefined;
+        | { original?: unknown; rewrite?: unknown }
+        | undefined;
       return current &&
         recorded?.original === arms.original &&
         recorded?.rewrite === arms.rewrite
@@ -5963,7 +6063,9 @@ function descriptionOverrideAttributionRefusal(
   message: string;
 } | null {
   const doc = run as
-    { toolSnapshot?: unknown; toolSnapshotDebug?: unknown } | null | undefined;
+    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
+    | null
+    | undefined;
   const servers = readSnapshotServers(doc?.toolSnapshot);
   const offering = servers
     .filter((server) => server.toolNames?.includes(toolName))
@@ -5971,7 +6073,11 @@ function descriptionOverrideAttributionRefusal(
   if (offering.length > 1) {
     return {
       reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS",
-      message: `Tool "${toolName}" is served by ${offering.length} of this run's servers (${offering.join(", ")}). A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
+      message: `Tool "${toolName}" is served by ${
+        offering.length
+      } of this run's servers (${offering.join(
+        ", ",
+      )}). A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
     };
   }
   const failed = new Set<string>(
@@ -5982,7 +6088,9 @@ function descriptionOverrideAttributionRefusal(
   const captureResult = (
     doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
   )?.captureResult as
-    { status?: unknown; failedServerIds?: unknown } | null | undefined;
+    | { status?: unknown; failedServerIds?: unknown }
+    | null
+    | undefined;
   if (Array.isArray(captureResult?.failedServerIds)) {
     for (const id of captureResult.failedServerIds) {
       if (typeof id === "string") failed.add(id);
@@ -6265,7 +6373,8 @@ evals.post(
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);
     const suiteId = String(launching.suiteId ?? experiment.suiteId);
     const plan = (launching.plan ?? experiment.plan) as
-      { caseScope?: string; repetitions?: number } | undefined;
+      | { caseScope?: string; repetitions?: number }
+      | undefined;
     const caseScope = body.caseScope ?? plan?.caseScope ?? "all";
     const affectedCaseIds = (launching.affectedCaseIds ??
       experiment.affectedCaseIds) as string[] | undefined;
@@ -6278,7 +6387,8 @@ evals.post(
     const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
       ?.configSnapshot;
     const envRef = snapshot?.environmentRef as
-      { environmentId?: string } | undefined;
+      | { environmentId?: string }
+      | undefined;
     const namedHostId =
       (typeof (sourceRun as { namedHostId?: unknown }).namedHostId === "string"
         ? (sourceRun as { namedHostId: string }).namedHostId
@@ -6962,10 +7072,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         ...takePrecondition(),
       });
     } catch (error) {
-      throw translateConvexWriteError(
-        error,
-        "quality-gate settings writes",
-      );
+      throw translateConvexWriteError(error, "quality-gate settings writes");
     }
   }
 
