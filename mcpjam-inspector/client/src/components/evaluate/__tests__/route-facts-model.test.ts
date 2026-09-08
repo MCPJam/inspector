@@ -13,6 +13,7 @@ import type { EvaluateCaseRow } from "../evaluate-case-row-model";
 import {
   ROUTE_LINE_MAX_ROUTES,
   buildRunRouteFacts,
+  frictionHeadingFor,
   frictionLineForTrial,
   iterationToRouteTrial,
   readTrialFrictionSignals,
@@ -496,6 +497,59 @@ describe("frictionLineForTrial", () => {
       "Possible detour: `search_issues` returned identifiers (results[].id) at " +
         "call 1 that no later call used; `search_issues` was called again at " +
         "calls 2 and 3",
+    );
+  });
+
+  it("heads the line with the DETOUR, not with whatever happened first", () => {
+    // Cursor Bugbot found this: signals are ordered by the call that made each
+    // observable, so heading the row with `signals[0]` labels a trial by
+    // whatever happened soonest. A pagination at call 1 then hides an unused
+    // identifier at call 8 behind the word "Pagination" — and a reader
+    // scanning collapsed rows skips the one row that had something to say,
+    // taking the suspected condition underneath it along too.
+    const line = frictionLineForTrial(
+      measuredFriction({
+        callCount: 9,
+        resultAvailableCount: 9,
+        signals: [
+          {
+            kind: "paginationContinuation",
+            callIndex: 1,
+            priorCallIndex: 0,
+            toolName: "list_pages",
+            paginationKeys: ["cursor"],
+          },
+          {
+            kind: "identifierSurfacedUnused",
+            informationCallIndex: 6,
+            observedAtCallIndex: 8,
+            toolName: "search_issues",
+            identifierKeyPaths: ["results[].id"],
+            identifierCount: 1,
+            laterCallCount: 2,
+          },
+        ],
+      }) as never,
+    );
+    expect(line!.startsWith("Possible detour:")).toBe(true);
+    // And the pagination is still reported, just not as the headline.
+    expect(line).toContain("continued pagination at call 1");
+  });
+
+  it("picks the heading by consequence: detour over retry over pagination", () => {
+    const heading = (kinds: string[]) =>
+      frictionHeadingFor(kinds.map((kind) => ({ kind })) as never);
+    expect(heading(["paginationContinuation", "identicalRetry"])).toBe("Retry");
+    expect(
+      heading([
+        "paginationContinuation",
+        "changedRetry",
+        "identifierSurfacedUnused",
+      ]),
+    ).toBe("Possible detour");
+    expect(heading(["paginationContinuation"])).toBe("Pagination");
+    expect(heading(["identicalRetry", "searchRepeatedAfterIdentifier"])).toBe(
+      "Possible detour",
     );
   });
 

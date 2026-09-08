@@ -24,6 +24,7 @@ import {
   type EvalRunRouteFacts,
   type EvalRunRouteFactsCase,
   type EvalTrialFrictionSignals,
+  type FrictionSignal,
   type FrictionSignalKind,
   type RouteFactsCatalog,
   type RouteFactsTrialInput,
@@ -435,15 +436,17 @@ export function frictionLineForTrial(
         break;
     }
   }
-  return `${frictionHeading(signals.signals[0]!.kind)}: ${parts.join("; ")}`;
+  return `${frictionHeadingFor(signals.signals)}: ${parts.join("; ")}`;
 }
 
 /**
- * The heading the line opens with, from the FIRST signal's kind.
+ * The heading the line opens with, from the kind of ONE signal.
  *
  * Three headings for five kinds: what a reader does next is the same for both
  * identifier kinds and the same for both retry kinds, and a heading per kind
  * would be five words that mean three things.
+ *
+ * Callers with a whole trial want {@link frictionHeadingFor}, not this.
  */
 export function frictionHeading(kind: FrictionSignalKind): string {
   switch (kind) {
@@ -456,6 +459,33 @@ export function frictionHeading(kind: FrictionSignalKind): string {
     case "paginationContinuation":
       return "Pagination";
   }
+}
+
+/**
+ * The heading for a whole trial: the most CONSEQUENTIAL kind present, not the
+ * earliest one.
+ *
+ * Signals are ordered by the call that made each observable, so the first is
+ * merely whichever happened soonest. Heading a row with it hides the finding
+ * behind the noise: a trial that paginated at call 1 and surfaced an unused
+ * identifier at call 8 would read `Pagination`, and a reader deciding whether
+ * to open a collapsed row would skip the one row that had something to say —
+ * taking the suspected condition underneath it along too.
+ *
+ * So the heading answers "what is the most a reader would act on here", in
+ * the order the three headings mean: a possible detour outranks a retry,
+ * which outranks pagination.
+ */
+export function frictionHeadingFor(signals: readonly FrictionSignal[]): string {
+  const kinds = new Set(signals.map((signal) => signal.kind));
+  if (
+    kinds.has("identifierSurfacedUnused") ||
+    kinds.has("searchRepeatedAfterIdentifier")
+  ) {
+    return "Possible detour";
+  }
+  if (kinds.has("identicalRetry") || kinds.has("changedRetry")) return "Retry";
+  return "Pagination";
 }
 
 function callList(indexes: readonly number[]): string {

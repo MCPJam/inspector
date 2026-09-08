@@ -34,7 +34,7 @@ import { buildStageFixPrompt } from "./stage-fix-prompt";
 import { remedyForReason, type StageRemedy } from "./stage-remedy";
 import { EvaluateToolList } from "./evaluate-tool-list";
 import {
-  frictionHeading,
+  frictionHeadingFor,
   frictionLineForTrial,
   iterationsForRow,
   readTrialFrictionSignals,
@@ -304,7 +304,7 @@ function FrictionSignalsSection({
       if (!line || !signals) return null;
       const heading =
         signals.state === "measured" && signals.signals.length > 0
-          ? frictionHeading(signals.signals[0]!.kind)
+          ? frictionHeadingFor(signals.signals)
           : "Friction signals";
       // Step 2's advisory verdict, read beside the signals rather than
       // inside them: the two are written by different systems at different
