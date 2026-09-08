@@ -140,6 +140,11 @@ export const tokensCss: string = `@theme {
      blur, not the offset. Like every other shadow here it is one value for
      both themes. */
   --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
+  /* The active server tab's cast. Points UP, away from the panel: the tab
+     hangs on the panel's top edge, so the only side with anywhere to throw a
+     shadow is its head. A tenth of the panel's weight — it separates a sheet
+     from the chrome behind it, it does not lift a pane off the app. */
+  --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -260,5 +265,10 @@ export const tokensCss: string = `@theme {
      blur, not the offset. Like every other shadow here it is one value for
      both themes. */
   --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
+  /* The active server tab's cast. Points UP, away from the panel: the tab
+     hangs on the panel's top edge, so the only side with anywhere to throw a
+     shadow is its head. A tenth of the panel's weight — it separates a sheet
+     from the chrome behind it, it does not lift a pane off the app. */
+  --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
 }
 `;
