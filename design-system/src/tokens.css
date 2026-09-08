@@ -78,11 +78,13 @@
   /* Run-origin accent tokens — the two launch origins the runs table has to
      tell apart from the API rows they are stamped as: the mcpjam CLI and an
      MCP client's agent (Slack and Discord included). Role-based; used only by
-     `lib/evals/run-origin.ts`.
+     lib/evals/run-origin.ts.
      Border and background are separate tokens carrying their own alpha, so the
-     badge reads them as plain `border-[var(--…)]` / `bg-[var(--…)]` and the
-     tint tracks the theme without a `dark:` variant. Both stay behind
-     --foreground text, which is what keeps the contrast ratio. */
+     badge reads them as plain border-[var(--...)] / bg-[var(--...)] utilities
+     and the tint tracks the theme without a dark: variant. Both stay behind
+     --foreground text, which is what keeps the contrast ratio.
+     No backticks in this file: tokens.ts embeds it verbatim in a template
+     literal, and the parity test compares the two byte for byte. */
   --run-origin-cli-border: oklch(0.65 0.11 195 / 0.5);
   --run-origin-cli-bg: oklch(0.65 0.11 195 / 0.1);
   --run-origin-agent-border: oklch(0.62 0.21 330 / 0.5);
