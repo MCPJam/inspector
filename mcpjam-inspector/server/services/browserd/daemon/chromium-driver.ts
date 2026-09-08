@@ -318,7 +318,10 @@ export class ChromiumDriver implements BrowserDriver {
    * Its own `commandId` is the one id it holds before the call, so that is the
    * handle `webmcp_cancel` takes.
    */
-  private readonly invocationsByCommand = new Map<string, string>();
+  private readonly invocationsByCommand = new Map<
+    string,
+    { tabId: string; invocationId: string }
+  >();
   /**
    * Commands whose cancellation arrived before their invocation had an id.
    *
@@ -718,7 +721,7 @@ export class ChromiumDriver implements BrowserDriver {
         // Recorded BEFORE the tool settles, which is the only window in which
         // a cancel can still reach the page.
         onStarted: (id) => {
-          if (!this.rememberInvocation(commandId, id)) return;
+          if (!this.rememberInvocation(commandId, id, tabId)) return;
           // THE SAME GATE THE NAMED-ID PATH ASKS. Cancelling reaches into the
           // page, and this delivery can span the whole accept window — longer
           // than the await that made the other path re-ask. A handoff landing
@@ -762,16 +765,28 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "webmcp_cancel" }>,
     permit: () => boolean,
   ): Promise<BrowserCommandResult> {
-    const entry = this.tabs.get(tabId);
-    if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${tabId}` };
-    }
     // A caller may name the invocation directly (it listed one) or name the
     // COMMAND whose invocation it wants stopped. The second is the case that
     // matters: a server aborting a tool call it issued has no invocation id,
     // because `webmcp_invoke` only reports one once the tool has settled.
-    const invocationId =
-      action.invocationId ?? this.invocationsByCommand.get(action.commandId ?? "");
+    const started = action.commandId
+      ? this.invocationsByCommand.get(action.commandId)
+      : undefined;
+    // THE TAB THE INVOCATION RAN ON, not the tab the cancellation names.
+    //
+    // An invocation id is meaningful only to the bridge that issued it, and
+    // these two tabs need not agree: `webmcp_cancel {commandId}` is a valid
+    // shape with no tab at all, which resolves to the default one. Resolving
+    // the bridge from the CANCEL's tab and then handing it an id minted by
+    // another sends a stop to a page that never started the thing — the
+    // invocation runs on, and an id that happened to collide would stop
+    // something unrelated.
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
+    }
+    const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
       // NOT an error, and NOT forgotten either.
       //
@@ -850,7 +865,11 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   /** Remember which invocation a command started, evicting oldest-first. */
-  private rememberInvocation(commandId: string, invocationId: string): boolean {
+  private rememberInvocation(
+    commandId: string,
+    invocationId: string,
+    tabId: string,
+  ): boolean {
     // A CANCELLATION THAT ARRIVED FIRST. It had no id to name at the time, so
     // it left its intent here; this is the moment the id exists. Reported back
     // rather than acted on, because the caller holds the bridge.
@@ -859,7 +878,7 @@ export class ChromiumDriver implements BrowserDriver {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== undefined) this.invocationsByCommand.delete(oldest);
     }
-    this.invocationsByCommand.set(commandId, invocationId);
+    this.invocationsByCommand.set(commandId, { tabId, invocationId });
     return cancelWanted;
   }
 

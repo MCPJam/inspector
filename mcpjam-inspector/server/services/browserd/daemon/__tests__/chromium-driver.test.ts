@@ -2216,6 +2216,67 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     expect(cancelled).toEqual([]);
   });
 
+  it("cancels on the tab the invocation RAN on, not the one the Stop names", async () => {
+    // An invocation id is meaningful only to the bridge that issued it, and
+    // `webmcp_cancel {commandId}` is a valid shape with no tab at all — which
+    // resolves to the default one. Resolving the bridge from the CANCEL's tab
+    // and handing it another tab's id sends a stop to a page that never
+    // started the thing: the invocation runs on, and a colliding id would stop
+    // something unrelated.
+    const cancelledOn: Array<[string, string]> = [];
+    let releaseInvoke: (() => void) | undefined;
+    const bridgeFor = (label: string) => ({
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        (args.onStarted as ((id: string) => void) | undefined)?.("inv-other");
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+        return { invocationId: "inv-other", output: { ok: true } };
+      },
+      cancel: async (invocationId: string) => {
+        cancelledOn.push([label, invocationId]);
+        return true;
+      },
+    });
+    const session = fakePage({
+      url: "https://first.test/",
+      webmcp: bridgeFor("@session") as never,
+    });
+    const other = fakePage({
+      url: "https://second.test/",
+      webmcp: bridgeFor("tab-2") as never,
+    });
+    const { context } = fakeContext({ pages: [session, other] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://first.test/" }));
+    await driver.execute({
+      ...cmd({ kind: "navigate", url: "https://second.test/", newTab: true }),
+      tabId: "tab-2",
+    } as never);
+
+    // The invocation runs on tab-2.
+    const invoking = driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      tabId: "tab-2",
+      commandId: "cmd-cross",
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The Stop names no tab, so it resolves to the default one.
+    await driver.execute(cmd({ kind: "webmcp_cancel", commandId: "cmd-cross" }));
+
+    // It reached tab-2's bridge, which is the only one that knows this id.
+    expect(cancelledOn).toEqual([["tab-2", "inv-other"]]);
+
+    releaseInvoke?.();
+    await invoking;
+  });
+
   it("latches a Stop that lands while the BRIDGE is still resolving", async () => {
     // The window before `bridge.invoke` is reached at all: resolving the page's
     // bridge and settling its probe are both awaits, and a Stop landing in them

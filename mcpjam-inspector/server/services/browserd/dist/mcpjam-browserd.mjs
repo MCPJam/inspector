@@ -3934,7 +3934,7 @@ var ChromiumDriver = class {
         // Recorded BEFORE the tool settles, which is the only window in which
         // a cancel can still reach the page.
         onStarted: (id) => {
-          if (!this.rememberInvocation(commandId, id)) return;
+          if (!this.rememberInvocation(commandId, id, tabId)) return;
           if (!permit()) return;
           void bridge.cancel(id).catch(() => void 0);
         }
@@ -3962,11 +3962,13 @@ var ChromiumDriver = class {
     }
   }
   async webmcpCancel(tabId, action, permit) {
-    const entry = this.tabs.get(tabId);
+    const started = action.commandId ? this.invocationsByCommand.get(action.commandId) : void 0;
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
     if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${tabId}` };
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
     }
-    const invocationId = action.invocationId ?? this.invocationsByCommand.get(action.commandId ?? "");
+    const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
       if (action.commandId && this.activeInvocations.has(action.commandId)) {
         this.pendingCancels.add(action.commandId);
@@ -4012,13 +4014,13 @@ var ChromiumDriver = class {
     return void 0;
   }
   /** Remember which invocation a command started, evicting oldest-first. */
-  rememberInvocation(commandId, invocationId) {
+  rememberInvocation(commandId, invocationId, tabId) {
     const cancelWanted = this.pendingCancels.delete(commandId);
     if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== void 0) this.invocationsByCommand.delete(oldest);
     }
-    this.invocationsByCommand.set(commandId, invocationId);
+    this.invocationsByCommand.set(commandId, { tabId, invocationId });
     return cancelWanted;
   }
   /**
