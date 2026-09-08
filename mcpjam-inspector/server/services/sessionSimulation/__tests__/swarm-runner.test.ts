@@ -53,10 +53,10 @@ import {
   startJourneyRun,
   shutdownRunningJourneyRuns,
   getRunningJourneyStreamHub,
-  ACCOUNT_LIMIT_CODE,
   classifyRateLimit,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
@@ -658,13 +658,13 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
   });
 
   it("recognizes every user-owned backend denial code as an account limit", () => {
-    // The two lists answer different questions (who is at fault vs. whether
-    // another host could escape the limit), so they stay separate — but a code
-    // the backend adds to the capture policy must not silently keep burning
-    // the run's remaining targets here.
+    // `isAccountLimit` keeps its own list rather than importing this one: that
+    // one answers who is at fault, this one whether another host could escape
+    // the limit. A code added to the capture policy must not silently keep
+    // burning the run's remaining targets here.
     for (const code of USER_OWNED_DENIAL_CODES) {
       expect(
-        ACCOUNT_LIMIT_CODE.test(`Limit reached. (${code}, HTTP 403)`),
+        isAccountLimit(`Limit reached. (${code}, HTTP 403)`),
         `${code} should stop the whole run`
       ).toBe(true);
     }
@@ -1294,7 +1294,7 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     expect(classifyRateLimit("monthly budget exceeded")).toBe("org_spend_cap");
   });
 
-  // The denial code is matched by ACCOUNT_LIMIT_CODE one line earlier, so
+  // The denial code is matched by `isAccountLimit` one line earlier, so
   // narrowing the prose pattern does not stop it halting the run.
   it("still escalates the spend_budget_reached denial code", () => {
     expect(

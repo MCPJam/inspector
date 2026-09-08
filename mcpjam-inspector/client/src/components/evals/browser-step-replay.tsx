@@ -41,8 +41,8 @@ export const BROWSER_STEP_STATUS_BADGE_CLASS: Record<
   BrowserStepStatus,
   string
 > = {
-  ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  error: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+  ok: "border-success/30 bg-success/10 text-success",
+  error: "border-destructive/30 bg-destructive/10 text-destructive",
   unknown: "border-border/50 bg-muted/40 text-muted-foreground",
 };
 
@@ -182,7 +182,7 @@ export function BrowserStepDetail({
       </div>
 
       {step.assertion && !step.assertion.passed && step.assertion.reason ? (
-        <p className="text-xs text-red-500">{step.assertion.reason}</p>
+        <p className="text-xs text-destructive">{step.assertion.reason}</p>
       ) : null}
 
       {step.screenshotUrl ? (
@@ -206,13 +206,13 @@ export function BrowserStepDetail({
               <span
                 className={cn(
                   "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-                  call.ok ? "bg-emerald-500" : "bg-destructive",
+                  call.ok ? "bg-success" : "bg-destructive",
                 )}
                 aria-hidden
               />
               <span className="font-mono text-foreground">{call.name}</span>
               {call.error ? (
-                <span className="truncate text-red-500">{call.error}</span>
+                <span className="truncate text-destructive">{call.error}</span>
               ) : null}
             </div>
           ))}
@@ -481,7 +481,7 @@ export function BrowserStepFilmstrip({
                     className={cn(
                       "truncate text-[10px]",
                       status === "error"
-                        ? "text-red-500"
+                        ? "text-destructive"
                         : "text-muted-foreground",
                     )}
                   >

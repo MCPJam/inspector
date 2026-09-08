@@ -20,9 +20,11 @@ import {
   formatBrowserdError,
   type WebMcpToolsRevision,
   isPointInViewport,
+  wantsFor,
   type BrowserAction,
   type BrowserCommand,
   type BrowserCommandResult,
+  type BrowserdErrorCode,
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
@@ -47,6 +49,7 @@ import {
   assignRefs,
   filterInteractive,
   parseRef,
+  type RefEntry,
   type RefMap,
 } from "./a11y-refs";
 import { renderA11yTree } from "./a11y-render";
@@ -75,6 +78,65 @@ import {
  * separate FIFO and race the tab-less commands (P1).
  */
 const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+
+/**
+ * A failure the driver already knows the CODE for.
+ *
+ * The `act` catch classifies an unknown throw by matching Playwright's prose,
+ * which is the right answer for a page primitive that timed out. It is the
+ * wrong one for a failure this file raised itself: a `fill_form_failed: …
+ * Timeout …` message matches the regex and would come back re-labelled
+ * `target_not_found: fill_form_failed: …` — two codes in one string, and the
+ * outer one wrong.
+ */
+class ActError extends Error {
+  constructor(
+    readonly code: BrowserdErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ActError";
+  }
+}
+
+/**
+ * A person took the browser BETWEEN the steps of a composite verb.
+ *
+ * Its own type because the answer differs from every other act failure: the
+ * refusal must carry `leaseBlocked` (the handler's 423, and the signal the
+ * tool layer drops its cached tokens on), and its prose must say that part of
+ * the form is already filled — "nothing was run" would be false, and a model
+ * told that would fill the same fields again on top of the ones that landed.
+ */
+class LeaseTakenMidAct extends Error {}
+
+/**
+ * An a11y payload minus the ref INDEX, for a result that cannot store one.
+ *
+ * A ref is a promise the driver has to keep: the model reads `e7` and expects
+ * `rootRef:"e7"` to resolve. That promise is only made by `commitRefs`, and a
+ * result carrying no state token cannot commit — so handing the index over
+ * anyway would advertise names nothing will answer to.
+ *
+ * The rendered tree keeps its `[ref=eN]` markers, which is deliberate: they
+ * read as part of the page's shape, and a model that tries one gets the clean
+ * `unknown_ref` refusal that exists for exactly a ref this tab never issued.
+ */
+function withoutRefIndex(fields: Record<string, unknown>): Record<string, unknown> {
+  const { refs: _unstored, ...rest } = fields;
+  return rest;
+}
+
+/**
+ * Did `fillSelector` refuse because the target is a `<select>`?
+ *
+ * See `fillOneField` for the two real messages this separates. The engines
+ * agree on the wording by contract (`DriverPage.fillSelector`), so the test is
+ * on the text rather than on a per-engine flag.
+ */
+function isNotAnInputRefusal(message: string): boolean {
+  return /not an <input>/i.test(message) && !/<select>/i.test(message);
+}
 
 interface TabEntry {
   page: DriverPage;
@@ -439,9 +501,16 @@ export class ChromiumDriver implements BrowserDriver {
 
   /**
    * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
-   * returns the post-act screenshot + URL with a fresh state token, so the
-   * model never has to spend a turn asking "what happened?" — and the token it
-   * gets back is the one its NEXT act should be pinned to.
+   * returns what the page BECAME — its URL, the tree of what can be acted on
+   * next (with refs), a screenshot, or whichever of those `observe` asked for
+   * — with a fresh state token, so the model never has to spend a turn asking
+   * "what happened?" and the token it gets back is the one its NEXT act should
+   * be pinned to.
+   *
+   * The a11y half is what closes the last round trip: an act used to hand back
+   * a picture, and a model that wanted to know what was now CLICKABLE had to
+   * observe again. `afterAct` is the funnel every one of these paths — success,
+   * failure, and the stale refusal above — leaves through.
    *
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
@@ -470,25 +539,70 @@ export class ChromiumDriver implements BrowserDriver {
       return this.observation(tabId, entry, { url: frame.url }, frame, permit);
     }
 
+    const wants = wantsFor(action.observe);
+    // ONE extra `domStructureSignal` evaluate, taken here so `previousUrl` can
+    // say whether the act moved the page. Read before the verb runs, because
+    // afterwards there is nothing left that remembers where the page was.
+    const before = await this.snapshot(page).catch(() => undefined);
+    // AND THE LEASE AGAIN, because the line above is an AWAIT.
+    //
+    // `execute` checks the permit and, on this path, used to reach
+    // `dispatchVerb` with nothing to yield on in between — so its check was
+    // the last word right up to the click. The snapshot changed that: it
+    // evaluates in the page, and a person taking control while it runs would
+    // otherwise get the agent's click or keystroke in their own browser a beat
+    // later. Discarding the observation afterwards does not help; `afterAct`
+    // can decline to LOOK at the page, it cannot un-type a password into it.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed",
+      );
+    }
     try {
-      await this.dispatchVerb(page, action);
+      await this.dispatchVerb(page, action, permit);
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
       // able to act on ("the button isn't there"), not a daemon fault — and
       // Playwright's own timeout prose would just confuse it.
+      if (error instanceof LeaseTakenMidAct) {
+        // NOT an act failure. Said precisely, because a composite stops
+        // halfway: the fields before the handoff are in the page, and a model
+        // told "nothing was run" would fill them a second time.
+        return this.leaseBlockedResult(
+          "a person took control of this browser partway through this action; " +
+            "any earlier steps of it have already been applied to the page — " +
+            "re-observe after they hand it back rather than repeating it",
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
-      const kind = /timeout|not found|no element|strict mode/i.test(message)
-        ? "target_not_found"
-        : "act_failed";
+      // A failure THIS FILE raised already carries its code; only an unknown
+      // throw from a page primitive is classified by matching prose.
+      const kind =
+        error instanceof ActError
+          ? error.code
+          : /timeout|not found|no element|strict mode/i.test(message)
+            ? "target_not_found"
+            : "act_failed";
       // Same rule as the success path: the act may have failed, but the page
-      // it failed on can still be someone's now. `permit()` decides whether we
-      // may say anything about it beyond "it failed" — asked before the read
-      // to avoid making it, and again after, because the read is an await and
-      // a handoff can land inside it.
-      const before = permit()
-        ? await this.snapshot(page).catch(() => null)
-        : null;
-      const frame = permit() ? before : null;
+      // it failed on can still be someone's now. `afterAct` asks `permit()`
+      // before it reads anything, and `observation` asks again on the way out,
+      // because the read is an await and a handoff can land inside it.
+      //
+      // A FAILED ACT CARRIES THE FRESH TREE TOO: "your selector matched
+      // nothing" plus the list of what the page DOES offer is one turn; the
+      // bare refusal is two.
+      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      // A HANDOFF DURING THAT READ WINS, exactly as it does on the success
+      // path above. Keeping the act's own error instead would drop the
+      // `leaseBlocked` flag, and that flag is not decoration: the handler maps
+      // it to 423 and the tool layer forgets its cached tokens off it, so a
+      // person taking the browser here would be reported to the model as "your
+      // selector matched nothing" and the turn would go on pinning acts to a
+      // page they have since navigated. The flag cannot simply be merged onto
+      // the act error either — the handler reads the refusal CODE out of that
+      // string, and `target_not_found` under a 423 reads to the client codec
+      // as an unknown refusal.
+      if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -497,44 +611,51 @@ export class ChromiumDriver implements BrowserDriver {
         // carries the handoff note too — an act that failed right after a
         // person used the browser most likely failed BECAUSE the page is now
         // somewhere else, and "your click missed" would be the wrong lesson.
-        ...(frame
+        ...(fresh.ok
           ? {
-              stateToken: this.tokenFor(tabId, entry, frame),
-              output: this.withHandoffNote({ url: frame.url }),
+              ...(fresh.stateToken ? { stateToken: fresh.stateToken } : {}),
+              ...(fresh.output !== undefined ? { output: fresh.output } : {}),
             }
           : {}),
       };
     }
 
     const settled = await this.settle(page);
-    // The act RAN. If a person took the browser while the page settled, we
-    // still owe the caller an honest answer — but not a picture of whatever
-    // they are doing now. Say what happened and hand back nothing else.
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
-      );
-    }
-    const frame = await this.snapshot(page);
-    const screenshot = await page.screenshotBase64().catch(() => undefined);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url, ...(screenshot ? { screenshot } : {}) },
-        frame,
-        permit,
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
-      ),
-      settled,
-    };
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wants,
+      before,
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
+    );
+    // `settled` describes the page the act ran on. A refusal describes no page
+    // at all, and stapling a load flag to it would suggest one was looked at.
+    // `observed` is spread LAST so an observation that could not be taken keeps
+    // its own `settled: false` rather than being overwritten with the settle
+    // result of a page it never managed to read.
+    return observed.ok ? { settled, ...observed } : observed;
   }
 
-  /** Map an act verb onto the page primitives. */
+  /**
+   * Map an act verb onto the page primitives.
+   *
+   * `permit` is threaded in for the COMPOSITE verbs only. A single-step verb is
+   * one dispatch and the caller's check immediately precedes it; `fill_form` is
+   * a loop of awaited page writes, so a person taking the browser after the
+   * first field would otherwise have the rest of the form — and the Enter —
+   * typed into it. The check is between steps because there is no way to take
+   * back the ones already made.
+   */
   private async dispatchVerb(
     page: DriverPage,
     action: Extract<BrowserAction, { kind: "act" }>,
+    permit: () => boolean = () => true,
   ): Promise<void> {
+    /** Refuse the NEXT page write when the browser changed hands. */
+    const stillOurs = () => {
+      if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
+    };
     const target = action.target;
     const point =
       target && "coordinates" in target
@@ -576,8 +697,47 @@ export class ChromiumDriver implements BrowserDriver {
         const text = action.value ?? "";
         // With a selector, REPLACE the field's value; without one, type into
         // whatever has focus (the model's previous click).
-        if (selector) return page.fillSelector(selector, text);
-        return page.typeText(text);
+        if (selector) await page.fillSelector(selector, text);
+        else await page.typeText(text);
+        // ONE settle and ONE observation for what was two commands. The submit
+        // is also the half a model most often cannot pin: it acts on the page
+        // its own typing produced, which nothing has observed yet.
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
+      }
+      case "fill_form": {
+        // Validated HERE because the handler does not: `isValidCommand` checks
+        // the envelope and passes the action through untouched, so a
+        // `fill_form` with no fields would otherwise reach `for (const field
+        // of undefined)`.
+        const fields = action.fields;
+        if (
+          !Array.isArray(fields) ||
+          fields.length === 0 ||
+          fields.some(
+            (field) =>
+              typeof field?.selector !== "string" ||
+              !field.selector ||
+              typeof field?.value !== "string",
+          )
+        ) {
+          throw new ActError(
+            "act_failed",
+            "fill_form needs fields: [{selector, value}]",
+          );
+        }
+        for (const [index, field] of fields.entries()) {
+          stillOurs();
+          await this.fillOneField(page, field, index, stillOurs);
+        }
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
@@ -617,6 +777,89 @@ export class ChromiumDriver implements BrowserDriver {
       case "activate_tab":
         // Handled by the caller before dispatch.
         return;
+      default:
+        // UNREACHABLE for this build's own union, and the reason it is here
+        // anyway: a verb arrives off the WIRE. A newer inspector talking to
+        // this daemon (the lazy-upgrade path reuses a running one) would send
+        // a verb this switch has no case for, fall straight through, and be
+        // told `ok: true` for something that never happened — a form reported
+        // filled with every field still empty. `BROWSERD_PROTOCOL_VERSION`
+        // exists to stop that pairing; this is what it costs if one slips
+        // through.
+        throw new ActError(
+          "act_failed",
+          `this browser daemon does not support the "${
+            (action as { verb: string }).verb
+          }" verb; it is running an older build`,
+        );
+    }
+  }
+
+  /**
+   * One field of a `fill_form`, with the `<select>` fallback.
+   *
+   * A model should not have to know what KIND of control it is filling: it
+   * read "Size" off a tree or a screenshot and wants "L" in it, so the
+   * fallback is driven by Playwright's own refusal rather than by a per-field
+   * hint the model would have to get right.
+   *
+   * WHICH refusal, measured against a real Chromium rather than guessed —
+   * the two messages differ by one item in the same list:
+   *
+   *   <select>  "Element is not an <input>, <textarea> or [contenteditable]
+   *              element"
+   *   <button>  "Element is not an <input>, <textarea>, <select> or
+   *              [contenteditable] and does not have a role allowing
+   *              [aria-readonly]"
+   *
+   * So "names <input>" alone is NOT the discriminator: it matches both, and
+   * matching the second sent a `fill` at a button off to `selectOption`, which
+   * failed for its own unrelated reason and reported that instead of "this
+   * element cannot be filled". The `<select>` case is the one whose message
+   * does not offer `<select>` as an alternative.
+   *
+   * Any OTHER failure stops the form. Half a filled form is a state the page
+   * is in and the model cannot see, so the error names the field that failed
+   * AND the ones that went in before it.
+   */
+  private async fillOneField(
+    page: DriverPage,
+    field: { selector: string; value: string },
+    index: number,
+    stillOurs: () => void,
+  ): Promise<void> {
+    try {
+      await page.fillSelector(field.selector, field.value);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isNotAnInputRefusal(message)) {
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` +
+            (index > 0 ? `; fields 1..${index} were filled` : ""),
+        );
+      }
+      // OUTSIDE the try below, and re-asked at all because the fill we just
+      // waited on can take the whole act timeout — long enough for someone to
+      // take the browser, after which `selectOption` is a page write into
+      // their hands. Outside, because the catch turns everything it sees into
+      // `fill_form_failed`, and a handoff relabelled as a field failure loses
+      // the flag that makes it a 423 and drops the turn's cached tokens.
+      stillOurs();
+      try {
+        await page.selectOption(field.selector, field.value);
+      } catch (selectError) {
+        const detail =
+          selectError instanceof Error
+            ? selectError.message
+            : String(selectError);
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` +
+            (index > 0 ? `; fields 1..${index} were filled` : ""),
+        );
+      }
     }
   }
 
@@ -973,59 +1216,20 @@ export class ChromiumDriver implements BrowserDriver {
         return this.observeText(tabId, entry, permit);
       }
       case "a11y": {
-        // filter → cap → number → render, in that order, and the order is
-        // load-bearing. Filtering first keeps the budget from being spent on
-        // prose the interactive view will not show; numbering after the cap
-        // keeps every ref in the map reachable in the text (a ref stamped on a
-        // node the budget then dropped would be a name for something the model
-        // cannot see); rendering last means the map and the text were built
-        // from one pass over one tree.
-        const raw = await this.readA11y(tabId, entry, action);
-        if (!raw.ok) return raw.error;
-        const filtered =
-          raw.filter === "interactive" && raw.tree
-            ? filterInteractive(raw.tree)
-            : raw.tree;
+        const rendered = await this.renderA11y(tabId, entry, action);
+        if (!rendered.ok) return rendered.error;
+        // The tree FIRST, then the frame the token is minted from: a snapshot
+        // taken before the walk would describe a page the tree may already
+        // have moved past.
         const frame = await this.snapshot(entry.page);
-        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          filtered,
-          this.a11yBudget,
-        );
-        const refs = assignRefs(tree);
-        const rendered = renderA11yTree(tree, {
-          interactiveOnly: raw.filter === "interactive",
-        });
         const result = this.observation(
           tabId,
           entry,
-          {
-            a11y: rendered,
-            refs: Object.fromEntries(
-              [...refs].map(([ref, entryValue]) => [
-                ref,
-                { role: entryValue.role, name: entryValue.name },
-              ]),
-            ),
-            ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
-          },
+          rendered.fields,
           frame,
           permit,
         );
-        // COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
-        // mid-read discards the result — and refs stored anyway would be names
-        // for a page the model was never shown, guessable afterwards by a model
-        // that never received them. On that path the old map goes too: it
-        // described a page this tab may no longer be on.
-        if (!result.ok) {
-          this.refs.delete(tabId);
-          return result;
-        }
-        // Replaces the per-tab map wholesale: refs are valid for exactly one
-        // observation, and leaving an older map merged underneath is how `e7`
-        // comes to mean two things at once. Bound to the token the observation
-        // carries, so a ref used after the page moved is refused rather than
-        // resolved by name against whatever is there now.
-        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
       case "console": {
@@ -1562,6 +1766,309 @@ export class ChromiumDriver implements BrowserDriver {
     } finally {
       this.pendingTabs.delete(tabId);
     }
+  }
+
+  /**
+   * Read, filter, cap, number and render one a11y tree — everything between
+   * "ask the page" and "here are the fields", for BOTH readers of a tree.
+   *
+   * filter → cap → number → render, in that order, and the order is
+   * load-bearing. Filtering first keeps the budget from being spent on prose
+   * the interactive view will not show; numbering after the cap keeps every
+   * ref in the map reachable in the text (a ref stamped on a node the budget
+   * then dropped would be a name for something the model cannot see);
+   * rendering last means the map and the text were built from one pass over
+   * one tree.
+   *
+   * IT DOES NOT TAKE THE FRAME SNAPSHOT. The caller does, after this returns,
+   * so the token an observation carries describes the page as it was once the
+   * tree had been walked — never before it.
+   */
+  private async renderA11y(
+    tabId: string,
+    entry: TabEntry,
+    action: {
+      rootSelector?: string;
+      rootRef?: string;
+      filter?: "interactive" | "all";
+    },
+  ): Promise<
+    | {
+        ok: true;
+        fields: Record<string, unknown>;
+        refMap: Map<string, RefEntry>;
+      }
+    | { ok: false; error: BrowserCommandResult }
+  > {
+    const raw = await this.readA11y(tabId, entry, action);
+    if (!raw.ok) return raw;
+    const filtered =
+      raw.filter === "interactive" && raw.tree
+        ? filterInteractive(raw.tree)
+        : raw.tree;
+    const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+      filtered,
+      this.a11yBudget,
+    );
+    const refs = assignRefs(tree);
+    const rendered = renderA11yTree(tree, {
+      interactiveOnly: raw.filter === "interactive",
+    });
+    return {
+      ok: true,
+      fields: {
+        a11y: rendered,
+        refs: Object.fromEntries(
+          [...refs].map(([ref, entryValue]) => [
+            ref,
+            { role: entryValue.role, name: entryValue.name },
+          ]),
+        ),
+        ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
+      },
+      refMap: refs,
+    };
+  }
+
+  /**
+   * Store (or discard) the refs an observation just minted.
+   *
+   * COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+   * mid-read discards the result — and refs stored anyway would be names for a
+   * page the model was never shown, guessable afterwards by a model that never
+   * received them. On that path the old map goes too: it described a page this
+   * tab may no longer be on.
+   *
+   * A commit REPLACES the per-tab map wholesale: refs are valid for exactly
+   * one observation, and leaving an older map merged underneath is how `e7`
+   * comes to mean two things at once. Bound to the token the observation
+   * carries, so a ref used after the page moved is refused rather than
+   * resolved by name against whatever is there now.
+   */
+  private commitRefs(
+    tabId: string,
+    result: BrowserCommandResult,
+    refMap: Map<string, RefEntry> | undefined,
+  ): void {
+    if (!result.ok || !refMap) {
+      this.refs.delete(tabId);
+      return;
+    }
+    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+  }
+
+  /**
+   * THE ONE FUNNEL for "what does the page look like now that something
+   * happened to it" — the post-act observation (L1), the observation a failed
+   * act still owes, and the fresh page a `stale_observation` refusal hands
+   * back.
+   *
+   * Every caller reaches `observation` through here, so `withHandoffNote` and
+   * the final permit re-check are inherited rather than repeated, and the refs
+   * an act's tree hands out are committed with the same semantics an `observe`
+   * gives them — which is what makes `rootRef` zoom work off an act result.
+   *
+   * `before` is the frame captured just before the verb ran; `previousUrl` is
+   * reported only when the act actually moved the page, because a URL repeated
+   * on every result is noise the model has to read past.
+   */
+  private async afterAct(
+    tabId: string,
+    entry: TabEntry,
+    permit: () => boolean,
+    wants: { a11y: boolean; screenshot: boolean },
+    before?: FrameSnapshot,
+    blockedDetail?: string,
+  ): Promise<BrowserCommandResult> {
+    // Before ANY read, the same rule `observe` opens with: a person holding
+    // the browser is not shown to the model, and the cheap refusal comes
+    // before the expensive read rather than after it.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        blockedDetail ??
+          "a person has taken control of this browser; nothing was observed",
+      );
+    }
+    const page = entry.page;
+    // THE FRAME THE CAPTURES ARE TAKEN AGAINST, sampled before them and again
+    // after, exactly as `observeScreenshot` does — and for the same P1.
+    //
+    // A token minted AFTER an image describes a page the image may not show.
+    // That is the dangerous direction: an act chosen from the stale image and
+    // pinned to that token MATCHES the live tab and sails through
+    // `guardStaleness`, which is precisely the stale targeting L3 exists to
+    // refuse. (Minting it before, as this path used to, errs the other way —
+    // the token is older than the image, so the guard REFUSES. Safe, but only
+    // by accident.) Sampling both sides lets the result say which it is.
+    //
+    // Skipped when nothing is captured: with `observe:"none"` there is no
+    // image and no tree to bind, so the one snapshot below is the whole story.
+    const captures = wants.a11y || wants.screenshot;
+    const pre = captures
+      ? await this.snapshot(page).catch(() => undefined)
+      : undefined;
+    let a11yFields: Record<string, unknown> = {};
+    let refMap: Map<string, RefEntry> | undefined;
+    if (wants.a11y) {
+      // `.catch` as well as the `ok:false` arm: `renderA11y` READS the page
+      // (a CDP attach, an AX tree walk), and a navigation or a closing tab
+      // rejects rather than answering. An act that RAN must not come back as
+      // a command failure because the aftermath could not be described.
+      const rendered = await this.renderA11y(tabId, entry, {
+        filter: "interactive",
+      }).catch(() => ({ ok: false as const, error: undefined }));
+      if (rendered.ok) {
+        a11yFields = rendered.fields;
+        refMap = rendered.refMap;
+      } else {
+        // NON-FATAL, deliberately. A page that cannot answer a tree — a PDF, a
+        // page whose CDP session went away, a `chrome://` surface — must not
+        // turn a click that WORKED into a failed act. Say the tree is missing
+        // and hand back everything else.
+        a11yFields = { a11yUnavailable: true };
+      }
+    }
+    const screenshot = wants.screenshot
+      ? await page.screenshotBase64().catch(() => undefined)
+      : undefined;
+    // AFTER both reads: the token must describe the state the output was
+    // captured against, and a snapshot taken first would describe the page as
+    // it was before a tree walk that can take a moment.
+    //
+    // AND IT CAN REJECT. `domStructureSignal` is an in-page evaluate, and a
+    // navigation destroys the execution context it runs in — which a submitted
+    // form does as a matter of course. Letting that escape would report a
+    // COMPLETED act as a failed command, and the obvious next move for a model
+    // reading a failure is to try again: the form gets submitted twice.
+    const frame = await this.snapshot(page).catch(() => undefined);
+    if (!frame) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ??
+            "a person has taken control of this browser; nothing was observed",
+        );
+      }
+      // The act ran; we cannot say what it produced. NO STATE TOKEN, which is
+      // the honest answer and also the safe one: the tool layer keeps the
+      // token it already had, the next act pins to that, and `guardStaleness`
+      // refuses it with a fresh look rather than acting on a page nobody has
+      // seen. `settled: false` tells the model to look again.
+      //
+      // AND NO CAPTURE WITHOUT A URL TO ATTRIBUTE IT TO. This return does not
+      // pass through `observation`, so it has to keep that funnel's promise
+      // itself: the unattended origin allowlist is enforced against a result's
+      // `url` and fails OPEN without one, so a tree or a screenshot handed back
+      // here unnamed would reach the model past a boundary it was never
+      // checked against. `page.url()` throws on a closed page — the very case
+      // that brought us here — and then there is nothing to check, so the
+      // captures go rather than the check.
+      //
+      // AND NO REFS, minted or remembered. There is no token to bind a fresh
+      // map to, and whatever this tab held describes a page we have just
+      // failed to read — so the index goes out of the result and the stored
+      // map goes with it.
+      this.refs.delete(tabId);
+      const url = safeUrl(page);
+      return {
+        ok: true,
+        output: this.withHandoffNote(
+          url
+            ? {
+                url,
+                ...withoutRefIndex(a11yFields),
+                ...(screenshot ? { screenshot } : {}),
+                observationFailed: true,
+              }
+            : { observationFailed: true },
+        ),
+        settled: false,
+      };
+    }
+    const output = {
+      // Only when it MOVED. `url` is on every observation already; a
+      // `previousUrl` equal to it teaches the model nothing and costs a line
+      // on every act.
+      ...(before && before.url !== frame.url ? { previousUrl: before.url } : {}),
+      ...a11yFields,
+      ...(screenshot ? { screenshot } : {}),
+    };
+    // Both must hold, as in `observeScreenshot`: a same-skeleton client-side
+    // route change moves the URL while `domSignal` does not.
+    const held =
+      !captures ||
+      (pre !== undefined &&
+        pre.url === frame.url &&
+        pre.domSignal === frame.domSignal);
+    if (!held) {
+      // The page moved WHILE it was being captured, so no token here can
+      // honestly describe what came back. Sending none is what keeps the next
+      // act safe: the tool layer keeps the token it had, that act is pinned to
+      // it, and the guard refuses it with a fresh look rather than admitting
+      // one aimed at an image of a page that has already changed.
+      //
+      // No retry, unlike `observeScreenshot`: the act has already run, so
+      // there is nothing to take again — only the description, and a second
+      // tree walk buys a guess at what is by definition still moving.
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ??
+            "a person has taken control of this browser; nothing was observed",
+        );
+      }
+      // UNCONDITIONALLY, not only when this act read a tree. The page moved
+      // under the capture, so a map minted by some earlier observation is
+      // describing a state nobody has been shown since — and `refsStillDescribe`
+      // would not catch it, because it compares page IDENTITY (which
+      // navigation, which URL) rather than shape. Cheap to lose: one
+      // `observe {mode:"a11y"}` mints a fresh set.
+      this.refs.delete(tabId);
+      // `url` explicitly, for the same reason as above: `observation` is what
+      // normally stamps it, and skipping that funnel must not also skip the
+      // field the origin allowlist is enforced against.
+      return {
+        ok: true,
+        output: this.withHandoffNote({
+          url: frame.url,
+          ...withoutRefIndex(output),
+        }),
+        settled: false,
+      };
+    }
+    const result =
+      blockedDetail === undefined
+        ? this.observation(tabId, entry, output, frame, permit)
+        : this.observation(tabId, entry, output, frame, permit, blockedDetail);
+    // `wants.a11y`, not `refMap`. An act that ASKED for a tree and could not
+    // get one (`a11yUnavailable`) leaves `refMap` undefined, and the
+    // conditional then skipped the commit entirely — so the previous
+    // observation's map stayed live and answered for a page this act has since
+    // changed and failed to describe. `commitRefs` with no map deletes, which
+    // is the right answer there. An act that never asked about the tree keeps
+    // whatever the tab held: refs are meant to survive a DOM mutation, and
+    // this capture proved stable.
+    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    return result;
+  }
+
+  /**
+   * The observation that rides a refusal — `guardStaleness`'s recovery read.
+   *
+   * Public because the guard sits ABOVE the driver (it is pure, and testable
+   * with a fake), so the one thing it cannot do for itself is look at the
+   * page. Without this the refusal says "re-read the page" and the model
+   * spends the very round trip the state token exists to save.
+   */
+  async observeForRefusal(
+    command: BrowserCommand,
+    wants: { a11y: boolean; screenshot: boolean },
+  ): Promise<BrowserCommandResult> {
+    const tabId = command.tabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    // No `before`: nothing ran, so there is no previous URL to report.
+    return this.afterAct(tabId, entry, this.permitFor(command), wants);
   }
 
   /**

@@ -444,7 +444,7 @@ export function StepList({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6 text-muted-foreground hover:text-red-500"
+                className="h-6 w-6 text-muted-foreground hover:text-destructive"
                 onClick={() => remove(index)}
                 aria-label="Remove step"
               >

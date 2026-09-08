@@ -39,7 +39,6 @@ export type SuiteSettingsRowProps = {
   hint?: ReactNode;
   disabledReason?: string;
   accessory?: ReactNode;
-  appliesImmediately?: boolean;
   error?: SuiteSettingsRowError;
   /** When false, the section is always expanded with no Edit/Close row. */
   collapsible?: boolean;
@@ -75,7 +74,6 @@ function SectionHeader({
   hint,
   accessory,
   summary,
-  appliesImmediately,
   error,
   labelClassName,
   collapsible,
@@ -87,7 +85,6 @@ function SectionHeader({
   hint?: ReactNode;
   accessory?: ReactNode;
   summary?: ReactNode;
-  appliesImmediately?: boolean;
   error?: SuiteSettingsRowError;
   labelClassName?: string;
   collapsible: boolean;
@@ -130,13 +127,8 @@ function SectionHeader({
           </CollapsibleTrigger>
         ) : null}
       </div>
-      {appliesImmediately || error ? (
+      {error ? (
         <div className="flex flex-wrap items-center gap-2">
-          {appliesImmediately ? (
-            <span className="rounded-md border border-border px-1.5 py-px text-[11px] text-muted-foreground">
-              Applies immediately
-            </span>
-          ) : null}
           {error ? (
             <button
               type="button"
@@ -177,7 +169,6 @@ export function SuiteSettingsRow({
   hint,
   disabledReason,
   accessory,
-  appliesImmediately,
   error,
   collapsible = false,
   chained = true,
@@ -244,7 +235,6 @@ export function SuiteSettingsRow({
       hint={hint}
       accessory={accessory}
       summary={summary}
-      appliesImmediately={appliesImmediately}
       error={error}
       labelClassName={labelClassName}
       collapsible={collapsible}
