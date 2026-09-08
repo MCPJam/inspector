@@ -8,8 +8,10 @@ import {
   FOLD_CHAR_LIMIT,
   FOLD_LINE_LIMIT,
   countLines,
+  foldSizeLabel,
   shouldFold,
 } from "../parts/folded-block";
+import { JsonView } from "../parts/json-view";
 
 /**
  * BB-198. A session transcript has to read as a conversation, not as a JSON
@@ -75,6 +77,44 @@ describe("tool result presentation", () => {
     expect(container.textContent).toContain('"temp": 72');
   });
 
+  it("ignores a mode it does not recognise rather than guessing markdown", () => {
+    // The mode is the producer's claim that the text is markdown. A reader
+    // that does not understand the claim falls back to the payload, which is
+    // always still correct — rendering an unknown future mode as markdown
+    // anyway is a renderer lying about content it cannot read.
+    const messages = [
+      assistantParts([
+        toolPart({
+          toolName: "search",
+          output: { temp: 72 },
+          traceDisplayText: "not markdown at all",
+          traceDisplayMode: "some-future-mode",
+        }),
+      ]),
+    ];
+    const { container } = render(<ReadOnlyTranscript messages={messages} />);
+
+    expect(container.textContent).not.toContain("not markdown at all");
+    expect(container.textContent).toContain('"temp": 72');
+  });
+
+  it("accepts the modes the adapter actually writes", () => {
+    const messages = [
+      assistantParts([
+        toolPart({
+          toolName: "search",
+          output: { temp: 72 },
+          traceDisplayText: "It is 72 degrees.",
+          traceDisplayMode: "markdown",
+        }),
+      ]),
+    ];
+    const { container } = render(<ReadOnlyTranscript messages={messages} />);
+
+    expect(container.textContent).toContain("It is 72 degrees.");
+    expect(container.textContent).not.toContain('"temp": 72');
+  });
+
   it("leaves a small payload open, with no control to press", () => {
     const messages = [
       assistantParts([
@@ -108,6 +148,26 @@ describe("tool result presentation", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByTestId("folded-block-preview")).toBeNull();
+  });
+
+  it("labels a length-folded payload by its size, not by its one line", () => {
+    // Both limits close a block, and a single long line trips only the char
+    // one. Reporting "1 lines" there was broken grammar and, worse, the
+    // opposite of the signal the label exists to give.
+    const messages = [
+      assistantParts([
+        toolPart({ toolName: "dump", output: "x".repeat(FOLD_CHAR_LIMIT * 3) }),
+      ]),
+    ];
+    render(<ReadOnlyTranscript messages={messages} />);
+
+    const toggle = screen.getByRole("button", { name: /Output/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle.textContent).not.toContain("1 lines");
+    expect(toggle.textContent).toContain("KB");
+    // Two words, not one, for anything computing an accessible name off the
+    // concatenated text rather than off the flex gap a sighted reader sees.
+    expect(toggle.textContent).toContain("Output ");
   });
 
   it("folds a long readable result too — prose can bury a transcript as well", () => {
@@ -223,6 +283,34 @@ describe("renderTool override", () => {
     );
   });
 
+  it("applies the same emptiness test the card does", () => {
+    // The two readers used to disagree: the card required non-blank text, the
+    // context accepted any non-empty string. A host following the
+    // `ToolRenderContext` doc ("prefer it over `output` when present") then
+    // rendered an empty Result and dropped the payload — the BB-198 failure,
+    // just on the far side of the seam.
+    const seen: ToolRenderContext[] = [];
+    render(
+      <Transcript
+        messages={[
+          assistantParts([
+            toolPart({
+              toolName: "s",
+              output: { temp: 72 },
+              traceDisplayText: "   ",
+            }),
+          ]),
+        ]}
+        renderTool={(ctx) => {
+          seen.push(ctx);
+          return null;
+        }}
+      />,
+    );
+
+    expect(seen[0]!.resultText).toBeUndefined();
+  });
+
   it("leaves it undefined for a part the adapter never touched", () => {
     const seen: ToolRenderContext[] = [];
     render(
@@ -249,10 +337,41 @@ describe("fold thresholds", () => {
     expect(shouldFold("x".repeat(FOLD_CHAR_LIMIT + 1))).toBe(true);
   });
 
+  it("labels by whichever limit actually closed the block", () => {
+    expect(foldSizeLabel("a" + "\n".repeat(FOLD_LINE_LIMIT + 8))).toBe(
+      "21 lines",
+    );
+    // One long line: a line count would say "1" and tell the reader nothing.
+    expect(foldSizeLabel("x".repeat(FOLD_CHAR_LIMIT + 100))).toBe(
+      "900 characters",
+    );
+    expect(foldSizeLabel("x".repeat(2048))).toBe("2.0 KB");
+  });
+
   it("counts lines without a trailing-newline off-by-one", () => {
     expect(countLines("")).toBe(0);
     expect(countLines("one")).toBe(1);
     expect(countLines("one\ntwo")).toBe(2);
     expect(countLines("one\n")).toBe(2);
+  });
+});
+
+describe("JsonView", () => {
+  it("shows the text it was handed instead of re-serialising the value", () => {
+    // `FoldedBlock` has to serialise a payload to size it. Passing that string
+    // back in is what stops a large tool result being stringified twice on
+    // every render, and it is what makes "the text measured is the text shown"
+    // a guarantee rather than two call sites branching the same way by habit.
+    const { container } = render(
+      <JsonView value={{ never: "rendered" }} text="the measured text" />,
+    );
+
+    expect(container.textContent).toBe("the measured text");
+  });
+
+  it("still serialises the value when no text is supplied", () => {
+    const { container } = render(<JsonView value={{ ok: 1 }} />);
+
+    expect(container.textContent).toContain('"ok": 1');
   });
 });

@@ -14,6 +14,7 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "./internal/tool-result-utils";
+import { readTraceDisplayText } from "./internal/trace-display";
 import {
   detectUIType,
   getUIResourceUri,
@@ -41,20 +42,6 @@ function getToolServerId(
   toolServerMap: ToolServerMap
 ): string | undefined {
   return toolServerMap[toolName];
-}
-
-/**
- * The trace adapter's readable rendering of a tool result, when it attached
- * one to the part (`toolResultDisplay: "attached-to-tool"`).
- *
- * Read defensively off an unknown-shaped part rather than widening the public
- * part types: this is an adapter-to-renderer channel inside the package, and
- * a part that never went through the adapter simply has no such field.
- */
-function traceResultText(part: unknown): string | undefined {
-  if (!part || typeof part !== "object") return undefined;
-  const value = (part as { traceDisplayText?: unknown }).traceDisplayText;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export interface PartSwitchProps {
@@ -121,7 +108,11 @@ export function PartSwitch({
     // replaces our tool block, and forwarding this only to ours would leave
     // the override showing the raw payload for exactly the sessions this
     // exists to make readable (BB-198).
-    const resultText = traceResultText(toolPart);
+    //
+    // Via the shared reader, so this branch, `ToolCallPart` and the
+    // inspector's own tool card agree on what counts as a readable result —
+    // they previously each had their own answer. See `internal/trace-display`.
+    const resultText = readTraceDisplayText(toolPart);
 
     const ctx: ToolRenderContext = {
       toolName: info.toolName,
@@ -151,10 +142,12 @@ export function PartSwitch({
         input={info.input}
         output={resolvedOutput}
         errorText={info.errorText}
-        // Forwarded because nothing did (BB-198): the adapter computed it,
-        // wrote it onto the part, and every renderer ignored it — so those
-        // sessions showed the raw payload and nothing else, while the modes
-        // that emit a sibling text part read fine.
+        // Forwarded because this card did not read it (BB-198): the adapter
+        // computed it, wrote it onto the part, and the package's own tool
+        // card ignored it — so the Chat tab of an `attached-to-tool` session
+        // showed the raw payload and nothing else, while the modes that emit
+        // a sibling text part read fine. (The inspector's `chat-v2` ToolPart
+        // has rendered the same field since #1583; the gap was here.)
         resultText={resultText}
       />
     );

@@ -39,6 +39,29 @@ export function countLines(text: string): number {
 }
 
 /**
+ * How big the thing behind the toggle is, measured in whatever made it fold.
+ *
+ * A LINE COUNT IS THE WRONG ANSWER FOR A BLOCK THAT FOLDED ON LENGTH. Both
+ * limits can close a block, and a single 2 KB line trips only the second one —
+ * labelling that "1 line" is both broken grammar and the exact opposite of the
+ * signal this label exists to give, which is letting the reader tell two
+ * skipped lines from four hundred before deciding to open it.
+ */
+export function foldSizeLabel(text: string): string {
+  const lines = countLines(text);
+  if (lines > FOLD_LINE_LIMIT) {
+    return `${lines} lines`;
+  }
+  // Folded on length instead. Characters up to a kilobyte, because "1,400
+  // characters" is a size a reader can picture; KB past that, because
+  // "512,000 characters" is not.
+  if (text.length >= 1024) {
+    return `${(text.length / 1024).toFixed(1)} KB`;
+  }
+  return `${text.length} characters`;
+}
+
+/**
  * A labelled payload block that folds when it is big enough to bury the
  * conversation around it.
  *
@@ -82,7 +105,7 @@ export function FoldedBlock({
     );
   }
 
-  const lines = countLines(text);
+  const sizeLabel = foldSizeLabel(text);
 
   return (
     <div className={cn("space-y-1", className)}>
@@ -101,11 +124,13 @@ export function FoldedBlock({
         ) : (
           <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
         )}
-        <span>{label}</span>
+        <span>{label}</span>{" "}
         {/* The size, so the reader can tell "two lines I skipped" from "four
-            hundred" before deciding to open it. */}
+            hundred" before deciding to open it. The explicit space is for the
+            accessible name, which concatenates these two spans without the
+            flex gap a sighted reader sees between them. */}
         <span className="font-normal text-muted-foreground/70">
-          {lines} lines
+          {sizeLabel}
         </span>
       </button>
       {open ? (

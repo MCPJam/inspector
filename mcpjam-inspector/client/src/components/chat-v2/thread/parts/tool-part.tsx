@@ -35,6 +35,7 @@ import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import {
   getToolNameFromType,
   getToolStateMeta,
+  readTraceDisplayText,
   type ToolState,
   isDynamicTool,
 } from "../thread-helpers";
@@ -64,7 +65,6 @@ import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-t
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
-type TraceDisplayMode = "markdown" | "json-markdown";
 
 export function ToolPart({
   part,
@@ -243,17 +243,14 @@ export function ToolPart({
   const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
-  const traceDisplayText =
-    typeof (part as unknown as { traceDisplayText?: unknown })
-      .traceDisplayText === "string"
-      ? (part as unknown as { traceDisplayText: string }).traceDisplayText
-      : undefined;
-  const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
-    .traceDisplayMode;
-  const hasAttachedTraceDisplay = Boolean(
-    traceDisplayText &&
-    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
-  );
+  // Through the package's shared reader rather than a local copy of the same
+  // field test. This channel had three hand-rolled readers with three
+  // different gates — this one required a recognised mode, `PartSwitch`
+  // ignored the mode and accepted whitespace, `ToolCallPart` rejected it —
+  // which is how BB-198 stayed open on one surface while this one rendered
+  // the same field fine.
+  const traceDisplayText = readTraceDisplayText(part);
+  const hasAttachedTraceDisplay = traceDisplayText !== undefined;
   const hasInput = inputData !== undefined && inputData !== null;
   const paramCount = useMemo(() => {
     if (!hasInput) return 0;

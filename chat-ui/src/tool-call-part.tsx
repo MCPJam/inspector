@@ -2,7 +2,7 @@ import { Terminal } from "lucide-react";
 import { cn } from "./internal/cn";
 import { Markdown } from "./internal/markdown";
 import { getToolStateMeta, type ToolState } from "./internal/thread-helpers";
-import { JsonView, stringifyJson } from "./parts/json-view";
+import { JsonView, renderJsonText } from "./parts/json-view";
 import { FoldedBlock } from "./parts/folded-block";
 
 export interface ToolCallPartProps {
@@ -61,6 +61,9 @@ export function ToolCallPart({
   const stateMeta = getToolStateMeta(toolState);
   const hasInput = input !== undefined && input !== null;
   const hasError = typeof errorText === "string" && errorText.length > 0;
+  // `PartSwitch` already applies this test via `readTraceDisplayText`; kept
+  // here for direct callers of the public component, which reach this prop
+  // without passing through the shared reader.
   const readableResult =
     typeof resultText === "string" && resultText.trim().length > 0
       ? resultText
@@ -68,16 +71,13 @@ export function ToolCallPart({
   const hasRawOutput =
     !hasError && !readableResult && output !== undefined && output !== null;
 
-  const inputText = hasInput
-    ? typeof input === "string"
-      ? input
-      : stringifyJson(input)
-    : "";
-  const outputText = hasRawOutput
-    ? typeof output === "string"
-      ? output
-      : stringifyJson(output)
-    : "";
+  // Serialised ONCE and handed to both the fold (which sizes it) and the view
+  // (which shows it). Doing it here and again inside `JsonView` stringified
+  // every large payload twice per render, and left the measured text and the
+  // displayed text agreeing only because two call sites happened to branch the
+  // same way.
+  const inputText = hasInput ? renderJsonText(input) : "";
+  const outputText = hasRawOutput ? renderJsonText(output) : "";
 
   return (
     <div
@@ -110,7 +110,7 @@ export function ToolCallPart({
 
       {hasInput ? (
         <FoldedBlock label="Input" text={inputText}>
-          <JsonView value={input} />
+          <JsonView value={input} text={inputText} />
         </FoldedBlock>
       ) : null}
 
@@ -138,7 +138,7 @@ export function ToolCallPart({
 
       {hasRawOutput ? (
         <FoldedBlock label="Output" text={outputText}>
-          <JsonView value={output} />
+          <JsonView value={output} text={outputText} />
         </FoldedBlock>
       ) : null}
     </div>
