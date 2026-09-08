@@ -16165,6 +16165,7 @@
           },
           "repeatCallIndexes": {
             "type": "array",
+            "minItems": 1,
             "maxItems": 8,
             "items": {
               "type": "integer",
@@ -16173,9 +16174,21 @@
           },
           "paginationKeys": {
             "type": "array",
+            "minItems": 1,
             "maxItems": 4,
             "items": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "cursor",
+                "nextCursor",
+                "page",
+                "pageToken",
+                "offset",
+                "after",
+                "before",
+                "start",
+                "limit"
+              ]
             }
           }
         }
