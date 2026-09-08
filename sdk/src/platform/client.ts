@@ -221,9 +221,13 @@ export interface PlatformRunLauncherOption {
  *
  * Deliberately the shape `detectCiMetadata` returns, GitHub's own spellings and
  * all: the platform maps `runId`→`pipelineId` and `job`→`jobId` at its header
- * boundary, and fields the run row has no column for (`repository`,
- * `pullRequestNumber`, `workflow`) are dropped there. One mapping, in one
- * place, rather than every caller learning the run row's vocabulary.
+ * boundary. One mapping, in one place, rather than every caller learning the
+ * run row's vocabulary.
+ *
+ * ACCEPTED IS NOT SENT. `repository`, `pullRequestNumber` and `workflow` are
+ * accepted because that is what the environment offers and a caller should not
+ * have to strip them by hand. A run row has no column for any of the three, so
+ * none of them reaches the wire — see the key list in `runLaunchHeaders`.
  */
 export interface PlatformCiMetadataOption {
   provider?: string;
@@ -327,13 +331,23 @@ function buildLaunchHeaders(
     // detector that grows a field would otherwise start sending it into a
     // header with a size cap, and the first symptom would be the whole
     // envelope being dropped for being too long.
+    //
+    // The list is exactly what a run row can hold — its own six columns, plus
+    // the two GitHub spellings (`runId`, `job`) the platform maps onto
+    // `pipelineId` and `jobId` at its header boundary.
+    //
+    // `repository`, `pullRequestNumber` and `workflow` are absent ON PURPOSE,
+    // not by oversight. `detectCiMetadata` returns all three because they are
+    // what the environment offers, and the boundary is documented and tested
+    // to drop all three: a run row has no column for any of them. Sending them
+    // anyway would spend the header budget on fields nothing can read — and an
+    // envelope over that cap is dropped WHOLE, so a dead field's only possible
+    // effect is to cost a live one.
     const ci: Record<string, string> = {};
     for (const key of [
       "provider",
-      "repository",
       "commitSha",
       "branch",
-      "workflow",
       "job",
       "jobId",
       "runUrl",
@@ -601,8 +615,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },

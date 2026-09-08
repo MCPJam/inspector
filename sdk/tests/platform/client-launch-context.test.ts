@@ -79,6 +79,46 @@ describe("declared launch context", () => {
     });
   });
 
+  /*
+   * WHAT `detectCiMetadata` OFFERS IS NOT WHAT THE HEADER CARRIES.
+   *
+   * The detector returns GitHub's whole environment, three fields of which a
+   * run row has no column for. The `/v1` boundary is documented and tested to
+   * drop `repository`, `pullRequestNumber` and `workflow`, and the backend's
+   * validator has no key for them either — so putting them on the wire buys
+   * nothing and costs header budget, and an envelope over the cap is dropped
+   * WHOLE. This is the test that says so, because "the type accepts it, so
+   * send it" is the reasonable-sounding change that would undo it.
+   */
+  it("carries only the fields a run row can hold", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ok());
+    await makeClient(fetchMock, {
+      launcher: { ...CLI_LAUNCHER },
+      // Exactly what `detectCiMetadata` returns inside a PR-triggered job.
+      ci: {
+        provider: "github_actions",
+        repository: "acme/widgets",
+        commitSha: "a1b2c3",
+        branch: "main",
+        pullRequestNumber: 12,
+        workflow: "CI",
+        job: "evals",
+        runUrl: "https://github.com/acme/widgets/actions/runs/42",
+        runId: "42.1",
+      },
+    }).createEvalRun({ projectId: "p1", body: { suiteId: "s1" } });
+
+    // `toEqual`, not `toMatchObject`: the point is what is ABSENT.
+    expect(JSON.parse(headersOf(fetchMock)[RUN_LAUNCH_HEADERS.ci]!)).toEqual({
+      provider: "github_actions",
+      commitSha: "a1b2c3",
+      branch: "main",
+      job: "evals",
+      runUrl: "https://github.com/acme/widgets/actions/runs/42",
+      runId: "42.1",
+    });
+  });
+
   it("rides them on a grouped launch too", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());
     await makeClient(fetchMock, {
@@ -104,7 +144,7 @@ describe("declared launch context", () => {
       // A claim about a run's origin, on a request that creates no run, is a
       // claim about nothing — and one more header on every read.
       expect(headersOf(fetchMock, call)).not.toHaveProperty(
-        RUN_LAUNCH_HEADERS.launcher,
+        RUN_LAUNCH_HEADERS.launcher
       );
     }
   });
@@ -131,7 +171,7 @@ describe("declared launch context", () => {
 
     // A label must never cost someone their run.
     expect(headersOf(fetchMock)).not.toHaveProperty(
-      RUN_LAUNCH_HEADERS.launcher,
+      RUN_LAUNCH_HEADERS.launcher
     );
   });
 
@@ -158,7 +198,7 @@ describe("declared launch context", () => {
     // `extraHeaders` is the edge-authenticator door. An edge credential must
     // not be able to relabel a run's origin on the way past.
     expect(
-      JSON.parse(headersOf(fetchMock)[RUN_LAUNCH_HEADERS.launcher]!).kind,
+      JSON.parse(headersOf(fetchMock)[RUN_LAUNCH_HEADERS.launcher]!).kind
     ).toBe("cli");
   });
 
