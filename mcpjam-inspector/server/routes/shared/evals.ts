@@ -191,6 +191,104 @@ function legacyCaseStepsFallback(testCase: {
   return turns.length > 0 ? promptTurnsToSteps(turns) : undefined;
 }
 
+/**
+ * A suite's or run's pass floor, as a PERCENT in [0, 100].
+ *
+ * BOUNDED, and that is the whole point. Unbounded, this was
+ * `z.object({ minimumPassRate: z.number() })` at four sites, while every
+ * consumer compares it as a percent — the backend against an UNROUNDED
+ * `passRate * 100` (`convex/testSuites.ts`, `convex/sdkEvals.ts`), the GitHub
+ * check against a rounded one (`github-checks-worker.ts`).
+ *
+ * So `minimumPassRate: 0.8` — the natural thing to send for someone who wrote
+ * `passThreshold: 0.8` as a FRACTION two fields earlier — was accepted, meant
+ * 0.8%, and produced a CI gate that could never fail. `8000` was accepted just
+ * as happily and could never pass. A gate that cannot fail is worse than no
+ * gate: it reports a verdict nobody measured.
+ *
+ * `minimumPassRatePercent` is the canonical name, following the SDK's own rule
+ * (`sdk/src/gates.ts`): every percent-valued field is named `*Percent` so a
+ * bare `100` cannot be read as "100%" when it means "10000%".
+ * `minimumPassRate` stays as the deprecated alias, because it is the name
+ * every stored policy and existing caller already uses.
+ *
+ * THE NAME IS THE DISAMBIGUATOR, which is what makes the `*Percent` convention
+ * load-bearing here rather than decorative:
+ *
+ *   - on `minimumPassRatePercent`, the unit is in the field name and nothing is
+ *     ambiguous, so the FULL range is accepted — `0.5` there is 0.5% and the
+ *     backend's unrounded comparison can genuinely act on it (1 passing case in
+ *     200 is exactly 0.5%);
+ *   - on the bare `minimumPassRate`, a value in (0, 1) is refused. That is the
+ *     spelling the bug arrives through, and this schema cannot tell a caller
+ *     who meant 80% from one who meant 0.8%. It says so, and names the field
+ *     that can say either without guessing.
+ *
+ * A fraction-looking value is never REINTERPRETED on either field: reading
+ * `0.8` as 80% would silently move the bar on every policy already stored
+ * under the old unbounded schema. `0` is a real floor ("any run clears it")
+ * and is accepted on both.
+ *
+ * ONE CAVEAT ON SUB-1% FLOORS, and it applies to every threshold to some
+ * degree. The platform verdict compares an UNROUNDED `passRate * 100`, while
+ * `github-checks-worker.ts` rounds the measured rate to an integer first (to
+ * stay in step with the eval UI's badge — see the comment there). So the
+ * GitHub check quantizes: a floor below 0.5 behaves there as if it were 0.5,
+ * exactly as a floor of 80 already passes the check at a measured 79.6%.
+ * Nothing here can fix that asymmetry — moving the check off `Math.round`
+ * would change the verdict of every existing gate at a rounding boundary,
+ * which is a decision of its own, not a side effect of bounding this field.
+ */
+const passRatePercentBoundsSchema = z
+  .number()
+  .min(0, "must be a percent in [0, 100]")
+  .max(100, "must be a percent in [0, 100] — 80 means 80%, not 8000%");
+
+/** The canonical field: unambiguous by name, so the whole range is usable. */
+const canonicalPassRatePercentSchema = passRatePercentBoundsSchema;
+
+/** The deprecated field: same unit, minus the band that reads as a fraction. */
+const aliasPassRatePercentSchema = passRatePercentBoundsSchema.refine(
+  (value) => value === 0 || value >= 1,
+  {
+    message:
+      "must be a PERCENT in [0, 100], and a value below 1 on this field is almost always a fraction sent by mistake — send 80 for 80%, not 0.8. If you really mean a sub-1% floor, send it as minimumPassRatePercent, whose name carries the unit. (A per-case passThreshold IS a fraction; this suite/run floor is not.)",
+  },
+);
+
+export const passCriteriaSchema = z
+  .strictObject({
+    /** Canonical: the unit is in the name. */
+    minimumPassRatePercent: canonicalPassRatePercentSchema.optional(),
+    /** Deprecated alias for `minimumPassRatePercent`. */
+    minimumPassRate: aliasPassRatePercentSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    const canonical = value.minimumPassRatePercent !== undefined;
+    const alias = value.minimumPassRate !== undefined;
+    if (canonical && alias) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["minimumPassRatePercent"],
+        message:
+          "Send minimumPassRatePercent or minimumPassRate, not both — they are two spellings of one percent.",
+      });
+    } else if (!canonical && !alias) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["minimumPassRatePercent"],
+        message:
+          "passCriteria needs minimumPassRatePercent (a percent in [0, 100]).",
+      });
+    }
+  })
+  // Normalized to the STORED name, so nothing downstream learns there were
+  // two spellings and no stored row changes shape.
+  .transform((value) => ({
+    minimumPassRate: (value.minimumPassRatePercent ??
+      value.minimumPassRate) as number,
+  }));
+
 export const RunEvalsRequestSchema = z.object({
   projectId: z.string().optional(),
   suiteId: z.string().optional(),
@@ -294,11 +392,7 @@ export const RunEvalsRequestSchema = z.object({
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
-  passCriteria: z
-    .object({
-      minimumPassRate: z.number(),
-    })
-    .optional(),
+  passCriteria: passCriteriaSchema.optional(),
   /**
    * When true, the request is a rerun of an already-persisted suite — skip
    * the per-test-case upsert. Without this, derived wire fields (suite

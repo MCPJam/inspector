@@ -3,8 +3,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { foldInlineTestChecks } from "../evals.js";
-
 /**
  * ONE grading rule, one name a customer types.
  *
@@ -12,39 +10,20 @@ import { foldInlineTestChecks } from "../evals.js";
  * `predicates` on the inline-create paths, `checks` on the case CRUD routes,
  * the UI and this spec. `check` is the survivor by explicit decision, so the
  * inline paths accept it too — and `predicates`, which was accepted here all
- * along and passed only because `EvalTestCase` allows unknown properties, is
- * now written down instead of being a third silent spelling.
+ * along and passed only because `EvalTestCase` allowed unknown properties, is
+ * written down instead of being a third silent spelling.
+ *
+ * The BEHAVIOUR of that alias — folding `checks` onto the stored
+ * `predicates`, and refusing a body that sends both — is covered against the
+ * real routes in `eval-inline-test-vocabulary.test.ts` ("stores `checks` as
+ * the case's predicate gate", "refuses both spellings of one field rather
+ * than picking one") and against the published schema in
+ * `openapi-alias-cardinality.test.ts`. Those arrived with the closed-object
+ * work and exercise the request path end to end, so this file does not
+ * duplicate them. What is left here is the half nothing else asserts: that
+ * the spec NAMES the surviving spelling, and that one name which looks like a
+ * synonym is deliberately not renamed.
  */
-describe("a case's checks, under either spelling", () => {
-  const gate = {
-    mode: "replace" as const,
-    list: [{ type: "toolCalledAtLeastOnce" as const, toolName: "echo" }],
-  };
-
-  it("folds `checks` onto the internal `predicates`", () => {
-    const folded = foldInlineTestChecks({ title: "echo works", checks: gate });
-    expect(folded.predicates).toEqual(gate);
-    expect(folded).not.toHaveProperty("checks");
-  });
-
-  it("leaves a body that only sent `predicates` untouched", () => {
-    const test = { title: "echo works", predicates: gate };
-    expect(foldInlineTestChecks(test)).toBe(test);
-  });
-
-  it("refuses both spellings, rather than picking one", () => {
-    // Two gates are two different gradings of one case. Choosing silently
-    // would score it against rules its author cannot see in the body.
-    expect(() =>
-      foldInlineTestChecks({
-        title: "echo works",
-        checks: gate,
-        predicates: gate,
-      }),
-    ).toThrow(/echo works/);
-  });
-});
-
 describe("the spec documents both spellings", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const spec = JSON.parse(
@@ -56,18 +35,51 @@ describe("the spec documents both spellings", () => {
     components: {
       schemas: Record<
         string,
-        { properties?: Record<string, { deprecated?: boolean }> }
+        {
+          properties?: Record<
+            string,
+            { deprecated?: boolean; description?: string }
+          >;
+        }
       >;
     };
   };
 
-  it("names `checks` on EvalTestCase and marks `predicates` deprecated", () => {
-    const props = spec.components.schemas.EvalTestCase?.properties ?? {};
-    expect(props.checks).toBeDefined();
-    expect(props.predicates).toBeDefined();
-    expect(props.predicates?.deprecated).toBe(true);
-    expect(props.checks?.deprecated).toBeUndefined();
-  });
+  const inlineCaseProperties = [
+    ["EvalTestCase", spec.components.schemas.EvalTestCase?.properties ?? {}],
+    [
+      "EvalSuiteCreateRequest.tests[]",
+      ((
+        spec.components.schemas.EvalSuiteCreateRequest?.properties as
+          | Record<
+              string,
+              {
+                items?: {
+                  properties?: Record<
+                    string,
+                    { deprecated?: boolean; description?: string }
+                  >;
+                };
+              }
+            >
+          | undefined
+      )?.tests?.items?.properties ?? {}) as Record<
+        string,
+        { deprecated?: boolean; description?: string }
+      >,
+    ],
+  ] as const;
+
+  for (const [schemaName, props] of inlineCaseProperties) {
+    it(`names \`checks\` on ${schemaName} and marks \`predicates\` deprecated`, () => {
+      expect(props.checks).toBeDefined();
+      expect(props.predicates).toBeDefined();
+      // The deprecation is the whole point: both spellings are accepted, and
+      // only one of them is the word a new caller should learn.
+      expect(props.predicates?.deprecated).toBe(true);
+      expect(props.checks?.deprecated).toBeUndefined();
+    });
+  }
 
   it("says why `steps[].assertion` is NOT renamed to a check", () => {
     // The name is earned: the field is `WidgetAssertion | Predicate`, and only

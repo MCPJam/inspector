@@ -65,10 +65,21 @@ export function getEvalOutcome(
   if (result === "failed") {
     return { label: "Failed", dotClass: "bg-red-500" };
   }
+  // Verdict policy 2's third verdict, and it MUST be read before the status
+  // switch below. An inconclusive run is `status: "completed"`, so without this
+  // it fell through to the `completed` arm and rendered green: a run the
+  // platform declined to decide, shown to the user as a clean pass.
+  if (result === "inconclusive") {
+    return { label: "Inconclusive", dotClass: "bg-amber-500" };
+  }
 
   switch (status) {
     case "completed":
-      return { label: "Completed", dotClass: "bg-emerald-500" };
+      // NEUTRAL, not emerald. Reaching this arm means the run finished and no
+      // verdict was read off it — either the payload carried none, or it
+      // carried one this function does not recognise. "Finished" is not
+      // "passed", and green is the one colour that claims it is.
+      return { label: "Completed", dotClass: "bg-muted-foreground/55" };
     case "failed":
       return { label: "Failed", dotClass: "bg-red-500" };
     case "cancelled":
