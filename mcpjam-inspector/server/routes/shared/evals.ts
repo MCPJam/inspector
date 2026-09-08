@@ -1579,9 +1579,16 @@ export async function authorEvalSuite(args: {
     // What still refuses, on purpose: `refreshSnapshot`, and a non-rerun
     // inline-test launch. Both really do rewrite the suite's persisted
     // configuration, and that is the drift the lock exists to stop.
+    //
+    // Name and description are NOT exempt from that. A rerun echoes back the
+    // suite's OWN name and description — the web client reads them off the
+    // suite row it is looking at and sends them straight back — so writing
+    // them stores what is already stored, and the only thing that write can
+    // do is fail. Renaming a suite has its own route (`PATCH
+    // /eval-suites/:suiteId`); a rerun is not it.
     const suiteWriteFields = {
-      ...(suiteName !== undefined ? { name: suiteName } : {}),
-      ...(suiteDescription !== undefined
+      ...(!suiteRerun && suiteName !== undefined ? { name: suiteName } : {}),
+      ...(!suiteRerun && suiteDescription !== undefined
         ? { description: suiteDescription }
         : {}),
       ...(shouldUpdateSnapshot ? { environment: persistedEnvironment } : {}),

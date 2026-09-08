@@ -1077,20 +1077,44 @@ describe("authorEvalSuite — the suite write a rerun does not need", () => {
     expect(write?.args?.environment).toBeDefined();
   });
 
-  it("carries a name or description through even on a rerun", async () => {
+  it("ignores the name and description a rerun echoes back", async () => {
     const { client, mutations } = fakeConvex();
     await authorEvalSuite({
       ...BASE,
       convexClient: client as never,
-      suiteName: "Renamed",
+      // What the web client actually sends on a rerun: the suite's own name
+      // and description, read off the row it is looking at. Writing them back
+      // stores what is already stored — and on a CI-owned suite it is the
+      // difference between a rerun that works and a 409.
+      suiteName: "Billing smoke",
+      suiteDescription: "Nightly",
       suiteRerun: true,
       refreshSnapshot: undefined,
     });
-    // The skip is "nothing to write", not "reruns never write". A caller that
-    // actually sent a name still means it.
+    expect(mutations.map((m) => m.fn)).not.toContain(
+      "testSuites:updateTestSuite"
+    );
+  });
+
+  it("writes a name and description on a non-rerun launch", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteName: "Billing smoke",
+      suiteDescription: "Nightly",
+      suiteRerun: false,
+      refreshSnapshot: undefined,
+    });
+    // Renaming has its own route; this is the authoring path, where the name
+    // arrives with the tests that define the suite.
     const write = mutations.find(
       (m) => m.fn === "testSuites:updateTestSuite"
     );
-    expect(write?.args).toEqual({ suiteId: "suite_1", name: "Renamed" });
+    expect(write?.args).toMatchObject({
+      suiteId: "suite_1",
+      name: "Billing smoke",
+      description: "Nightly",
+    });
   });
 });
