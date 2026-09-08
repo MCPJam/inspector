@@ -442,6 +442,38 @@ describe("electron page — the keyboard", () => {
     expect(keyEvents(dbg)).toHaveLength(0);
   });
 
+  it("re-checks focus after the select-all, not just before it", async () => {
+    // `pressKey` dispatches a real `keydown`, and a handler on it can move
+    // focus — so a check taken before it describes a page that has since run
+    // its own code. And the select-all has already left a full selection
+    // behind, so a write landing elsewhere would REPLACE that element rather
+    // than merely append to it.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    let typed = false;
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "Input.dispatchKeyEvent") typed = true;
+      // The keydown handler ran and took the caret with it.
+      if (method === "DOM.querySelector" && params?.selector === ":focus") {
+        await send(method, params);
+        return { nodeId: typed ? 43 : 42 };
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#name", "Ada")).rejects.toThrow(
+      /focus left the element/,
+    );
+    // The point of the second check: nothing is written into the element the
+    // handler moved to.
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
   it("calls a vanished field NOT FOUND, so the model looks again", async () => {
     // Error prose is load-bearing: `chromium-driver` reads
     // /timeout|not found|no element|strict mode/ as `target_not_found`, which

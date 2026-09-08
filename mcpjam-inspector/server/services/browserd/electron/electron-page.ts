@@ -826,17 +826,18 @@ export function createElectronPage(
           // `Document.prototype.activeElement` and lie about focus to page
           // JS, but it cannot change what `:focus` matches. Against the root
           // `pointFor` already read, so the ids are from one numbering.
-          const focused = (await cdp
-            .send("DOM.querySelector", {
-              nodeId: rootNodeId,
-              selector: ":focus",
-            })
-            .catch(() => undefined)) as { nodeId?: number } | undefined;
-          if (focused?.nodeId !== nodeId) {
-            // Same fork, one line later: a page that removed the field during
-            // its own focus handler reaches here rather than the branch
-            // above, and it is still a re-render the model should re-observe
-            // rather than a fault it should give up on.
+          const focusHeld = async (): Promise<void> => {
+            const focused = (await cdp
+              .send("DOM.querySelector", {
+                nodeId: rootNodeId,
+                selector: ":focus",
+              })
+              .catch(() => undefined)) as { nodeId?: number } | undefined;
+            if (focused?.nodeId === nodeId) return;
+            // Same fork as the focus rejection: a page that removed the field
+            // during its own handler reaches here instead, and it is still a
+            // re-render the model should re-observe rather than a fault it
+            // should give up on.
             throw new Error(
               (await nodeIsGone(nodeId))
                 ? `not found: ${selector} left the document before it could ` +
@@ -844,10 +845,31 @@ export function createElectronPage(
                 : `${selector}: focus left the element before it could be ` +
                   `filled`,
             );
-          }
+          };
+          await focusHeld();
           await pressKey(
             process.platform === "darwin" ? "Meta+a" : "Control+a",
           );
+          // AGAIN, BECAUSE THE SELECT-ALL HANDED THE PAGE THE FLOOR.
+          //
+          // `pressKey` dispatches a real `keydown`, and a handler on it can
+          // move focus — so a check taken before it describes a page that has
+          // since run its own code. `Input.insertText` targets whatever is
+          // focused NOW, and the select-all has already left a full selection
+          // behind it, so the write would not merely land in the wrong
+          // element: it would REPLACE that element's contents.
+          //
+          // This narrows the window rather than closing it. A handler that
+          // schedules the focus change — `setTimeout`, a microtask, a
+          // framework's effect queue — can still land between this check and
+          // the insert. Closing it properly means a target-bound write (the
+          // value set on the node itself, from an isolated world, the way
+          // Playwright's `fill` does it), which is a different mechanism than
+          // this engine's "focus and type" and wants a real Electron to
+          // exercise before it is trusted. Left as it stands, deliberately:
+          // this catches every synchronous steal, which is the one a page
+          // gets for free.
+          await focusHeld();
           await cdp.send("Input.insertText", { text });
         })(),
         ACT_TIMEOUT_MS,
