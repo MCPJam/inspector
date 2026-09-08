@@ -18,7 +18,8 @@
  *
  * Per-tool gates (all inside this module, by design):
  *   - web_search: requires Convex auth ctx (bills MCPJam credits server-side;
- *     guests are rejected by the Convex route at execute time).
+ *     guests are rejected by the Convex route at execute time). Inherits the
+ *     host's `requireToolApproval` via ctx, like bash.
  *   - bash: TWO paths. With `ctx.sandboxBinding` (a trusted, in-process-only
  *     binding to an already-provisioned EPHEMERAL sandbox) it binds to that
  *     disposable box and the personal computer is never consulted. Without one
@@ -347,6 +348,7 @@ export function resolveHostTools(
         // session — so without this it is offered to the model and then
         // fails at execution for every link visitor.
         ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
+        requireToolApproval: ctx.requireToolApproval,
       });
       continue;
     }
