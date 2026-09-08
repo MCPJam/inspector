@@ -69,7 +69,12 @@ describe("TurnRating", () => {
     expect(screen.getByText(/could not save/i)).toBeInTheDocument();
   });
 
-  it("read-only mode shows the comment and takes no input", () => {
+  it("read-only mode is a RECORD, not a disabled control", () => {
+    // It used to render the same `role="radio"` buttons with `disabled`, so a
+    // recorded session looked exactly like the live widget and a PM tried to
+    // click it (BB-198). "Disabled" is invisible when its only expression is
+    // a hover colour nobody hovers for, so read-only renders no control at
+    // all — nothing focusable, nothing with a checked state.
     const onSubmit = vi.fn();
     render(
       <TurnRating
@@ -82,9 +87,31 @@ describe("TurnRating", () => {
     );
 
     expect(screen.getByText(/it never found my order/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "4 of 5" }));
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryByRole("textbox")).toBeNull();
+    // The value still reaches a screen reader, as one statement rather than
+    // five icons that each announce nothing useful.
+    expect(
+      screen.getByRole("img", { name: "Tester rated 1 of 5" })
+    ).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("keeps Send beside the comment it sends", () => {
+    // `flex-1` on the input alone let this row grow to the transcript's
+    // measure, putting the button most of a screen from the stars that opened
+    // it — "it's all the way to the right, I never even saw it until you
+    // mentioned it" (BB-198).
+    render(<TurnRating value={4} status="idle" onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("radio", { name: "4 of 5" }));
+
+    const input = screen.getByRole("textbox");
+    const row = input.parentElement;
+    expect(row?.className).toContain("max-w-md");
+    // Still the same row, so the two never separate.
+    expect(row).toContainElement(screen.getByRole("button", { name: "Send" }));
   });
 
   it("carries the existing comment when only the stars change", () => {
@@ -280,7 +307,7 @@ describe("TurnRating — thumbs variant", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("renders read-only with the comment and no inputs", () => {
+  it("renders read-only as a record of the thumb that was left", () => {
     const onSubmit = vi.fn();
     render(
       <TurnRating
@@ -293,10 +320,15 @@ describe("TurnRating — thumbs variant", () => {
       />
     );
 
-    expect(screen.getByRole("radio", { name: "Thumbs down" })).toBeChecked();
+    // Only the chosen thumb. Showing both — one filled, one not — is what
+    // made this read as a picker in the first place.
+    expect(
+      screen.getByRole("img", { name: "Tester rated thumbs down" })
+    ).toBeInTheDocument();
     expect(screen.getByText(/wrong order/)).toBeInTheDocument();
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryByRole("textbox")).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: "Thumbs up" }));
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });

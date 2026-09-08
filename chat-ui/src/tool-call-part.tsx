@@ -1,7 +1,9 @@
 import { Terminal } from "lucide-react";
 import { cn } from "./internal/cn";
+import { Markdown } from "./internal/markdown";
 import { getToolStateMeta, type ToolState } from "./internal/thread-helpers";
-import { JsonView } from "./parts/json-view";
+import { JsonView, stringifyJson } from "./parts/json-view";
+import { FoldedBlock } from "./parts/folded-block";
 
 export interface ToolCallPartProps {
   toolName: string;
@@ -9,6 +11,17 @@ export interface ToolCallPartProps {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  /**
+   * The READABLE form of the result, when the trace adapter produced one.
+   *
+   * This is the difference between a conversation and a JSON dump (BB-198). A
+   * tool that returns text returns it here as prose; one that returns
+   * structure returns it pre-fenced. The adapter has computed this all along
+   * — under `attached-to-tool` it is the ONLY place the result is carried, and
+   * nothing rendered it, so User Testing sessions showed the raw payload while
+   * Swarm sessions (which get the result as a sibling text part) read fine.
+   */
+  resultText?: string;
   /**
    * Optional "from {appName}" attribution. The inspector resolves this via
    * `useAppToolAttribution`; the read-only package accepts it as a plain prop.
@@ -23,6 +36,17 @@ export interface ToolCallPartProps {
  * display-mode controls, CSP workbench, widget debug tabs, analytics,
  * navigation) is intentionally NOT part of this — hosts inject that via the
  * `renderTool` seam on `PartSwitch`.
+ *
+ * **Input and output FOLD when large.** A tool result is evidence, not the
+ * conversation: a session whose every call inlines two hundred lines of JSON
+ * stops being a transcript anyone can read (BB-198). Small payloads stay open
+ * and gain no control.
+ *
+ * **The readable result wins over the raw one.** When `resultText` is present
+ * it replaces the JSON view of `output` rather than sitting beside it —
+ * showing both would put the dump back in the transcript next to its own
+ * translation. The raw payload is still one click away in the session's Raw /
+ * Trace tab, which is where someone who wants bytes is looking.
  */
 export function ToolCallPart({
   toolName,
@@ -30,19 +54,36 @@ export function ToolCallPart({
   input,
   output,
   errorText,
+  resultText,
   attributionLabel,
   className,
 }: ToolCallPartProps) {
   const stateMeta = getToolStateMeta(toolState);
   const hasInput = input !== undefined && input !== null;
   const hasError = typeof errorText === "string" && errorText.length > 0;
-  const hasOutput = !hasError && output !== undefined && output !== null;
+  const readableResult =
+    typeof resultText === "string" && resultText.trim().length > 0
+      ? resultText
+      : null;
+  const hasRawOutput =
+    !hasError && !readableResult && output !== undefined && output !== null;
+
+  const inputText = hasInput
+    ? typeof input === "string"
+      ? input
+      : stringifyJson(input)
+    : "";
+  const outputText = hasRawOutput
+    ? typeof output === "string"
+      ? output
+      : stringifyJson(output)
+    : "";
 
   return (
     <div
       className={cn(
         "mcpjam-chat-tool space-y-2 rounded-lg border border-border bg-card p-3 text-xs",
-        className,
+        className
       )}
       data-tool-name={toolName}
       data-tool-state={toolState ?? "unknown"}
@@ -68,10 +109,9 @@ export function ToolCallPart({
       </div>
 
       {hasInput ? (
-        <div className="space-y-1">
-          <div className="font-medium text-muted-foreground">Input</div>
+        <FoldedBlock label="Input" text={inputText}>
           <JsonView value={input} />
-        </div>
+        </FoldedBlock>
       ) : null}
 
       {hasError ? (
@@ -83,11 +123,23 @@ export function ToolCallPart({
         </div>
       ) : null}
 
-      {hasOutput ? (
-        <div className="space-y-1">
-          <div className="font-medium text-muted-foreground">Output</div>
+      {readableResult ? (
+        <FoldedBlock label="Result" text={readableResult}>
+          {/* One renderer for both kinds the adapter produces: prose the tool
+              returned, and structured output it already fenced as ```json.
+              Markdown gives the fence its code treatment, so there is no
+              second branch to keep in step. */}
+          <Markdown
+            content={readableResult}
+            className="max-w-full overflow-auto break-words text-foreground"
+          />
+        </FoldedBlock>
+      ) : null}
+
+      {hasRawOutput ? (
+        <FoldedBlock label="Output" text={outputText}>
           <JsonView value={output} />
-        </div>
+        </FoldedBlock>
       ) : null}
     </div>
   );

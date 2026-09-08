@@ -3,8 +3,12 @@ import { cn } from "../internal/cn";
 /**
  * Stable JSON stringify that survives circular references (tool outputs can
  * contain cycles) instead of collapsing to "[object Object]".
+ *
+ * Exported so a caller that needs to MEASURE a payload before rendering it
+ * (see `FoldedBlock`) sizes exactly the text this component will show, rather
+ * than a second stringification that could disagree about it.
  */
-function stringifyJson(value: unknown): string {
+export function stringifyJson(value: unknown): string {
   const seen = new WeakSet<object>();
   try {
     return (
@@ -17,7 +21,7 @@ function stringifyJson(value: unknown): string {
           }
           return val as unknown;
         },
-        2,
+        2
       ) ?? String(value)
     );
   } catch {
@@ -47,7 +51,7 @@ export function JsonView({
     <pre
       className={cn(
         "mcpjam-chat-json overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed text-foreground",
-        className,
+        className
       )}
     >
       {text}
