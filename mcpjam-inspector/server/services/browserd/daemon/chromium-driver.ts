@@ -1730,7 +1730,15 @@ export class ChromiumDriver implements BrowserDriver {
       blockedDetail === undefined
         ? this.observation(tabId, entry, output, frame, permit)
         : this.observation(tabId, entry, output, frame, permit, blockedDetail);
-    if (refMap) this.commitRefs(tabId, result, refMap);
+    // `wants.a11y`, not `refMap`. An act that ASKED for a tree and could not
+    // get one (`a11yUnavailable`) leaves `refMap` undefined, and the
+    // conditional then skipped the commit entirely — so the previous
+    // observation's map stayed live and answered for a page this act has since
+    // changed and failed to describe. `commitRefs` with no map deletes, which
+    // is the right answer there. An act that never asked about the tree keeps
+    // whatever the tab held: refs are meant to survive a DOM mutation, and
+    // this capture proved stable.
+    if (wants.a11y) this.commitRefs(tabId, result, refMap);
     return result;
   }
 

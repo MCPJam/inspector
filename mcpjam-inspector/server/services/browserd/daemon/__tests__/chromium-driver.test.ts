@@ -1476,6 +1476,66 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(zoom.error).toMatch(/unknown_ref|stale_ref/);
   });
 
+  it("drops stored refs when an act ASKED for a tree and could not get one", async () => {
+    // `a11yUnavailable` leaves no new map, and the old one then answered for a
+    // page this act has since changed and failed to describe —
+    // `refsStillDescribe` compares which navigation and which URL, so a
+    // same-document change leaves it satisfied.
+    const page = fakePage({ url: "https://x.test/", cdpReplies: oneButton() });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y", rootRef: "e1" })))
+        .ok,
+    ).toBe(true);
+
+    // The act asks for a tree; the page can no longer answer one.
+    page.cdpSession = null;
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "a11y",
+      }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({ a11yUnavailable: true });
+
+    page.cdpSession = undefined; // the page can answer again
+    const zoom = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(zoom.ok).toBe(false);
+    expect(zoom.error).toMatch(/unknown_ref|stale_ref/);
+  });
+
+  it("keeps the tab's refs when an act never asked about the tree", async () => {
+    // The other half of the same condition: refs are meant to survive a DOM
+    // mutation, and a stable screenshot-only act is no reason to lose them.
+    const page = fakePage({ url: "https://x.test/", cdpReplies: oneButton() });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "screenshot",
+      }),
+    );
+
+    expect(
+      (await driver.execute(cmd({ kind: "observe", mode: "a11y", rootRef: "e1" })))
+        .ok,
+    ).toBe(true);
+  });
+
   it("does not advertise refs it could not store when the read failed", async () => {
     const page = fakePage({ url: "https://x.test/", cdpReplies: oneButton() });
     const { context } = fakeContext({ pages: [page] });

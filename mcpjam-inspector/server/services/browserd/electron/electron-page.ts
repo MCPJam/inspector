@@ -349,8 +349,14 @@ export function createElectronPage(
     return cdp;
   }
 
-  /** Centre of the element a selector names, in CSS pixels. */
-  async function pointFor(selector: string): Promise<ActPoint> {
+  /**
+   * Centre of the element a selector names, in CSS pixels — and the CDP node
+   * id it resolved to, so a caller can ask the PROTOCOL what the element is
+   * rather than asking the page.
+   */
+  async function pointFor(
+    selector: string,
+  ): Promise<{ point: ActPoint; nodeId: number }> {
     const cdp = await needCdp();
     const doc = (await cdp.send("DOM.getDocument", { depth: 0 })) as {
       root?: { nodeId?: number };
@@ -393,9 +399,72 @@ export function createElectronPage(
     const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
     const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
     return {
-      x: Math.round(xs.reduce((a, b) => a + b, 0) / 4),
-      y: Math.round(ys.reduce((a, b) => a + b, 0) / 4),
+      point: {
+        x: Math.round(xs.reduce((a, b) => a + b, 0) / 4),
+        y: Math.round(ys.reduce((a, b) => a + b, 0) / 4),
+      },
+      nodeId: found.nodeId,
     };
+  }
+
+  /**
+   * What KIND of thing is this node, asked of CDP rather than of the page.
+   *
+   * The classification used to run as page JS through `document.querySelector`,
+   * which a page can replace — and a thrown classifier was treated as "carry
+   * on", so any page could switch the guard off and collect the click it was
+   * meant to prevent. `DOM.describeNode` answers from the protocol side, where
+   * page script cannot reach.
+   *
+   * `contenteditable` is the one property that has to be COMPUTED (it
+   * inherits, so a span inside an editable div is editable and carries no
+   * attribute of its own), and there is no protocol-side answer for it. That
+   * probe runs over a node CDP resolved — never a selector the page could
+   * re-answer — and it FAILS CLOSED. The asymmetry is deliberate: the refusals
+   * that matter, a checkbox toggled or a submit sent, are decided from
+   * `nodeName` and the `type` attribute where nothing can lie, and the worst a
+   * spoofed `isContentEditable` can buy is a click on an ordinary element.
+   */
+  async function classifyFillTarget(
+    nodeId: number,
+  ): Promise<"FILLABLE" | "SELECT" | "OTHER" | `TYPE:${string}`> {
+    const cdp = await needCdp();
+    const described = (await cdp
+      .send("DOM.describeNode", { nodeId })
+      .catch(() => undefined)) as
+      | { node?: { nodeName?: string; attributes?: string[] } }
+      | undefined;
+    const tag = described?.node?.nodeName?.toUpperCase();
+    if (tag === "TEXTAREA") return "FILLABLE";
+    if (tag === "SELECT") return "SELECT";
+    if (tag === "INPUT") {
+      // `attributes` is a flat [name, value, name, value] list.
+      const attributes = described?.node?.attributes ?? [];
+      const at = attributes.findIndex(
+        (entry, index) => index % 2 === 0 && entry.toLowerCase() === "type",
+      );
+      const type = (at >= 0 ? (attributes[at + 1] ?? "text") : "text")
+        .toLowerCase();
+      return (UNFILLABLE_INPUT_TYPES as readonly string[]).includes(type)
+        ? (`TYPE:${type}` as const)
+        : "FILLABLE";
+    }
+    // Everything else is fillable only if it is editable, which only the page
+    // can compute. Resolved BY NODE so the lookup cannot be re-pointed, and
+    // anything short of a definite `true` refuses.
+    const resolved = (await cdp
+      .send("DOM.resolveNode", { nodeId })
+      .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
+    const objectId = resolved?.object?.objectId;
+    if (!objectId) return "OTHER";
+    const editable = (await cdp
+      .send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: "function () { return this.isContentEditable === true; }",
+        returnByValue: true,
+      })
+      .catch(() => undefined)) as { result?: { value?: unknown } } | undefined;
+    return editable?.result?.value === true ? "FILLABLE" : "OTHER";
   }
 
   async function mouse(
@@ -534,7 +603,7 @@ export function createElectronPage(
     clickAt: (point, options) => clickPoint(point, options?.button ?? "left"),
     async clickSelector(selector) {
       await deadline(
-        (async () => clickPoint(await pointFor(selector)))(),
+        (async () => clickPoint((await pointFor(selector)).point))(),
         ACT_TIMEOUT_MS,
         `clicking ${selector}`,
       );
@@ -542,7 +611,7 @@ export function createElectronPage(
     hoverAt: (point) => mouse("mouseMoved", point),
     async hoverSelector(selector) {
       await deadline(
-        (async () => mouse("mouseMoved", await pointFor(selector)))(),
+        (async () => mouse("mouseMoved", (await pointFor(selector)).point))(),
         ACT_TIMEOUT_MS,
         `hovering ${selector}`,
       );
@@ -559,49 +628,29 @@ export function createElectronPage(
       await deadline(
         (async () => {
           const cdp = await needCdp();
-          // BEFORE the click, and MIRRORING PLAYWRIGHT'S TWO REFUSALS. This
-          // engine fills by clicking, selecting all and inserting text, and on
-          // anything that is not a text field that sequence silently does
-          // NOTHING — no error, no change, and on a button it also CLICKS the
-          // button, which is a side effect nobody asked for. Playwright
-          // refuses both, and its two messages differ by one item in the list
-          // (measured, not guessed — see `fillOneField` in the driver):
-          // a `<select>` gets a message that does NOT offer `<select>` as an
-          // alternative, and that is the one the driver falls back to
-          // `selectOption` on. Anything else gets the message that DOES, so
-          // the fallback stays out of it.
+          // RESOLVE FIRST, THEN CLASSIFY, THEN CLICK.
           //
-          // `.catch` because a MALFORMED selector must keep failing the way it
-          // always has: this preflight would reject with the page's own
-          // `querySelector` prose, which the driver classifies as a daemon
-          // fault, where `pointFor` below normalizes it to "no element" and
-          // the model is told its selector was wrong.
-          const kind = await wc
-            .executeJavaScript(
-              `(() => {
-                const el = document.querySelector(${JSON.stringify(selector)});
-                if (!el) return null;
-                if (el.isContentEditable) return "FILLABLE";
-                const tag = el.tagName.toUpperCase();
-                if (tag === "TEXTAREA") return "FILLABLE";
-                if (tag === "SELECT") return "SELECT";
-                if (tag !== "INPUT") return "OTHER";
-                // The types a text insertion cannot reach, measured against
-                // Playwright rather than recalled — see below.
-                const type = (el.getAttribute("type") || "text").toLowerCase();
-                return ${JSON.stringify(UNFILLABLE_INPUT_TYPES)}.includes(type)
-                  ? "TYPE:" + type
-                  : "FILLABLE";
-              })()`,
-            )
-            .catch(() => undefined);
+          // Resolving first is what keeps a malformed selector failing the way
+          // it always has: `pointFor` normalizes that to "no element", which
+          // the driver reads as the model's mistake, where a classifier
+          // running first would reject with the page's own parser prose and be
+          // read as a daemon fault. It also means the classification asks CDP
+          // about a node CDP resolved, rather than asking the page to find the
+          // element again — a lookup the page could answer differently, or
+          // refuse, to get the click it wants.
+          //
+          // Classifying before the click is the point of the whole thing: this
+          // engine fills by clicking and then typing, and on a checkbox the
+          // click IS the toggle, on a submit it IS the submission.
+          const { point, nodeId } = await pointFor(selector);
+          const kind = await classifyFillTarget(nodeId);
           if (kind === "SELECT") {
             throw new Error(
               `${selector}: Element is not an <input>, <textarea> or ` +
                 `[contenteditable] element`,
             );
           }
-          if (typeof kind === "string" && kind.startsWith("TYPE:")) {
+          if (kind.startsWith("TYPE:")) {
             // Playwright's THIRD refusal, word for word. It names neither
             // `<input>` nor `<select>`, which is what keeps `fill_form` from
             // treating a checkbox as a dropdown it should have selected.
@@ -615,10 +664,6 @@ export function createElectronPage(
                 `or [contenteditable] element`,
             );
           }
-          const point = await pointFor(selector);
-          // Click to focus, select what is there, then replace it. `fill`'s
-          // contract is REPLACE, and an insert into a field with a value would
-          // append instead.
           await clickPoint(point);
           await pressKey(
             process.platform === "darwin" ? "Meta+a" : "Control+a",

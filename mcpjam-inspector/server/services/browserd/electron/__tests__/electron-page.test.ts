@@ -145,10 +145,8 @@ describe("electron page — the keyboard", () => {
     // `fill_form` falls back to `selectOption` on the refusal that names
     // `<input>`, so without this check the fallback fires on Playwright and
     // never here, and the model's form is quietly half-filled.
-    const contents = new FakeBrowserWebContents({
-      evaluate: (code) => (code.includes("isContentEditable") ? "SELECT" : undefined),
-    });
-    for (const [method, reply] of elementAt(5, 5)) {
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, { nodeName: "SELECT" })) {
       contents.debugger.replies.set(method, reply);
     }
     const { page, dbg } = makePage(contents);
@@ -169,10 +167,8 @@ describe("electron page — the keyboard", () => {
     // precedes them presses it, which is a side effect nobody asked for. The
     // message names `<select>` among the alternatives, which is what keeps the
     // driver's `fill_form` from falling back to `selectOption` here.
-    const contents = new FakeBrowserWebContents({
-      evaluate: (code) => (code.includes("isContentEditable") ? "OTHER" : undefined),
-    });
-    for (const [method, reply] of elementAt(5, 5)) {
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, { nodeName: "BUTTON" })) {
       contents.debugger.replies.set(method, reply);
     }
     const { page, dbg } = makePage(contents);
@@ -186,15 +182,15 @@ describe("electron page — the keyboard", () => {
     // at a checkbox TOGGLES it, at a file input opens a picker, and at a
     // submit sends the form — each a side effect nobody asked for, followed by
     // an insertion that changed nothing and reported success.
-    const contents = new FakeBrowserWebContents({
-      evaluate: (code) =>
-        code.includes("isContentEditable") ? "TYPE:checkbox" : undefined,
-    });
+    const contents = new FakeBrowserWebContents();
     // `range` and `color` are in the same set on THIS engine even though
     // Playwright fills them, because it writes the value and this one clicks:
     // a centre click on a range IS the interaction (measured: 0 → 50) and a
     // colour input opens the platform picker.
-    for (const [method, reply] of elementAt(5, 5)) {
+    for (const [method, reply] of elementAt(5, 5, 10, {
+      nodeName: "INPUT",
+      attributes: ["type", "checkbox"],
+    })) {
       contents.debugger.replies.set(method, reply);
     }
     const { page, dbg } = makePage(contents);
@@ -210,16 +206,38 @@ describe("electron page — the keyboard", () => {
     expect(mouseEvents(dbg)).toHaveLength(0);
   });
 
+  it("cannot be talked out of the refusal by a page that breaks its own DOM", async () => {
+    // The classification used to run as page JS through
+    // `document.querySelector`, and a thrown classifier was read as "carry on"
+    // — so any page could switch the guard off by replacing that function and
+    // collect the click it was meant to prevent. It is asked of CDP now, where
+    // page script cannot reach.
+    const contents = new FakeBrowserWebContents({
+      evaluate: () => {
+        throw new Error("document.querySelector is not a function");
+      },
+    });
+    for (const [method, reply] of elementAt(5, 5, 10, {
+      nodeName: "INPUT",
+      attributes: ["type", "submit"],
+    })) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await expect(page.fillSelector("#pay", "x")).rejects.toThrow(
+      /Input of type "submit" cannot be filled/,
+    );
+    // The submit button was never pressed.
+    expect(mouseEvents(dbg)).toHaveLength(0);
+  });
+
   it("lets a MALFORMED selector fail the way it always has", async () => {
     // The preflight would reject with the page's own `querySelector` prose,
     // which the driver reads as a daemon fault; the box lookup below it
     // normalizes the same failure to "no element", which the model is told is
     // its own selector's problem.
-    const contents = new FakeBrowserWebContents({
-      evaluate: () => {
-        throw new Error("SyntaxError: '[[[' is not a valid selector");
-      },
-    });
+    const contents = new FakeBrowserWebContents();
     for (const [method, reply] of noElement()) {
       contents.debugger.replies.set(method, reply);
     }

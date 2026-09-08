@@ -4334,7 +4334,7 @@ var ChromiumDriver = class {
       };
     }
     const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
-    if (refMap) this.commitRefs(tabId, result, refMap);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap);
     return result;
   }
   /**
