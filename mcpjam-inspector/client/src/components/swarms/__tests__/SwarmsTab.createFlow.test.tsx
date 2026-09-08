@@ -853,6 +853,18 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/1 existing · 3 new on next step/i)).toBeVisible();
   });
 
+  it("shows one Lapis golem beside the heading, not the four-golem row", () => {
+    openDescribe();
+    // BB-160: the V2 frame gives the graphic a 68px slot — one `lg` avatar is
+    // 44px wide against 188 for the row — and its PNG carries the Lapis
+    // palette, `MINERALS[3]`, which none of the row's four characters use.
+    const golems = screen
+      .getByTestId("swarm-hero-characters")
+      .querySelectorAll("[data-testid='persona-pixel-avatar']");
+    expect(golems).toHaveLength(1);
+    expect(golems[0]).toHaveAttribute("data-palette", "3");
+  });
+
   it("shows clients and servers before the user description", () => {
     openDescribe();
     expect(

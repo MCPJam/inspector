@@ -29,27 +29,57 @@ const HERO_CHARACTERS = [
 ] as const;
 
 /**
+ * Describe's hero is ONE golem, not the row (BB-160).
+ *
+ * Two things pin it. The V2 frame gives the graphic a 68px slot, and one `lg`
+ * avatar is 44px wide against 188px for four with their gaps. And the frame's
+ * PNG carries the Lapis palette byte for byte (#1d2740 / #334570 / #54679b /
+ * #9ec1f0), which is `MINERALS[3]` and which the row above does not use at all
+ * — so rendering any one of those four would still be the wrong colour.
+ *
+ * The shape is the row's own first silhouette, because a 68px raster is not
+ * enough to identify a family. The frame also poses the character tilted with
+ * an arm raised, which no sprite here does; both wait on the asset.
+ */
+export const SOLO_HERO_CHARACTERS: readonly HeroCharacter[] = [
+  { seed: "swarm-hero-lapis", shapeIndex: 0, paletteIndex: 3 },
+];
+
+type HeroCharacter = {
+  seed: string;
+  shapeIndex: number;
+  paletteIndex: number;
+};
+
+/**
  * A quarter-cycle apart against the 1.1s loop. Negative so every character is
  * already mid-wave on first paint — a positive delay would show four idle
  * golems for up to a second before anything moved.
  */
 const JUMP_PERIOD_S = 1.1;
 
-export function SwarmHeroCharacters({ className }: { className?: string }) {
+export function SwarmHeroCharacters({
+  className,
+  /** Defaults to the four-golem row; Describe passes the solo character. */
+  characters = HERO_CHARACTERS,
+}: {
+  className?: string;
+  characters?: readonly HeroCharacter[];
+}) {
   return (
     <div
       className={cn("flex items-end justify-center gap-1", className)}
       data-testid="swarm-hero-characters"
       aria-hidden
     >
-      {HERO_CHARACTERS.map((character, index) => (
+      {characters.map((character, index) => (
         <span
           key={character.seed}
           className="animate-swarm-hero-jump inline-flex"
           style={{
             animationDelay: `-${(
               (index * JUMP_PERIOD_S) /
-              HERO_CHARACTERS.length
+              characters.length
             ).toFixed(3)}s`,
           }}
         >

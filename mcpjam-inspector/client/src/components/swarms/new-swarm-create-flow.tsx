@@ -68,7 +68,10 @@ import {
   SWARM_INTENSITY_PRESETS,
   type SwarmPushIntensity,
 } from "@/components/swarms/swarm-intensity";
-import { SwarmHeroCharacters } from "@/components/swarms/swarm-hero-characters";
+import {
+  SOLO_HERO_CHARACTERS,
+  SwarmHeroCharacters,
+} from "@/components/swarms/swarm-hero-characters";
 import {
   SWARM_QUERIES,
   LaunchJourneyRunError,
@@ -1798,7 +1801,7 @@ export function NewSwarmCreateFlow({
                 </p>
               </div>
               <div className="hidden shrink-0 sm:block">
-                <SwarmHeroCharacters />
+                <SwarmHeroCharacters characters={SOLO_HERO_CHARACTERS} />
               </div>
             </div>
 
