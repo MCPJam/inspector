@@ -14,6 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const boundedDirs = [
   join(here, "../case-workspace"),
   join(here, "../case-scorecard"),
+  join(here, "../case-spine"),
   join(here, "../simple-case"),
 ];
 

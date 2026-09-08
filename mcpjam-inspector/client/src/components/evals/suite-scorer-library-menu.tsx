@@ -16,6 +16,7 @@ import {
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
 import { SYNTHETIC_MONITOR_KINDS } from "./predicate-kind-meta";
 import {
   NEW_SCORER_KINDS,
@@ -26,6 +27,8 @@ import {
 export function SuiteScorerLibraryMenu({
   onAdd,
   kinds,
+  triggerLabel = "Add scorer",
+  onAddWidgetCheck,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
   /**
@@ -36,6 +39,19 @@ export function SuiteScorerLibraryMenu({
    * that the route row then contradicts.
    */
   kinds?: readonly Predicate["type"][];
+  /**
+   * What the button says. The suite table's "Add scorer" is the default; the
+   * spine says "Add a check after this", because there the menu answers WHERE
+   * as well as what, and a generic label would lose the position.
+   */
+  triggerLabel?: string;
+  /**
+   * Offers DOM-level widget assertions alongside the predicates, under their
+   * own category. Only a surface that can place a check at a position can
+   * accept one — a widget assertion grades the view as it stood at that point,
+   * so it is meaningless as a whole-run check.
+   */
+  onAddWidgetCheck?: (kind: WidgetAssertion["kind"]) => void;
 }) {
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
   const categories = scorerLibraryCategories(kinds).map((category) => ({
@@ -54,17 +70,17 @@ export function SuiteScorerLibraryMenu({
           variant="outline"
           size="sm"
           aria-haspopup="dialog"
-          aria-label="Add scorer"
+          aria-label={triggerLabel}
           className="h-8 gap-1.5 border-dashed text-xs"
         >
           <Plus className="h-3.5 w-3.5" />
-          Add scorer
+          {triggerLabel}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" sideOffset={4} className="w-72 p-1">
         <div className="px-2 pb-1.5 pt-1">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Add scorer
+            {triggerLabel}
           </span>
         </div>
         <ul className="space-y-2" data-testid="scorer-library">
@@ -75,6 +91,31 @@ export function SuiteScorerLibraryMenu({
               onAdd={onAdd}
             />
           ))}
+          {onAddWidgetCheck ? (
+            <li data-library-category="widget">
+              <div className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                In the view
+              </div>
+              <ul className="space-y-0.5">
+                {(
+                  Object.keys(WIDGET_ASSERTION_LABELS) as Array<
+                    WidgetAssertion["kind"]
+                  >
+                ).map((kind) => (
+                  <li key={kind}>
+                    <button
+                      type="button"
+                      data-testid={`add-widget-check-${kind}`}
+                      onClick={() => onAddWidgetCheck(kind)}
+                      className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent/50"
+                    >
+                      <span>{WIDGET_ASSERTION_LABELS[kind]}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ) : null}
         </ul>
       </PopoverContent>
     </Popover>

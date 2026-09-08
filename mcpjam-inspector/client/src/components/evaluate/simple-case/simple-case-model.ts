@@ -349,7 +349,12 @@ export function isSimpleCaseShape(steps: TestStep[]): boolean {
 }
 
 export function readSimpleCase(steps: TestStep[]): SimpleCaseView {
-  const prompt = isPromptStep(steps[0]) ? steps[0].prompt : "";
+  // `steps[0]` is `undefined` on an empty draft, and the narrowing helpers
+  // dereference `.kind`. The old form never saw that shape — the editor seeded
+  // a prompt before mounting it — but the first-run form renders a case that
+  // has nothing yet, which is exactly where a new case starts.
+  const first = steps.length > 0 ? steps[0] : undefined;
+  const prompt = first && isPromptStep(first) ? first.prompt : "";
   const inApp: InAppStep[] = [];
   const tools: SimpleCaseTool[] = [];
   for (const step of steps) {
@@ -401,7 +406,13 @@ export function writeSimpleCase(
   prevSteps: TestStep[],
   view: WriteSimpleCaseView,
 ): TestStep[] {
-  const prevPrompt = isPromptStep(prevSteps[0]) ? prevSteps[0] : undefined;
+  // Same guard as `readSimpleCase`: on a fresh draft `prevSteps[0]` is
+  // `undefined` and the narrowing helpers dereference `.kind`. The comment
+  // below already contemplates "the case is empty", so this shape was always
+  // meant to be reachable.
+  const prevFirst = prevSteps.length > 0 ? prevSteps[0] : undefined;
+  const prevPrompt =
+    prevFirst && isPromptStep(prevFirst) ? prevFirst : undefined;
   /**
    * Lead with a prompt only when the case already had one, the case is empty
    * (a fresh draft), or the author actually typed one. Every tool button in

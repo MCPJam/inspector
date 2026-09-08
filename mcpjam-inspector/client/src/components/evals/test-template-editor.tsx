@@ -224,6 +224,7 @@ import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
+import { CaseSpine } from "../evaluate/case-spine/case-spine";
 import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
   caseHasOwnAssertion,
@@ -323,6 +324,14 @@ interface TestTemplateEditorProps {
    * host produced each batch (via `namedHostId` on suite runs).
    */
   suiteRuns?: EvalSuiteRun[];
+  /**
+   * Renders the case as a SPINE — numbered actions with their checks nested
+   * under the action each one follows — instead of the form plus the Steps
+   * hatch plus the header gear. Arrives as a prop, resolved once on the
+   * Evaluate surface, so `/evals` cannot reach it and a test toggles it
+   * without a flag mock.
+   */
+  observeFirst?: boolean;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   /** Route-driven tab switch. Editor reflects {@link openCompareFromRoute} after the URL changes. */
@@ -918,6 +927,7 @@ export function TestTemplateEditor({
   openCompareIterationId = null,
   trialChainEnabled = false,
   simpleCaseEditor = false,
+  observeFirst = false,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -1685,6 +1695,12 @@ export function TestTemplateEditor({
    * workspace, so neither the shape nor the deep toggle swaps the page.
    */
   const useWorkspace = Boolean(simpleCaseEditorEnabled && editForm);
+  /**
+   * The spine replaces the form, the Steps hatch AND the header gear at once —
+   * a case cannot be half on it, because the gear's envelope writer and the
+   * spine's would disagree about which surface owns `replace`.
+   */
+  const useSpine = useWorkspace && observeFirst;
 
   /**
    * Whether this deployment accepts a role on a check.
@@ -3595,7 +3611,10 @@ export function TestTemplateEditor({
                     </Button>
                   )
                 ) : null}
-                {editForm ? (
+                {/* The gear duplicated the whole check list and owned the one
+                    control the spine did not have a home for (argument
+                    matching). On the spine it is gone; `/evals` keeps it. */}
+                {editForm && !useSpine ? (
                   <CasePassCriteriaPopover
                     matchOptions={editForm.matchOptions}
                     onMatchOptionsChange={(next) =>
@@ -3979,6 +3998,96 @@ export function TestTemplateEditor({
                       }
                       suiteJudgeRubric={suite?.judgeRubric}
                       capabilities={caseCapabilities.capabilities}
+                    />
+                  ) : editForm && useSpine ? (
+                    <CaseSpine
+                      key={`spine:${currentTestCase?._id ?? "none"}`}
+                      steps={editForm.steps}
+                      onStepsChange={setSteps}
+                      matchOptions={editForm.matchOptions}
+                      onMatchOptionsChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, matchOptions: next }
+                            : current,
+                        )
+                      }
+                      suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                      kind={editForm.kind}
+                      onKindChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, kind: next } : current,
+                        )
+                      }
+                      expectedOutput={editForm.expectedOutput}
+                      onExpectedOutputChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, expectedOutput: next }
+                            : current,
+                        )
+                      }
+                      predicates={editForm.predicates}
+                      onPredicatesChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, predicates: next } : current,
+                        )
+                      }
+                      suiteDefaultPredicates={
+                        (suite?.defaultPredicates ?? []) as Predicate[]
+                      }
+                      availableTools={assertableTools}
+                      suiteServers={effectiveSuiteServers}
+                      projectServers={projectServers}
+                      isNegativeTest={currentTestCase.isNegativeTest}
+                      toolsChoice={simpleToolsChoice}
+                      onToolsChoiceChange={setSimpleToolsChoice}
+                      stashedTools={simpleStashedTools}
+                      onStashedToolsChange={setSimpleStashedTools}
+                      judgeConfigOverride={editForm.judgeConfigOverride}
+                      onJudgeConfigOverrideChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, judgeConfigOverride: next }
+                            : current,
+                        )
+                      }
+                      suiteJudgeConfig={suite?.judgeConfig}
+                      suiteJudgeRubric={suite?.judgeRubric}
+                      capabilities={caseCapabilities.capabilities}
+                      onOpenSuiteSettings={onOpenSuiteSettings}
+                      evalValidationBorderClass={evalValidationBorderClass}
+                      autoFocusPrompt={draftKind === "record"}
+                      validationAttempted={simpleValidationAttempted}
+                      recording={liveRecordMode}
+                      recordEntryPrimary={draftKind === "record"}
+                      onStartRecording={() => {
+                        setShowSpecOverride(false);
+                        setCaptureMode("record");
+                        setLiveRecordMode(true);
+                      }}
+                      onStopRecording={() => setLiveRecordMode(false)}
+                      onAddCheck={() => setCaptureMode("assert")}
+                      stepStatusById={workspaceStepStatusById}
+                      stepStatusByTurn={workspaceStepStatusByTurn}
+                      syncedStepId={syncedStepId}
+                      onHoverStep={setSyncedStepId}
+                      onSelectStep={(stepId) => {
+                        setSyncedStepId(stepId);
+                        const liveSteps =
+                          workspaceSelectedTrial?.kind === "live"
+                            ? workspaceSelectedTrial.record
+                                .streamingLiveBrowserSteps
+                            : undefined;
+                        if (
+                          workspaceSelectedTrial?.kind === "live" &&
+                          (liveSteps?.length ?? 0) === 0
+                        ) {
+                          setMissingAppEvidenceStepId(stepId);
+                        } else {
+                          setMissingAppEvidenceStepId(null);
+                        }
+                      }}
                     />
                   ) : editForm ? (
                     <SimpleCaseForm

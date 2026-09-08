@@ -790,3 +790,23 @@ describe("an advisory tool assert is not the route", () => {
     expect(leftoverSteps([prompt("p1", "go"), advisoryTool])).toEqual([]);
   });
 });
+
+describe("readSimpleCase on an empty draft", () => {
+  it("reads a case with no steps at all instead of throwing", () => {
+    // A brand-new case has nothing until the first keystroke; the narrowing
+    // helpers dereference `.kind`, so an unguarded `steps[0]` crashes the pane.
+    expect(readSimpleCase([])).toMatchObject({ prompt: "", tools: [] });
+  });
+});
+
+describe("writeSimpleCase on an empty draft", () => {
+  it("mints the first prompt instead of throwing", () => {
+    const next = writeSimpleCase([], {
+      prompt: "hi",
+      tools: [],
+      noTool: false,
+    });
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ kind: "prompt", prompt: "hi" });
+  });
+});

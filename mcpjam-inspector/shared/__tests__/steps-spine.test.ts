@@ -35,7 +35,8 @@ const assert = (id: string): TestStep => ({
 const interact = (id: string): TestStep => ({
   id,
   kind: "interact",
-  action: { type: "click", locator: { testId: "cart" } },
+  toolName: "cart_view",
+  action: { kind: "click", target: { testId: "cart" } },
 });
 const toolCall = (id: string): TestStep => ({
   id,
