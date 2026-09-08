@@ -23,10 +23,6 @@
  * so a new setting cannot render as a change nobody can describe.
  */
 
-import {
-  describeStageChecks,
-  normalizeDisabledStageChecks,
-} from "./suite-stage-check-catalog";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
@@ -68,7 +64,6 @@ export type SuiteSettingsValues = {
   computerEnvironmentId: string | undefined;
   defaultMatchOptions: EvalMatchOptions | undefined;
   defaultPredicates: Predicate[];
-  disabledStageChecks?: string[];
   judgeConfig: EvalJudgeConfig | undefined;
   judgeRubric: EvalJudgeRubric | undefined;
   /**
@@ -116,7 +111,6 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "computerEnvironmentId",
   "defaultMatchOptions",
   "defaultPredicates",
-  "disabledStageChecks",
   "judgeConfig",
   "judgeRubric",
   "verdictPolicyVersion",
@@ -193,7 +187,6 @@ export function readSuiteSettingsValues(suite: {
   environment?: { computerEnvironmentId?: string };
   defaultMatchOptions?: EvalMatchOptions;
   defaultPredicates?: Predicate[];
-  disabledStageChecks?: string[];
   judgeConfig?: EvalJudgeConfig;
   judgeRubric?: EvalJudgeRubric;
   verdictPolicyVersion?: 2;
@@ -213,9 +206,6 @@ export function readSuiteSettingsValues(suite: {
     // Absent and empty are the same state to a reader, and two spellings is
     // how one of them ends up looking like an unsaved change.
     defaultPredicates: suite.defaultPredicates ?? [],
-    disabledStageChecks: normalizeDisabledStageChecks(
-      suite.disabledStageChecks,
-    ),
     judgeConfig: suite.judgeConfig,
     judgeRubric: suite.judgeRubric,
     verdictPolicyVersion: suite.verdictPolicyVersion,
@@ -467,9 +457,6 @@ export function toUpdateArgs(
       case "defaultMatchOptions":
         args.defaultMatchOptions = value ?? null;
         break;
-      case "disabledStageChecks":
-        args.disabledStageChecks = value ?? [];
-        break;
       case "defaultPredicates":
         args.defaultPredicates =
           (value as Predicate[]).length === 0 ? null : value;
@@ -578,13 +565,6 @@ export function describeChange(
         label: "Tool calls",
         before: describeMatchOptions(before.defaultMatchOptions),
         after: describeMatchOptions(after.defaultMatchOptions),
-      };
-    case "disabledStageChecks":
-      return {
-        key,
-        label: "Checks by stage",
-        before: describeStageChecks(before.disabledStageChecks),
-        after: describeStageChecks(after.disabledStageChecks),
       };
     case "defaultPredicates":
       return {
