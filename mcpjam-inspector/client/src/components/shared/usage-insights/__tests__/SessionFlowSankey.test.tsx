@@ -314,6 +314,10 @@ describe("SessionFlowSankey", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
+    // No arguments: wiring the callback straight to `onClick` handed it a
+    // React synthetic event, which Convex could not serialize ("Converting
+    // circular structure to JSON"), so analysis never started.
+    expect(onRebuild.mock.calls[0]).toEqual([]);
   });
 
   it("reports an analysis in flight instead of offering to start one", () => {
