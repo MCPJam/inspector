@@ -644,6 +644,7 @@ export function HostedBrowserBody({
             noteWebmcpStats(
               browserPageToolsKey(projectId, "hosted"),
               daemon as never,
+              session.bootId,
             );
           },
           onFatal: () => {
@@ -739,6 +740,7 @@ export function HostedBrowserBody({
             noteWebmcpStats(
               browserPageToolsKey(projectId, "hosted"),
               parsed.daemon as never,
+              session.bootId,
             );
             // The tier decision is made from what the RELAY saw, not from what
             // this pane painted: a pane that dropped a frame because a tab was

@@ -43,6 +43,7 @@ import { findLocalBrowserSessionForProject } from "./local/local-browser-session
 import { webmcpToolsObserveCommand } from "./page-tools.js";
 import { browserdBundleHash } from "./live-session-deps.js";
 import type { BrowserdCommandResponse } from "./browserd-codec.js";
+import { BROWSERD_PROTOCOL_VERSION } from "./protocol.js";
 import type { WebMcpToolsRevision } from "./protocol.js";
 
 /**
@@ -178,6 +179,11 @@ async function peekHosted(
     ? await lookupBrowserSession({
         sandboxRowId: args.sandboxRowId,
         expectedBundleHash: browserdBundleHash(),
+        // MATCHES `tryReuse`. Without it a bundle-only deploy leaves rows whose
+        // recorded protocol version this build cannot speak looking reusable,
+        // and the peek reports "no tools" for a browser that is running fine
+        // until something restarts it.
+        expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
         expectedContextMode: "any",
         signal,
       })
@@ -193,7 +199,7 @@ async function peekHosted(
   // daemon it describes, and a command sent to a relaunched daemon under the
   // old bootId is refused as `command_unknown_boot` anyway — this just makes
   // the answer "no browser" instead of a confusing refusal.
-  const status = await client.status().catch(() => null);
+  const status = await client.status({ signal }).catch(() => null);
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return { tools: [], reason: "no_browser_session" };
   }

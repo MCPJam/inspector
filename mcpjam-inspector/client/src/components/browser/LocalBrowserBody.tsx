@@ -374,6 +374,7 @@ export function LocalBrowserBody({
             noteWebmcpStats(
               browserPageToolsKey(projectId, "local"),
               daemon as never,
+              session.bootId,
             );
           },
           onFatal: () => {
@@ -452,6 +453,7 @@ export function LocalBrowserBody({
               noteWebmcpStats(
                 browserPageToolsKey(projectId, "local"),
                 parsed.daemon as never,
+                session.bootId,
               );
               paneFrameStats.noteRelayStats({
                 framesIn: parsed.framesIn ?? 0,

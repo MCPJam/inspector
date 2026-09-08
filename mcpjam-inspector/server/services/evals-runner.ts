@@ -4814,6 +4814,9 @@ const runHostedIterationWithBrowser = async (
               : { projectId: undefined }),
             bearer: convexAuthToken,
             sandboxRowId: sandboxBinding.sandboxRowId,
+            // A cancelled run must not sit out the peek's full deadline before
+            // its cancellation takes effect.
+            ...(abortSignal ? { signal: abortSignal } : {}),
           })
         : undefined,
     );

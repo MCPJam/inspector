@@ -248,7 +248,7 @@ export function BrowserToolsSection({
                 {tool.isMainFrame ? "" : " \u00b7 embedded frame"}
               </p>
               {tool.diagnostics.length > 0 && (
-                <p className="text-[10px] text-amber-600 dark:text-amber-500 mt-1">
+                <p className="text-[10px] text-warning mt-1">
                   {tool.diagnostics[0].blocking
                     ? "Not offered to the model: "
                     : "Note: "}

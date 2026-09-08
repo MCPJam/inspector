@@ -117,8 +117,19 @@ function pageToolFrom(value: unknown): BrowserPageTool | null {
     tool.annotations = value.annotations as BrowserPageTool["annotations"];
   }
   if (typeof value.origin === "string") tool.origin = value.origin;
-  if (typeof value.frameId === "string") tool.frameId = value.frameId;
-  if (typeof value.registrationSeq === "number") {
+  // IDENTITY FIELDS ARE VALIDATED, not merely typed. A tool advertised with an
+  // empty frame id or a nonsense sequence gets a binding that can never match
+  // the daemon's live registration, so every call to it is refused as
+  // `stale_binding` — a tool that exists only to fail. Better to arrive here
+  // WITHOUT them and be dropped as unbindable, which says so plainly.
+  if (typeof value.frameId === "string" && value.frameId.length > 0) {
+    tool.frameId = value.frameId;
+  }
+  if (
+    typeof value.registrationSeq === "number" &&
+    Number.isInteger(value.registrationSeq) &&
+    value.registrationSeq > 0
+  ) {
     tool.registrationSeq = value.registrationSeq;
   }
   if (typeof value.isMainFrame === "boolean") {

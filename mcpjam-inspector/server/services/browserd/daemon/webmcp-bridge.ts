@@ -670,6 +670,19 @@ export class WebMcpBridge {
      */
     strictFrame?: boolean;
     /**
+     * The registration this invocation was approved against.
+     *
+     * Checked at the LAST possible moment — the line before the CDP send —
+     * because everything between a caller validating a binding and the browser
+     * being told to run something is time in which the page can unregister the
+     * tool and register a new one under the same name in the same frame. The
+     * driver checks this too, one layer up; that check answers "was this
+     * binding valid when we decided", and this one answers "is it still valid
+     * now that we are about to act", which is the only question the page cannot
+     * invalidate behind our back.
+     */
+    expectedRegistrationSeq?: number;
+    /**
      * The invocation id, the moment the browser hands it back.
      *
      * The whole reason a cancel could not reach the page before: `invoke` is
@@ -712,6 +725,20 @@ export class WebMcpBridge {
       args.toolName,
       args.strictFrame === true,
     );
+    // RE-ASKED AT THE SEND BOUNDARY. `frameFor` proves the frame still offers
+    // SOMETHING by this name; it cannot prove it is the same registration the
+    // caller's approval named, and a page that unregisters and re-registers
+    // between the driver's check and this line would otherwise run its
+    // replacement under that approval.
+    if (args.expectedRegistrationSeq !== undefined) {
+      const live = this.registrationSeqFor(frameId, args.toolName);
+      if (live !== args.expectedRegistrationSeq) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `"${args.toolName}" was re-registered by the page after it was listed.`,
+        );
+      }
+    }
 
     let invocationId: string;
     try {

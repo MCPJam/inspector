@@ -3882,11 +3882,16 @@ export function useChatSession(
     // and for a closed session there is no browser to ask at all. The rows
     // carry identity and origin but no schema, because the turn record stores a
     // digest rather than the schema itself; see `pageToolRowsFromRecords`.
+    // THE NEWEST TURN'S ANSWER, including when that answer is "we do not know".
+    //
+    // Filtering before picking would walk back to an older turn whose record
+    // happens to exist — and `undefined` here means the newest turn did not
+    // record one, not that its tools were the previous turn's. Showing a
+    // stale set for the current turn is a more confident wrong answer than
+    // showing none.
     const lastTurnPageTools = [...Object.values(liveTraceState.turns)]
       .sort((left, right) => left.promptIndex - right.promptIndex)
-      .map((turn) => turn.pageToolsAtTurn)
-      .filter((records): records is MintedPageToolRecord[] => records !== undefined)
-      .at(-1);
+      .at(-1)?.pageToolsAtTurn;
     const tools = withBuiltInToolDefinitions(
       {
         ...(lastTurnPageTools

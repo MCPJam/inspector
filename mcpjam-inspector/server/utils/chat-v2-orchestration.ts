@@ -1163,6 +1163,16 @@ export interface PrepareChatV2Result {
    * not inherit MCPJam UI approval semantics from a discarded client entry.
    */
   effectiveUiTools: UiToolEntry[];
+  /**
+   * Every name a page tool minted LATER in this turn may not take.
+   *
+   * The collision policy below is applied here to the set a turn starts with. A
+   * turn that navigates gets a second set, minted by the browser capability
+   * from a page this function never sees, and the same rule has to hold for it
+   * — so the decision travels to whoever applies those refreshes rather than
+   * being re-derived from a partial view. See `guardPageToolRefresh`.
+   */
+  reservedAgainstPageTools: ReadonlySet<string>;
 }
 
 /**
@@ -1487,6 +1497,32 @@ export async function prepareChatV2(
   // `webmcp_deploy` believing it was the one it was told about. Dropping is
   // also why this cannot throw: a page choosing an unlucky name must not be
   // able to fail somebody's turn.
+  // THE `webmcp_` PREFIX IS THE HOST'S NAMESPACE, like `app_` and `ui_`.
+  //
+  // Reserved in the OTHER direction from the policy below: a page tool loses
+  // every collision, but a tool from anywhere else that claims a name in this
+  // namespace is the one that goes. Two reasons, and the second is the one that
+  // matters.
+  //
+  // The first is ordinary: these names are minted by this host from a page's
+  // declarations, so a server-supplied one is not a name conflict to resolve
+  // but a name that was never that server's to take.
+  //
+  // The second is that the prefix is IDENTITY downstream. A tool card reads the
+  // `pageTool` block out of a result and renders the page's own name and origin
+  // beside it, and it decides whether to do that from the name — so a server
+  // free to call its tool `webmcp_pay` would be free to put an origin chip of
+  // its choosing on its own card. Keeping the namespace clean here is what lets
+  // that check be sound there.
+  for (const source of [mcpTools, appToolEntries, uiToolEntries, finalSkillTools]) {
+    for (const name of Object.keys(source)) {
+      if (!isWebmcpPageToolName(name)) continue;
+      logger.warn(
+        `[chat-v2] tool '${name}' claims the reserved webmcp_ namespace, which belongs to the open page's own tools; dropping it for this turn`,
+      );
+      delete (source as ToolSet)[name];
+    }
+  }
   const collidesWithSomethingElse = (name: string) =>
     Object.prototype.hasOwnProperty.call(mcpTools, name) ||
     Object.prototype.hasOwnProperty.call(appToolEntries, name) ||

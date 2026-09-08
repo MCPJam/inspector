@@ -587,8 +587,8 @@ var BrowserdRequestHandler = class {
    * no WebMCP, which the pane reads as "this engine cannot tell you" rather
    * than as "no tools".
    */
-  webmcpSnapshot() {
-    return this.driver.webmcpToolsSnapshot?.();
+  webmcpSnapshot(tabId) {
+    return this.driver.webmcpToolsSnapshot?.(tabId);
   }
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */
   attachFrameCounters(watchers) {
@@ -1519,7 +1519,7 @@ function createFrameStreamHost(handler, options = {}) {
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            const webmcp = handler.webmcpSnapshot?.();
+            const webmcp = handler.webmcpSnapshot?.(tabId);
             return {
               ...stats,
               ...tabs ? { tabs } : {},
@@ -2959,6 +2959,15 @@ var WebMcpBridge = class {
       args.toolName,
       args.strictFrame === true
     );
+    if (args.expectedRegistrationSeq !== void 0) {
+      const live = this.registrationSeqFor(frameId, args.toolName);
+      if (live !== args.expectedRegistrationSeq) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `"${args.toolName}" was re-registered by the page after it was listed.`
+        );
+      }
+    }
     let invocationId;
     try {
       this.outstandingSends += 1;
@@ -3850,6 +3859,7 @@ var ChromiumDriver = class {
       return { ok: false, error: `unknown_tab: ${tabId}` };
     }
     const bridge = await entry.page.webmcp();
+    await bridge?.probeSettled();
     if (!bridge || !bridge.isSupported()) {
       return {
         ok: false,
@@ -3881,7 +3891,15 @@ var ChromiumDriver = class {
         // in the main frame. `invoke` falls back to name resolution when it is
         // absent or when the frame no longer offers the tool, so an older
         // caller that sends no frame still works.
-        ...binding ? { frameId: binding.frameId, strictFrame: true } : {},
+        ...binding ? {
+          frameId: binding.frameId,
+          strictFrame: true,
+          // Re-checked inside `invoke`, against the same value
+          // `bindingRefusal` just accepted. The gap between the two is a
+          // real one — an abort check and a CDP round trip — and it is
+          // exactly long enough for a page to swap the tool.
+          expectedRegistrationSeq: binding.registrationSeq
+        } : {},
         ...!binding && action.frameId ? { frameId: action.frameId } : {},
         input: action.input,
         // Recorded BEFORE the tool settles, which is the only window in which

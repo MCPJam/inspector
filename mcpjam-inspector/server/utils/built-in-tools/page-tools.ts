@@ -233,6 +233,31 @@ export function buildWebmcpPageTools(
       );
       continue;
     }
+    // NO IDENTITY, NO FIRST-CLASS TOOL.
+    //
+    // A binding is the whole reason one of these can be advertised as an
+    // ordinary tool: it says which registration in which frame on which
+    // generation of which document the approval was granted against, and the
+    // daemon refuses the invocation when any of that has moved. Building the
+    // tool anyway and simply omitting the binding does not degrade to "less
+    // safe" — it degrades to the daemon resolving the tool BY NAME at call
+    // time, which is precisely the silent substitution this design exists to
+    // prevent, wearing a typed schema and an approval pill that say otherwise.
+    //
+    // A daemon too old to send `frameId` and `registrationSeq` therefore gets
+    // the generic verbs instead, where an untyped by-name call is at least
+    // honest about being one.
+    if (
+      pageTool.frameId === undefined ||
+      pageTool.registrationSeq === undefined
+    ) {
+      drop(
+        "this browser did not say which frame and registration declared this " +
+          "tool, so a call to it could not be bound to the document it was " +
+          "listed on",
+      );
+      continue;
+    }
     const provider = toProviderToolSchema(
       pageTool.inputSchema,
       options.provider ?? "generic",
@@ -265,16 +290,15 @@ function buildOne(
   pageTool: MintedDeclaredTool,
   options: BuildWebmcpPageToolsOptions,
 ): ToolSet[string] {
-  const binding: WebMcpToolBinding | undefined =
-    pageTool.frameId !== undefined && pageTool.registrationSeq !== undefined
-      ? {
-          bootId: options.binding.bootId,
-          tabId: options.binding.tabId,
-          navCounter: options.binding.navCounter,
-          frameId: pageTool.frameId,
-          registrationSeq: pageTool.registrationSeq,
-        }
-      : undefined;
+  // ALWAYS PRESENT. `buildWebmcpPageTools` drops a tool it cannot bind rather
+  // than reaching here without one — see the drop beside `reservedNames`.
+  const binding: WebMcpToolBinding = {
+    bootId: options.binding.bootId,
+    tabId: options.binding.tabId,
+    navCounter: options.binding.navCounter,
+    frameId: pageTool.frameId!,
+    registrationSeq: pageTool.registrationSeq!,
+  };
 
   return tool({
     description: pageTool.description,
@@ -314,7 +338,7 @@ function buildOne(
           // to the page.
           toolKey: pageTool.rawName,
           ...(pageTool.frameId ? { frameId: pageTool.frameId } : {}),
-          ...(binding ? { expectedBinding: binding } : {}),
+          expectedBinding: binding,
           input,
         },
         {

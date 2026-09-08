@@ -28,6 +28,18 @@ export interface LiveWebmcpSignal {
   hash: string;
   count: number;
   url?: string;
+  /**
+   * WHICH BROWSER this signal is about.
+   *
+   * Not carried on the wire — the pane that receives the heartbeat already
+   * knows which session it opened — but folded into the signal because without
+   * it a replacement browser is invisible. A daemon that restarts counts its
+   * revision up from zero again, so a fresh session's first beat can be
+   * byte-identical to the last one the previous session sent; the equality
+   * check below would then treat a whole new browser as "nothing happened" and
+   * leave the pane showing the old one's tools.
+   */
+  bootId?: string;
 }
 
 /** `projectId:engine` — the two things that decide WHICH browser this is. */
@@ -75,7 +87,8 @@ export const useBrowserPageToolsStore = create<BrowserPageToolsState>(
         previous.revision === signal.revision &&
         previous.hash === signal.hash &&
         previous.count === signal.count &&
-        previous.url === signal.url
+        previous.url === signal.url &&
+        previous.bootId === signal.bootId
       ) {
         return;
       }
@@ -121,6 +134,8 @@ export function useWebmcpEpoch(key: BrowserPageToolsKey): number {
 export function noteWebmcpStats(
   key: BrowserPageToolsKey,
   stats: { webmcp?: LiveWebmcpSignal } | null | undefined,
+  /** The session this beat came from; see `LiveWebmcpSignal.bootId`. */
+  bootId?: string,
 ): void {
   const webmcp = stats?.webmcp;
   if (
@@ -134,5 +149,7 @@ export function noteWebmcpStats(
     // blanking a list that is still correct.
     return;
   }
-  useBrowserPageToolsStore.getState().noteLive(key, webmcp);
+  useBrowserPageToolsStore
+    .getState()
+    .noteLive(key, bootId ? { ...webmcp, bootId } : webmcp);
 }

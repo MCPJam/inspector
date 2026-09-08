@@ -119,8 +119,18 @@ export class BrowserdClient {
   }
 
   /** Probe the authenticated `/v1/status`: liveness + bootId + bearer check. */
-  async status(): Promise<BrowserdStatus> {
-    const res = await this.request("/v1/status", { method: "GET" }, true);
+  async status(options?: { signal?: AbortSignal }): Promise<BrowserdStatus> {
+    // The signal matters more here than anywhere else: this is the first thing
+    // a turn-start peek asks, and a wedged box answers it slowly or not at all.
+    // Without it an abandoned peek holds a socket for the full client timeout
+    // after the turn that wanted it has gone.
+    const res = await this.request(
+      "/v1/status",
+      { method: "GET" },
+      true,
+      undefined,
+      options?.signal,
+    );
     return decodeStatus({ status: res.status, body: await this.json(res) });
   }
 
@@ -485,7 +495,13 @@ export class BrowserdClient {
   private async json(res: Response): Promise<Record<string, unknown>> {
     try {
       return asRecord(await res.json());
-    } catch {
+    } catch (error) {
+      // AN ABORT IS NOT AN EMPTY BODY. `res.json()` rejects when the caller's
+      // signal fires mid-body, and swallowing that to `{}` decodes as a
+      // successful reply with nothing in it — which upstream reads as "the
+      // daemon answered and the page has no tools", the one answer a
+      // cancellation must never be mistaken for.
+      if (error instanceof Error && error.name === "AbortError") throw error;
       return {};
     }
   }

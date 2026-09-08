@@ -89,3 +89,29 @@ describe("browser page-tools store", () => {
     expect(epoch()).toBe(0);
   });
 });
+
+describe("a replacement browser is not the same browser", () => {
+  it("moves the epoch when an identical beat comes from a NEW session", () => {
+    // A daemon that restarts counts its revision up from zero again, so a fresh
+    // session's first beat can be byte-identical to the last one the previous
+    // session sent. Treating that as "nothing happened" leaves the pane showing
+    // a browser that no longer exists.
+    noteWebmcpStats(KEY, { webmcp: { revision: 1, hash: "a", count: 1 } }, "boot-1");
+    expect(epoch()).toBe(1);
+    noteWebmcpStats(KEY, { webmcp: { revision: 1, hash: "a", count: 1 } }, "boot-1");
+    expect(epoch()).toBe(1);
+    noteWebmcpStats(KEY, { webmcp: { revision: 1, hash: "a", count: 1 } }, "boot-2");
+    expect(epoch()).toBe(2);
+  });
+
+  it("still stays silent on repeat beats from the same session", () => {
+    for (let index = 0; index < 10; index += 1) {
+      noteWebmcpStats(
+        KEY,
+        { webmcp: { revision: 4, hash: "z", count: 2 } },
+        "boot-9",
+      );
+    }
+    expect(epoch()).toBe(1);
+  });
+});

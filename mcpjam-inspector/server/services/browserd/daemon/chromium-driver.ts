@@ -611,6 +611,12 @@ export class ChromiumDriver implements BrowserDriver {
       return { ok: false, error: `unknown_tab: ${tabId}` };
     }
     const bridge = await entry.page.webmcp();
+    // SETTLED FIRST, exactly as the tool-list read does. Support is decided by
+    // a page-API probe that a navigation re-runs, and it is not a synchronous
+    // event — so on the first invocation after a navigate `isSupported()` can
+    // still be answering for the document the model has already left, and a
+    // page that genuinely offers tools would be refused as unsupported.
+    await bridge?.probeSettled();
     if (!bridge || !bridge.isSupported()) {
       return {
         ok: false,
@@ -653,7 +659,17 @@ export class ChromiumDriver implements BrowserDriver {
         // in the main frame. `invoke` falls back to name resolution when it is
         // absent or when the frame no longer offers the tool, so an older
         // caller that sends no frame still works.
-        ...(binding ? { frameId: binding.frameId, strictFrame: true } : {}),
+        ...(binding
+          ? {
+              frameId: binding.frameId,
+              strictFrame: true,
+              // Re-checked inside `invoke`, against the same value
+              // `bindingRefusal` just accepted. The gap between the two is a
+              // real one — an abort check and a CDP round trip — and it is
+              // exactly long enough for a page to swap the tool.
+              expectedRegistrationSeq: binding.registrationSeq,
+            }
+          : {}),
         ...(!binding && action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
         // Recorded BEFORE the tool settles, which is the only window in which

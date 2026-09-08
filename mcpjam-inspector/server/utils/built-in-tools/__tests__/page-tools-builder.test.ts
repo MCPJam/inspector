@@ -351,3 +351,46 @@ describe("buildWebmcpPageTools — collisions and bounds", () => {
     ).toEqual(["frame-a", "frame-b"]);
   });
 });
+
+describe("a tool it cannot bind is not a tool it advertises", () => {
+  // A binding is the whole reason one of these can be an ordinary tool. Without
+  // it the daemon resolves the call BY NAME at invoke time, which is the silent
+  // substitution the design exists to prevent — so a tool that arrives without
+  // frame identity is dropped rather than advertised with the protection
+  // quietly missing behind a typed schema and an approval pill.
+  it.each([
+    ["frameId", { frameId: undefined }],
+    ["registrationSeq", { registrationSeq: undefined }],
+  ])("drops a tool with no %s", (_field, over) => {
+    const dropped: Array<{ rawName: string; reason: string }> = [];
+    const { built } = build({
+      pageTools: [pageTool(over as Partial<PeekedPageTool>)],
+      onDropped: ({ rawName, reason }) => dropped.push({ rawName, reason }),
+    });
+    expect(Object.keys(built.tools)).toEqual([]);
+    expect(built.minted).toEqual([]);
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]!.reason).toContain("frame and registration");
+  });
+
+  it("sends the binding on every invocation it DOES build", () => {
+    const { built, sent } = build();
+    expect(Object.keys(built.tools)).toEqual(["webmcp_add_topping"]);
+    return run(built.tools.webmcp_add_topping, { topping: "pepperoni" }).then(
+      () => {
+        const invoke = sent.find(
+          (entry) => entry.action.kind === "webmcp_invoke",
+        );
+        expect(invoke?.action).toMatchObject({
+          expectedBinding: {
+            bootId: "boot-1",
+            tabId: "@session",
+            navCounter: 4,
+            frameId: "frame-main",
+            registrationSeq: 3,
+          },
+        });
+      },
+    );
+  });
+});

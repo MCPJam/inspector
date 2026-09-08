@@ -1698,6 +1698,182 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     )!;
   }
 
+  it("RETRIES after a refused definitions read instead of going quiet", async () => {
+    // The markers record "the set we have successfully read", not "the revision
+    // we have heard about". Moving them when the revision moves — before the
+    // definitions read that may still be refused — makes every later refresh
+    // see a revision it has already recorded, return at the early exit, and
+    // never look again. The turn then holds the previous page's tools for as
+    // long as it lasts, and `lease_blocked` (a person taking the browser for a
+    // moment) is the ordinary way in.
+    let refuseDefinitions = true;
+    const seen: string[] = [];
+    const send = async (command: any): Promise<SendResult> => {
+      const action = command.action;
+      if (action.kind === "observe" && action.mode === "webmcp_revision") {
+        seen.push("revision");
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: {},
+            // MOVED, and it stays moved: the page changed once and is now
+            // sitting still, which is exactly when a missed read is permanent.
+            webmcpTools: { revision: 9, hash: "h9", count: 1, supported: true },
+          } as never,
+        };
+      }
+      if (action.kind === "observe" && action.mode === "webmcp_tools") {
+        seen.push("definitions");
+        if (refuseDefinitions) {
+          return { status: "lease_blocked", lease: "held", bootId: "boot-1" } as never;
+        }
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: {
+              url: "https://pizza.test/",
+              webmcpSupported: true,
+              tools: [{ ...(PAGE as Record<string, unknown>), name: "checkout" }],
+            },
+            stateToken: {
+              tabId: "@session",
+              navCounter: 2,
+              urlHash: "u",
+              domHash: "d",
+            },
+          } as never,
+        };
+      }
+      return OK;
+    };
+    const { ensureSession } = fakeSession(send);
+    const built = withFlagOn(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        pageTools: {
+          tools: [PAGE],
+          bootId: "boot-1",
+          tabId: "@session",
+          navCounter: 1,
+          revision: 5,
+          hash: "h1",
+        },
+      }),
+    )!;
+
+    // Refused: nothing changes, and nothing is claimed to have been read.
+    expect(await built.refreshPageTools!({})).toBeUndefined();
+    expect(seen).toEqual(["revision", "definitions"]);
+
+    // The person gives the browser back. The revision has NOT moved again —
+    // the whole point — so only an un-advanced marker gets us to look.
+    refuseDefinitions = false;
+    const refresh = await built.refreshPageTools!({});
+    expect(seen).toEqual(["revision", "definitions", "revision", "definitions"]);
+    expect(Object.keys(refresh?.add ?? {})).toContain("webmcp_checkout");
+  });
+
+  it("FOLLOWS the tab the model moved to, even on identical revisions", async () => {
+    // `@session` is a literal tab key in the daemon, not "whichever tab is
+    // active". A refresher pinned to the turn-start tab keeps reading the first
+    // page after the model opens a second one — and in dynamic mode, where the
+    // generic invoke verb is retired, the new tab's tools are then unreachable
+    // for the rest of the turn.
+    //
+    // The identical revision numbers are the point: two tabs keep separate
+    // counters, so a move is a change the numbers cannot express.
+    const reads: Array<string | undefined> = [];
+    const tabTools: Record<string, unknown[]> = {
+      "@session": [PAGE],
+      "tab-2": [{ ...(PAGE as Record<string, unknown>), name: "checkout" }],
+    };
+    const send = async (command: any): Promise<SendResult> => {
+      const action = command.action;
+      const tab = command.tabId ?? "@session";
+      if (action.kind === "observe" && action.mode === "webmcp_revision") {
+        reads.push(command.tabId);
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: {},
+            // The SAME numbers on both tabs.
+            webmcpTools: { revision: 5, hash: "h1", count: 1, supported: true },
+          } as never,
+        };
+      }
+      if (action.kind === "observe" && action.mode === "webmcp_tools") {
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: {
+              url: "https://pizza.test/",
+              webmcpSupported: true,
+              tools: tabTools[tab] ?? [],
+            },
+            stateToken: {
+              tabId: tab,
+              navCounter: 1,
+              urlHash: "u",
+              domHash: "d",
+            },
+          } as never,
+        };
+      }
+      // A model navigation that landed in a NEW tab.
+      return {
+        status: "ok",
+        result: {
+          ok: true,
+          output: { url: "https://pizza.test/checkout" },
+          stateToken: {
+            tabId: "tab-2",
+            navCounter: 1,
+            urlHash: "u2",
+            domHash: "d2",
+          },
+        } as never,
+      };
+    };
+    const { ensureSession } = fakeSession(send);
+    const built = withFlagOn(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        pageTools: {
+          tools: [PAGE],
+          bootId: "boot-1",
+          tabId: "@session",
+          navCounter: 1,
+          revision: 5,
+          hash: "h1",
+        },
+      }),
+    )!;
+
+    await (built.tools.browser_navigate as any).execute(
+      { url: "https://pizza.test/checkout", newTab: true },
+      {},
+    );
+    const refresh = await built.refreshPageTools!({});
+
+    // It asked the tab the model is in, not the one the turn opened on.
+    expect(reads.at(-1)).toBe("tab-2");
+    // And it advertised THAT tab's tools despite the unchanged revision.
+    expect(Object.keys(refresh?.add ?? {})).toContain("webmcp_checkout");
+    expect(refresh?.retire).toContain("webmcp_add_topping");
+  });
+
   it("an unchanged revision fetches no definitions and changes nothing", async () => {
     const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
     const built = build(fake);

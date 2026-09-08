@@ -29,6 +29,18 @@ import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools.js";
 
+/**
+ * What a first-class build advertises: the catalog minus the listing verb.
+ *
+ * `browser_webmcp_tools` exists for `MCPJAM_WEBMCP_PAGE_TOOLS=verbs`, where the
+ * model needs somewhere to learn a page's tool names from. The default mode
+ * puts `{count, names}` on every observation instead, so it is not built — and
+ * this pane describes what the model is given, not the catalog it came from.
+ */
+const FIRST_CLASS_TOOL_NAMES = BROWSER_TOOL_NAMES.filter(
+  (name) => name !== "browser_webmcp_tools",
+);
+
 type Definition = {
   name: string;
   description?: string;
@@ -56,10 +68,13 @@ describe("GET /built-in-tools/:builtInToolId/definitions", () => {
     const items = await definitions(
       "/api/v1/built-in-tools/browser/definitions",
     );
-    // The whole set, not a curated subset: a pane listing five of six tools
-    // would be a quietly wrong account of what the model can do.
+    // The whole set the model is GIVEN, not a curated subset: a pane listing
+    // four of five tools would be a quietly wrong account of what it can do.
+    // `browser_webmcp_tools` is not among them under the default first-class
+    // mode, because the model is not given it — every observation already
+    // carries what the page offers.
     expect(items.map((item) => item.name).sort()).toEqual(
-      [...BROWSER_TOOL_NAMES].sort(),
+      [...FIRST_CLASS_TOOL_NAMES].sort(),
     );
     for (const item of items) {
       expect(item.description, `${item.name} needs a description`).toBeTruthy();
@@ -90,7 +105,7 @@ describe("GET /built-in-tools/:builtInToolId/definitions", () => {
     const items = await definitions(
       "/api/v1/built-in-tools/browser/definitions?engine=banana",
     );
-    expect(items).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(items).toHaveLength(FIRST_CLASS_TOOL_NAMES.length);
   });
 
   it("404s an unknown built-in tool instead of answering an empty page", async () => {

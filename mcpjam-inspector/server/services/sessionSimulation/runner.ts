@@ -639,7 +639,10 @@ export async function runSyntheticHostSession(
             builtInToolIds,
             browserToolId: BROWSER_BUILT_IN_TOOL_ID,
             firstClass: webmcpPageToolsMode() === "first_class",
-            isHarnessTurn: false,
+            // A harness takes its toolset as a constructor argument and never
+            // re-reads it, so page tools it could not use are latency spent on
+            // definitions nothing will call.
+            isHarnessTurn: Boolean(harness),
             hasV1PageTools: false,
             engine: "hosted",
             projectId,

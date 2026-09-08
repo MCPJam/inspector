@@ -2052,6 +2052,11 @@ describe("mcpjam-stream-handler", () => {
           { type: "finish", finishReason: "tool-calls" },
         ])
       );
+      // The loop only reaches its tool-execution branch through this gate,
+      // and the suite mocks it to an inert `false`. Left that way, "the call
+      // executed" is unobservable and the assertion below could only have
+      // been about a chunk the mocked stream writes regardless.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "pay" }] as any,
@@ -2078,6 +2083,20 @@ describe("mcpjam-stream-handler", () => {
           (chunk: any) => chunk.type === "tool-approval-request"
         )
       ).toHaveLength(0);
+      // THE CALL REACHED THE EXECUTOR. This is the claim in the test's name,
+      // and a `tool-input-available` chunk cannot carry it: that chunk is
+      // written from the mocked stream whatever happens next, so a regression
+      // that stranded the call would leave it in place and this test green
+      // while the hazard it describes had quietly gone away.
+      //
+      // The suite runs tool execution through a mocked
+      // `executeToolCallsFromMessages`, so THAT is the seam — reaching it is
+      // what "third-party code runs against a signed-in browser" means here,
+      // and the classified twin below asserts the same seam is NOT reached.
+      expect(executeToolCallsFromMessages).toHaveBeenCalled();
+      const executedTools = vi.mocked(executeToolCallsFromMessages).mock
+        .calls[0]!;
+      expect(JSON.stringify(executedTools)).toContain("webmcp_pay");
       // No pill is the WHOLE hazard here. A `page_*` call with no
       // classification strands (the test above) because the browser is waiting
       // for an approval that never comes; a `webmcp_*` call has an `execute`,
@@ -2244,6 +2263,7 @@ describe("mcpjam-stream-handler", () => {
           execute: async () => ({ ok: true }),
         },
       };
+      const originalGone = tools.webmcp_gone;
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "go" }] as any,
@@ -2254,16 +2274,32 @@ describe("mcpjam-stream-handler", () => {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        refreshTools: async () => ({ retire: ["webmcp_gone"] }),
+        refreshTools: async () => ({
+          retire: ["webmcp_gone"],
+          tombstones: {
+            webmcp_gone: {
+              description: "[WebMCP page tool] gone",
+              inputSchema: z.object({}),
+              execute: async () => ({
+                error: "page_moved_on",
+              }),
+            } as never,
+          },
+        }),
       });
 
       await lastExecution;
 
       const step2 = (bodies[1]?.tools ?? []).map((tool: any) => tool.name);
       expect(step2).not.toContain("webmcp_gone");
-      // Still in the executable map. A model that had already decided to call
-      // it gets a recoverable answer instead of "Tool not found".
-      expect(tools.webmcp_gone).toBeDefined();
+      // NOT MERELY STILL PRESENT — replaced. The original entry would still be
+      // "defined" whether or not anything happened, which is why asserting its
+      // presence proves nothing; what matters is that a model which had already
+      // decided to call it now reaches something that can explain itself
+      // instead of the dead binding, and instead of "Tool not found".
+      expect(tools.webmcp_gone).not.toBe(originalGone);
+      await expect(tools.webmcp_gone.execute({}, {} as never)).resolves
+        .toMatchObject({ error: "page_moved_on" });
     });
 
     it("keeps the tool definitions IDENTICAL when nothing changed", async () => {

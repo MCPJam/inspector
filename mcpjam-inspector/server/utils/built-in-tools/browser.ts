@@ -669,6 +669,22 @@ export function buildBrowserTools(
   // blast radius of an unreviewed click is their accounts rather than a
   // disposable box.
   const needsApproval = delivery.kind === "attested" || engine === "local";
+  /**
+   * The tab the model is actually working in.
+   *
+   * `@session` is a literal tab key in the daemon, not "whichever tab is
+   * active", so a refresher pinned to the turn-start tab keeps reading the
+   * first page after the model opens a second one with
+   * `browser_navigate({newTab:true})` or switches with `browser_tabs` — and in
+   * dynamic mode, where the generic invoke verb is retired, the new tab's tools
+   * would be unreachable for the rest of the turn.
+   *
+   * Moved only by the MODEL's own commands. The refresher's reads pass `raw`
+   * and are deliberately excluded: they target whatever this already says, so
+   * letting them write back would be a variable updating itself.
+   */
+  let modelTabId = "@session";
+
   const send = async (
     action: BrowserAction,
     args: {
@@ -765,7 +781,14 @@ export function buildBrowserTools(
           : (action) => send(action, { ...args, recovering: true }),
       });
     }
-    if (!args.raw) state.rememberToken(args.tabId, outcome.stateToken);
+    if (!args.raw) {
+      state.rememberToken(args.tabId, outcome.stateToken);
+      // The MODEL's own commands move the target the refresher follows. A
+      // command that resolved a tab tells us which one it is working in, and
+      // that is the page whose tools it should be offered next step.
+      if (outcome.stateToken?.tabId) modelTabId = outcome.stateToken.tabId;
+      else if (args.tabId) modelTabId = args.tabId;
+    }
     return { ...outcome, tabId };
   };
 
@@ -1097,6 +1120,10 @@ export function buildBrowserTools(
           send,
           reservedNames: new Set(built),
           initial: { snapshot: opts.pageTools, minted: page.minted },
+          // Read per refresh, not captured: the model can move between tabs
+          // mid-turn, and the tools it should be offered are the ones on the
+          // page it is actually looking at.
+          currentTabId: () => modelTabId,
           install: (name, definition) => {
             tools[name] = definition;
           },
@@ -1154,20 +1181,23 @@ function createPageToolRefresher(args: {
     minted: MintedDeclaredTool[];
   };
   install: (name: string, definition: ToolSet[string]) => void;
+  /** The tab the model is working in NOW; see `modelTabId`. */
+  currentTabId: () => string;
 }): {
   refresh: (ctx: {
     signal?: AbortSignal;
   }) => Promise<BrowserPageToolsRefresh | undefined>;
   current: () => MintedDeclaredTool[];
 } {
-  const tabId = args.initial.snapshot.tabId;
   let lastRevision = args.initial.snapshot.revision;
   let lastHash = args.initial.snapshot.hash;
+  /** The tab the last successful read was of. See `movedTab` below. */
+  let lastTabId = args.initial.snapshot.tabId;
   let advertised = new Map(
     args.initial.minted.map((tool) => [tool.name, tool] as const),
   );
 
-  const readRevision = async (signal?: AbortSignal) => {
+  const readRevision = async (tabId: string, signal?: AbortSignal) => {
     const outcome = await args.send(
       { kind: "observe", mode: "webmcp_revision" },
       {
@@ -1185,12 +1215,23 @@ function createPageToolRefresher(args: {
   return {
     current: () => [...advertised.values()],
     refresh: async ({ signal }) => {
-      const revision = await readRevision(signal);
+      const tabId = args.currentTabId();
+      // A MOVE IS A CHANGE, whatever the revisions say. Two tabs keep separate
+      // revision counters, so the tab the model just switched to can be sitting
+      // on the same numbers the old one was — and the early exit below would
+      // then read that as "nothing happened" and leave the model holding the
+      // previous page's tools.
+      const movedTab = tabId !== lastTabId;
+      const revision = await readRevision(tabId, signal);
       // A daemon that would not answer, or one too old to know this observe
       // mode, leaves the set exactly as it was. Advertising nothing because a
       // read failed would silently take a capability away mid-turn.
       if (!revision) return undefined;
-      if (revision.revision === lastRevision && revision.hash === lastHash) {
+      if (
+        !movedTab &&
+        revision.revision === lastRevision &&
+        revision.hash === lastHash
+      ) {
         return undefined;
       }
       const observation = await args.send(
@@ -1261,6 +1302,7 @@ function createPageToolRefresher(args: {
       // at the set we already advertise.
       lastRevision = revision.revision;
       lastHash = revision.hash;
+      lastTabId = tabId;
       if (Object.keys(add).length === 0 && retire.length === 0) {
         return undefined;
       }

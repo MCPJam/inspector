@@ -297,7 +297,12 @@ describe("classifyBrowserToolApprovals", () => {
       BROWSER_TOOL_NAMES,
       { readOnly: true },
     );
-    expect([...freeNames].sort()).toEqual(["browser_observe"]);
+    // Both LOOK: `browser_webmcp_tools` reads the page's tool list and changes
+    // nothing, the same claim `browser_observe` makes.
+    expect([...freeNames].sort()).toEqual([
+      "browser_observe",
+      "browser_webmcp_tools",
+    ]);
     // A policy cannot make clicking a button on a live, logged-in page safe.
     expect([...requiredNames].sort()).toEqual([
       "browser_act",

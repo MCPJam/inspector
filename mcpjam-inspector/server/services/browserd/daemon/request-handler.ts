@@ -222,8 +222,8 @@ export class BrowserdRequestHandler {
    * no WebMCP, which the pane reads as "this engine cannot tell you" rather
    * than as "no tools".
    */
-  webmcpSnapshot(): WebMcpToolsRevision | undefined {
-    return this.driver.webmcpToolsSnapshot?.();
+  webmcpSnapshot(tabId?: string): WebMcpToolsRevision | undefined {
+    return this.driver.webmcpToolsSnapshot?.(tabId);
   }
 
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */

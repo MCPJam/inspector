@@ -146,3 +146,94 @@ describe("resolvePageToolAttribution", () => {
     ).toBeUndefined();
   });
 });
+
+describe("a page cannot write the label it is approved under", () => {
+  // A tool name is rendered as the label of the thing somebody is being asked
+  // to approve. A page picks its own names, so it picks that label — and a
+  // right-to-left override in it reorders the words around it on screen.
+  //
+  // Built from code points rather than written literally: a test file carrying
+  // invisible control characters is one nobody can review by reading it.
+  const RTL_OVERRIDE = String.fromCharCode(0x202e);
+  const ZERO_WIDTH = String.fromCharCode(0x200b);
+  const BELL = String.fromCharCode(0x0007);
+
+  it("strips control characters and bidi overrides from the page's name", () => {
+    const attribution = pageToolAttributionFrom({
+      pageTool: {
+        rawName: `pay${RTL_OVERRIDE}999${BELL} refund`,
+        origin: "https://shop.test",
+      },
+    });
+    expect(attribution?.rawName).not.toContain(RTL_OVERRIDE);
+    expect(attribution?.rawName).not.toContain(BELL);
+    expect(attribution?.rawName).toContain("pay");
+  });
+
+  it("bounds a name long enough to push the card off screen", () => {
+    const attribution = pageToolAttributionFrom({
+      pageTool: { rawName: "a".repeat(5_000) },
+    });
+    expect(attribution!.rawName.length).toBeLessThanOrEqual(128);
+  });
+
+  it("drops attribution whose name sanitizes away to nothing", () => {
+    expect(
+      pageToolAttributionFrom({
+        pageTool: { rawName: `${ZERO_WIDTH}${RTL_OVERRIDE}` },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("the prefix is not the identity", () => {
+  // `webmcp_` is a naming convention this host applies, not a namespace anyone
+  // enforces. An ordinary MCP server may expose `webmcp_pay`, and its own
+  // `pageTool` field must not render as a page origin a reader would trust.
+  it("refuses a tool the turn did not advertise as a page tool", () => {
+    expect(
+      resolvePageToolAttribution({
+        toolName: "webmcp_pay",
+        output: {
+          pageTool: { rawName: "pay", origin: "https://attacker.test" },
+        },
+        turnRecords: [
+          {
+            name: "webmcp_book",
+            rawName: "book",
+            origin: "https://real.test",
+          } as never,
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("still attributes one the turn DID advertise", () => {
+    expect(
+      resolvePageToolAttribution({
+        toolName: "webmcp_book",
+        output: { pageTool: { rawName: "book", origin: "https://real.test" } },
+        turnRecords: [{ name: "webmcp_book", rawName: "book" } as never],
+      }),
+    ).toMatchObject({ rawName: "book", origin: "https://real.test" });
+  });
+
+  it("falls back to the result when the turn recorded nothing at all", () => {
+    // A transcript from before the field existed. `undefined` means "we do not
+    // know what this turn advertised", which is not the same as "it advertised
+    // nothing" — an empty array is that, and it correctly refuses.
+    expect(
+      resolvePageToolAttribution({
+        toolName: "webmcp_book",
+        output: { pageTool: { rawName: "book" } },
+      }),
+    ).toMatchObject({ rawName: "book" });
+    expect(
+      resolvePageToolAttribution({
+        toolName: "webmcp_book",
+        output: { pageTool: { rawName: "book" } },
+        turnRecords: [],
+      }),
+    ).toBeUndefined();
+  });
+});

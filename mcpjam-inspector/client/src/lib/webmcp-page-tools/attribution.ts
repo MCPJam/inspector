@@ -21,7 +21,24 @@ import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import {
   isWebmcpPageToolName,
   safeDeclaredOrigin,
+  sanitizeDeclaredText,
 } from "@/shared/declared-tools";
+
+/**
+ * How much of a page's own tool name a card will show.
+ *
+ * A name is a place a page can write a sentence. It is rendered as the label of
+ * the thing a person is being asked to approve, so it gets the same treatment
+ * as a tool description: no control characters, no bidi overrides, no fence
+ * markers, and short enough that it cannot push the rest of the card off screen.
+ */
+const RAW_NAME_MAX_CHARS = 128;
+
+/** A page's own tool name, made safe to render as a label. */
+function safeRawName(rawName: string): string | undefined {
+  const cleaned = sanitizeDeclaredText(rawName, RAW_NAME_MAX_CHARS);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
 
 export interface PageToolAttribution {
   /** The page's own name for the tool — what a person recognizes. */
@@ -51,8 +68,9 @@ export function pageToolAttributionFrom(
   if (!isRecord(output)) return undefined;
   const attribution = output.pageTool;
   if (!isRecord(attribution)) return undefined;
-  const rawName = attribution.rawName;
-  if (typeof rawName !== "string" || !rawName) return undefined;
+  if (typeof attribution.rawName !== "string") return undefined;
+  const rawName = safeRawName(attribution.rawName);
+  if (!rawName) return undefined;
   const origin =
     typeof attribution.origin === "string"
       ? safeDeclaredOrigin(attribution.origin)
@@ -80,15 +98,29 @@ export function resolvePageToolAttribution(args: {
   turnRecords?: readonly MintedPageToolRecord[];
 }): PageToolAttribution | undefined {
   if (!isWebmcpPageToolName(args.toolName)) return undefined;
+  // THE PREFIX IS THE NAMESPACE, and the turn's record is the exact answer.
+  //
+  // `webmcp_` means "the open page declared this" — to the model, through the
+  // declared-tools prompt section, and here, where it decides whether a result
+  // may put a page name and an origin chip on its own card. That only holds
+  // because `prepareChatV2` RESERVES the prefix: a tool from an MCP server, an
+  // app, the UI set or a skill that claims one of these names is dropped rather
+  // than advertised, so nothing else can arrive carrying it.
+  //
+  // Where the turn also recorded what it advertised, that record is checked
+  // too. It is the narrower fact — this turn, this name — and it costs nothing
+  // to prefer it over a namespace rule enforced a process away.
+  const records = args.turnRecords;
+  const record = records?.find((entry) => entry.name === args.toolName);
+  if (records && !record) return undefined;
   const fromResult = pageToolAttributionFrom(args.output);
   if (fromResult) return fromResult;
-  const record = args.turnRecords?.find(
-    (entry) => entry.name === args.toolName,
-  );
   if (!record) return undefined;
   const origin = record.origin ? safeDeclaredOrigin(record.origin) : undefined;
+  const rawName = safeRawName(record.rawName);
+  if (!rawName) return undefined;
   return {
-    rawName: record.rawName,
+    rawName,
     ...(origin && origin !== "unknown" ? { origin } : {}),
     ...(record.binding ? { navCounter: record.binding.navCounter } : {}),
   };

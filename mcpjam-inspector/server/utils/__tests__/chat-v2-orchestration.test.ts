@@ -1720,17 +1720,31 @@ describe("first-class page tools in prepareChatV2", () => {
     systemPrompt: "Base prompt.",
   });
 
-  it("A PAGE TOOL LOSES a collision with an MCP tool, and never throws", async () => {
-    // The opposite of the built-in policy. A built-in winning over a same-named
-    // MCP tool is the host's own catalog choice beating a server's; a PAGE tool
-    // is a third party's name, and letting it win would let any web page shadow
-    // a tool the host configured. Throwing is equally wrong: a page choosing an
-    // unlucky name must not be able to fail somebody's turn.
+  it("RESERVES the webmcp_ namespace against an MCP server, and never throws", async () => {
+    // The concern this settles is real: letting a web page shadow a tool the
+    // host configured would have the model call `webmcp_deploy` believing it
+    // was the one it was told about. Arbitrating each collision in the page's
+    // disfavour was one answer; reserving the namespace is the better one,
+    // because the name means something to more than the model.
+    //
+    // A tool card reads a result's `pageTool` block and renders the page's own
+    // name and origin beside it, and it decides whether to from the prefix. A
+    // server free to call its tool `webmcp_pay` would be free to put an origin
+    // chip of its choosing on its own card. So `webmcp_` has exactly one
+    // meaning — "the open page declared this" — and a server that claims it
+    // loses the name rather than the page losing its tool.
+    //
+    // Still never throws: a name collision must not be able to fail a turn.
     const result = await prepareChatV2({
       ...base(),
       mcpClientManager: mockManager({
         webmcp_deploy: {
           description: "the host's own deploy tool",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+        ordinary_tool: {
+          description: "unaffected",
           inputSchema: { jsonSchema: { type: "object" } },
           execute: async () => ({}),
         },
@@ -1740,10 +1754,12 @@ describe("first-class page tools in prepareChatV2", () => {
         webmcp_safe: pageTool("safe"),
       },
     } as any);
-    expect((result.allTools.webmcp_deploy as any)?.description).toContain(
+    expect((result.allTools.webmcp_deploy as any)?.description).not.toContain(
       "the host's own",
     );
     expect(result.allTools.webmcp_safe).toBeDefined();
+    // Only the reserved name goes; the server keeps everything else.
+    expect(result.allTools.ordinary_tool).toBeDefined();
   });
 
   it("tells the model where the `webmcp_*` tools came from", async () => {

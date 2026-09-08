@@ -350,6 +350,10 @@ export function createFrameStreamHost(
     const beat = (): void => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      // NO `tabId` HERE, on purpose: this is the video stream, which grabs the
+      // X display and therefore always shows the ACTIVE tab. Reporting some
+      // other tab's tool revision beside a picture of this one is the mismatch
+      // the JPEG path below threads a tabId to avoid.
       const webmcp = handler.webmcpSnapshot?.();
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
@@ -629,7 +633,12 @@ export function createFrameStreamHost(
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            const webmcp = handler.webmcpSnapshot?.();
+            // THE TAB THIS STREAM WATCHES, not the default one. A JPEG
+            // subscriber names its tab, and reporting the default tab's
+            // revision to a watcher of another page would make the Tools pane
+            // miss that page's changes and then read definitions for a
+            // document nobody is looking at.
+            const webmcp = handler.webmcpSnapshot?.(tabId);
             return {
               ...stats,
               ...(tabs ? { tabs } : {}),
