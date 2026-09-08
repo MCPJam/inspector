@@ -16,7 +16,14 @@ async function stateFile(
 }
 
 function env(file: string): NodeJS.ProcessEnv {
-  return { ...process.env, MCPJAM_BROWSER_STATE_FILE: file };
+  // MCPJAM_LOCAL_CONSENT is cleared explicitly: `consentOf` reads it BEFORE the
+  // stored consent, so a developer who happens to export one would have these
+  // tests reach a real Inspector instead of failing the way they assert.
+  return {
+    ...process.env,
+    MCPJAM_LOCAL_CONSENT: "",
+    MCPJAM_BROWSER_STATE_FILE: file,
+  };
 }
 
 test("browser commands are registered and documented", async () => {

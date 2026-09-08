@@ -145,7 +145,7 @@ the idempotent queue apply exactly as they do to a model's tool call.
 | The door: policy, actor, outcomes    | `server/services/browserd/local/agent-door.ts`               |
 | Logical session + durable ledger     | `server/services/browserd/local/agent-session-store.ts`       |
 | The ledger itself                    | `server/services/browserd/daemon/command-ledger.ts`          |
-| CLI                                  | `cli/src/commands/browser.ts`                                |
+| CLI                                  | `../cli/src/commands/browser.ts`                             |
 | The rail's Activity list             | `client/src/components/browser/BrowserActivityList.tsx`      |
 
 Four things about it are load-bearing.

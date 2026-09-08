@@ -765,14 +765,21 @@ function disposeSession(session: LocalSession): Promise<void> {
  */
 export async function closeLocalBrowserSession(
   bootId: string,
-): Promise<boolean> {
+): Promise<{ closed: true } | { closed: false; reason: "not_found" | "lease_held" }> {
   for (const session of sessions.values()) {
     if (session.stack.bootId !== bootId) continue;
+    // RE-CHECKED HERE, not only by the caller. A route asks the lease and then
+    // awaits — reading the session, writing the participant list — and a person
+    // can take the browser inside that window. Closing it then shuts the window
+    // they are typing into, which is the one thing termination must never do.
+    if (session.lease.isBlocking()) {
+      return { closed: false, reason: "lease_held" };
+    }
     session.stack.closeStreams();
     await disposeSession(session);
-    return true;
+    return { closed: true };
   }
-  return false;
+  return { closed: false, reason: "not_found" };
 }
 
 export async function killLocalBrowserSessions(): Promise<void> {

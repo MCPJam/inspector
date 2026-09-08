@@ -300,7 +300,7 @@ describe("runAgentCommand", () => {
       ledger: fake.ledger,
       bootId: "boot-1",
       actor: ACTOR,
-      command: { op: "act", verb: "click", target: { ref: "e1" } },
+      command: { op: "act", verb: "click", target: { selector: "#save" } },
     });
     expect(ran.status).toBe(409);
     if (ran.result.status !== "refused") throw new Error("wrong arm");
@@ -505,6 +505,55 @@ describe("runAgentCommand", () => {
     expect(JSON.stringify(ran.result)).not.toContain("evil.test/landed");
   });
 
+  it("withholds an off-allowlist page from a stale-observation refusal too", async () => {
+    // A redirect can land the tab outside the allowlist; a refusal carrying
+    // that observation would hand over exactly what the success path withholds.
+    const fake = fakeClient({
+      status: "stale_observation",
+      result: { ok: true, output: { url: "https://evil.test/moved" } },
+      bootId: "boot-1",
+    });
+    const ran = await runAgentCommand({
+      session: await session({
+        mode: "allowlist",
+        originAllowlist: ["https://ok.test"],
+      }),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "act", verb: "click", target: { selector: "#save" } },
+    });
+    if (ran.result.status !== "refused") throw new Error("wrong arm");
+    expect(ran.result.refusal.code).toBe("stale_observation");
+    expect(ran.result.refusal.page).toBeUndefined();
+    expect(JSON.stringify(ran.result)).not.toContain("evil.test");
+  });
+
+  it("refuses a ref target as caller-fixable, not as a policy denial", async () => {
+    // 400 and `unsupported_target`: the caller can fix this by using a
+    // selector. Reporting it as `tool_not_allowed` would tell an agent to give
+    // up on a capability the session actually has.
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    const ran = await runAgentCommand({
+      session: await session(),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "act", verb: "click", target: { ref: "e7" } },
+    });
+    expect(ran.status).toBe(400);
+    if (ran.result.status !== "refused") throw new Error("wrong arm");
+    expect(ran.result.refusal.code).toBe("unsupported_target");
+    expect(fake.sent).toHaveLength(0);
+    // Recorded as the act it was, with the ref it named.
+    expect(fake.refusals[0]?.command.action).toMatchObject({
+      kind: "act",
+      target: { a11yRef: "e7" },
+    });
+  });
+
   it("does not duplicate history when two mirrors race", async () => {
     // `mirrorLedger` is a read-modify-write over one file. Two commands on
     // different tabs, or a command racing the rail's trace poll, would both
@@ -519,7 +568,7 @@ describe("runAgentCommand", () => {
         ledger: fake.ledger,
         bootId: "boot-1",
         actor: ACTOR,
-        command: { op: "act", verb: "click", target: { ref: "e1" } },
+        command: { op: "act", verb: "click", target: { selector: "#a" } },
         commandId: "cmd-a",
         tabId: "tab-1",
       }),
@@ -529,7 +578,7 @@ describe("runAgentCommand", () => {
         ledger: fake.ledger,
         bootId: "boot-1",
         actor: ACTOR,
-        command: { op: "act", verb: "click", target: { ref: "e2" } },
+        command: { op: "act", verb: "click", target: { selector: "#b" } },
         commandId: "cmd-b",
         tabId: "tab-2",
       }),

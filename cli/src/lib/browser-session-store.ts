@@ -18,9 +18,10 @@
  * browsing history.
  */
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { writeFileAtomic } from "./atomic-write.js";
 
 const STORE_VERSION = 1;
 
@@ -89,10 +90,22 @@ export async function writeBrowserState(
   state: StoredBrowserState,
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  await writeFile(filePath, JSON.stringify(state, null, 2), { mode: 0o600 });
-  // `writeFile`'s mode applies only when it CREATES the file, so an existing
-  // one written before this rule tightens up here rather than staying loose.
-  await chmod(filePath, 0o600).catch(() => {});
+  // ATOMIC, and 0600 on the TEMPORARY file rather than a chmod afterwards.
+  //
+  // Two problems with write-then-chmod, both of which this closes. A write
+  // interrupted partway leaves `browser.json` as invalid JSON, and the next
+  // command reads it as empty — losing the consent capability and every
+  // remembered session. And `writeFile`'s own mode applies only when it creates
+  // the file, so an existing loose file needed a follow-up `chmod` whose
+  // failure was swallowed, leaving a credential readable under its old
+  // permissions with nothing to say so.
+  //
+  // Writing 0600 to a fresh temp file and renaming it into place means the
+  // destination is never partially written and never briefly world-readable,
+  // and a permission failure is thrown rather than ignored.
+  await writeFileAtomic(filePath, JSON.stringify(state, null, 2), {
+    mode: 0o600,
+  });
 }
 
 /** Remember which session this project's commands should go to. */

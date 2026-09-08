@@ -44,88 +44,112 @@ export function BrowserActivityList({
   className?: string;
 }) {
   const [entries, setEntries] = useState<LocalBrowserTraceEntry[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  /**
+   * The session being read, WITH the project it belongs to.
+   *
+   * Stored as one value rather than two pieces of state so a stale pairing is
+   * impossible by construction: holding a bare `sessionId` meant a project
+   * switch left the previous project's session in place for at least one poll,
+   * which asked the new project for the old project's history. Two fields that
+   * must agree are two fields that eventually will not.
+   */
+  const [reading, setReading] = useState<
+    { projectId: string; sessionId: string } | null
+  >(null);
+  const sessionId = reading?.projectId === projectId ? reading.sessionId : null;
   const [warning, setWarning] = useState<string | null>(null);
   const cursor = useRef(0);
+  /**
+   * One poll at a time, and only the current generation's answer is applied.
+   *
+   * A slow trace request that overlaps the next tick would otherwise have both
+   * polls read the same cursor and append the same rows, so one click appears
+   * in the list twice — the same duplication the server-side mirror lock
+   * prevents, arriving from the other end.
+   */
+  const inFlight = useRef(false);
+  const generation = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   // Whether the reader is at the bottom. A list that auto-scrolled while
   // somebody was reading three rows up would be a list they cannot read.
   const pinned = useRef(true);
 
   /**
-   * The session these rows belong to.
+   * Start a fresh list whenever the thing being read changes.
    *
-   * A ref, and compared rather than reset on every change, because the FIRST
-   * change is not a change of session — it is this pane learning which session
-   * it was already reading. Resetting there wipes the page the same poll just
-   * appended while leaving the cursor past it, so the opening rows of every
-   * session vanish and are never fetched again.
-   *
-   * A genuine switch (one id to a different one) still resets: the cursor
-   * belongs to one ledger, and carrying it across would skip the new session's
-   * first rows for real.
+   * Keyed on the pair, so it covers both a project switch and an agent opening
+   * a new session in the same project. The FIRST resolution — null to a
+   * session — is deliberately not a reset: that is this pane learning what it
+   * was already reading, and resetting there would wipe the page the same poll
+   * had just appended while leaving the cursor past it.
    */
-  const readingSession = useRef<string | null>(null);
+  const readingKey = sessionId ? `${projectId}:${sessionId}` : null;
+  const lastKey = useRef<string | null>(null);
   useEffect(() => {
-    const previous = readingSession.current;
-    readingSession.current = sessionId;
-    if (previous === null || previous === sessionId) return;
+    const previous = lastKey.current;
+    lastKey.current = readingKey;
+    if (previous === null || previous === readingKey) return;
+    // An in-flight poll belongs to what we just left, so its answer is already
+    // discarded by the generation check; releasing the latch lets the new one
+    // start at once rather than waiting out a worthless request.
+    generation.current += 1;
+    inFlight.current = false;
     cursor.current = 0;
     setEntries([]);
     setWarning(null);
-  }, [sessionId]);
-
-  /**
-   * A PROJECT switch drops the session along with the rows.
-   *
-   * `sessionId` is rediscovered only when it is null, so without this the pane
-   * keeps polling the previous project's session and keeps showing its history
-   * — one project's browsing displayed under another project's name, which is
-   * the one mistake a per-project profile exists to prevent.
-   */
-  const readingProject = useRef<string | null>(projectId);
-  useEffect(() => {
-    if (readingProject.current === projectId) return;
-    readingProject.current = projectId;
-    readingSession.current = null;
-    cursor.current = 0;
-    setSessionId(null);
-    setEntries([]);
-    setWarning(null);
-  }, [projectId]);
+  }, [readingKey]);
 
   const poll = useCallback(async () => {
-    if (!projectId) return;
-    let currentSession = sessionId;
-    if (!currentSession) {
-      const found = await listLocalBrowserSessions(projectId, consentToken)
-        .then((r) => r.sessions.find((s) => !s.closedAt)?.sessionId ?? null)
-        .catch(() => null);
-      if (!found) return;
-      currentSession = found;
-      setSessionId(found);
+    if (!projectId || inFlight.current) return;
+    inFlight.current = true;
+    const mine = generation.current;
+    try {
+      let currentSession = sessionId;
+      if (!currentSession) {
+        const found = await listLocalBrowserSessions(projectId, consentToken)
+          .then((r) => r.sessions.find((s) => !s.closedAt)?.sessionId ?? null)
+          .catch(() => {
+            // A failure to LOOK is not an absence of history, and a pane that
+            // showed "nothing has driven this browser" either way would be
+            // telling a reader something it does not know.
+            setWarning(
+              "this session's history could not be read just now; retrying",
+            );
+            return null;
+          });
+        if (!found) return;
+        if (generation.current !== mine) return;
+        currentSession = found;
+        setReading({ projectId, sessionId: found });
+      }
+      const page = await readLocalBrowserTrace(
+        {
+          projectId,
+          sessionId: currentSession,
+          afterSeq: cursor.current,
+          limit: 100,
+        },
+        consentToken,
+      ).catch(() => null);
+      // A late answer from a session or project we have since left is dropped:
+      // applying it would file one project's rows under another's name.
+      if (generation.current !== mine) return;
+      if (!page) {
+        setWarning("this session's history could not be read just now; retrying");
+        return;
+      }
+      // Never silent: a hole in the history is the pane's to report, not
+      // something a reader should have to notice for themselves.
+      setWarning(page.historyWarning ?? null);
+      if (page.entries.length === 0) return;
+      cursor.current = Math.max(
+        cursor.current,
+        ...page.entries.map((entry) => entry.seq),
+      );
+      setEntries((previous) => [...previous, ...page.entries].slice(-MAX_ROWS));
+    } finally {
+      inFlight.current = false;
     }
-    const page = await readLocalBrowserTrace(
-      {
-        projectId,
-        sessionId: currentSession,
-        afterSeq: cursor.current,
-        limit: 100,
-      },
-      consentToken,
-    ).catch(() => null);
-    if (!page) return;
-    // Never silent: a hole in the history is the pane's to report, not
-    // something a reader should have to notice for themselves.
-    setWarning(page.historyWarning ?? null);
-    if (page.entries.length === 0) return;
-    cursor.current = Math.max(
-      cursor.current,
-      ...page.entries.map((entry) => entry.seq),
-    );
-    setEntries((previous) =>
-      [...previous, ...page.entries].slice(-MAX_ROWS),
-    );
   }, [projectId, sessionId, consentToken]);
 
   useEffect(() => {
@@ -185,7 +209,9 @@ export function BrowserActivityList({
             title={warning}
           >
             <AlertTriangle className="h-3 w-3" />
-            history incomplete
+            {warning.includes("could not be read")
+              ? "history unavailable"
+              : "history incomplete"}
           </span>
         ) : null}
       </div>

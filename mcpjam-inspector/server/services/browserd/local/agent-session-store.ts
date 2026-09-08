@@ -141,7 +141,27 @@ export interface OpenSessionArgs {
 
 export type OpenSessionResult =
   | { ok: true; session: AgentSessionRecord; attached: boolean }
-  | { ok: false; reason: "nothing_to_attach" };
+  | { ok: false; reason: "nothing_to_attach" }
+  /** The live session's policy differs; `session` is the one that is running. */
+  | {
+      ok: false;
+      reason: "policy_mismatch";
+      session: AgentSessionRecord;
+    };
+
+/** Two policies are the same session's policy only if they say the same thing. */
+function policiesMatch(
+  a: BrowserAgentSessionPolicy,
+  b: BrowserAgentSessionPolicy,
+): boolean {
+  const list = (values: readonly string[] | undefined) =>
+    [...(values ?? [])].sort().join("\u0000");
+  return (
+    a.mode === b.mode &&
+    list(a.originAllowlist) === list(b.originAllowlist) &&
+    list(a.toolAllowlist) === list(b.toolAllowlist)
+  );
+}
 
 /**
  * Attach to this project's live session, or create one.
@@ -158,11 +178,31 @@ export type OpenSessionResult =
 export async function openAgentSession(
   args: OpenSessionArgs,
 ): Promise<OpenSessionResult> {
+  // SERIALIZED PER PROJECT. Discovery and creation are separate awaits over the
+  // filesystem, so two callers opening the same project together can both find
+  // nothing and both create — leaving two attachable persistent sessions where
+  // the whole point is that there is one to share.
+  return withKeyedLock(`browser-session-open:${args.projectId}`, () =>
+    openAgentSessionLocked(args),
+  );
+}
+
+async function openAgentSessionLocked(
+  args: OpenSessionArgs,
+): Promise<OpenSessionResult> {
   const now = args.now ?? Date.now;
   const attach = args.attach ?? "prefer";
   if (attach !== "never" && args.profile === "persistent") {
     const live = await findOpenSession(args.projectId);
     if (live) {
+      // A POLICY MISMATCH IS REFUSED, not silently resolved. Attaching means
+      // sharing one browser under one policy: taking the caller's would widen
+      // what the existing participants agreed to, and ignoring it would tell a
+      // caller its `read_only` was accepted while it drives a session that can
+      // click anything. Neither is something to decide on a caller's behalf.
+      if (!policiesMatch(live.policy, args.policy)) {
+        return { ok: false, reason: "policy_mismatch", session: live };
+      }
       const joined = await joinSession(live, args.actor, args.bootId, now());
       return { ok: true, session: joined, attached: true };
     }
@@ -355,7 +395,26 @@ async function mirrorLedgerLocked(args: {
   // row we already have, and continuing from a previous boot's cursor into a
   // fresh ring would skip the new boot's opening rows.
   const afterSeq = continuing ? (session.lastBootSeq ?? 0) : 0;
-  const { entries } = ledger.read({ afterSeq, limit: 1000 });
+  // ROWS FOR THIS SESSION, plus rows nobody claimed. Two logical sessions can
+  // share one project browser, and copying the whole ring into whichever one is
+  // being read would put each session's commands in the other's history. A row
+  // with no `sessionId` is a model- or pane-driven command on the shared
+  // browser, which genuinely belongs in every session's view of it.
+  const { entries } = ledger
+    .read({ afterSeq, limit: 1000 })
+    .entries.reduce<{ entries: BrowserLedgerEntry[] }>(
+      (acc, entry) => {
+        if (
+          entry.kind !== "command" ||
+          entry.sessionId === undefined ||
+          entry.sessionId === session.sessionId
+        ) {
+          acc.entries.push(entry);
+        }
+        return acc;
+      },
+      { entries: [] },
+    );
 
   const lines: string[] = [];
   let seq = session.lastSeq;

@@ -279,6 +279,11 @@ export function sanitizeLedgerUrl(value: unknown): string | undefined {
     return undefined;
   }
   if (parsed.protocol === "data:") return undefined;
+  // USERINFO FIRST. `https://alice:hunter2@host/p` carries a password in the
+  // URL itself, so stripping only the query and fragment would leave the one
+  // credential this policy exists to keep out of a shareable history.
+  parsed.username = "";
+  parsed.password = "";
   parsed.search = "";
   parsed.hash = "";
   return parsed.toString();
@@ -365,6 +370,8 @@ export class CommandLedger {
   private nextSeq = 1;
   private readonly entries: BrowserLedgerEntry[] = [];
   private readonly artifacts = new Map<string, StoredArtifact>();
+  /** Every id this boot has minted, payload or not. @see knowsArtifact */
+  private readonly knownArtifacts = new Set<string>();
   private artifactBytes = 0;
 
   constructor(options: CommandLedgerOptions) {
@@ -486,6 +493,17 @@ export class CommandLedger {
     return { entries: matched.slice(0, limit), headSeq: this.headSeq };
   }
 
+  /**
+   * Has this ledger ever minted this artifact id?
+   *
+   * Lets a reader tell a typo from a payload that aged out — 404 against 410 —
+   * which are different problems with different fixes. The id set is bounded by
+   * the same eviction the payloads are: it is trimmed alongside them.
+   */
+  knowsArtifact(id: string): boolean {
+    return this.knownArtifacts.has(id);
+  }
+
   /** Fetch one artifact payload, or undefined once it has aged out. */
   artifact(id: string):
     | { id: string; mediaType: string; encoding: "base64" | "utf8"; data: string }
@@ -563,7 +581,12 @@ export class CommandLedger {
       // named them.
       if (dropped.artifacts) {
         for (const ref of Object.values(dropped.artifacts)) {
-          if (ref) this.releaseArtifact(ref.id);
+          if (!ref) continue;
+          this.releaseArtifact(ref.id);
+          // Forgotten with the row that named it, so the id set cannot grow
+          // without bound across a long session. A fetch for it then answers
+          // 404 — which is right: the row it belonged to is gone too.
+          this.knownArtifacts.delete(ref.id);
         }
       }
       fromSeq = Math.min(fromSeq ?? dropped.seq, dropped.seq);
@@ -622,6 +645,7 @@ export class CommandLedger {
     encoding: "base64" | "utf8",
   ): BrowserLedgerArtifactRef {
     const id = this.mintId();
+    this.knownArtifacts.add(id);
     const bytes =
       encoding === "base64"
         ? Math.floor((data.length * 3) / 4)

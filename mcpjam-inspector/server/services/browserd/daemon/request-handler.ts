@@ -512,12 +512,18 @@ export class BrowserdRequestHandler {
     }
     const artifact = this.ledger.artifact(id);
     if (!artifact) {
-      // 410 rather than 404: this id was real and its payload has aged out,
-      // which is a different thing from an id that never existed and points the
-      // caller at the row's `evicted` marker rather than at a typo.
+      // 410 for an id this ledger MINTED whose payload has aged out — that
+      // points the caller at the row's `evicted` marker. 404 for one it never
+      // minted, which is a typo or a stale id from another boot. Answering both
+      // with 410 tells a caller to go looking for a row that was never there.
+      const known = this.ledger.knowsArtifact(id);
       return {
-        status: 410,
-        body: { error: "artifact_evicted", id, bootId: this.bootId },
+        status: known ? 410 : 404,
+        body: {
+          error: known ? "artifact_evicted" : "artifact_unknown",
+          id,
+          bootId: this.bootId,
+        },
       };
     }
     return { status: 200, body: { artifact, bootId: this.bootId } };

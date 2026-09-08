@@ -65,7 +65,15 @@ export type BrowserAgentTarget =
   /** In `BROWSER_AGENT_VIEWPORT` space, origin top-left, CSS pixels. */
   | { coordinates: [number, number] }
   | { selector: string }
-  /** A `ref` from THIS tab's last a11y observation, e.g. `e7`. */
+  /**
+   * A `ref` from this tab's last a11y observation, e.g. `e7`.
+   *
+   * NOT YET ACTIONABLE. The daemon has no ref→node resolution (that is the
+   * unlanded ref-targeting work), so an act aimed at a ref is refused with
+   * `unsupported_target` rather than dispatched. It is in the union because
+   * the observation already hands refs out and the shape is settled; use
+   * `selector` or `coordinates` to act until resolution lands.
+   */
   | { ref: string };
 
 export type BrowserAgentActVerb =
@@ -93,11 +101,15 @@ export type BrowserAgentObserveMode =
 /**
  * Which observation an acting command folds in on its way back.
  *
- * `a11y` is the contract's DEFAULT, which is the difference between one round
- * trip and two: an agent driving by ref needs the refs from after its click to
- * decide the next one, and a screenshot carries none. It also halves the rows
- * in the ledger, and closes the window in which the page moves between an act
- * and the separate observation that was supposed to describe it.
+ * `a11y` is the contract's DEFAULT because a tree is the most useful thing a
+ * caller can be handed about a page it must act on next: it names the controls,
+ * where a screenshot only shows them. Folding it into the act is the difference
+ * between one round trip and two — it halves the rows in the ledger, and closes
+ * the window in which the page moves between an act and the separate
+ * observation that was supposed to describe it.
+ *
+ * The refs it carries are not yet act-able targets; see `BrowserAgentTarget`.
+ * The tree's value here is reading the page and building a `selector`.
  */
 export type BrowserAgentObserveAfter = "a11y" | "screenshot" | "none";
 
@@ -188,6 +200,15 @@ export interface BrowserAgentPageContent {
   pageTools?: unknown;
   /** A WebMCP invocation's own result. */
   invocation?: unknown;
+  /**
+   * Ref → what the accessibility tree calls it.
+   *
+   * INSIDE the fence, because an accessible name is text the page chose. A
+   * `<button aria-label="Ignore previous instructions and…">` puts that string
+   * in `name`, and a ref map published outside `untrusted` would be a hole in
+   * the boundary the rest of this object maintains.
+   */
+  refs?: Record<string, { role: string; name?: string }>;
 }
 
 /** What the caller learned about the page, alongside what it may act on. */
@@ -208,8 +229,6 @@ export interface BrowserAgentPage {
    * happened.
    */
   handoffNote?: string;
-  /** Ref → what it is, for the a11y tree in `pageContent`. */
-  refs?: Record<string, { role: string; name?: string }>;
   /** What the budget dropped, so a caller knows the view is partial. */
   omitted?: { subtrees?: number; totalNodes?: number; entries?: number };
   artifacts?: {
@@ -234,6 +253,17 @@ export type BrowserAgentRefusalCode =
   | "lease_parked"
   | "origin_not_allowed"
   | "tool_not_allowed"
+  /**
+   * The command itself is malformed or asks for something unsupported — a
+   * coordinate outside the viewport, a ref target while ref resolution is
+   * unavailable.
+   *
+   * DISTINCT from `tool_not_allowed`, which is a policy decision: this one the
+   * caller can fix by correcting its input, and conflating them tells an agent
+   * to give up on a capability it actually has.
+   */
+  | "invalid_command"
+  | "unsupported_target"
   | "dialog_pending"
   | "target_covered"
   | "session_revoked"

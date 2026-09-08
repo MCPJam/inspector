@@ -19,6 +19,7 @@
  *          when one is supplied (a delayed revoke must not sever a newer
  *          grant's rotated capability), unconditional otherwise.
  */
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
@@ -67,6 +68,7 @@ import {
 } from "../../services/browserd/local/agent-door.js";
 import {
   appendNote,
+  findOpenSession,
   leaveAgentSession,
   listAgentSessions,
   mirrorLedger,
@@ -656,6 +658,7 @@ computers.post("/local-browser/session", async (c) => {
     captureTypedText?: unknown;
     captureScreenshots?: unknown;
     observe?: unknown;
+    runKey?: unknown;
   } | null;
   const projectId = typeof body?.projectId === "string" ? body.projectId : "";
   const policy = parseSessionPolicy(body?.policy);
@@ -692,11 +695,39 @@ computers.post("/local-browser/session", async (c) => {
     body?.attach === "never" || body?.attach === "require"
       ? body.attach
       : "prefer";
+  // ASKED BEFORE ANYTHING IS LAUNCHED. `require` means "join or fail", so
+  // starting a Chromium and then answering `nothing_to_attach` leaves a browser
+  // on somebody's desk that no session owns and nothing will close until the
+  // idle reaper notices.
+  if (attach === "require") {
+    const live = await findOpenSession(projectId).catch(() => undefined);
+    if (!live) {
+      return c.json(
+        {
+          error: "nothing_to_attach",
+          detail:
+            "attach: 'require' was asked for and this project has no open " +
+            "persistent browser session",
+        },
+        409,
+      );
+    }
+  }
+  // An EPHEMERAL browser needs an owner key or `ensureLocalBrowserSession`
+  // refuses outright: two unattended runs on one project must not share a
+  // profile, and without a key they would collide on the project alone. The
+  // caller may name its run; otherwise one is minted, which is the honest
+  // default for a throwaway browser nobody else will attach to.
+  const runKey =
+    typeof body?.runKey === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(body.runKey)
+      ? body.runKey
+      : `agent-${randomUUID()}`;
   let handle;
   try {
     handle = await ensureLocalBrowserSession({
       projectId,
       contextMode: profile,
+      ...(profile === "ephemeral" ? { ownerKey: runKey } : {}),
       ...(captureTypedText ? { captureTypedText: true } : {}),
     });
   } catch (error) {
@@ -723,6 +754,22 @@ computers.post("/local-browser/session", async (c) => {
     ...(body?.captureScreenshots === false ? { captureScreenshots: false } : {}),
   });
   if (!opened.ok) {
+    if (opened.reason === "policy_mismatch") {
+      // Neither widening the running session nor pretending the caller's policy
+      // was accepted is ours to choose: the caller either accepts the live
+      // policy (by declaring it) or opens its own session with `attach: never`.
+      return c.json(
+        {
+          error: "policy_mismatch",
+          detail:
+            "this project's open browser session runs under a different " +
+            "policy; declare the same policy to attach, or pass " +
+            "attach: 'never' to open a separate session",
+          policy: opened.session.policy,
+        },
+        409,
+      );
+    }
     return c.json(
       {
         error: "nothing_to_attach",
@@ -1054,13 +1101,45 @@ computers.post("/local-browser/close", async (c) => {
     actorId: actor.id,
     ...(terminate ? { terminate: true } : {}),
   });
+  let terminated = false;
   if (terminate && live) {
     // THIS browser, not every browser on the machine: another project's has
     // nothing to do with this session ending. The ordinary case needs none of
     // this — the idle reaper handles it, and a recent ledger row is activity.
-    await closeLocalBrowserSession(live.handle.bootId).catch(() => {});
+    //
+    // And only when no OTHER open logical session is still using it. Two
+    // sessions can share one project browser, so closing on the first one's
+    // terminate would take the browser out from under the second.
+    const others = (await listAgentSessions(projectId).catch(() => [])).filter(
+      (other) => !other.closedAt && other.sessionId !== sessionId,
+    );
+    if (others.length > 0) {
+      return c.json({
+        session,
+        terminated: false,
+        detail:
+          `${others.length} other open session(s) still use this browser; ` +
+          "this one was detached and the browser left running",
+      });
+    }
+    const closed = await closeLocalBrowserSession(live.handle.bootId).catch(
+      () => ({ closed: false, reason: "not_found" }) as const,
+    );
+    if (!closed.closed && closed.reason === "lease_held") {
+      // Somebody took the browser between the check above and here.
+      return c.json(
+        {
+          error: "lease_held",
+          detail:
+            "somebody took this browser while the session was closing; it was " +
+            "left running",
+        },
+        423,
+      );
+    }
+    terminated = closed.closed;
   }
-  return c.json({ session, terminated: terminate });
+  return c.json({ session, terminated });
 });
 
 

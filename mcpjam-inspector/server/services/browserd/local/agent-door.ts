@@ -381,8 +381,13 @@ function toContractResult(args: {
             "the page changed after the observation this act was decided " +
             "from; re-decide from the observation below",
           // The FRESH page rides along so the caller can re-decide in one round
-          // trip rather than being told to go and look again.
-          ...(response.result
+          // trip rather than being told to go and look again — but only when
+          // the page it describes is one this session's policy admits. A
+          // redirect can land the tab outside the allowlist, and a refusal
+          // carrying that observation would hand over exactly what the outbound
+          // check on the success path withholds.
+          ...(response.result &&
+          !originRefusalFor(args.policy, readUrl(response.result.output))
             ? { page: toAgentPage(response.result, args.artifacts) }
             : {}),
         }),
@@ -466,14 +471,18 @@ async function recordOnlyRefusal(
     });
   const mirrored = await mirror(args);
   const row = await findDurableRow(mirrored.session, commandId);
+  // 400 for a command the caller can fix by correcting its input; 403 for one
+  // the session's policy excludes. Different problems, different fixes — and
+  // reporting a bad coordinate as a policy denial tells an agent to give up on
+  // a capability it actually has.
+  const callerFixable =
+    refusal.code === "invalid_command" || refusal.code === "unsupported_target";
   return {
-    // 400 for a command the contract could not carry at all; 403 for one the
-    // session's policy excludes. Different problems, different fixes.
-    status: refusal.code === "invalid_command" ? 400 : 403,
+    status: callerFixable ? 400 : 403,
     session: mirrored.session,
     result: refusedResult({
       commandId,
-      code: refusal.code === "invalid_command" ? "tool_not_allowed" : refusal.code,
+      code: refusal.code,
       message: refusal.message,
       ...(row
         ? { ledger: { sessionId: args.session.sessionId, seq: row.seq } }

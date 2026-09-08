@@ -292,6 +292,8 @@ function sanitizeLedgerUrl(value) {
     return void 0;
   }
   if (parsed.protocol === "data:") return void 0;
+  parsed.username = "";
+  parsed.password = "";
   parsed.search = "";
   parsed.hash = "";
   return parsed.toString();
@@ -345,6 +347,8 @@ var CommandLedger = class {
   nextSeq = 1;
   entries = [];
   artifacts = /* @__PURE__ */ new Map();
+  /** Every id this boot has minted, payload or not. @see knowsArtifact */
+  knownArtifacts = /* @__PURE__ */ new Set();
   artifactBytes = 0;
   constructor(options) {
     this.bootId = options.bootId;
@@ -445,6 +449,16 @@ var CommandLedger = class {
     }
     return { entries: matched.slice(0, limit), headSeq: this.headSeq };
   }
+  /**
+   * Has this ledger ever minted this artifact id?
+   *
+   * Lets a reader tell a typo from a payload that aged out — 404 against 410 —
+   * which are different problems with different fixes. The id set is bounded by
+   * the same eviction the payloads are: it is trimmed alongside them.
+   */
+  knowsArtifact(id) {
+    return this.knownArtifacts.has(id);
+  }
   /** Fetch one artifact payload, or undefined once it has aged out. */
   artifact(id) {
     const stored = this.artifacts.get(id);
@@ -512,7 +526,9 @@ var CommandLedger = class {
       }
       if (dropped.artifacts) {
         for (const ref of Object.values(dropped.artifacts)) {
-          if (ref) this.releaseArtifact(ref.id);
+          if (!ref) continue;
+          this.releaseArtifact(ref.id);
+          this.knownArtifacts.delete(ref.id);
         }
       }
       fromSeq = Math.min(fromSeq ?? dropped.seq, dropped.seq);
@@ -563,6 +579,7 @@ var CommandLedger = class {
   }
   put(data, mediaType, encoding) {
     const id = this.mintId();
+    this.knownArtifacts.add(id);
     const bytes = encoding === "base64" ? Math.floor(data.length * 3 / 4) : Buffer.byteLength(data, "utf8");
     if (bytes > this.maxArtifactBytes) {
       return { id, bytes, mediaType, evicted: true };
@@ -1051,9 +1068,14 @@ var BrowserdRequestHandler = class {
     }
     const artifact = this.ledger.artifact(id);
     if (!artifact) {
+      const known = this.ledger.knowsArtifact(id);
       return {
-        status: 410,
-        body: { error: "artifact_evicted", id, bootId: this.bootId }
+        status: known ? 410 : 404,
+        body: {
+          error: known ? "artifact_evicted" : "artifact_unknown",
+          id,
+          bootId: this.bootId
+        }
       };
     }
     return { status: 200, body: { artifact, bootId: this.bootId } };

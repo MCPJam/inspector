@@ -36,6 +36,15 @@ describe("sanitizeLedgerUrl", () => {
     );
   });
 
+  it("strips HTTP userinfo — the password IS in the URL", () => {
+    // Stripping only the query and fragment would leave the one credential
+    // this policy exists to keep out of a shareable history.
+    expect(sanitizeLedgerUrl("https://alice:hunter2@x.test/p?q=1")).toBe(
+      "https://x.test/p",
+    );
+    expect(sanitizeLedgerUrl("https://alice@x.test/p")).toBe("https://x.test/p");
+  });
+
   it("omits a data: URL entirely", () => {
     // A data: URL IS the page content rather than a name for it, so keeping it
     // would put the page in the row under the guise of a location.

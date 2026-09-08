@@ -76,10 +76,24 @@ test("re-writing an existing loose file tightens its mode", async () => {
   const { writeFile, chmod } = await import("node:fs/promises");
   await writeFile(file, "{}");
   await chmod(file, 0o644);
-  // `writeFile`'s own mode applies only when it CREATES the file, so without
-  // the explicit chmod a file written before this rule would stay loose.
+  // The atomic write creates a fresh 0600 temp file and renames it over the
+  // loose one, so the destination is never briefly world-readable and there is
+  // no follow-up chmod whose failure could be swallowed.
   await writeBrowserState(file, { version: 1, consent: "cap" });
   assert.equal((await stat(file)).mode & 0o077, 0);
+});
+
+test("a write is atomic — an interrupted one cannot leave invalid JSON", async () => {
+  // Losing this file loses the consent capability and every remembered
+  // session, so a half-written destination is not an acceptable failure mode.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
+  const file = path.join(dir, "browser.json");
+  await writeBrowserState(file, { version: 1, consent: "first" });
+  await writeBrowserState(file, { version: 1, consent: "second" });
+  const { readdir } = await import("node:fs/promises");
+  // No temp files left behind, and the destination still parses.
+  assert.deepEqual(await readdir(dir), ["browser.json"]);
+  assert.equal(readBrowserState(file).consent, "second");
 });
 
 test("remembering a session does not disturb the consent or other projects", async () => {

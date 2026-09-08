@@ -59,9 +59,21 @@ if (
   );
 }
 
+/** Output keys that mean the page was actually looked at. @see toAgentPage */
+const OBSERVATION_KEYS = [
+  "url",
+  "title",
+  "a11y",
+  "text",
+  "dom",
+  "console",
+  "tools",
+  "screenshot",
+] as const;
+
 /** A command the contract will not hand to the daemon. */
 export interface ContractRefusal {
-  code: BrowserAgentRefusalCode | "invalid_command";
+  code: BrowserAgentRefusalCode;
   message: string;
 }
 
@@ -192,6 +204,23 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         ...(expectedState ? { expectedState } : {}),
         observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
       };
+      if (target && "ref" in target) {
+        // Refused HERE rather than at the browser, so the caller learns why in
+        // one hop and with the alternative named. The daemon would answer
+        // `unsupported_target` anyway — ref→node resolution is not built — and
+        // a round trip to be told so is a round trip wasted.
+        return {
+          ok: false,
+          action,
+          refusal: {
+            code: "unsupported_target",
+            message:
+              `ref targeting (\`${target.ref}\`) is not available yet; the ` +
+              "accessibility tree names the control, but acting on it needs a " +
+              "`selector` or `coordinates`",
+          },
+        };
+      }
       if (target && "coordinates" in target) {
         const [x, y] = target.coordinates;
         // REFUSED, never clamped and never dispatched. Chromium happily
@@ -312,7 +341,16 @@ export function toAgentPage(
   artifacts?: BrowserAgentPage["artifacts"],
 ): BrowserAgentPage | undefined {
   const output = asRecord(result.output);
-  if (!output && !result.stateToken && !artifacts) return undefined;
+  // An OBSERVATION, not merely a result. `close_tab` and `cancel_page_tool`
+  // answer with an action record and no state token, and building a page from
+  // that would hand a caller an empty `pageContent` implying something was
+  // looked at. A page needs a token, an artifact, or something the page wrote.
+  const observed =
+    result.stateToken !== undefined ||
+    artifacts !== undefined ||
+    (output !== undefined &&
+      OBSERVATION_KEYS.some((key) => output[key] !== undefined));
+  if (!observed) return undefined;
   const pageContent: BrowserAgentPageContent = { untrusted: true };
   if (typeof output?.url === "string") pageContent.url = output.url;
   if (typeof output?.title === "string") pageContent.title = output.title;
@@ -324,6 +362,9 @@ export function toAgentPage(
   }
   if (output?.tools !== undefined) pageContent.pageTools = output.tools;
   if (output?.result !== undefined) pageContent.invocation = output.result;
+  // Inside the fence: an accessible name is text the page chose, and a
+  // `<button aria-label="Ignore previous instructions…">` lands in `name`.
+  if (isRefMap(output?.refs)) pageContent.refs = output.refs;
 
   const omitted: NonNullable<BrowserAgentPage["omitted"]> = {};
   if (typeof output?.omittedSubtrees === "number") {
@@ -343,7 +384,6 @@ export function toAgentPage(
     ...(typeof output?.handoffNote === "string"
       ? { handoffNote: output.handoffNote }
       : {}),
-    ...(isRefMap(output?.refs) ? { refs: output.refs } : {}),
     ...(Object.keys(omitted).length ? { omitted } : {}),
     ...(artifacts && Object.keys(artifacts).length ? { artifacts } : {}),
     pageContent,

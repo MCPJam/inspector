@@ -139,6 +139,40 @@ describe("the logical session", () => {
     expect(result).toEqual({ ok: false, reason: "nothing_to_attach" });
   });
 
+  it("refuses to attach under a DIFFERENT policy", async () => {
+    // Attaching means sharing one browser under one policy. Taking the
+    // caller's would widen what the running participants agreed to; ignoring it
+    // would tell a caller its `read_only` was accepted while it drives a
+    // session that can click anything.
+    await open({ policy: { mode: "allow_all" } });
+    const mismatched = await open({ policy: { mode: "read_only" } });
+    expect(mismatched.ok).toBe(false);
+    expect(!mismatched.ok && mismatched.reason).toBe("policy_mismatch");
+    // …and the caller is told what IS running, so it can match or opt out.
+    expect(
+      !mismatched.ok && mismatched.reason === "policy_mismatch"
+        ? mismatched.session.policy
+        : null,
+    ).toEqual({ mode: "allow_all" });
+  });
+
+  it("attaches when the policies agree, whatever the key order", async () => {
+    await open({
+      policy: {
+        mode: "allowlist",
+        originAllowlist: ["https://a.test", "https://b.test"],
+      },
+    });
+    const joined = await open({
+      policy: {
+        mode: "allowlist",
+        originAllowlist: ["https://b.test", "https://a.test"],
+      },
+      actor: { actorId: "mcp:other", kind: "agent" },
+    });
+    expect(joined.ok && joined.attached).toBe(true);
+  });
+
   it("never attaches to an EPHEMERAL session", async () => {
     // The point of having no profile is that one run cannot inherit another's
     // cookies; joining one would hand that straight back.
@@ -208,6 +242,42 @@ describe("the durable ledger sink", () => {
     expect(trace.entries.map((e) => e.seq)).toEqual([1, 2]);
     // The daemon's own seq is kept, so a row can still be found in its ring.
     expect(trace.entries.map((e) => e.bootSeq)).toEqual([1, 2]);
+  });
+
+  it("keeps one session's rows out of another's history", async () => {
+    // Two logical sessions can share one project browser; copying the whole
+    // ring into whichever is being read would file each one's commands under
+    // the other. A row nobody claimed (a model- or pane-driven command on the
+    // shared browser) genuinely belongs in both.
+    const a = await open();
+    const b = await open({ attach: "never" });
+    if (!a.ok || !b.ok) throw new Error("no sessions");
+    const ledger = new CommandLedger({ bootId: "boot-1" });
+    for (const [id, sessionId] of [
+      ["mine", a.session.sessionId],
+      ["theirs", b.session.sessionId],
+      ["shared", undefined],
+    ] as const) {
+      ledger.record({
+        command: cmd(id),
+        actor: AGENT,
+        ...(sessionId ? { sessionId } : {}),
+        ts: 1,
+        durationMs: 1,
+        outcome: "executed",
+        ok: true,
+      });
+    }
+    await mirrorLedger({ session: a.session, ledger, bootId: "boot-1" });
+    const trace = await readLedger({
+      projectId: PROJECT,
+      sessionId: a.session.sessionId,
+    });
+    expect(
+      trace.entries
+        .filter((e) => e.kind === "command")
+        .map((e) => (e.kind === "command" ? e.commandId : "")),
+    ).toEqual(["mine", "shared"]);
   });
 
   it("does not duplicate rows it has already mirrored", async () => {

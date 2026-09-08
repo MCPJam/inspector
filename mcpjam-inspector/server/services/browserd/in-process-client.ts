@@ -36,6 +36,17 @@ import {
   type BrowserdStatus,
 } from "./browserd-codec";
 
+/** A non-200 from the daemon is a failure, not an empty answer. */
+function assertOk(
+  response: { status: number; body: Record<string, unknown> },
+  path: string,
+): void {
+  if (response.status === 200) return;
+  const error =
+    typeof response.body.error === "string" ? response.body.error : "unknown";
+  throw new Error(`browserd ${path} answered ${response.status}: ${error}`);
+}
+
 /** What the hosted client exposes, satisfied here without a socket. */
 export interface InProcessBrowserdClient {
   health(): Promise<BrowserdHealth>;
@@ -128,6 +139,11 @@ export function createInProcessBrowserdClient(
       if (args.limit !== undefined) query.set("limit", String(args.limit));
       const suffix = query.size > 0 ? `?${query.toString()}` : "";
       const response = await call("GET", `/v1/trace${suffix}`);
+      // THROWN, not smoothed into an empty page. A 501 means this daemon keeps
+      // no ledger and a 401 means the credential is wrong; answering both with
+      // "no rows" tells a caller its history is empty, which is the one thing
+      // it must not conclude from a failure to read it.
+      assertOk(response, "/v1/trace");
       const entries = response.body.entries;
       return {
         entries: Array.isArray(entries) ? (entries as BrowserLedgerEntry[]) : [],
@@ -137,6 +153,9 @@ export function createInProcessBrowserdClient(
     },
     async recordRefusal(args) {
       const response = await call("POST", "/v1/trace", args);
+      // Likewise: a refusal that was not recorded is a hole in the trace, and
+      // the door turns this rejection into the caller's `historyWarning`.
+      assertOk(response, "/v1/trace");
       return {
         seq: typeof response.body.seq === "number" ? response.body.seq : 0,
       };

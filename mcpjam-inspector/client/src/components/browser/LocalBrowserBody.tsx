@@ -848,7 +848,11 @@ export function LocalBrowserBody({
   if (native) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="min-h-0 flex-1">
+        {/* `flex flex-col` and not merely `flex-1`: both pane bodies render a
+            control bar above a `min-h-0 flex-1` viewport and so expect a flex
+            COLUMN parent. A plain block wrapper leaves that `flex-1` with no
+            flex container to grow in, and the picture collapses to nothing. */}
+        <div className="flex min-h-0 flex-1 flex-col">
           <ElectronNativeBody
             session={session}
             holder={holder}
@@ -883,7 +887,7 @@ export function LocalBrowserBody({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col">
         <BrowserPaneSurface
           // Gated as well as cleared: a frame that lands in the same tick as
           // the revocation must not be the one that gets painted.

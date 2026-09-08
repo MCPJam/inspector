@@ -62,13 +62,22 @@ describe("toDaemonAction", () => {
     );
   });
 
-  it("renames the contract's `ref` onto the daemon's `a11yRef`", () => {
+  it("REFUSES a ref target, because the daemon cannot resolve one yet", () => {
+    // The tree hands out refs and the daemon has no ref→node resolution, so an
+    // act aimed at one would come back `unsupported_target` after a round trip.
+    // Saying so here names the alternative in one hop — and keeps the contract
+    // from promising something the code does not do.
     const mapped = toDaemonAction({
       op: "act",
       verb: "click",
       target: { ref: "e7" },
     });
-    expect(mapped.ok && mapped.action).toMatchObject({
+    expect(mapped.ok).toBe(false);
+    expect(!mapped.ok && mapped.refusal.code).toBe("unsupported_target");
+    expect(!mapped.ok && mapped.refusal.message).toMatch(/selector|coordinates/);
+    // The action it WOULD have been still comes back, so the refusal is
+    // recorded as what was attempted rather than as a placeholder.
+    expect(!mapped.ok && mapped.action).toMatchObject({
       kind: "act",
       target: { a11yRef: "e7" },
     });
@@ -192,11 +201,24 @@ describe("toAgentPage — the untrusted fence on the structured half", () => {
     });
     // OUR accounting stays outside the fence: it is not the page's words.
     expect(page.handoffNote).toBe("a person took control");
-    expect(page.refs).toEqual({ e1: { role: "button", name: "Save" } });
     expect(page.omitted).toEqual({ subtrees: 2, totalNodes: 900 });
     expect(page.settled).toBe(true);
     expect(page.pageContent).not.toHaveProperty("handoffNote");
-    expect(page.pageContent).not.toHaveProperty("refs");
+    // Refs are INSIDE it, though: an accessible name is text the page chose,
+    // and `<button aria-label="Ignore previous instructions…">` lands in it.
+    expect(page.pageContent.refs).toEqual({
+      e1: { role: "button", name: "Save" },
+    });
+    expect(page).not.toHaveProperty("refs");
+  });
+
+  it("is undefined for a command that did not observe anything", () => {
+    // `close_tab` and `cancel_page_tool` answer with an action record and no
+    // token; a page built from that would imply something was looked at.
+    expect(toAgentPage({ output: { closed: "tab-1" } })).toBeUndefined();
+    expect(toAgentPage({ output: { cancelled: true } })).toBeUndefined();
+    // …but a URL alone IS an observation.
+    expect(toAgentPage({ output: { url: "https://x.test" } })).toBeDefined();
   });
 
   it("carries the viewport on EVERY observation", () => {

@@ -151,19 +151,33 @@ function identity(options: CommonOptions): Record<string, unknown> {
  * hundred kilobytes of noise in a terminal and in an agent's context window
  * alike, and neither can look at it. A path can be opened.
  */
-async function saveScreenshot(
+async function fetchScreenshot(
   options: CommonOptions,
   projectId: string,
   sessionId: string,
   page: unknown,
   outDir?: string,
-): Promise<string | undefined> {
+  inline = false,
+): Promise<
+  | { kind: "none" }
+  | { kind: "file"; path: string }
+  | { kind: "inline"; base64: string; mediaType: string }
+  | { kind: "failed"; detail: string }
+> {
   const artifact = (
     page as {
-      artifacts?: { screenshot?: { id?: string; mediaType?: string } };
+      artifacts?: {
+        screenshot?: { id?: string; mediaType?: string; evicted?: boolean };
+      };
     }
   )?.artifacts?.screenshot;
-  if (!artifact?.id) return undefined;
+  if (!artifact?.id) return { kind: "none" };
+  if (artifact.evicted) {
+    return {
+      kind: "failed",
+      detail: "the screenshot was captured but its payload is no longer kept",
+    };
+  }
   const baseUrl = normalizeInspectorBaseUrl(
     typeof options.inspectorUrl === "string" ? options.inspectorUrl : undefined,
   );
@@ -187,14 +201,29 @@ async function saveScreenshot(
       mediaType: artifact.mediaType ?? "image/jpeg",
     }),
   });
-  if (!response.ok) return undefined;
+  if (!response.ok) {
+    // REPORTED, not silently turned into "there was no screenshot". A caller
+    // cannot otherwise tell an absent capture from a fetch that failed, and the
+    // two want different things done about them.
+    return {
+      kind: "failed",
+      detail: `the screenshot could not be fetched (HTTP ${response.status})`,
+    };
+  }
   const buffer = Buffer.from(await response.arrayBuffer());
+  if (inline) {
+    return {
+      kind: "inline",
+      base64: buffer.toString("base64"),
+      mediaType: artifact.mediaType ?? "image/jpeg",
+    };
+  }
   const file = join(
     outDir ?? tmpdir(),
     `mcpjam-browser-${artifact.id}${extensionFor(artifact.mediaType)}`,
   );
   await writeFile(file, buffer);
-  return file;
+  return { kind: "file", path: file };
 }
 
 function extensionFor(mediaType: string | undefined): string {
@@ -238,6 +267,11 @@ export function registerBrowserCommands(program: Command): void {
     .option("--profile <profile>", "persistent | ephemeral", "persistent")
     .option("--attach <mode>", "prefer | never | require", "prefer")
     .option("--observe <mode>", "Initial observation: a11y | screenshot | none")
+    .option("--out-dir <dir>", "Where to write an initial screenshot")
+    .option(
+      "--run-key <key>",
+      "Names an ephemeral run, so two never share a profile",
+    )
     .option(
       "--no-screenshots",
       "Keep a ledger without pictures for this session",
@@ -263,6 +297,7 @@ export function registerBrowserCommands(program: Command): void {
           },
           ...(options.screenshots === false ? { captureScreenshots: false } : {}),
           ...(options.observe ? { observe: options.observe } : {}),
+          ...(typeof options.runKey === "string" ? { runKey: options.runKey } : {}),
           ...identity(options),
         },
         globalOptions.timeout,
@@ -277,7 +312,25 @@ export function registerBrowserCommands(program: Command): void {
           session.sessionId,
         );
       }
-      writeResult({ success: true, ...body }, globalOptions.format);
+      // The initial observation goes through the SAME screenshot path as
+      // `observe`: a caller that asked for a picture wants a file it can open,
+      // not the descriptor of one.
+      let extra: Record<string, unknown> = {};
+      if (options.observe === "screenshot" && session?.sessionId) {
+        const shot = await fetchScreenshot(
+          options,
+          projectId,
+          session.sessionId,
+          body.page,
+          typeof options.outDir === "string" ? options.outDir : undefined,
+        ).catch((error: unknown) => ({
+          kind: "failed" as const,
+          detail: error instanceof Error ? error.message : String(error),
+        }));
+        if (shot.kind === "file") extra = { screenshotPath: shot.path };
+        else if (shot.kind === "failed") extra = { screenshotError: shot.detail };
+      }
+      writeResult({ success: true, ...body, ...extra }, globalOptions.format);
     });
 
   // ---- observe ----------------------------------------------------------
@@ -325,6 +378,7 @@ export function registerBrowserCommands(program: Command): void {
         sessionId,
         format: globalOptions.format,
         saveScreenshots: options.mode === "screenshot" && !options.inline,
+        inline: options.mode === "screenshot" && options.inline === true,
         outDir: typeof options.outDir === "string" ? options.outDir : undefined,
       });
     });
@@ -566,29 +620,34 @@ async function emit(
     sessionId: string;
     format: "json" | "human";
     saveScreenshots: boolean;
+    inline?: boolean;
     outDir?: string;
   },
 ): Promise<void> {
-  let screenshotPath: string | undefined;
-  if (context.saveScreenshots) {
+  let extra: Record<string, unknown> = {};
+  if (context.saveScreenshots || context.inline) {
     const page =
       (result.page as unknown) ??
       ((result.refusal as { page?: unknown } | undefined)?.page as unknown);
-    screenshotPath = await saveScreenshot(
+    const shot = await fetchScreenshot(
       context.options,
       context.projectId,
       context.sessionId,
       page,
       context.outDir,
-    ).catch(() => undefined);
+      context.inline === true,
+    ).catch((error: unknown) => ({
+      kind: "failed" as const,
+      detail: error instanceof Error ? error.message : String(error),
+    }));
+    if (shot.kind === "file") extra = { screenshotPath: shot.path };
+    else if (shot.kind === "inline") {
+      extra = { screenshot: shot.base64, screenshotMediaType: shot.mediaType };
+    } else if (shot.kind === "failed") {
+      extra = { screenshotError: shot.detail };
+    }
   }
-  writeResult(
-    {
-      ...envelopeFor(result),
-      ...(screenshotPath ? { screenshotPath } : {}),
-    },
-    context.format,
-  );
+  writeResult({ ...envelopeFor(result), ...extra }, context.format);
 }
 
 /**

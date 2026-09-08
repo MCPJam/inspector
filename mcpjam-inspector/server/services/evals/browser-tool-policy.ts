@@ -83,6 +83,22 @@ export function parseBrowserToolPolicy(
     );
     return undefined;
   }
+  // A `toolAllowlist` outside `allowlist` mode is REFUSED rather than dropped.
+  // `allow_all` and `read_only` decide by kind of tool, not by name, so the
+  // list would be silently ignored — and a caller that wrote one is asking for
+  // a narrowing it would not get. Refusing is the only answer that does not
+  // leave them believing in a restriction that is not there.
+  //
+  // `originAllowlist` stays legal in every mode: "only these origins" composes
+  // with both "read only" and "anything", and means the same in each.
+  if (candidate.mode !== "allowlist" && toolAllowlist?.length) {
+    warn(
+      `browserToolPolicy.toolAllowlist only applies to mode 'allowlist'; ` +
+        `mode '${candidate.mode}' would ignore it`,
+      context,
+    );
+    return undefined;
+  }
   return {
     mode: candidate.mode as BrowserUnattendedPolicy["mode"],
     ...(originAllowlist?.length ? { originAllowlist } : {}),
