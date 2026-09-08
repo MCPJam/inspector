@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { Github } from "lucide-react";
+import { Github, Lock } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useAppNavigate } from "@/lib/app-navigation";
@@ -280,44 +280,102 @@ export function GithubInstallCallbackRoute() {
             </div>
           ) : (
             <>
+              {/* "organization", not "workspace": `workspaces` is a different
+                  table entirely (a set of servers and a client config), and a
+                  GitHub installation binds to an ORGANIZATION. Calling it a
+                  workspace here reads as "one project", which is the wrong
+                  mental model for a limit that is actually per-org. */}
               <p className="px-4 pt-3 text-sm text-muted-foreground">
                 These are the accounts you administer that already have the
-                MCPJam app installed. Connecting one lets this workspace run
+                MCPJam app installed. Connecting one lets this organization run
                 checks on its repositories.
               </p>
-              {phase.installations.map((installation) => (
+              {phase.installations.map((installation) => {
+                // Ties the disabled button to the reason it is disabled. The
+                // note sits AFTER the button in the DOM, so without this a
+                // screen reader reaches "Connect, unavailable" with no cause
+                // — the one thing a blocked row exists to communicate.
+                const conflictNoteId = `github-claim-conflict-${installation.installationId}`;
+                return (
                 <div
                   key={installation.installationId}
-                  className="flex items-center justify-between gap-4 px-4 py-3"
                   data-testid={`claimable-${installation.accountLogin}`}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Github
-                      className="size-4 text-muted-foreground shrink-0"
-                      aria-hidden
-                    />
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium truncate">
-                        {installation.accountLogin}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {installation.accountType === "Organization"
-                          ? "Organization"
-                          : "Personal account"}
-                      </span>
+                  <div className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Github
+                        className="size-4 text-muted-foreground shrink-0"
+                        aria-hidden
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span
+                          className={`text-sm font-medium truncate ${
+                            installation.conflict ? "text-muted-foreground" : ""
+                          }`}
+                        >
+                          {installation.accountLogin}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {installation.accountType === "Organization"
+                            ? "Organization"
+                            : "Personal account"}
+                        </span>
+                      </div>
                     </div>
+                    <Button
+                      size="sm"
+                      // A conflicting row is disabled rather than hidden: the
+                      // account IS one they administer, and hiding it would
+                      // read as "GitHub lost it" rather than "it is taken".
+                      disabled={
+                        claiming !== null || Boolean(installation.conflict)
+                      }
+                      aria-describedby={
+                        installation.conflict ? conflictNoteId : undefined
+                      }
+                      onClick={() =>
+                        void handleClaim(phase.linkSessionId, installation)
+                      }
+                    >
+                      Connect
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    disabled={claiming !== null}
-                    onClick={() =>
-                      void handleClaim(phase.linkSessionId, installation)
-                    }
-                  >
-                    Connect
-                  </Button>
+                  {installation.conflict ? (
+                    <p
+                      id={conflictNoteId}
+                      className="flex items-start gap-2 px-4 pb-3 text-xs leading-relaxed text-muted-foreground"
+                    >
+                      <Lock
+                        className="size-3.5 shrink-0 mt-0.5 text-destructive"
+                        aria-hidden
+                      />
+                      {/* Two sentences, not one, because the second is the
+                          only actionable half and must survive being skimmed.
+                          The name is used when the backend gave one — its
+                          absence means the caller may not see that org, so the
+                          non-member copy names the party they CAN reach. */}
+                      <span>
+                        {installation.conflict.organizationName ? (
+                          <>
+                            Already connected to{" "}
+                            <span className="font-medium text-foreground">
+                              {installation.conflict.organizationName}
+                            </span>
+                            . Disconnect it there to use it here.
+                          </>
+                        ) : (
+                          <>
+                            Already connected to another MCPJam organization. An
+                            owner of the {installation.accountLogin} GitHub
+                            account can disconnect it there.
+                          </>
+                        )}
+                      </span>
+                    </p>
+                  ) : null}
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
         </SettingsSection>

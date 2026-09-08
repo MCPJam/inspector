@@ -35,6 +35,7 @@ function fakeSession(send: (command: any) => Promise<SendResult>) {
     async (): Promise<BrowserSessionHandle> =>
       ({
         engine: "hosted" as const,
+        target: "computer" as const,
         sessionId: "session-1",
         computerId: "computer-1",
         bootId: "boot-1",
@@ -83,10 +84,16 @@ function build(
   send: (command: any) => Promise<SendResult> = async () => OK,
 ) {
   const fake = fakeSession(send);
+  const delivery = over.approvalDelivery ?? { kind: "attested" as const };
   const result = buildBrowserTools({
     authHeader: "Bearer user",
     projectId: "project-1",
     approvalDelivery: { kind: "attested" },
+    // The unattended cases below are about POLICY, which is engine-blind — but
+    // the HOSTED engine refuses an unattended run outright (its one computer
+    // per project+member is shared by every run), so they run on the local
+    // engine unless a case says otherwise. `...over` still wins.
+    ...(delivery.kind === "unattended" ? { engine: "local" as const } : {}),
     ensureSession: fake.ensureSession,
     // Ignored on an attested turn; required on an unattended one, which most
     // of the cases below are. Overridable per test.
@@ -192,6 +199,7 @@ describe("buildBrowserTools — unattended policy", () => {
     const built = buildBrowserTools({
       authHeader: "Bearer user",
       projectId: "project-1",
+      engine: "local",
       approvalDelivery: {
         kind: "unattended",
         policy: { mode: "allowlist", toolAllowlist: ["nonexistent_tool"] },
@@ -906,6 +914,7 @@ describe("buildBrowserTools — engines and profile mode", () => {
       seen.push(args);
       return {
         engine: "hosted" as const,
+        target: "computer" as const,
         sessionId: "s",
         computerId: "c",
         bootId: "b",
@@ -920,6 +929,7 @@ describe("buildBrowserTools — engines and profile mode", () => {
     const unattended = buildBrowserTools({
       authHeader: "Bearer u",
       projectId: "project-1",
+      engine: "local",
       approvalDelivery: {
         kind: "unattended",
         policy: { mode: "allow_all" },
@@ -966,12 +976,118 @@ describe("buildBrowserTools — engines and profile mode", () => {
   });
 });
 
+describe("buildBrowserTools — an unattended hosted run has no box of its own", () => {
+  it("advertises nothing, so the model never sees a tool that cannot run", () => {
+    // The hosted engine reserves the ONE desktop computer this project+member
+    // has, so every unattended run in a project would drive the same Chromium
+    // and the same cookie jar — and the ephemeral request that isolation needs
+    // is a mode mismatch that relaunches the daemon a person may be using.
+    // `ensureBrowserSession` refuses it by name; advertising tools whose every
+    // call is that refusal only wastes the run's turns.
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      runKey: "iteration-7",
+      onToolSuppressed: (info) => suppressed.push(info),
+      ensureSession: (async () => {
+        throw new Error("must not boot");
+      }) as never,
+    });
+
+    expect(built).toBeUndefined();
+    expect(suppressed[0]).toMatchObject({ id: BROWSER_BUILT_IN_TOOL_ID });
+    expect(suppressed[0]?.reason).toContain("its own sandbox");
+  });
+
+  it("leaves the LOCAL unattended browser alone — it is keyed per run", () => {
+    const { result } = build({
+      engine: "local",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+    });
+    expect(Object.keys(result!.tools)).toHaveLength(6);
+  });
+
+  it("leaves an INTERACTIVE hosted turn alone — one member, one computer", () => {
+    const { result } = build({ engine: "hosted" });
+    expect(Object.keys(result!.tools)).toHaveLength(6);
+  });
+
+  it("BUILDS them when the run brought a box of its own", () => {
+    const { result } = build({
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+    });
+    expect(Object.keys(result!.tools)).toHaveLength(6);
+  });
+
+  it("ensureSession receives the sandbox target, and the run still names itself", () => {
+    // Both are load-bearing and INDEPENDENT: the target says which box, and
+    // the owner key says which run — the local engine has no target and keys
+    // on the run alone, so dropping either would silently share something.
+    const seen: Array<Record<string, unknown>> = [];
+    const ensureSession = vi.fn(async (args: any) => {
+      seen.push(args);
+      return {
+        engine: "hosted" as const,
+        target: "sandbox" as const,
+        sessionId: "s",
+        sandboxRowId: "row_1",
+        sandboxId: "sbx_1",
+        bootId: "b",
+        client: { sendCommand: async () => OK } as never,
+        contextMode: args.contextMode,
+        reused: false,
+      };
+    });
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      runKey: "iteration-7",
+      sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+      ensureSession: ensureSession as never,
+    });
+
+    return run(built!.tools, "browser_observe", {}).then(() => {
+      expect(seen[0]).toMatchObject({
+        contextMode: "ephemeral",
+        ownerKey: "iteration-7",
+        target: {
+          kind: "sandbox",
+          sandboxRowId: "row_1",
+          sandboxId: "sbx_1",
+        },
+      });
+    });
+  });
+
+  it("still refuses a bound run that cannot name itself", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+      onToolSuppressed: (info) => suppressed.push(info),
+    });
+    expect(built).toBeUndefined();
+    expect(suppressed[0]?.reason).toContain("name the run");
+  });
+});
+
 describe("buildBrowserTools — an unattended run must name itself", () => {
   it("advertises nothing when no run key is supplied", () => {
     const suppressed: Array<{ id: string; reason: string }> = [];
     const built = buildBrowserTools({
       authHeader: "Bearer u",
       projectId: "project-1",
+      engine: "local",
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
       onToolSuppressed: (info) => suppressed.push(info),
       ensureSession: (async () => {
@@ -989,6 +1105,7 @@ describe("buildBrowserTools — an unattended run must name itself", () => {
       keys.push(args.ownerKey);
       return {
         engine: "hosted" as const,
+        target: "computer" as const,
         sessionId: "s",
         computerId: "c",
         bootId: "b",
@@ -1011,6 +1128,7 @@ describe("buildBrowserTools — an unattended run must name itself", () => {
         authHeader: "Bearer u",
         projectId: "project-1",
         executionScope: scope,
+        engine: "local",
         approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
         runKey,
         ensureSession: capture as never,

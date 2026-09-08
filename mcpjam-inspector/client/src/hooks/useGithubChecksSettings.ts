@@ -47,8 +47,7 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
  * would bounce a legitimately-flagged user who cold-loads the URL directly.
  */
 export type GithubChecksAvailability =
-  | { state: "enabled" | "disabled" }
-  | undefined;
+  { state: "enabled" | "disabled" } | undefined;
 
 /**
  * What the check concludes when MCPJam cannot run the suite — an outage, or a
@@ -105,10 +104,7 @@ export type GithubCheckConnectionStatus =
 
 export type GithubInstallationAccountType = "Organization" | "User";
 export type GithubInstallationBindingStatus =
-  | "active"
-  | "suspended"
-  | "removed"
-  | "unbound";
+  "active" | "suspended" | "removed" | "unbound";
 
 /**
  * One GitHub App installation this organization holds.
@@ -131,6 +127,16 @@ export type ClaimableInstallation = {
   installationId: number;
   accountLogin: string;
   accountType: GithubInstallationAccountType;
+  /**
+   * Present when this installation is already connected to another MCPJam
+   * organization, so the row can say so instead of offering a click the
+   * backend will refuse. Absent means connectable.
+   *
+   * `organizationName` is present ONLY when the signed-in user is a member of
+   * the organization holding it. Its absence is the backend's answer, not a
+   * missing lookup — do not retry for it, and do not imply one exists to name.
+   */
+  conflict?: { organizationName?: string };
 };
 
 /**
@@ -196,12 +202,9 @@ export type InstallationRepo = {
   /**
    * WHICH binding this repository was listed through, opaque.
    *
-   * ABSENT only while the backend is still falling back to its pinned
-   * installation for an organization with no binding yet. Absent means "send no
-   * reference", which is what keeps the compatibility connect reachable during
-   * that window.
+   * Required: repository access always comes from an active org-owned binding.
    */
-  installationRef?: string;
+  installationRef: string;
   /**
    * The GitHub account, for disambiguating two same-named repositories from
    * different accounts in one picker. Display only.
@@ -236,7 +239,7 @@ const BINDINGS_QUERY = "github/appInstallLink:listBindingsForOrganization";
 // that ought to be checking it.
 
 export function useGithubChecksAvailability(
-  organizationId: string | null | undefined
+  organizationId: string | null | undefined,
 ): GithubChecksAvailability {
   // `useIsMemberActor`, not `useAuth().user`: the WorkOS user object flips
   // truthy while the Convex socket is still carrying the guest bearer that
@@ -249,12 +252,12 @@ export function useGithubChecksAvailability(
 
   return useQuery(
     AVAILABILITY_QUERY as any,
-    canQuery ? ({ organizationId } as any) : "skip"
+    canQuery ? ({ organizationId } as any) : "skip",
   ) as GithubChecksAvailability;
 }
 
 export function useGithubChecksSettings(
-  organizationId: string | null | undefined
+  organizationId: string | null | undefined,
 ) {
   const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
@@ -272,12 +275,12 @@ export function useGithubChecksSettings(
   // `isAuthenticated` where the availability gate carried `isAuthenticated &&
   // user` — a weaker term that only `isEnabled` was holding shut.
   const canQuery = Boolean(
-    isMember && isUserReady && organizationId && isEnabled
+    isMember && isUserReady && organizationId && isEnabled,
   );
 
   const repos = useQuery(
     LIST_QUERY as any,
-    canQuery ? ({ organizationId } as any) : "skip"
+    canQuery ? ({ organizationId } as any) : "skip",
   ) as GithubCheckRepoConfigRow[] | undefined;
 
   // `getTestSuitesOverview` accepts an org scope. Note it filters on
@@ -285,7 +288,7 @@ export function useGithubChecksSettings(
   // before that field existed will not appear here.
   const suiteOverview = useQuery(
     SUITES_QUERY as any,
-    canQuery ? ({ organizationId } as any) : "skip"
+    canQuery ? ({ organizationId } as any) : "skip",
   ) as Array<{ suite?: SuiteOption }> | undefined;
 
   const suites: SuiteOption[] | undefined = suiteOverview
@@ -293,34 +296,32 @@ export function useGithubChecksSettings(
     .filter((suite): suite is SuiteOption => Boolean(suite?._id));
 
   // The SERVER-VERIFIED connect, and the only connect path this app uses. It is
-  // an action rather than a mutation because proving the pinned installation can
-  // actually reach the repository takes a GitHub round trip, which a mutation
-  // cannot make — and it is the action that stamps the row's installation id.
-  // The unverified `checkRepoConfigs:connectRepo` mutation survives only for the
-  // two-deploy compatibility window and must not be called from here.
+  // an action because proving the selected organization-owned installation can
+  // reach the repository takes a GitHub round trip, which a mutation cannot
+  // make. The action stamps the row's installation and repository identities.
   const connectVerifiedRepoAction = useAction(
-    "github/checkRepoConfigsNode:connectVerifiedRepo" as any
+    "github/checkRepoConfigsNode:connectVerifiedRepo" as any,
   );
   const setRepoEnabledMutation = useMutation(
-    "github/checkRepoConfigs:setRepoEnabled" as any
+    "github/checkRepoConfigs:setRepoEnabled" as any,
   );
   const setRepoSuiteMutation = useMutation(
-    "github/checkRepoConfigs:setRepoSuite" as any
+    "github/checkRepoConfigs:setRepoSuite" as any,
   );
   const setRepoOutagePolicyMutation = useMutation(
-    "github/checkRepoConfigs:setRepoOutagePolicy" as any
+    "github/checkRepoConfigs:setRepoOutagePolicy" as any,
   );
   const setRepoConformanceMutation = useMutation(
-    "github/checkRepoConfigs:setRepoConformance" as any
+    "github/checkRepoConfigs:setRepoConformance" as any,
   );
   const setRepoFeedbackCommentsMutation = useMutation(
-    "github/checkRepoConfigs:setRepoFeedbackComments" as any
+    "github/checkRepoConfigs:setRepoFeedbackComments" as any,
   );
   const disconnectRepoMutation = useMutation(
-    "github/checkRepoConfigs:disconnectRepo" as any
+    "github/checkRepoConfigs:disconnectRepo" as any,
   );
   const listInstallationReposAction = useAction(
-    "github/checkRepoConfigsNode:listInstallationRepos" as any
+    "github/checkRepoConfigsNode:listInstallationRepos" as any,
   );
 
   // ── The org ↔ installation binding surface ───────────────────────────────
@@ -331,20 +332,20 @@ export function useGithubChecksSettings(
   // the click, in production — not at build time. Treat these call shapes as
   // part of the backend's signature and change them together.
   const startInstallationAction = useAction(
-    "github/appInstallLinkNode:startInstallation" as any
+    "github/appInstallLinkNode:startInstallation" as any,
   );
   const startDirectClaimAction = useAction(
-    "github/appInstallLinkNode:startDirectClaim" as any
+    "github/appInstallLinkNode:startDirectClaim" as any,
   );
   const unbindInstallationMutation = useMutation(
-    "github/appInstallLink:unbindInstallation" as any
+    "github/appInstallLink:unbindInstallation" as any,
   );
 
   // Bindings are read for MEMBERS, like the repository list — the write path is
   // where admin is required — so this rides the same `canQuery` gate.
   const bindings = useQuery(
     BINDINGS_QUERY as any,
-    canQuery ? ({ organizationId } as any) : "skip"
+    canQuery ? ({ organizationId } as any) : "skip",
   ) as GithubInstallationBinding[] | undefined;
 
   /**
@@ -360,7 +361,7 @@ export function useGithubChecksSettings(
       startInstallationAction({ organizationId } as any) as Promise<{
         installUrl: string;
       }>,
-    [startInstallationAction, organizationId]
+    [startInstallationAction, organizationId],
   );
 
   /**
@@ -373,7 +374,7 @@ export function useGithubChecksSettings(
       startDirectClaimAction({ organizationId } as any) as Promise<{
         authorizeUrl: string;
       }>,
-    [startDirectClaimAction, organizationId]
+    [startDirectClaimAction, organizationId],
   );
 
   const unbindInstallation = useCallback(
@@ -384,7 +385,7 @@ export function useGithubChecksSettings(
       } as any) as Promise<{
         changed: boolean;
       }>,
-    [unbindInstallationMutation, organizationId]
+    [unbindInstallationMutation, organizationId],
   );
 
   /**
@@ -396,10 +397,7 @@ export function useGithubChecksSettings(
    * `installationRef` and `repositoryId` come STRAIGHT OFF the picked
    * `InstallationRepo` and are never assembled by hand — they say which
    * installation the repository was listed through and which repository it
-   * actually is, and the server re-verifies both. They are optional here for
-   * exactly one reason: an organization with no binding yet is still listed
-   * through the backend's pinned installation, and those entries carry no ref,
-   * so the connect has to be reachable without one until the pin retires.
+   * actually is, and the server re-verifies both. Both are required.
    */
   const connectVerifiedRepo = useCallback(
     (args: {
@@ -407,25 +405,25 @@ export function useGithubChecksSettings(
       projectId: string;
       suiteId: string;
       outagePolicy: GithubCheckOutagePolicy;
-      installationRef?: string;
-      repositoryId?: number;
+      installationRef: string;
+      repositoryId: number;
     }) =>
       connectVerifiedRepoAction({ organizationId, ...args } as any) as Promise<{
         configId: string;
       }>,
-    [connectVerifiedRepoAction, organizationId]
+    [connectVerifiedRepoAction, organizationId],
   );
 
   const setRepoEnabled = useCallback(
     (args: { configId: string; enabled: boolean }) =>
       setRepoEnabledMutation({ organizationId, ...args } as any),
-    [setRepoEnabledMutation, organizationId]
+    [setRepoEnabledMutation, organizationId],
   );
 
   const setRepoSuite = useCallback(
     (args: { configId: string; projectId: string; suiteId: string }) =>
       setRepoSuiteMutation({ organizationId, ...args } as any),
-    [setRepoSuiteMutation, organizationId]
+    [setRepoSuiteMutation, organizationId],
   );
 
   const setRepoOutagePolicy = useCallback(
@@ -436,7 +434,7 @@ export function useGithubChecksSettings(
       } as any) as Promise<{
         changed: boolean;
       }>,
-    [setRepoOutagePolicyMutation, organizationId]
+    [setRepoOutagePolicyMutation, organizationId],
   );
 
   const setRepoConformance = useCallback(
@@ -451,7 +449,7 @@ export function useGithubChecksSettings(
       } as any) as Promise<{
         changed: boolean;
       }>,
-    [setRepoConformanceMutation, organizationId]
+    [setRepoConformanceMutation, organizationId],
   );
 
   /**
@@ -472,13 +470,13 @@ export function useGithubChecksSettings(
       } as any) as Promise<{
         changed: boolean;
       }>,
-    [setRepoFeedbackCommentsMutation, organizationId]
+    [setRepoFeedbackCommentsMutation, organizationId],
   );
 
   const disconnectRepo = useCallback(
     (args: { configId: string }) =>
       disconnectRepoMutation({ organizationId, ...args } as any),
-    [disconnectRepoMutation, organizationId]
+    [disconnectRepoMutation, organizationId],
   );
 
   const listInstallationRepos = useCallback(
@@ -486,7 +484,7 @@ export function useGithubChecksSettings(
       listInstallationReposAction({ organizationId } as any) as Promise<
         InstallationRepo[]
       >,
-    [listInstallationReposAction, organizationId]
+    [listInstallationReposAction, organizationId],
   );
 
   return {
@@ -524,13 +522,13 @@ export function useGithubChecksSettings(
  */
 export function useGithubInstallCallbacks() {
   const completeInstallSetupAction = useAction(
-    "github/appInstallLinkNode:completeInstallSetup" as any
+    "github/appInstallLinkNode:completeInstallSetup" as any,
   );
   const completeUserAuthorizationAction = useAction(
-    "github/appInstallLinkNode:completeUserAuthorization" as any
+    "github/appInstallLinkNode:completeUserAuthorization" as any,
   );
   const claimProvenInstallationAction = useAction(
-    "github/appInstallLinkNode:claimProvenInstallation" as any
+    "github/appInstallLinkNode:claimProvenInstallation" as any,
   );
 
   /** GitHub's setup redirect. Returns where to send the browser next. */
@@ -539,25 +537,25 @@ export function useGithubInstallCallbacks() {
       completeInstallSetupAction(args as any) as Promise<{
         authorizeUrl: string;
       }>,
-    [completeInstallSetupAction]
+    [completeInstallSetupAction],
   );
 
   /** GitHub's OAuth redirect. Either the bind is done, or a pick is needed. */
   const completeUserAuthorization = useCallback(
     (args: { code: string; state: string }) =>
       completeUserAuthorizationAction(
-        args as any
+        args as any,
       ) as Promise<GithubInstallCallbackResult>,
-    [completeUserAuthorizationAction]
+    [completeUserAuthorizationAction],
   );
 
   /** Adopt one installation out of a direct claim's proven list. */
   const claimProvenInstallation = useCallback(
     (args: { linkSessionId: string; installationId: number }) =>
       claimProvenInstallationAction(
-        args as any
+        args as any,
       ) as Promise<GithubInstallCallbackResult>,
-    [claimProvenInstallationAction]
+    [claimProvenInstallationAction],
   );
 
   return {
