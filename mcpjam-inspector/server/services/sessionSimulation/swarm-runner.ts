@@ -24,11 +24,13 @@ import {
   releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
+  targetWantsBrowser,
   targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
@@ -294,23 +296,38 @@ function terminalForOutcome(
   };
 }
 
+/** Backend denial codes whose limit belongs to the ACCOUNT, not to one host's
+ * provider key. Kept separate from `USER_OWNED_DENIAL_CODES` in
+ * `server/utils/mcpjam-stream-handler.ts` — that list answers who is at fault,
+ * this one whether another host could escape the limit, and they already
+ * disagree on `mcpjam_rate_limit`. A parity test pins the overlap so a code
+ * added there is not silently missed here. Exported for that test. */
+export const ACCOUNT_LIMIT_CODE =
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included)\b/i;
+
 /**
- * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
- * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
- * A spend/cap/quota/budget message is the org cap (WHOLE-RUN stop); anything
- * else (a provider 429 / rate limit) is a per-HOST stop. A missing message
- * defaults to the narrower per-host stop — never escalate to a whole-run halt
- * on ambiguous signal.
+ * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
+ * shared core's `rate_limited` bucket and the `failed` attempts whose message
+ * carries an account denial code.
+ * An account-wide limit is the org cap (WHOLE-RUN stop); a provider 429 on one
+ * host's own key is a per-HOST stop. A missing message defaults to the narrower
+ * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * `cap`/`quota`/`budget` are word-anchored so only genuine spend-cap wording
- * matches: "spend cap exceeded" / "quota exceeded" / "budget exhausted" →
- * org cap, but "capacity" / "rate capacity exceeded" / "recap" / "escape" →
- * NOT a spend cap (they stay a per-host provider rate-limit).
+ * The backend's denial code decides it. `runner.ts` concatenates that code into
+ * the message ("<sentence> (<code>, HTTP <status>)"), and it is the only
+ * reliable signal: no MCPJam limit sentence — "Daily credit limit reached.",
+ * "Daily MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ *
+ * The prose check is kept as a second signal for a backend that words a cap
+ * without a code. `cap`/`quota`/`budget` stay word-anchored so "capacity" /
+ * "recap" / "escape" remain a per-host provider rate-limit.
  */
 function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
-  if (message && /spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+  if (!message) return "provider_rate_limit";
+  if (ACCOUNT_LIMIT_CODE.test(message)) return "org_spend_cap";
+  if (/spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
@@ -330,6 +347,53 @@ function bindSessionEmit(
 ): (payload: SwarmStreamPayload) => void {
   return (payload) => {
     hub.emit({ ...envelope, ...payload } as SwarmStreamEvent);
+  };
+}
+
+/**
+ * WHAT this target needs the box FOR, in operator-facing words plus the
+ * `toolId` the UI keys its notice on.
+ *
+ * Until phase 6 the answer was always `bash`, so the copy could hardcode
+ * "shell". A harness-only target reached the same branches next, and a
+ * BROWSER-only target after that — which the two-branch version described as
+ * "the undefined harness", because it fell through to the harness arm with no
+ * harness to name.
+ *
+ * Built from what the target ACTUALLY declares rather than from a first
+ * matching branch, because the combinations are not exclusive: `bash` and
+ * `browser` conflict on a host config only while a deployment has NOT accepted
+ * the co-tenancy boundary (`allowComputerToolCoTenancy`), and a harness can
+ * accompany either. A target that lost its box lost every one of them, so the
+ * sentence names every one of them.
+ *
+ * The `toolId` is the capability that DECIDED the image, because that is the
+ * one the failure is about: a browser forces the desktop image, and the
+ * refusals that reach here (`desktop_pin_conflict`, desktop capacity) are
+ * desktop refusals. Without a browser it stays what it has always been.
+ */
+function describeSandboxConsumer(
+  target: PinnedHostExecutionSpec,
+  hostedBrowserAvailable: boolean,
+): {
+  label: string;
+  toolId: string;
+} {
+  const wantsBash = targetWantsBash(target);
+  const wantsBrowser = targetWantsBrowser(target, hostedBrowserAvailable);
+  const parts: string[] = [];
+  if (wantsBash) parts.push("the shell");
+  if (wantsBrowser) parts.push("the browser");
+  if (target.harness) parts.push(`the ${target.harness} harness`);
+  const label =
+    parts.length === 0
+      ? "the disposable computer"
+      : parts.length === 1
+        ? parts[0]!
+        : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)!}`;
+  return {
+    label,
+    toolId: wantsBrowser ? "browser" : wantsBash ? "bash" : "harness",
   };
 }
 
@@ -503,7 +567,7 @@ async function runJourneyFanOut(
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
         harnessTargetIntent = harnessNeedsBox
-          ? sandboxIntentFor(target)
+          ? sandboxIntentFor(target, hostedBrowserAdvertisable())
           : undefined;
         //
         // AND the same preflight interactive chat runs. Until phase 6 the swarm
@@ -767,20 +831,20 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
-        const sandboxConsumer = targetWantsBash(target)
-          ? target.harness
-            ? {
-                label: `the shell and the ${target.harness} harness`,
-                toolId: "bash",
-              }
-            : { label: "the shell", toolId: "bash" }
-          : { label: `the ${target.harness} harness`, toolId: "harness" };
+        // Resolved ONCE and shared with `sandboxIntentFor` below: the two
+        // must agree about whether a browser is in play, or the notice
+        // describes a consumer the intent never provisioned for.
+        const hostedBrowserAvailable = hostedBrowserAdvertisable();
+        const sandboxConsumer = describeSandboxConsumer(
+          target,
+          hostedBrowserAvailable,
+        );
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target);
+          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
@@ -856,6 +920,12 @@ async function runJourneyFanOut(
               runId,
               targetId: targetId ?? hostId,
               sessionIdx,
+              // WHICH IMAGE this attempt needs — a browser target boots the
+              // stock desktop one. Absent for everything else, so a terminal
+              // request stays byte-identical on the wire.
+              ...(intent.runtimeKind === "desktop-browser"
+                ? { runtimeKind: "desktop-browser" as const }
+                : {}),
               signal: sessionSignal,
             });
             if (provisioned.ok) {
@@ -984,6 +1054,11 @@ async function runJourneyFanOut(
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
               builtInToolIds: target.builtInToolIds,
+              // The unattended browser's only authorization. Threading it is
+              // what makes `browser` reachable on a swarm target at all: the
+              // runner parses it into an approval delivery, and without one
+              // `buildBrowserTools` advertises nothing.
+              browserToolPolicy: target.browserToolPolicy,
               modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
@@ -1220,7 +1295,15 @@ async function runJourneyFanOut(
             modelSource: modelId,
           });
 
-          if (outcome === "rate_limited") {
+          // An account-wide denial arrives under EITHER terminal: only the
+          // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
+          // `rate_limited`, so `wallet_locked` and the billing codes land in
+          // `failed` and would never reach the whole-run stop below.
+          const accountLimitFailure =
+            outcome === "failed" &&
+            !abortedBySpendCap &&
+            ACCOUNT_LIMIT_CODE.test(errorMessage ?? "");
+          if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage);
             if (cause === "org_spend_cap") {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The

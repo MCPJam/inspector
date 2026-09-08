@@ -35,10 +35,17 @@ function parseStringList(value: unknown): string[] | undefined | null {
  * Parse a declared policy, or `undefined` when there is none / it is
  * malformed. `context` only labels the warning so an operator can find which
  * run declared the bad policy.
+ *
+ * `quiet` is for callers that ask this question a SECOND time about the same
+ * policy in the same unit of work — the "does this run need a desktop box?"
+ * predicates run before the delivery is built, and a malformed policy would
+ * otherwise log the same complaint twice per iteration under two different
+ * source labels, which reads like two problems. The delivery parse keeps the
+ * warning, because it is the one whose failure the run actually feels.
  */
 export function parseBrowserToolPolicy(
   input: unknown,
-  context?: { source?: string },
+  context?: { source?: string; quiet?: boolean },
 ): BrowserUnattendedPolicy | undefined {
   if (input === undefined || input === null) return undefined;
   if (typeof input !== "object" || Array.isArray(input)) {
@@ -83,7 +90,11 @@ export function parseBrowserToolPolicy(
   };
 }
 
-function warn(message: string, context?: { source?: string }): void {
+function warn(
+  message: string,
+  context?: { source?: string; quiet?: boolean },
+): void {
+  if (context?.quiet) return;
   logger.warn(`[browser-policy] ${message}; browser tools will not be offered`, {
     ...(context?.source ? { source: context.source } : {}),
   });

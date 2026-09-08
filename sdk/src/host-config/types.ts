@@ -906,6 +906,36 @@ export type ModelVisibleMcpToolResults = {
   };
 };
 
+/**
+ * What an unattended run's browser tools may do.
+ *
+ * `allow_all` — every browser verb, unrestricted.
+ * `read_only` — only the verbs that LOOK; the run cannot click or type.
+ * `allowlist` — only what the allowlists name, and at least one must be
+ *   non-empty (an allowlist that names nothing would mean "everything", which
+ *   is the opposite of what an allowlist says).
+ *
+ * `originAllowlist` bounds which origins the run may be ON — checked against
+ * the page the browser actually landed on, not just the URL it was asked for.
+ * `toolAllowlist` names individual tools (and page-tool names) it may call.
+ */
+export type HostConfigBrowserToolPolicyMode =
+  | "allow_all"
+  | "read_only"
+  | "allowlist";
+
+export type HostConfigBrowserToolPolicy = {
+  mode: HostConfigBrowserToolPolicyMode;
+  originAllowlist?: ReadonlyArray<string>;
+  toolAllowlist?: ReadonlyArray<string>;
+};
+
+export type CanonicalHostConfigBrowserToolPolicy = {
+  mode: HostConfigBrowserToolPolicyMode;
+  originAllowlist?: Array<string>;
+  toolAllowlist?: Array<string>;
+};
+
 export type HostConfigInputV2 = {
   hostStyle: HostConfigStyle;
   modelId: string;
@@ -951,6 +981,18 @@ export type HostConfigInputV2 = {
   // table. undefined OR [] → omitted from the canonical hash so pre-feature
   // rows stay byte-identical; a populated set dedupes + sorts before hashing.
   builtInToolIds?: ReadonlyArray<string>;
+  // What an UNATTENDED run's `browser` built-in tool may do. An eval, swarm or
+  // journey has nobody to approve a click, so approval — the mechanism every
+  // interactive surface relies on — does not exist there; this policy is the
+  // substitute, stated before the run starts. Absent ⇒ the run advertises no
+  // browser tools at all (fail-closed), which is why absence must keep hashing
+  // byte-identically to a pre-feature row.
+  //
+  // It is part of the CONTENT HASH because it is part of what the config
+  // means: two hosts that differ only in what their browser may reach are two
+  // different hosts, and a canonicalizer that dropped the field would let an
+  // edit to it dedupe into — or be frozen against — the old identity.
+  browserToolPolicy?: HostConfigBrowserToolPolicy;
   // Skill selection policy. Absent → legacy all-visible behavior.
   // `{ mode: "all-visible" }` is the explicit spelling of the same behavior
   // and canonicalizes to absent; `{ mode: "explicit", skillIds }` (including
@@ -1022,6 +1064,11 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
   // empty so pre-feature rows hash byte-identically; deduped + sorted when set.
   builtInToolIds?: Array<string>;
+  // Mirrors HostConfigInputV2.browserToolPolicy. Optional + omitted when absent
+  // so pre-feature rows hash byte-identically. The two allowlists are deduped
+  // and sorted (they are sets, not sequences) and entries are trimmed, so the
+  // same policy written two ways has one content-addressed identity.
+  browserToolPolicy?: CanonicalHostConfigBrowserToolPolicy;
   // Mirrors HostConfigInputV2.skillSelection. Only the explicit variant
   // survives canonicalization (`all-visible` collapses to absent so one
   // behavior has one content-addressed identity); explicit-empty

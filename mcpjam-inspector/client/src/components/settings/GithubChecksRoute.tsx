@@ -24,7 +24,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import {
+  canManageGithubChecks,
+  useOrganizationQueries,
+} from "@/hooks/useOrganizations";
 import {
   OutagePolicyExplainer,
   OutagePolicySelectItems,
@@ -240,9 +243,27 @@ export function GithubChecksRoute({
   // window a cold deep link lands in. Only once auth AND the org list have
   // settled is a missing id genuinely missing rather than merely early.
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
-  const { isLoading: organizationsLoading } = useOrganizationQueries({
-    isAuthenticated,
-  });
+  const { sortedOrganizations, isLoading: organizationsLoading } =
+    useOrganizationQueries({
+      isAuthenticated,
+    });
+
+  // Every write on this page is org-ADMIN-only server-side; the availability
+  // query behind it needs only MEMBER. So a member reaches the page
+  // legitimately and must NOT be handed live controls — see
+  // `canManageGithubChecks`.
+  //
+  // Unresolved reads as "may not", which greys the page for the moment before
+  // the org list settles. That is the safe direction: the opposite flashes
+  // enabled controls at somebody who is about to be refused.
+  const activeOrganization = useMemo(
+    () =>
+      activeOrganizationId
+        ? sortedOrganizations.find((org) => org._id === activeOrganizationId)
+        : undefined,
+    [sortedOrganizations, activeOrganizationId]
+  );
+  const canManage = canManageGithubChecks(activeOrganization);
 
   // `null` = not loaded yet, `[]` = loaded and genuinely empty. The error is
   // tracked separately so a failed fetch never renders as "you have no
@@ -758,6 +779,16 @@ export function GithubChecksRoute({
         — existing repositories stay eval-only until you turn it on.
       </p>
 
+      {/* Says WHY the page is read-only, next to the controls it explains.
+          Without it a member reads the greyed page as broken, and the only
+          alternative answer they had was to click and get a refusal toast. */}
+      {!canManage && !organizationsLoading ? (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          You can see this organization's GitHub Checks setup, but only an
+          organization owner or admin can change it.
+        </p>
+      ) : null}
+
       <SettingsSection title="GitHub accounts">
         {bindings === undefined ? (
           <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
@@ -777,7 +808,7 @@ export function GithubChecksRoute({
             <InstallationRow
               key={binding.installationRef}
               binding={binding}
-              disabled={bindingBusy}
+              disabled={bindingBusy || !canManage}
               onUnbind={() => setPendingUnbind(binding)}
             />
           ))
@@ -785,7 +816,7 @@ export function GithubChecksRoute({
 
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <Button
-            disabled={bindingBusy}
+            disabled={bindingBusy || !canManage}
             onClick={() => void beginBindingFlow("install")}
           >
             <Github className="mr-2 size-4" aria-hidden /> Install on a GitHub
@@ -793,7 +824,7 @@ export function GithubChecksRoute({
           </Button>
           <Button
             variant="outline"
-            disabled={bindingBusy}
+            disabled={bindingBusy || !canManage}
             onClick={() => void beginBindingFlow("claim")}
           >
             Claim an existing installation
@@ -917,6 +948,7 @@ export function GithubChecksRoute({
               <div className="flex items-center gap-3 shrink-0">
                 <Select
                   value={row.suiteId}
+                  disabled={!canManage}
                   onValueChange={(value) => void handleSuiteChange(row, value)}
                 >
                   <SelectTrigger
@@ -940,7 +972,7 @@ export function GithubChecksRoute({
                     the default — a claim the stored row does not make. */}
                 <Select
                   value={row.outagePolicy ?? ""}
-                  disabled={pendingPolicies.has(row._id)}
+                  disabled={pendingPolicies.has(row._id) || !canManage}
                   onValueChange={(value) =>
                     void handlePolicyChange(
                       row,
@@ -961,14 +993,18 @@ export function GithubChecksRoute({
 
                 <Switch
                   checked={row.enabled}
-                  disabled={pendingToggles.has(row._id)}
+                  disabled={pendingToggles.has(row._id) || !canManage}
                   onCheckedChange={() => void handleToggle(row)}
                   aria-label={`Enable checks for ${row.repoFullName}`}
                 />
 
                 <Switch
                   checked={row.conformanceEnabled === true}
-                  disabled={pendingConformance.has(row._id) || !row.enabled}
+                  disabled={
+                    pendingConformance.has(row._id) ||
+                    !row.enabled ||
+                    !canManage
+                  }
                   onCheckedChange={() => void handleConformanceToggle(row)}
                   aria-label={`Enable conformance check for ${row.repoFullName}`}
                 />
@@ -982,7 +1018,7 @@ export function GithubChecksRoute({
                     write, and it stays answerable while checks are paused. */}
                 <Switch
                   checked={row.feedbackComments !== "off"}
-                  disabled={pendingFeedback.has(row._id)}
+                  disabled={pendingFeedback.has(row._id) || !canManage}
                   onCheckedChange={() => void handleFeedbackCommentsToggle(row)}
                   aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
                   aria-describedby={`feedback-comments-note-${row._id}`}
@@ -991,6 +1027,7 @@ export function GithubChecksRoute({
                 <Button
                   variant="ghost"
                   size="icon"
+                  disabled={!canManage}
                   aria-label={`Disconnect ${row.repoFullName}`}
                   onClick={() => void handleDisconnect(row)}
                 >
@@ -1008,7 +1045,11 @@ export function GithubChecksRoute({
               each have a `widgets`, and the id is what the connect is actually
               keyed on — selecting by name would make the account label below
               purely decorative and let one pick resolve to the other repo. */}
-          <Select value={pickerRepo} onValueChange={setPickerRepo}>
+          <Select
+            value={pickerRepo}
+            disabled={!canManage}
+            onValueChange={setPickerRepo}
+          >
             <SelectTrigger className="w-72" aria-label="Repository">
               <SelectValue placeholder="Select a repository" />
             </SelectTrigger>
@@ -1024,7 +1065,11 @@ export function GithubChecksRoute({
             </SelectContent>
           </Select>
 
-          <Select value={pickerSuite} onValueChange={setPickerSuite}>
+          <Select
+            value={pickerSuite}
+            disabled={!canManage}
+            onValueChange={setPickerSuite}
+          >
             <SelectTrigger className="w-56" aria-label="Suite">
               <SelectValue placeholder="Select a suite" />
             </SelectTrigger>
@@ -1039,6 +1084,7 @@ export function GithubChecksRoute({
 
           <Select
             value={pickerPolicy}
+            disabled={!canManage}
             onValueChange={(value) =>
               setPickerPolicy(value as GithubCheckOutagePolicy)
             }
@@ -1054,7 +1100,11 @@ export function GithubChecksRoute({
           <Button
             onClick={() => void handleConnect()}
             disabled={
-              connecting || !pickerRepo || !pickerSuite || !pickerPolicy
+              connecting ||
+              !pickerRepo ||
+              !pickerSuite ||
+              !pickerPolicy ||
+              !canManage
             }
           >
             <Plus className="mr-2 size-4" aria-hidden /> Connect

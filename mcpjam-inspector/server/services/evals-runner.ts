@@ -12,6 +12,7 @@ import {
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
+import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
@@ -56,6 +57,7 @@ import {
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -912,6 +914,46 @@ function descriptionAppliedOnPreparedTools(
     "description" in prepared &&
     (prepared as { description?: unknown }).description === override.description
   );
+}
+
+/**
+ * What to tell the author when a box could not be provisioned.
+ *
+ * An eval surface has no separate "notice" channel — a failed setup IS the
+ * message the author reads — so the wording has to carry the whole story:
+ *
+ *   - the DESKTOP refusals (`desktop_pin_conflict`, `desktop_not_advertised`,
+ *     `desktop_unavailable`) already arrive as a sentence written for a human
+ *     ("this run pins a custom environment AND advertises the browser tool…"),
+ *     so they are passed through verbatim. Wrapping them in
+ *     "Could not provision the eval's reproducible sandbox: <409>" would bury
+ *     the one part the author can act on.
+ *   - CAPACITY is a WAIT, not a mistake, and which budget was hit decides what
+ *     the author does about it. A desktop wait is a different sentence — and a
+ *     different remedy — from "this deployment is full".
+ */
+const DESKTOP_SETUP_REFUSAL_CODES = new Set([
+  "desktop_pin_conflict",
+  "desktop_not_advertised",
+  "desktop_unavailable",
+  "runtime_kind_mismatch",
+]);
+
+export function describeEvalSandboxRefusal(refusal: {
+  status: number;
+  error: string;
+  code?: string;
+  resource?: string;
+}): string {
+  if (refusal.code && DESKTOP_SETUP_REFUSAL_CODES.has(refusal.code)) {
+    return refusal.error;
+  }
+  if (refusal.status === 503) {
+    return refusal.resource === "desktop"
+      ? `Waiting on desktop (browser) capacity for this organization: ${refusal.error}`
+      : `Waiting on sandbox capacity: ${refusal.error}`;
+  }
+  return `Could not provision the eval's reproducible sandbox: ${refusal.error}`;
 }
 
 function throwIfDescriptionOverrideOnHarness(
@@ -3258,24 +3300,56 @@ async function seedAndAnnotateEvalAttachments(args: {
   testCaseId: string | undefined;
   sandboxId: string;
   promptTurns: PromptTurn[];
+  /** See `buildAttachmentsNote`: the tool THIS iteration's reader holds. */
+  readWith?: string;
   signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<string | null> {
   const seeded = await seedEvalCaseAttachments({
     bearer: args.bearer,
     runId: args.runId,
     testCaseId: args.testCaseId,
     sandboxId: args.sandboxId,
+    ...(args.readWith ? { readWith: args.readWith } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
-  if (!seeded.note) return;
+  if (!seeded.note) return null;
   const firstModelTurnIndex = args.promptTurns.findIndex(
     (t) => !isPinnedTurn(t),
   );
-  if (firstModelTurnIndex < 0) return;
-  args.promptTurns[firstModelTurnIndex] = {
-    ...args.promptTurns[firstModelTurnIndex],
-    prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
-  };
+  if (firstModelTurnIndex >= 0) {
+    args.promptTurns[firstModelTurnIndex] = {
+      ...args.promptTurns[firstModelTurnIndex],
+      prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
+    };
+  }
+  // RETURNED as well as applied, because `promptTurns` is not what the model
+  // reads. Both runners drive the iteration through `executeSteps`, whose
+  // steps come from `resolveSteps(test)` — and that returns `test.steps`
+  // verbatim whenever the case carries them, so a case authored in the step
+  // model never saw this note at all: the files landed on the box and nothing
+  // told the model where. See `annotateStepsWithAttachments`.
+  return seeded.note;
+}
+
+/**
+ * Put the attachment note on the first PROMPT step, which is what the model
+ * actually reads.
+ *
+ * Returns a new array; steps are persisted and replayed, and mutating the
+ * case's own objects would write the note into the stored case.
+ */
+export function annotateStepsWithAttachments(
+  steps: TestStep[],
+  note: string | null,
+): TestStep[] {
+  if (!note) return steps;
+  const index = steps.findIndex((step) => step.kind === "prompt");
+  if (index < 0) return steps;
+  const target = steps[index]!;
+  if (target.kind !== "prompt") return steps;
+  const annotated = [...steps];
+  annotated[index] = { ...target, prompt: `${target.prompt}\n\n${note}` };
+  return annotated;
 }
 
 // PR6: the single local (BYOK) iteration runner for BOTH quick-run modes.
@@ -3466,6 +3540,8 @@ const runLocalIteration = async ({
     iterationMetadataBase.compareRunId = compareRunId;
   }
   const resolvedSteps = resolveSteps(test);
+  /** Set by attachment seeding below; applied to the executed steps. */
+  let attachmentsNote: string | null = null;
   const testCaseSnapshot = {
     title: test.title,
     query,
@@ -3702,6 +3778,10 @@ const runLocalIteration = async ({
       const pinnedEnvironmentId = (
         environment as { computerEnvironmentId?: string } | undefined
       )?.computerEnvironmentId;
+      // TERMINAL ONLY, and no `runtimeKind`. This is the local-BYOK path: it
+      // resolves NO built-in tools at all (there is no Convex auth to execute
+      // them with), so a browser can never be advertised here and a desktop
+      // box would be paid for and unused.
       if (pinnedEnvironmentId && runId !== null) {
         // Don't provision unless this server is a fully-configured data plane.
         // Provisioning only needs the user bearer, but EXEC needs E2B_API_KEY
@@ -3729,10 +3809,25 @@ const runLocalIteration = async ({
         // first turn already sees the files. Fail-honest — a seed failure throws
         // (we're inside the try) and becomes a recorded failed iteration rather
         // than a silent run without the files.
-        await seedAndAnnotateEvalAttachments({
+        // This path is TERMINAL-only (see the comment on the branch), so the
+        // reader is always the `bash` tool injected on the next line.
+        attachmentsNote = await seedAndAnnotateEvalAttachments({
           bearer: convexAuthToken,
           runId: String(runId),
-          testCaseId: test.testCaseId,
+          // The EFFECTIVE id. Today the fallback is unreachable here — the
+          // outer `testCaseId` is the quick/single-case surface, which passes
+          // `runId: null`, and no box is booted without a run — but the two
+          // must not disagree if that ever changes: a seeder handed
+          // `undefined` returns no note and silently seeds nothing.
+          //
+          // MIND THE PRECEDENCE. This matches the persistence sites, which
+          // prefer `test.testCaseId`; the two `resolveEnforcementGate` calls
+          // resolve the same pair the other way round (`testCaseId ??
+          // test.testCaseId`). Neither order is reachable with both ids set,
+          // so nothing diverges today — but a path that ever sets both must
+          // reconcile them rather than pick one, or a case would seed its
+          // attachments under one id and be policy-gated under the other.
+          testCaseId: test.testCaseId ?? testCaseId,
           sandboxId: evalSandbox.value.sandboxId,
           promptTurns,
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -3879,7 +3974,13 @@ const runLocalIteration = async ({
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
-    const steps = resolveSteps(test);
+    // ANNOTATED for the same reason as the hosted path: `resolveSteps` returns
+    // `test.steps` verbatim when the case carries them, so the note applied to
+    // `promptTurns` above would never reach a step-authored case.
+    const steps = annotateStepsWithAttachments(
+      resolveSteps(test),
+      attachmentsNote,
+    );
     const stepHandlers = buildLocalStepHandlers({
       acc,
       browser,
@@ -4540,6 +4641,8 @@ const runHostedIterationWithBrowser = async (
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  /** Set by attachment seeding below; applied to the executed steps. */
+  let attachmentsNote: string | null = null;
   // PR 4d of the engine consolidation: same resolver shape as
   // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
   // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
@@ -4667,20 +4770,39 @@ const runHostedIterationWithBrowser = async (
     resolvedExecution.browserToolPolicy,
     { source: "evals-runner" },
   );
-  const builtInTools = resolveHostTools(
-    { builtInToolIds: resolvedExecution.builtInToolIds },
-    builtInTarget && "projectId" in builtInTarget
-      ? {
-          authHeader: convexAuthToken,
-          projectId: builtInTarget.projectId,
-          ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
-          // Names THIS iteration, so an unattended browser gets a profile no
-          // other iteration of this suite can reach. The suite's project is
-          // not enough: iterations run concurrently against it.
-          ...(iterationId ? { runKey: iterationId } : {}),
-        }
-      : null,
-  );
+  // RESOLVED AFTER THE BOX, not before.
+  //
+  // A browser binds to the run's OWN sandbox, and the binding reaches the
+  // resolver on `ctx` — so the tools cannot be built until the box exists.
+  // This used to run here, unconditionally, which is why it is a thunk rather
+  // than a value: the one call site below is inside the try that turns a
+  // provisioning failure into a cleanly recorded failed iteration.
+  const buildBuiltInTools = (
+    sandboxBinding?: {
+      sandboxId: string;
+      sandboxRowId: string;
+      runtimeKind: "terminal" | "desktop-browser";
+    },
+  ) =>
+    resolveHostTools(
+      { builtInToolIds: resolvedExecution.builtInToolIds },
+      builtInTarget && "projectId" in builtInTarget
+        ? {
+            authHeader: convexAuthToken,
+            projectId: builtInTarget.projectId,
+            ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            // Names THIS iteration, so an unattended browser gets a profile no
+            // other iteration of this suite can reach. The suite's project is
+            // not enough: iterations run concurrently against it.
+            ...(iterationId ? { runKey: iterationId } : {}),
+            // The trusted binding to THIS iteration's box. It reaches the
+            // resolver on `ctx`, never on the host config, so nothing in a
+            // member-readable snapshot can forge one.
+            ...(sandboxBinding ? { sandboxBinding } : {}),
+          }
+        : null,
+    );
+  let builtInTools: ReturnType<typeof resolveHostTools>;
   // ── Harness execution inputs, resolved once per iteration.
   //
   // Both are cheap and harness-gated: `resolveWebAuthorizedHarnessStrategy`
@@ -4745,6 +4867,85 @@ const runHostedIterationWithBrowser = async (
       toolDescriptionOverride,
       resolvedExecution.harness,
     );
+
+    // ── THE BOX FIRST, because the browser binds to it ──────────────────────
+    //
+    // Provisioning used to happen after `prepareChatV2`, which was fine while
+    // the only consumer was `bash` (injected out-of-band into `allTools`). A
+    // browser rides the tool REGISTRY, and the registry needs the binding on
+    // `ctx` — so the box has to exist before the tools are resolved.
+    //
+    // Still inside this try, so a provisioning failure records a clean failed
+    // iteration rather than an unhandled throw.
+    const pinnedEnvironmentId = (
+      environment as { computerEnvironmentId?: string } | undefined
+    )?.computerEnvironmentId;
+    const sandboxNeed = needsEphemeralEvalSandbox({
+      pinnedEnvironmentId,
+      harness: resolvedExecution.harness,
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolPolicy: resolvedExecution.browserToolPolicy,
+      // The SAME two gates `resolveHostTools` reads a moment later. Without
+      // them this books a desktop box the resolver then refuses to hand any
+      // tool to — paid, idle, and for the whole iteration.
+      hostedBrowserAvailable: hostedBrowserAdvertisable(),
+      runId,
+    });
+    if (sandboxNeed.needed) {
+      if (!isComputersDataPlaneConfigured()) {
+        throw new Error(
+          sandboxNeed.runtimeKind === "desktop-browser"
+            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            : pinnedEnvironmentId
+              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
+        );
+      }
+      evalSandbox = await provisionEvalSandbox({
+        bearer: convexAuthToken,
+        runId: String(runId),
+        ...(iterationId ? { iterationId: String(iterationId) } : {}),
+        // Absent for a terminal box, so every request that predates desktops
+        // is byte-identical on the wire.
+        ...(sandboxNeed.runtimeKind === "desktop-browser"
+          ? { runtimeKind: "desktop-browser" as const }
+          : {}),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!evalSandbox.ok) {
+        throw new Error(describeEvalSandboxRefusal(evalSandbox));
+      }
+    }
+    const sandboxBinding =
+      evalSandbox?.ok && sandboxNeed.needed
+        ? {
+            sandboxId: evalSandbox.value.sandboxId,
+            sandboxRowId: evalSandbox.value.sandboxRowId,
+            // What ACTUALLY booted, read off the response rather than off the
+            // request: a reuse answers with the row's own kind.
+            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+          }
+        : undefined;
+    // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
+    // terminal binding, so a desktop request answered with a terminal box
+    // would run the iteration with no browser tools at all and score it as an
+    // ordinary result — the transcript reads as a model that never chose to
+    // browse. A control plane that answers this way predates per-run desktops.
+    // Throwing lands in the catch below, which releases the box and records a
+    // failed iteration rather than a misleading passing one.
+    if (
+      sandboxNeed.runtimeKind === "desktop-browser" &&
+      sandboxBinding?.runtimeKind !== "desktop-browser"
+    ) {
+      throw new Error(
+        "This eval declares a browser tool policy, which needs a desktop " +
+          "computer, but the control plane provisioned a terminal one — it " +
+          "does not support per-run desktop boxes yet. Remove the browser " +
+          "tool from this host config, or update the deployment.",
+      );
+    }
+    builtInTools = buildBuiltInTools(sandboxBinding);
+
     prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -4794,51 +4995,47 @@ const runHostedIterationWithBrowser = async (
         ),
       );
     }
-    // Pinned env → boot a fresh ephemeral sandbox and add the `bash` tool to
-    // prepared.allTools (the hosted path serializes those to toolDefs for the
-    // backend agent, then executes tool calls inspector-side). A provision
-    // failure throws → the catch below persists a failed iteration.
-    const pinnedEnvironmentId = (
-      environment as { computerEnvironmentId?: string } | undefined
-    )?.computerEnvironmentId;
+    // Seed the case's attachments onto the box whenever anything in this
+    // iteration can READ it — the emulated `bash` tool below, or a harness
+    // running on the box with its own file tools. See
+    // `evalBoxFilesystemIsReachable`; both gates read what ACTUALLY booted
+    // rather than what the need asked for, for the same reason
+    // `sandboxBinding` does.
     if (
-      needsEphemeralEvalSandbox({
-        pinnedEnvironmentId,
+      sandboxBinding &&
+      evalBoxFilesystemIsReachable({
+        runtimeKind: sandboxBinding.runtimeKind,
         harness: resolvedExecution.harness,
-        runId,
       })
     ) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          pinnedEnvironmentId
-            ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-        );
-      }
-      evalSandbox = await provisionEvalSandbox({
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
-      if (!evalSandbox.ok) {
-        throw new Error(
-          `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
-        );
-      }
       // COMP-17: seed the case's pinned attachments before exposing `bash`
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
-      await seedAndAnnotateEvalAttachments({
+      attachmentsNote = await seedAndAnnotateEvalAttachments({
         bearer: convexAuthToken,
         runId: String(runId),
-        testCaseId: test.testCaseId,
-        sandboxId: evalSandbox.value.sandboxId,
+        // The EFFECTIVE id — see the identical note on the local path.
+        testCaseId: test.testCaseId ?? testCaseId,
+        sandboxId: sandboxBinding.sandboxId,
         promptTurns,
+        // Name the tool this iteration's reader actually holds: the `bash`
+        // injected just below on a terminal box, or the harness's own file
+        // tools on a desktop one, which has no shell to offer.
+        readWith:
+          sandboxBinding.runtimeKind === "terminal"
+            ? "the bash tool"
+            : "your file tools",
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
+    }
+    // `bash` is injected OUT-OF-BAND into the prepared tool map (the hosted
+    // path serializes those to toolDefs for the backend agent, then executes
+    // tool calls inspector-side), so it lands here rather than through the
+    // registry — and only for a TERMINAL box, the only class that has a shell
+    // to offer.
+    if (sandboxBinding && sandboxBinding.runtimeKind === "terminal") {
       prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
-        sandboxId: evalSandbox.value.sandboxId,
+        sandboxId: sandboxBinding.sandboxId,
       });
     }
   } catch (error) {
@@ -4979,7 +5176,13 @@ const runHostedIterationWithBrowser = async (
   // Hosted unify: drive the iteration through executeSteps; the handlers wrap
   // driveHostedEvalTurn (which mutates the acc), so the post-loop verdict +
   // finishParams below consume `acc` + the executor's StepExecutionState.
-  const steps = resolveSteps(test);
+  // ANNOTATED, because `resolveSteps` returns `test.steps` verbatim when the
+  // case carries them — so the note `seedAndAnnotateEvalAttachments` put on
+  // `promptTurns` would never reach the model on a step-authored case.
+  const steps = annotateStepsWithAttachments(
+    resolveSteps(test),
+    attachmentsNote,
+  );
   /**
    * What the run FROZE about tool-call evidence, as reported by the first
    * harness turn's proxy-token mint.
