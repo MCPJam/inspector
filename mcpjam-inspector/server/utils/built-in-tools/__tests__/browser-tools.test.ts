@@ -95,6 +95,20 @@ function echoingDaemon(): (command: any) => Promise<SendResult> {
   };
 }
 
+/**
+ * A page is open and declares no tools of its own — the steady state the
+ * builder sees on every turn but a session's first. `build()` supplies it by
+ * default so the cases below measure the first-class shape (the listing verb
+ * retired); a case about the FIRST turn passes `pageTools: undefined`.
+ */
+const OPEN_PAGE = {
+  tools: [],
+  bootId: "boot-1",
+  tabId: "@session",
+  navCounter: 1,
+  canBind: true,
+};
+
 function build(
   over: Partial<Parameters<typeof buildBrowserTools>[0]> = {},
   send: (command: any) => Promise<SendResult> = async () => OK,
@@ -105,6 +119,7 @@ function build(
     authHeader: "Bearer user",
     projectId: "project-1",
     approvalDelivery: { kind: "attested" },
+    pageTools: OPEN_PAGE,
     // The unattended cases below are about POLICY, which is engine-blind — but
     // the HOSTED engine refuses an unattended run outright (its one computer
     // per project+member is shared by every run), so they run on the local
@@ -1381,6 +1396,45 @@ describe("buildBrowserTools — first-class page tools", () => {
     expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
     expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
     expect(built.pageTools).toBeUndefined();
+  });
+
+  it("keeps BOTH verbs on a turn with NO snapshot — a session's first", () => {
+    // Before the first navigate there is no tab, so the turn-start peek has
+    // no page to describe and the builder gets no snapshot. Nothing
+    // first-class can be built from that and no refresher can grow it, so the
+    // generic verbs are all the model has. Retiring them here left the first
+    // turn of every fresh session with no way to list a page's tools and, on
+    // routes that also retire the invoke verb, no way to call one.
+    const { ensureSession, sendCommand } = fakeSession(async () => ({
+      ...OK,
+      result: {
+        ...OK.result!,
+        webmcpTools: { revision: 1, hash: "h", count: 2, supported: true },
+      },
+    }));
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: undefined,
+        dynamicPageTools: true,
+      }),
+    )!;
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+    expect(built.pageTools).toBeUndefined();
+    expect(built.refreshPageTools).toBeUndefined();
+    // And the model is told the truth about this turn: list, then call — not
+    // that the page's tools are "available directly" when none were built.
+    return (built.tools.browser_navigate as any)
+      .execute({ url: "https://pizza.test" }, {})
+      .then((result: any) => {
+        expect(sendCommand).toHaveBeenCalled();
+        expect(result.pageToolsNote).toContain("browser_webmcp_tools");
+        expect(result.pageToolsNote).not.toContain("directly");
+      });
   });
 
   it("FLAG ON: retires the listing verb but keeps a way to ACT", () => {

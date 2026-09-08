@@ -1439,6 +1439,13 @@ chatV2.post("/", async (c) => {
                   // constructor argument and never re-reads it, so claiming it here
                   // would withdraw the fallback and put nothing in its place.
                   browserDynamicPageTools: !resolvedExecution.harness,
+                  // KEPT HERE, dropped later. Which engine runs this turn is
+                  // decided below, and two of them — local-org and direct
+                  // BYOK — never consume `refreshTools`; retiring the verb
+                  // from here took the page away from them after the model
+                  // navigated. `refreshingEngineTools` drops it on the two
+                  // hosted paths that do refresh. Mirrors the web route.
+                  browserRetireInvokeVerb: false as const,
                 }
               : {}),
             onBrowserPageTools: ({ minted }) => {
@@ -1762,6 +1769,22 @@ chatV2.post("/", async (c) => {
           }),
       },
     );
+    /**
+     * The tool set for an engine that CAN grow it mid-turn.
+     *
+     * `browser_webmcp_invoke` was kept at build time (`browserRetireInvokeVerb:
+     * false` above) because which engine runs is only known here. Two of them
+     * — local-org and direct BYOK — never consume `refreshTools`, so the verb
+     * is their only way to reach a page the model navigated to after the turn
+     * started. Dropped ONLY on the two hosted paths that pass `refreshTools`
+     * below, which is the safe direction: an extra tool costs a line in the
+     * list, a missing one costs the page. Mirrors `web-chat-turn.ts`.
+     */
+    const refreshingEngineTools = (): ToolSet => {
+      if (!pageToolRefresh) return allTools as ToolSet;
+      const { browser_webmcp_invoke: _retired, ...rest } = allTools as ToolSet;
+      return rest as ToolSet;
+    };
     const scopeStepUpEngineResume = scopeStepUpResumeRequest
       ? buildLocalScopeStepUpResume({
           request: scopeStepUpResumeRequest,
@@ -1850,7 +1873,7 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader,
@@ -2132,7 +2155,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,

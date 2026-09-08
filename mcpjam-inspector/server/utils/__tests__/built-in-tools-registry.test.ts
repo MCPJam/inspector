@@ -585,12 +585,17 @@ describe("resolveHostTools — browser", () => {
         { builtInToolIds: ["browser"], computer },
         browserCtx,
       );
+      // SIX, including the listing verb: this ctx carries no page-tool
+      // snapshot, which is a session's first turn — no page has been read, so
+      // nothing first-class can replace the verb that lists a page's tools.
+      // The first-class shape (five) is pinned below, with a snapshot.
       expect(Object.keys(tools ?? {}).sort()).toEqual([
         "browser_act",
         "browser_navigate",
         "browser_observe",
         "browser_tabs",
         "browser_webmcp_invoke",
+        "browser_webmcp_tools",
       ]);
     });
   });
@@ -851,12 +856,15 @@ describe("resolveHostTools — browser engines", () => {
         { builtInToolIds: ["browser"], computer },
         localCtx,
       );
+      // No snapshot on this ctx ⇒ the listing verb stays (see the hosted
+      // case above for why).
       expect(Object.keys(tools ?? {}).sort()).toEqual([
         "browser_act",
         "browser_navigate",
         "browser_observe",
         "browser_tabs",
         "browser_webmcp_invoke",
+        "browser_webmcp_tools",
       ]);
     });
   });

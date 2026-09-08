@@ -676,7 +676,18 @@ export function buildBrowserTools(
   // would then resolve the call by name and run whatever carries it. Retiring
   // the invoke verb there would leave the model with no page tools AND no way
   // to reach one.
-  const canBindPageTools = opts.pageTools?.canBind !== false;
+  //
+  // AND ONLY WHEN THERE IS A SNAPSHOT AT ALL. `opts.pageTools` is absent when
+  // the turn-start peek could not describe a page: before the first navigate
+  // there is no tab, and a session that has not started has nothing to peek.
+  // Nothing first-class can be built from that and no refresher can grow it,
+  // so the generic verbs are all the model would have — and retiring them
+  // here left the first turn of every fresh session with no way to list a
+  // page's tools and, on some routes, no way to call one. That turn runs in
+  // verbs mode; the next, with a page open, gets the page's tools as tools.
+  const hasPageToolSnapshot = opts.pageTools !== undefined;
+  const canBindPageTools =
+    hasPageToolSnapshot && opts.pageTools?.canBind !== false;
   const retireLegacyWebmcpVerbs =
     firstClassPageTools &&
     canBindPageTools &&
@@ -839,10 +850,13 @@ export function buildBrowserTools(
 
   // What an observation says about the page's tools. Computed once: it is a
   // property of the TURN (which engine, which mode), not of a call.
+  // Both gated on `canBindPageTools`, like the verbs: a turn that kept the
+  // listing verb must be told to use it, not that the page's tools are
+  // "available directly" when none were built.
   const presented = (outcome: CommandOutcome & { tabId: string }) =>
     present(outcome, {
-      firstClass: firstClassPageTools,
-      dynamic: opts.dynamicPageTools === true,
+      firstClass: firstClassPageTools && canBindPageTools,
+      dynamic: opts.dynamicPageTools === true && canBindPageTools,
     });
 
   const tools: ToolSet = {};
@@ -1576,6 +1590,18 @@ export function describeBrowserTools(
       throw new Error(
         "describeBrowserTools builds definitions only; nothing may execute",
       );
+    },
+    // The STEADY state: a page is open and declares no tools of its own. That
+    // is the shape the model sees on every turn but a session's first, and the
+    // one a pane describing the toolset should show. Without a snapshot the
+    // builder keeps the listing verb (a first turn has no page to have read),
+    // which would describe a toolset one tool larger than the usual one.
+    pageTools: {
+      tools: [],
+      bootId: "describe",
+      tabId: DEFAULT_QUEUE_KEY,
+      navCounter: 0,
+      canBind: true,
     },
   });
   if (!built) return [];
