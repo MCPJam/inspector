@@ -1646,6 +1646,7 @@ async function startFileRunFixture(options?: {
   updateQueries: Record<string, string>[];
   deletedCaseIds: string[];
   suitePatches: unknown[];
+  suitePatchQueries: Record<string, string>[];
   runBodies: unknown[];
   close: () => Promise<void>;
 }> {
@@ -1657,6 +1658,7 @@ async function startFileRunFixture(options?: {
   const updateQueries: Record<string, string>[] = [];
   const deletedCaseIds: string[] = [];
   const suitePatches: unknown[] = [];
+  const suitePatchQueries: Record<string, string>[] = [];
   const runBodies: unknown[] = [];
   let environmentIds: string[] = [];
   let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
@@ -1929,6 +1931,7 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       suitePatches.push(body);
+      suitePatchQueries.push(Object.fromEntries(url.searchParams));
       if (Array.isArray(body.environmentIds)) {
         environmentIds = body.environmentIds;
       }
@@ -2008,6 +2011,7 @@ async function startFileRunFixture(options?: {
     updateQueries,
     deletedCaseIds,
     suitePatches,
+    suitePatchQueries,
     runBodies,
     close: () =>
       new Promise<void>((resolve, reject) =>
