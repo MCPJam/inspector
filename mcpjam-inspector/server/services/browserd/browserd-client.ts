@@ -169,11 +169,18 @@ export class BrowserdClient {
    * client's flat 30s that call was aborted at the transport while the tool
    * was still running perfectly well, and the caller was told "the browser
    * rejected the command".
+   *
+   * `options.signal` aborts THIS request when the caller gives up. It stops the
+   * waiting, not the work: the daemon has already admitted the command and the
+   * page's tool keeps running, so a caller that wants the page to stop must
+   * also send `webmcp_cancel`. It is threaded anyway because a stopped turn
+   * that keeps a socket open for the full page-tool timeout is a socket per
+   * abandoned tool call.
    */
   async sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<BrowserdCommandResponse> {
     const res = await this.request(
       "/v1/commands",
@@ -184,6 +191,7 @@ export class BrowserdClient {
       },
       true,
       options?.timeoutMs,
+      options?.signal,
     );
     return decodeCommandResponse({
       status: res.status,
@@ -456,13 +464,21 @@ export class BrowserdClient {
     init: RequestInit,
     authenticated: boolean,
     timeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const headers = new Headers(init.headers);
     if (authenticated) headers.set("authorization", `Bearer ${this.bearer}`);
+    const deadline = AbortSignal.timeout(timeoutMs ?? this.timeoutMs);
     return this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(timeoutMs ?? this.timeoutMs),
+      // BOTH, so a caller's cancellation is not swallowed by our deadline and
+      // our deadline is not lost by accepting theirs. Aborting the HTTP
+      // request does NOT stop what the daemon is doing — that takes a
+      // `webmcp_cancel`, which the caller issues — but leaving this
+      // un-threaded meant a stopped turn still held a socket open for the full
+      // page-tool timeout.
+      signal: signal ? AbortSignal.any([deadline, signal]) : deadline,
     });
   }
 

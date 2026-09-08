@@ -1264,3 +1264,267 @@ describe("describeBrowserTools", () => {
     );
   });
 });
+
+describe("buildBrowserTools — first-class page tools", () => {
+  const PAGE_TOOLS = {
+    tools: [
+      {
+        name: "add_topping",
+        description: "Add a topping",
+        origin: "https://pizza.test",
+        isMainFrame: true,
+        frameId: "frame-main",
+        registrationSeq: 2,
+        inputSchema: {
+          type: "object",
+          properties: { topping: { enum: ["pepperoni", "mushroom"] } },
+          required: ["topping"],
+        },
+      },
+    ],
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 1,
+  };
+
+  function withFlag<T>(mode: string | undefined, run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    if (mode === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = mode;
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
+  }
+
+  it("FLAG OFF: page tools are ignored and the six verbs are untouched", () => {
+    // The rollback claim, pinned. "Unset the variable and you are back to
+    // yesterday" is something somebody will rely on at 3am.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag(undefined, () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+    expect(Object.keys(built.tools).sort()).toEqual([...BROWSER_TOOL_NAMES].sort());
+    expect(built.pageTools).toBeUndefined();
+  });
+
+  it("FLAG ON: advertises the page's tools beside the verbs", () => {
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+      }),
+    )!;
+    expect(Object.keys(built.tools)).toContain("webmcp_add_topping");
+    expect(built.pageTools?.map((tool) => tool.name)).toEqual([
+      "webmcp_add_topping",
+    ]);
+    // And it gates, on the SAME classification slot the verbs use.
+    expect(built.approvals.requiredNames.has("webmcp_add_topping")).toBe(true);
+  });
+
+  it("retires the generic verbs only on an engine that can grow mid-turn", () => {
+    const { ensureSession } = fakeSession(async () => OK);
+    const dynamic = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+    expect(Object.keys(dynamic.tools)).not.toContain("browser_webmcp_tools");
+    expect(Object.keys(dynamic.tools)).not.toContain("browser_webmcp_invoke");
+
+    // An engine that CANNOT discover a page's tools mid-turn keeps them:
+    // otherwise turning this on would remove the only way to reach a page the
+    // model navigated to after the turn started.
+    const staticEngine = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+      }),
+    )!;
+    expect(Object.keys(staticEngine.tools)).toContain("browser_webmcp_invoke");
+  });
+
+  it("sends the invocation with its binding, and shapes the result like a verb", async () => {
+    const commands: any[] = [];
+    const { ensureSession } = fakeSession(async (command) => {
+      commands.push(command);
+      return {
+        status: "ok",
+        result: { ok: true, output: { url: "https://pizza.test", result: "added" } },
+      };
+    });
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+    const result = await (built.tools.webmcp_add_topping as any).execute(
+      { topping: "pepperoni" },
+      {},
+    );
+    expect(commands[0].action).toMatchObject({
+      kind: "webmcp_invoke",
+      toolKey: "add_topping",
+      expectedBinding: {
+        bootId: "boot-1",
+        tabId: "@session",
+        navCounter: 1,
+        frameId: "frame-main",
+        registrationSeq: 2,
+      },
+    });
+    expect(result.pageTool).toMatchObject({ rawName: "add_topping" });
+    // The page's own words are fenced, exactly as every other browser result is.
+    const model = (built.tools.webmcp_add_topping as any).toModelOutput({
+      output: result,
+    });
+    const text = model.value.map((part: any) => part.text ?? "").join("\n");
+    expect(text).toContain("MCPJAM_PAGE_CONTENT");
+    expect(text).toContain("added");
+  });
+
+  it("refuses an invalid call before any command reaches the daemon", async () => {
+    const { ensureSession, sendCommand } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+    const result = await (built.tools.webmcp_add_topping as any).execute(
+      { topping: "pineapple" },
+      {},
+    );
+    expect(result.error).toContain("invalid_arguments");
+    expect(sendCommand).not.toHaveBeenCalled();
+    // A refusal must not even resolve the session: a turn whose only page-tool
+    // call was malformed should not boot a browser.
+    expect(ensureSession).not.toHaveBeenCalled();
+  });
+
+  it("ABORT: asks the page to cancel, and reports a cancellation", async () => {
+    // Dropping the HTTP request stops us waiting; it does not stop the page,
+    // which is inside its own handler. Without an actual cancel the user
+    // pressed Stop and the form submitted anyway.
+    const commands: any[] = [];
+    const controller = new AbortController();
+    const { ensureSession } = fakeSession(async (command) => {
+      commands.push(command);
+      if (command.action?.kind === "webmcp_invoke") {
+        controller.abort();
+        // The transport rejects the way `fetch` does on an aborted signal.
+        throw Object.assign(new Error("This operation was aborted"), {
+          name: "AbortError",
+        });
+      }
+      return { status: "ok", result: { ok: true, output: { cancelled: true } } };
+    });
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+    const result = await (built.tools.webmcp_add_topping as any).execute(
+      { topping: "pepperoni" },
+      { abortSignal: controller.signal },
+    );
+    expect(result.error).toContain("webmcp_cancelled");
+    const cancel = commands.find(
+      (command) => command.action?.kind === "webmcp_cancel",
+    );
+    // Keyed on the INVOKE's commandId — the only id the server holds before a
+    // synchronous invoke settles.
+    expect(cancel?.action.commandId).toBe(
+      commands.find((command) => command.action?.kind === "webmcp_invoke")
+        ?.commandId,
+    );
+  });
+
+  it("drops a page tool that collides with a browser verb name", () => {
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: {
+          ...PAGE_TOOLS,
+          tools: [
+            {
+              name: "act",
+              description: "",
+              origin: "https://pizza.test",
+              isMainFrame: true,
+              frameId: "frame-main",
+              registrationSeq: 1,
+            },
+          ],
+        },
+      }),
+    )!;
+    // Not a real collision — the prefix is what prevents one — so it IS
+    // advertised, under a name that cannot be mistaken for `browser_act`.
+    expect(Object.keys(built.tools)).toContain("webmcp_act");
+    expect(built.tools.browser_act).toBeDefined();
+  });
+
+  it("advertises no page tools for an unattended read_only run", () => {
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        runKey: "run-1",
+        // Its own disposable box: an unattended HOSTED run without one is
+        // suppressed outright, which would prove nothing about read_only.
+        sandboxTarget: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+        approvalDelivery: {
+          kind: "unattended",
+          policy: { mode: "read_only" },
+        },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+      }),
+    )!;
+    expect(Object.keys(built.tools).some((name) => name.startsWith("webmcp_"))).toBe(
+      false,
+    );
+  });
+});

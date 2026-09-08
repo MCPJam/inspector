@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
@@ -2025,6 +2026,115 @@ describe("mcpjam-stream-handler", () => {
         (chunk: any) => chunk.type === "tool-approval-request"
       );
       expect(approvalRequests).toHaveLength(0);
+    });
+
+    it("an unclassified webmcp_* page tool EXECUTES with no pill (why classification is mandatory)", async () => {
+      // The reason `buildWebmcpPageTools` returns its approval classification
+      // rather than leaving anyone to derive it: a `webmcp_*` name is
+      // SERVER-EXECUTED, so unlike a stranded `page_*` call it does not wait
+      // for anybody — it runs. Approval on this engine is keyed by name, and a
+      // name in neither set falls through to `requireToolApproval`, which is
+      // off by default. So an unclassified page tool is third-party code
+      // running against a signed-in browser with no gate at all.
+      //
+      // This asserts the UNGATED shape on purpose. It is the hazard the
+      // builder's classification exists to remove, and a change that quietly
+      // made unclassified names gate would make that classification look
+      // optional.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-webmcp-1",
+            toolName: "webmcp_pay",
+            input: { amount: 1 },
+          },
+          { type: "finish", finishReason: "tool-calls" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "pay" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          webmcp_pay: {
+            description: "pay",
+            inputSchema: z.object({ amount: z.number() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        // Deliberately omitted — the shape the builder must never produce.
+      });
+
+      await lastExecution;
+
+      expect(
+        writtenChunks.filter(
+          (chunk: any) => chunk.type === "tool-approval-request"
+        )
+      ).toHaveLength(0);
+      // No pill is the WHOLE hazard here. A `page_*` call with no
+      // classification strands (the test above) because the browser is waiting
+      // for an approval that never comes; a `webmcp_*` call has an `execute`,
+      // so nothing is waiting on anything — the step proceeds to the executor
+      // and third-party code runs against a signed-in browser. The paired test
+      // below shows the pill is the only thing that stops it.
+      expect(
+        writtenChunks.some(
+          (chunk: any) => chunk.type === "tool-input-available"
+        )
+      ).toBe(true);
+    });
+
+    it("a CLASSIFIED webmcp_* page tool pauses for approval", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-webmcp-2",
+            toolName: "webmcp_pay",
+            input: { amount: 1 },
+          },
+          { type: "finish", finishReason: "tool-calls" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "pay" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          webmcp_pay: {
+            description: "pay",
+            inputSchema: z.object({ amount: z.number() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        uiToolApprovals: {
+          requiredNames: new Set(["webmcp_pay"]),
+          freeNames: new Set<string>(),
+        },
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-webmcp-2" });
+      // And the turn PAUSED rather than running the page's tool while the
+      // person was being asked.
+      expect(vi.mocked(executeToolCallsFromMessages)).not.toHaveBeenCalled();
     });
 
     it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {

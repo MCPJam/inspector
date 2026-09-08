@@ -180,6 +180,36 @@ export function hostedBrowserEnabled(
 }
 
 /**
+ * How a page's WebMCP tools reach the model.
+ *
+ *   - `verbs` (default) — today's behaviour, byte for byte: the model lists a
+ *     page's tools with `browser_webmcp_tools` and calls one by name through
+ *     `browser_webmcp_invoke` with an untyped `input`.
+ *   - `first_class` — each page tool becomes its own server-executed
+ *     `webmcp_*` model tool, with the page's schema advertised verbatim,
+ *     arguments validated before any command leaves this process, and an
+ *     ordinary approval pill.
+ *
+ * A MODE rather than a boolean because the rollback has to be exact. "Flag off
+ * restores today's behaviour" is a claim somebody will rely on at 3am, and it
+ * only holds if the off position leaves the six verbs and their descriptions
+ * untouched — which a boolean that also gated half a refactor would not.
+ *
+ * READ AT CALL TIME, like `hostedBrowserEnabled` beside it: flipped
+ * per-process in staging and per-test, and a module constant would freeze
+ * whatever the environment said when this module first loaded.
+ */
+export type WebmcpPageToolsMode = "verbs" | "first_class";
+
+export function webmcpPageToolsMode(
+  env: NodeJS.ProcessEnv = process.env,
+): WebmcpPageToolsMode {
+  return env.MCPJAM_WEBMCP_PAGE_TOOLS === "first_class"
+    ? "first_class"
+    : "verbs";
+}
+
+/**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
  * eval model as a per-turn system-prompt addendum, so the model reasons over a
  * widget interaction on its next turn (the headless analogue of Playground's
