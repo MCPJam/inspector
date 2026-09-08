@@ -894,6 +894,16 @@ export function SuiteIterationsView({
 
   const handleCommitSettings = useCallback(
     async (note: string) => {
+      // The LAST gate, not the only one. The commit bar and the review dialog
+      // are both withheld while `editingDisabled`, but the lock can arrive
+      // while a dialog is already open — a CI run stamping the row, or the
+      // capability query resolving — and this is the function that actually
+      // writes. Guarding only where the button renders is what put a Delete on
+      // a CI-owned suite twice already in this change.
+      if (editingDisabled) {
+        setReviewOpen(false);
+        return;
+      }
       const outcome = await commit({
         draft,
         suiteId: suite._id,
@@ -934,22 +944,26 @@ export function SuiteIterationsView({
         // rebase effect above does the real comparison then.
       }
     },
-    [commit, draft, suite],
+    [commit, draft, suite, editingDisabled],
   );
 
   // ⌘S opens the review rather than saving: the shortcut means "commit what I
   // did", and in a sheet with a review step the honest response is to show
   // them what that is.
+  //
+  // Gated on `editingDisabled` too: a draft made before the suite locked
+  // survives the lock, and without this the keyboard would still open a review
+  // for it — a commit path that never passes the disabled fieldset.
   useEffect(() => {
     if (!hasUnsavedSettings) return;
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key !== "s") return;
       event.preventDefault();
-      if (draftCanCommit) setReviewOpen(true);
+      if (draftCanCommit && !editingDisabled) setReviewOpen(true);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [hasUnsavedSettings, draftCanCommit]);
+  }, [hasUnsavedSettings, draftCanCommit, editingDisabled]);
   const suiteScenarioMigrationCount = useMemo(
     () =>
       splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
@@ -2808,8 +2822,13 @@ export function SuiteIterationsView({
           </div>
         </div>
       )}
+      {/*
+       * Withheld exactly as the commit bar above is. It used to render
+       * unconditionally, so a lock arriving while the dialog was open left a
+       * Save that could only produce a `409`.
+       */}
       <ReviewAndSaveDialog
-        open={reviewOpen}
+        open={reviewOpen && !editingDisabled}
         onOpenChange={setReviewOpen}
         requireNote={dirtySettingKeys.has("gatePolicy")}
         changes={draftChanges}

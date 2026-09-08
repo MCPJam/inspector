@@ -100,7 +100,10 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
-import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
+import {
+  CI_OWNED_REASON_COPY,
+  isCiOwnedSuite,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -692,7 +695,22 @@ function EvaluateTabContent({
   // Exact (case-insensitive) matches only against the loaded overview: the
   // suite id, the stored name, or the switcher's display name (timestamp
   // suffix stripped). Unknown or ambiguous → invalid_request, never a guess.
-  const resolveSuiteEntry = (raw: unknown): EvalSuiteOverviewEntry => {
+  //
+  // `intent` IS REQUIRED, deliberately with no default, so a command cannot be
+  // added without deciding. An agent command is a second door into the same
+  // mutations the buttons call, and it passes none of the rendered controls
+  // the CI-owned lock lives in — so a lock that only hides affordances is no
+  // lock at all here. `case.create` (generate) and `suite.delete` are both in
+  // the platform's locked set: an agent pointed at a CI-owned suite gets a
+  // `409`, which is the same offer-then-refuse this whole change removes.
+  //
+  // `"read"` is not "harmless" — it is "writes no configuration". Running and
+  // cancelling stay readable on a CI-owned suite, because running one from the
+  // app is exactly what locking edits rather than the suite exists to keep.
+  const resolveSuiteEntry = (
+    raw: unknown,
+    intent: "read" | "write",
+  ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
@@ -710,7 +728,14 @@ function EvaluateTabContent({
       );
     });
     if (matches.length === 1) {
-      return matches[0];
+      const entry = matches[0];
+      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+        throw createInspectorCommandClientError(
+          "invalid_request",
+          `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+        );
+      }
+      return entry;
     }
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
@@ -794,7 +819,7 @@ function EvaluateTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "read");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -847,7 +872,7 @@ function EvaluateTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "write");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -883,7 +908,7 @@ function EvaluateTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "write");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
