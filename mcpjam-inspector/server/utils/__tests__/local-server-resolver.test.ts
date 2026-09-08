@@ -329,6 +329,7 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       headers?: Record<string, string>;
       hasHeaders?: boolean;
+      secretsBoundOrigin?: string;
     };
     oauthAccessToken: string | null;
   }) {
@@ -1055,6 +1056,10 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
                   useXaa: true,
                   authServerMode: "mcpjam",
                   clientId: "xaa-client",
+                  // MJ-003: bound to its own origin. Without it the gate
+                  // refuses this preregistered row before the identity check,
+                  // which is not the contract under test here.
+                  secretsBoundOrigin: "https://xaa.example.com",
                   // Backend omitted BOTH identity members and sent the
                   // actionable error instead (legacy partial override).
                   xaaIdentityError: identityError,

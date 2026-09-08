@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   credentialOriginOf,
   pendingCredentialClearForUrlEdit,
+  rowHoldsStoredCredential,
 } from "../credential-origin";
 
 describe("credentialOriginOf", () => {
@@ -118,31 +119,6 @@ describe("pendingCredentialClearForUrlEdit", () => {
  * predicate now reads the ROW, so these pin the shapes it has to recognise.
  */
 describe("which rows count as holding a stored credential", () => {
-  // Mirrors the OR chain in `use-server-form.ts`. Kept here rather than
-  // exported from the hook because the hook needs React; the shapes are the
-  // contract worth pinning.
-  function rowHoldsStoredCredential(server: {
-    hasEnv?: boolean;
-    hasHeaders?: boolean;
-    hasBearerToken?: boolean;
-    hasClientSecret?: boolean;
-    oauthTokens?: unknown;
-    config?: { requestInit?: { headers?: Record<string, string> } };
-  }): boolean {
-    const headers = server.config?.requestInit?.headers;
-    return Boolean(
-      server.hasEnv === true ||
-        server.hasHeaders === true ||
-        server.hasBearerToken === true ||
-        server.hasClientSecret === true ||
-        server.oauthTokens != null ||
-        (headers &&
-          Object.values(headers).some(
-            (v) => typeof v === "string" && v.length > 0
-          ))
-    );
-  }
-
   it.each([
     ["hasEnv", { hasEnv: true }],
     ["hasHeaders", { hasHeaders: true }],
@@ -173,6 +149,12 @@ describe("which rows count as holding a stored credential", () => {
       { config: { requestInit: { headers: { "X-Api-Key": "" } } } },
     ],
     ["oauthTokens null", { oauthTokens: null }],
+    // A non-record `headers` is not a credential. The mirrored copy this suite
+    // used to run answered `true` here, which is the drift that made it useless.
+    [
+      "a header array rather than a record",
+      { config: { requestInit: { headers: ["x"] } } },
+    ],
   ])("%s does not count", (_label, server) => {
     expect(rowHoldsStoredCredential(server)).toBe(false);
   });

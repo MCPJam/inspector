@@ -137,23 +137,25 @@ describe("assertSecretsOriginMatches", () => {
   });
 });
 
+// Both resolver describes need Convex configured and the fetch stub torn down.
+// Hoisted so a third one does not fork another copy and drift from these two.
+const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+const fakeContext = { set: () => {}, get: () => undefined } as any;
+
+beforeEach(() => {
+  process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+});
+
+afterEach(() => {
+  if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+    delete process.env.CONVEX_HTTP_URL;
+  } else {
+    process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+  }
+  vi.unstubAllGlobals();
+});
+
 describe("local resolver — MJ-003 gate (desktop and /api/mcp)", () => {
-  const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
-  const fakeContext = { set: () => {}, get: () => undefined } as any;
-
-  beforeEach(() => {
-    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-  });
-
-  afterEach(() => {
-    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
-      delete process.env.CONVEX_HTTP_URL;
-    } else {
-      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
-    }
-    vi.unstubAllGlobals();
-  });
-
   function localAuthorize(serverConfig: Record<string, unknown>) {
     return vi.fn(async (input: any) => {
       const url = String(input instanceof Request ? input.url : input);
@@ -279,22 +281,6 @@ describe("assertSecretsOriginMatches — malformed bindings", () => {
 });
 
 describe("local resolver — the OAuth half of the gate", () => {
-  const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
-  const fakeContext = { set: () => {}, get: () => undefined } as any;
-
-  beforeEach(() => {
-    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-  });
-
-  afterEach(() => {
-    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
-      delete process.env.CONVEX_HTTP_URL;
-    } else {
-      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
-    }
-    vi.unstubAllGlobals();
-  });
-
   function authorizeOnly(serverConfig: Record<string, unknown>, token: unknown) {
     return vi.fn(async (input: any) => {
       const url = String(input instanceof Request ? input.url : input);
@@ -372,6 +358,75 @@ describe("local resolver — the OAuth half of the gate", () => {
     expect(config.requestInit.headers).toMatchObject({
       Authorization: "Bearer valid-oauth-token",
     });
+  });
+
+  it("refuses an OAuth row with no recorded binding at all", async () => {
+    // Absence, not mismatch. This is the pre-backfill shape, and the one the
+    // /api/mcp connect fixtures carried until this change: an unbound row
+    // holding a credential is a refusal, never consent.
+    const fetchMock = authorizeOnly(
+      {
+        transportType: "http",
+        url: "https://owner.example.com/mcp",
+        headers: {},
+        useOAuth: true,
+      },
+      "victim-oauth-token"
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer", "proj-1", "srv-1", {
+        serverDisplayName: "oauth-only",
+      })
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("refuses a repointed discover row whose refresh produced a token", async () => {
+    // The discover rung holds no token on the way in, so the gate above it
+    // cannot fire — and the refresh then spends the row's stored material and
+    // hands back a bearer. Without the second check that bearer went to the
+    // new host.
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-1": {
+                ok: true,
+                role: "owner",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://collector.attacker.example/mcp",
+                  headers: {},
+                  authMethod: "auto",
+                  secretsBoundOrigin: "https://owner.example.com",
+                },
+                oauthAccessToken: null,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({ accessToken: "refreshed-victim-token" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer", "proj-1", "srv-1", {
+        serverDisplayName: "discover-row",
+      })
+    ).rejects.toMatchObject({ status: 403 });
   });
 
   it("leaves an unauthenticated row alone, bound or not", async () => {

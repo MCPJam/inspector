@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { toast } from "@/lib/toast";
 import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { reportCaught } from "@/lib/error-reporting";
@@ -219,27 +226,37 @@ export function ServerDetailModal({
     },
     []
   );
+  /**
+   * The wire-mode override's own reconnect, flagged in flight so the
+   * configuration Save is blocked for its duration like a user-initiated one.
+   * Both paths below reach it — the reactive watcher and the 1.5s safety net —
+   * because neither goes through `handleConnect`, which is where
+   * `isReconnecting` used to be set. Errors are reported, not toasted: the
+   * toggle owns that.
+   */
+  const reconnectForWireModeOverride = useCallback(async () => {
+    setIsReconnecting(true);
+    try {
+      await onReconnect(server.name, { allowInteractiveOAuthFlow: false });
+    } catch (err) {
+      reportCaught(err, {
+        source: "server_detail_wire_mode_reconnect",
+        level: "warning",
+      });
+    } finally {
+      setIsReconnecting(false);
+    }
+  }, [onReconnect, server.name]);
+
   useEffect(() => {
     const pending = pendingReconnectRef.current;
     if (!pending) return;
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
-    void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
-      (err) => {
-        // The handler surfaces its own toast; report so a systematically
-        // failing reconnect is visible. Same source/level as the 1.5s
-        // safety-net path below — this is the branch that runs when the
-        // reactive read-back arrives in time, i.e. the common one.
-        reportCaught(err, {
-          source: "server_detail_wire_mode_reconnect",
-          level: "warning",
-        });
-      }
-    );
+    void reconnectForWireModeOverride();
   }, [
     currentMcpProtocolVersionOverride,
-    onReconnect,
-    server.name,
+    reconnectForWireModeOverride,
     pendingReconnectTick,
   ]);
 
@@ -301,17 +318,7 @@ export function ServerDetailModal({
         fallbackReconnectTimerRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name, {
-            allowInteractiveOAuthFlow: false,
-          }).catch((err) => {
-            // Deliberately not toasted: this is the 1.5s safety-net
-            // reconnect and the toggle has its own error path. Reported so a
-            // systematically failing fallback is visible rather than dropped.
-            reportCaught(err, {
-              source: "server_detail_wire_mode_reconnect",
-              level: "warning",
-            });
-          });
+          void reconnectForWireModeOverride();
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the

@@ -1763,7 +1763,23 @@ export async function createAuthorizedManager(
       // never going to send the stale credential.
       const willMintXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
-      if (oauthToken && oauthTokenIsRowDerived && !willMintXaa) {
+      // That exemption covers the STALE BEARER only. The mint itself is not
+      // credential-free: `preregistered` and `dcr` reveal the row's stored
+      // client secret and post it to a token endpoint discovered from the row's
+      // CURRENT url (`xaa-mint.ts` `resolveServerTarget` ->
+      // `resolveAuthorizedServerTarget`, which falls back to the resource URL
+      // when no issuer is stored) — the exact repoint this gate exists to
+      // refuse. `cimd` sends no row secret: public client, or an org-level key
+      // whose assertion is audience-bound to the endpoint it goes to.
+      const xaaMintSendsRowSecret =
+        willMintXaa &&
+        resolveXaaConnectRegistrationMode(
+          auth.serverConfig.registrationMode,
+        ) !== "cimd";
+      if (
+        xaaMintSendsRowSecret ||
+        (!willMintXaa && oauthToken && oauthTokenIsRowDerived)
+      ) {
         assertSecretsOriginMatches({
           boundOrigin: auth.serverConfig.secretsBoundOrigin,
           targetUrl: auth.serverConfig.url,

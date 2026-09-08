@@ -15,7 +15,9 @@
 import { useQuery } from "convex/react";
 
 interface ServerUrlChangeEvent {
-  id: string;
+  // Convex system field. The sibling audit reader (`useOrganizationAudit`)
+  // keys off `_id` for these same rows.
+  _id: string;
   action: string;
   actorEmail: string | null;
   timestamp: number;
@@ -98,7 +100,7 @@ export function ServerUrlChangeHistory({
             : [];
           return (
             <li
-              key={event.id}
+              key={event._id}
               className="rounded-md border border-border px-2.5 py-2 text-xs"
             >
               <div className="flex flex-wrap items-baseline gap-x-1.5">

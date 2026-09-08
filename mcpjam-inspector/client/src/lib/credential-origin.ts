@@ -51,6 +51,60 @@ export function credentialOriginOf(
   return parsed.origin;
 }
 
+/**
+ * Does this config carry at least one header VALUE?
+ *
+ * A redacted config has the names stripped and a `has*` flag instead, so this
+ * only ever answers true for the plaintext case — which is exactly the case the
+ * redaction flags miss.
+ */
+function hasNonEmptyHeaderRecord(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return false;
+  }
+  return Object.values(headers as Record<string, unknown>).some(
+    (value) => typeof value === "string" && value.length > 0
+  );
+}
+
+/**
+ * Does this row hold a credential a cross-origin repoint would destroy?
+ *
+ * Read off the ROW, not off the form's `hasStored*` flags. Those mean "stored
+ * AND HIDDEN from me" — `hasStoredHeaders` carries a trailing
+ * `headersArray.length === 0`, so a row whose headers arrive as plaintext (the
+ * local path, where nothing is redacted) reports `false` while genuinely
+ * holding headers the backend will wipe. `server.has*` are the backend's own
+ * answers to the question actually being asked.
+ *
+ * `oauthTokens` is in the list because the backend clears every
+ * `hostedOAuthCredentials` row for the server on an origin change, and an
+ * OAuth-connected server may hold nothing else; there is no `hasOAuthTokens`
+ * redaction flag.
+ */
+export function rowHoldsStoredCredential(
+  server:
+    | {
+        hasEnv?: boolean;
+        hasHeaders?: boolean;
+        hasBearerToken?: boolean;
+        hasClientSecret?: boolean;
+        oauthTokens?: unknown;
+        config?: { requestInit?: { headers?: unknown } };
+      }
+    | null
+    | undefined
+): boolean {
+  return Boolean(
+    server?.hasEnv === true ||
+    server?.hasHeaders === true ||
+    server?.hasBearerToken === true ||
+    server?.hasClientSecret === true ||
+    server?.oauthTokens != null ||
+    hasNonEmptyHeaderRecord(server?.config?.requestInit?.headers)
+  );
+}
+
 export interface PendingCredentialClear {
   previousOrigin: string;
   nextOrigin: string;

@@ -58,6 +58,8 @@ function mockBackend(opts: {
   hasHeaders?: boolean;
   oauthAccessToken?: string | null;
   revealHeaders?: Record<string, string>;
+  /** Extra `serverConfig` fields — the XAA rows need `authMethod`/`registrationMode`. */
+  serverConfigExtra?: Record<string, unknown>;
 }) {
   const revealCalls: string[] = [];
   global.fetch = vi.fn(async (input: any) => {
@@ -95,6 +97,7 @@ function mockBackend(opts: {
               ...(opts.secretsBoundOrigin !== undefined
                 ? { secretsBoundOrigin: opts.secretsBoundOrigin }
                 : {}),
+              ...(opts.serverConfigExtra ?? {}),
             },
           },
         },
@@ -337,45 +340,51 @@ describe("MJ-003 gate scope — what it must NOT refuse", () => {
     });
   });
 
-  it("does not let a stale binding block an XAA server", async () => {
-    const revealCalls: string[] = [];
-    global.fetch = vi.fn(async (input: any) => {
-      const target = input instanceof Request ? input.url : String(input);
-      revealCalls.push(target);
-      return new Response(
-        JSON.stringify({
-          results: {
-            "server-1": {
-              ok: true,
-              role: "member",
-              accessLevel: "project_member",
-              permissions: { chatOnly: false },
-              // Converted from OAuth: the stored token is still on the row.
-              oauthAccessToken: "stale-oauth-token",
-              serverConfig: {
-                transportType: "http",
-                url: "https://moved.example.com/mcp",
-                headers: {},
-                authMethod: "xaa",
-                useXaa: true,
-                secretsBoundOrigin: "https://owner.example.com",
-              },
-            },
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }) as typeof fetch;
+  it("does not let a stale binding block a CIMD XAA server", async () => {
+    // CIMD sends no secret of the row's — public client, or an org-level key
+    // whose assertion is audience-bound to the endpoint it goes to — so a
+    // binding left over from the server's OAuth days is irrelevant and must
+    // not refuse the connect.
+    const { revealCalls } = mockBackend({
+      url: "https://moved.example.com/mcp",
+      secretsBoundOrigin: "https://owner.example.com",
+      hasHeaders: false,
+      // Converted from OAuth: the stored token is still on the row.
+      oauthAccessToken: "stale-oauth-token",
+      serverConfigExtra: {
+        authMethod: "xaa",
+        useXaa: true,
+        registrationMode: "cimd",
+      },
+    });
 
-    // An XAA token is minted per connect with `resource` set to the row's
-    // CURRENT url, so it is bound by construction and the stale OAuth binding
-    // is irrelevant — the stored token is overridden and never sent. Refusing
-    // here would break every server converted from OAuth to XAA.
-    //
-    // The mint itself needs an issuer this test does not thread, so the
-    // assertion is narrow: whatever happens next, it is NOT the origin refusal.
-    await expect(connect()).rejects.not.toMatchObject({
+    // Reaching the issuer check IS the assertion: it sits immediately after
+    // the gate, so a 500 for a missing issuer proves the gate passed this row.
+    // Asserting "not the origin refusal" instead would pass for almost any
+    // regression.
+    await expect(connect()).rejects.toMatchObject({
+      status: 500,
+      message: expect.stringContaining("Missing XAA issuer"),
+    });
+    expect(revealCalls).toEqual([]);
+  });
+
+  it("refuses a repointed preregistered XAA row before revealing its secret", async () => {
+    // `preregistered` and `dcr` post the row's stored client secret to a token
+    // endpoint discovered from the row's CURRENT url, which the mint's
+    // `resource` pinning does not cover. Repointing the row therefore
+    // redirects the secret, and the gate has to fire before the reveal.
+    const { revealCalls } = mockBackend({
+      url: "https://collector.attacker.example/mcp",
+      secretsBoundOrigin: "https://owner.example.com",
+      hasHeaders: false,
+      serverConfigExtra: { authMethod: "xaa", useXaa: true },
+    });
+
+    await expect(connect()).rejects.toMatchObject({
+      status: 403,
       details: expect.objectContaining({ secretOriginMismatch: true }),
     });
+    expect(revealCalls).toEqual([]);
   });
 });

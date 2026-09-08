@@ -937,7 +937,7 @@ async function applyLocalRuntimeResolution<
     assertSecretsOriginMatches({
       boundOrigin: result.serverConfig.secretsBoundOrigin,
       targetUrl: result.serverConfig.url,
-      serverName: result.serverConfig.name,
+      serverName: args.serverDisplayName ?? args.managerKey,
     });
   }
 
@@ -1297,16 +1297,30 @@ export async function resolveLocalServerForConnect(
   // XAA is excluded: it mints per connect with `resource` set to the row's
   // current url, so it is bound by construction, and a stale binding left over
   // from a converted OAuth server must not block it.
-  if (
-    result.serverConfig.transportType === "http" &&
-    effectiveAuth !== "xaa" &&
-    (useOAuth || result.oauthAccessToken != null)
-  ) {
-    assertSecretsOriginMatches({
-      boundOrigin: result.serverConfig.secretsBoundOrigin,
-      targetUrl: result.serverConfig.url,
-      serverName: options?.serverDisplayName ?? result.serverConfig.name,
-    });
+  if (result.serverConfig.transportType === "http") {
+    const httpConfig = result.serverConfig;
+    const willMintXaa = effectiveAuth === "xaa";
+    // The XAA exemption above covers the STALE BEARER only. The mint itself is
+    // not credential-free: `preregistered` and `dcr` reveal the row's stored
+    // client secret and post it to a token endpoint discovered from the row's
+    // CURRENT url (`xaa-mint.ts` `resolveServerTarget` ->
+    // `resolveAuthorizedServerTarget`, which falls back to the resource URL
+    // when no issuer is stored), which is the repoint this gate exists to
+    // refuse. `cimd` sends no row secret: public client, or an org-level key
+    // whose assertion is audience-bound to the endpoint it goes to.
+    const xaaMintSendsRowSecret =
+      willMintXaa &&
+      resolveXaaConnectRegistrationMode(httpConfig.registrationMode) !== "cimd";
+    if (
+      xaaMintSendsRowSecret ||
+      (!willMintXaa && (useOAuth || result.oauthAccessToken != null))
+    ) {
+      assertSecretsOriginMatches({
+        boundOrigin: httpConfig.secretsBoundOrigin,
+        targetUrl: httpConfig.url,
+        serverName: options?.serverDisplayName ?? serverId,
+      });
+    }
   }
 
   // Track the access token we'll hand to `toMCPServerConfig`. Starts from
@@ -1385,6 +1399,22 @@ export async function resolveLocalServerForConnect(
           error: error instanceof Error ? error.message : String(error),
         }
       );
+    }
+    // MJ-003, the discover rung. The gate above could not fire for this row —
+    // it had no token to bind — but the refresh just spent the row's stored
+    // material and produced one, and `toMCPServerConfig` puts it straight into
+    // `Authorization`. Re-check before it goes out, and only when a token
+    // actually came back, so a discover row holding nothing still connects
+    // bare.
+    if (
+      resolvedOauthAccessToken &&
+      result.serverConfig.transportType === "http"
+    ) {
+      assertSecretsOriginMatches({
+        boundOrigin: result.serverConfig.secretsBoundOrigin,
+        targetUrl: result.serverConfig.url,
+        serverName: options?.serverDisplayName ?? serverId,
+      });
     }
   }
 
