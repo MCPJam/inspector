@@ -22,8 +22,7 @@ export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 // needs more than the generic 1MB JSON cap. It does NOT need the 25MB this was
 // originally set to: that number came from matching the Convex route's own cap
 // so we would not accept what the backend only rejects, which bounds redundant
-// work rather than bounding SPEND. Transcription is billed per audio-minute, so
-// the body size IS the per-request cost.
+// work rather than bounding SPEND.
 //
 // Be precise about what a byte cap can and cannot do here, because the obvious
 // reading is wrong: it does NOT bound billable audio minutes. Bitrate is the
@@ -42,6 +41,7 @@ export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 //   m4a/AAC @128kbps                                    ~3.7MB
 //   wav, 16-bit 16kHz mono                              ~7.3MB   fits
 //   wav, 16-bit 22.05kHz mono                          ~10.1MB   REJECTED
+//   wav, 16-bit 44.1kHz mono                           ~20.2MB   REJECTED
 //   wav, 16-bit 44.1kHz stereo                         ~40.4MB   also >25MB
 //
 // The trade is deliberate: a non-browser caller posting three minutes of WAV

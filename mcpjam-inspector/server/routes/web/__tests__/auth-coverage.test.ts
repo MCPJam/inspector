@@ -25,23 +25,25 @@ import { createWebTestApp } from "./helpers/test-app.js";
  * The invariant is "no route SUCCEEDS without a credential" — no 2xx — which is
  * exactly the MJ-002 shape: that finding was a `200` with a transcript in it.
  *
- * It deliberately does not assert a particular refusal code. This suite has no
- * Convex, so a route whose first act is an upstream call fails on that instead
- * of on its bearer check, and which of the two happens first is not stable
- * across environments. Pinning 401 here would make the suite fail for reasons
- * that have nothing to do with auth. The narrow, deterministic 401 assertions
- * for the route this finding was about live in `audio-auth.test.ts`, where the
- * bearer middleware is the first thing the request meets.
+ * The refusal code IS asserted, against a named exception list: every route
+ * must answer 401 or 403 unless `NON_AUTH_REFUSALS` records why it does
+ * something else. This suite has no Convex, so a route whose first act is an
+ * upstream call fails on that instead of on its bearer check, and one that
+ * validates before it authenticates answers 400 on the probe body. Naming those
+ * keeps the set this sweep cannot see countable, instead of letting a broken
+ * upstream read as a refusal. The narrow, deterministic 401 assertions for the
+ * route this finding was about live in `audio-auth.test.ts`, where the bearer
+ * middleware is the first thing the request meets.
  *
- * So: a route's ABSENCE from the list below is not a claim that it requires a
- * bearer. It is a claim that it does not hand an anonymous caller a success.
+ * So: for a route named in `NON_AUTH_REFUSALS` this proves only "not a
+ * success", not "checks a bearer". For every other route it proves an auth
+ * refusal.
  *
  * Be concrete about how much that is worth. Of the routes swept at the time of
  * writing, 95 answer 401 and 6 answer 403 — those are genuinely refusing. Seven
- * answer 5xx because their upstream is absent here, and for those seven this
- * suite proves only "not a success", not "checks a bearer". Three answer 400
- * on body validation, which likewise runs ahead of any upstream. Narrowing that
- * gap needs a Convex stub, not a stricter assertion over the same responses.
+ * answer 5xx because their upstream is absent here and three answer 400 on body
+ * validation; those ten are the `NON_AUTH_REFUSALS` entries. Narrowing that gap
+ * needs a Convex stub, not a stricter assertion over the same responses.
  *
  * The one thing that must never be silent is a probe that fails to reach its
  * handler; that is asserted separately below.
@@ -51,9 +53,17 @@ import { createWebTestApp } from "./helpers/test-app.js";
  */
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
-const BODYLESS_METHODS = new Set(["GET", "HEAD", "DELETE"]);
+const BODYLESS_METHODS = new Set(["GET", "HEAD", "DELETE", "OPTIONS"]);
 /** What an `.all()` route accepts, so every branch of one gets probed. */
-const ALL_ROUTE_METHODS = ["POST", "GET", "HEAD", "PUT", "PATCH", "DELETE"];
+const ALL_ROUTE_METHODS = [
+  "POST",
+  "GET",
+  "HEAD",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+];
 
 /**
  * Routes that correctly return a SUCCESS to a caller with no `Authorization`
@@ -200,9 +210,11 @@ function probes(): Probe[] {
  *
  * An `.all()` handler is free to branch on the verb, and one of those branches
  * answering 2xx to an anonymous caller is exactly the hole this suite hunts.
- * `harnessMcp.all("/:serverId")` is that shape today: POST speaks JSON-RPC
- * while GET/HEAD return a 200 event-stream. Stopping at the first answer would
- * check POST, see a refusal, and never look at the branch that returns 200.
+ * `harnessMcp.all("/:serverId")` is that shape: POST speaks JSON-RPC while
+ * GET/HEAD return an event-stream. Every branch refuses here only because that
+ * handler verifies its proxy token ahead of the verb check — an ordering choice
+ * inside one handler, not something the router guarantees. Stopping at the
+ * first answer would take POST's refusal for all of them.
  */
 async function probeResponses(
   app: Hono,
@@ -300,7 +312,7 @@ describe("/api/web — credential-less requests", () => {
         if (response.status === 401 || response.status === 403) continue;
         // 2xx is the sweep above's business, not this test's.
         if (response.status >= 200 && response.status < 300) continue;
-        unexplained.push(`${method} ${probe.path} -> ${response.status}`);
+        unexplained.push(`${probe.key} [${method}] -> ${response.status}`);
       }
     }
 
