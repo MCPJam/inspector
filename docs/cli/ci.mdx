@@ -563,7 +563,7 @@ Evidence is scoped to the claim it supports: for a measured failure the span ids
 
 `eval status` prints the block only when a terminal run did not pass — a clean pass has nothing to diagnose. `--format json` stays exactly one parseable document in every case: the summary rides *inside* it, never as a second block appended after it. If the summary cannot be fetched, it is omitted rather than failing the command.
 
-**The human block leads with where the chain broke.** Under the diagnostics headline, before any per-trial detail, a non-passing run gets one line naming the earliest stage at which a readable trial stopped, why, and how many trials stopped there:
+**The human block leads with where the chain broke.** Under the diagnostics headline, before any per-iteration detail, a non-passing run gets one line naming the earliest stage at which a readable iteration stopped, why, and how many iterations stopped there:
 
 ```text
   First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured iterations)
