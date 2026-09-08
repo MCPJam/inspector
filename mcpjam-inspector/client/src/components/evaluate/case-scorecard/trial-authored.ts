@@ -91,6 +91,7 @@ export function authoredForTrial(input: {
         predicates: asCasePredicates(launch.predicates),
         matchOptions: launch.matchOptions,
         expectedOutput: launch.expectedOutput,
+        toolsChoice: launch.isNegativeTest ? "noTool" : "unset",
       },
       basis: "draft",
     };
@@ -111,6 +112,7 @@ export function authoredForTrial(input: {
       ),
       matchOptions: input.draft.matchOptions,
       expectedOutput: input.draft.expectedOutput,
+      isNegativeTest: input.draft.toolsChoice === "noTool",
     });
   if (matches) return { authored: input.draft, basis: "draft" };
 

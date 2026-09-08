@@ -146,6 +146,7 @@ export function trialSnapshotFields(trial: SelectedTrial): CaseSnapshotFields {
     predicates: snapshot?.predicates,
     matchOptions: snapshot?.matchOptions,
     expectedOutput: snapshot?.expectedOutput,
+    isNegativeTest: snapshot?.isNegativeTest,
   };
 }
 

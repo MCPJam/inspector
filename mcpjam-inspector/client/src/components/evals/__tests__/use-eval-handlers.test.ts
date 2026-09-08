@@ -249,7 +249,7 @@ describe("useEvalHandlers", () => {
       mockAuthFetch.mockResolvedValue(createFetchResponse({ runId: "run-1" }));
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {
-        await result.current.handleRerun(
+        const ids = await result.current.handleRerun(
           {
             _id: "suite-stay",
             name: "Suite",
@@ -257,6 +257,7 @@ describe("useEvalHandlers", () => {
           } as any,
           { caseIds: ["test-case-1"] },
         );
+        expect(ids).toEqual(["run-1"]);
       });
       expect(mockNavigateApp).not.toHaveBeenCalled();
     });
@@ -730,6 +731,45 @@ describe("useEvalHandlers", () => {
       expect(mockNavigateApp).toHaveBeenCalledWith(
         "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
       );
+    });
+
+    it.each([{ servers: [] }, { servers: ["server-1"] }])("refuses whole-suite replay for a scoped launch with unavailable servers $servers", async ({ servers }) => {
+      const { result } = renderHook(() => useEvalHandlers({
+        ...defaultProps,
+        connectedServerNames: new Set(),
+        ensureServersReady: vi.fn().mockResolvedValue({
+          readyServerNames: [], missingServerNames: [], failedServerNames: ["server-1"], reauthServerNames: [],
+        }),
+        latestRunBySuiteId: new Map([["suite-123", { _id: "old-run", hasServerReplayConfig: true } as any]]),
+      }));
+      await act(async () => {
+        const ids = await result.current.handleRerun({
+          _id: "suite-123", name: "Suite", environment: { servers },
+        } as any, { caseIds: ["test-case-1"], iterationOverride: 1 });
+        expect(ids).toBeUndefined();
+      });
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("returns only accepted run ids after a partial case fanout", async () => {
+      mockAuthFetch.mockImplementation(async (_path, init) => {
+        const body = JSON.parse(init.body);
+        return body.namedHostId === "host-a"
+          ? createFetchResponse({ runId: "new-a" })
+          : createFetchResponse({ message: "Unavailable" }, 500);
+      });
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        const ids = await result.current.handleRerun({
+          _id: "suite-partial", name: "Suite", environment: { servers: ["server-1"] },
+          hostAttachments: ["host-a", "host-b"].map(namedHostId => ({
+            namedHostId, hostName: namedHostId, enabledOptionalServerIds: [], resolvedServerNames: ["server-1"],
+          })),
+        } as any, { caseIds: ["test-case-1"] });
+        expect(ids).toEqual(["new-a"]);
+      });
+      expect(mockNavigateApp).not.toHaveBeenCalled();
     });
 
     it("uses the normal rerun path when live servers are connected", async () => {

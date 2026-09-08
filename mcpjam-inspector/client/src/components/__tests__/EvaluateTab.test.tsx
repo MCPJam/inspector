@@ -359,6 +359,38 @@ describe("EvaluateTab", () => {
     });
   });
 
+  it.each([false, true])("tracks only launched case runs unless the case skips judging (%s)", async (skipJudge) => {
+    mocks.handleRerun.mockResolvedValueOnce(["new-a", "new-b"]);
+    const view = render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
+    await act(async () => {
+      await props.onRerun(props.suite, { caseIds: ["case-a"], skipJudge });
+    });
+    const runQueries = () => mocks.useQuery.mock.calls
+      .filter(([name]) => name === "testSuites:getTestSuiteRun")
+      .map(([, args]) => (args as { runId: string }).runId);
+    if (skipJudge) {
+      expect(runQueries()).toEqual([]);
+    } else {
+      expect(runQueries()).toEqual(expect.arrayContaining(["new-a", "new-b"]));
+      mocks.useQuery.mockClear();
+      mocks.route.current = { type: "list" };
+      view.rerender(<EvaluateTab projectId="ws-1" />);
+      expect(runQueries()).toEqual(expect.arrayContaining(["new-a", "new-b"]));
+    }
+  });
+
+  it("does not request judging for a refused launch or ordinary suite rerun", async () => {
+    mocks.handleRerun.mockResolvedValueOnce(undefined).mockResolvedValueOnce(["full-suite-run"]);
+    render(<EvaluateTab projectId="ws-1" />);
+    const props = mocks.suiteIterationsView.mock.calls.at(-1)?.[0] as any;
+    await act(async () => {
+      await props.onRerun(props.suite, { caseIds: ["case-a"] });
+      await props.onRerun(props.suite);
+    });
+    expect(mocks.useQuery.mock.calls.some(([name]) => name === "testSuites:getTestSuiteRun")).toBe(false);
+  });
+
   it("keeps handler-driven navigation on /evaluate", () => {
     render(<EvaluateTab projectId="ws-1" />);
 

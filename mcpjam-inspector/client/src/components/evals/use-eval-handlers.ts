@@ -683,14 +683,16 @@ export function useEvalHandlers({
          * otherwise identical to a full rerun.
          *
          * A case-scoped launch also STAYS ON THE PAGE and never takes the
-         * replay fallback. Both matter. The page that launched the run is what
-         * asks the judge to grade it once it finishes, so navigating away
-         * unmounts the only thing that would. And a replay sends the old run
+         * replay fallback. Both matter. The Evaluate tab tracks the returned
+         * run IDs to request judging after completion. Staying on the case
+         * keeps its result visible. And a replay sends the old run
          * id alone — it would silently re-run the whole historical suite
          * instead of the one case that was asked for, spending on tests the
          * author did not launch.
          */
         caseIds?: string[];
+        /** The selected case explicitly opts out of launch-triggered judging. */
+        skipJudge?: boolean;
       }
     ) => {
       if (rerunningSuiteId) return;
@@ -956,8 +958,7 @@ export function useEvalHandlers({
           // fan-outs land on the suite's runs view instead, since there
           // are multiple sibling runs to pick from.
           if (caseScoped) {
-            // Stay put. The case page owns the judge request for the run it
-            // just launched, and it can only make it while it is mounted.
+            // Keep the case visible while the tab tracks its new runs.
           } else if (runPlans.length === 1) {
             const firstSettled = settled[0];
             const newRunId =
@@ -1037,6 +1038,13 @@ export function useEvalHandlers({
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
+        return settled.flatMap((result) => {
+          const runId =
+            result.status === "fulfilled"
+              ? (result.value as { runId?: unknown } | null)?.runId
+              : undefined;
+          return typeof runId === "string" && runId.length > 0 ? [runId] : [];
+        });
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         if (openEvalIterationWall(error)) {

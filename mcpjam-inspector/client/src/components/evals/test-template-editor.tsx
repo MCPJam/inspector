@@ -353,7 +353,10 @@ interface TestTemplateEditorProps {
    * end to end; a quick run cannot be graded. Absent on a surface that cannot
    * launch one, and Run test then does not render.
    */
-  onRunCase?: (caseId: string, opts?: { iterationOverride?: number }) => void;
+  onRunCase?: (
+    caseId: string,
+    opts?: { iterationOverride?: number; skipJudge?: boolean },
+  ) => void | Promise<void>;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   /** Route-driven tab switch. Editor reflects {@link openCompareFromRoute} after the URL changes. */
@@ -2050,18 +2053,7 @@ export function TestTemplateEditor({
     [suggestionBatch?.key],
   );
 
-  /**
-   * "Run test": save, then run THIS case as a suite run.
-   *
-   * A suite run and not a quick run, because the judge is keyed by
-   * `suiteRunId` at every surface — the request mutation, the `autoRun`
-   * trigger, the verdict store and the client reader — so a quick run can
-   * never answer "did it accomplish the goal?", which is the first thing this
-   * flow promises. The run executes the PERSISTED case, so an unsaved draft is
-   * saved first; a case that has never been saved has no id to run and the
-   * button says so instead of silently running something else.
-   */
-  const judgeIntentRunIds = useRef<Set<string>>(new Set());
+  /** Save the current draft before launching a judged, case-scoped run. */
   const [runTestPending, setRunTestPending] = useState(false);
   /**
    * `handleSave` closes over `editForm` and is rebuilt every render, so the
@@ -2083,8 +2075,10 @@ export function TestTemplateEditor({
         const saved = await handleSaveRef.current?.();
         if (!saved) return;
       }
-      judgeIntentRunIds.current.add(caseId);
-      onRunCase(caseId, { iterationOverride });
+      await onRunCase(caseId, {
+        iterationOverride,
+        skipJudge: editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
+      });
     } finally {
       setRunTestPending(false);
     }
@@ -2094,6 +2088,7 @@ export function TestTemplateEditor({
     isDraft,
     hasUnsavedChanges,
     iterationOverride,
+    editForm?.judgeConfigOverride?.goalCompletion?.enabled,
   ]);
 
   const arePromptTurnsValid = useMemo(() => {
@@ -3080,6 +3075,7 @@ export function TestTemplateEditor({
         predicates: savePayload.predicates,
         matchOptions: savePayload.matchOptions,
         expectedOutput: savePayload.expectedOutput,
+        isNegativeTest: savePayload.isNegativeTest,
         runs: useWorkspace ? (editForm.runs ?? 1) : iterationOverride,
         namedHostId: quickRunHostPlan.namedHostId,
       };
@@ -3596,6 +3592,7 @@ export function TestTemplateEditor({
       editForm?.matchOptions,
     ),
     expectedOutput: editForm?.expectedOutput ?? "",
+    isNegativeTest: simpleToolsChoice === "noTool",
   };
   const workspacePaneView = paneViewFor({
     explicit: replayIteration
@@ -3684,6 +3681,8 @@ export function TestTemplateEditor({
               workspaceLeftView.iteration.testCaseSnapshot?.matchOptions,
             expectedOutput:
               workspaceLeftView.iteration.testCaseSnapshot?.expectedOutput,
+            isNegativeTest:
+              workspaceLeftView.iteration.testCaseSnapshot?.isNegativeTest,
           })
         }
         onEditCase={() => setInspectIterationId(null)}
@@ -4732,12 +4731,8 @@ export function TestTemplateEditor({
                                 ) : null
                               }
                               judgeSlot={
-                                // On the spine the judge row also owns the ONE
-                                // request that grades a run this page launched,
-                                // and says "did it accomplish the goal?" in a
-                                // sentence — wrapping the existing panel rather
-                                // than replacing it, so the blind-label flow is
-                                // untouched.
+                                // The tab owns launch-triggered judging; this
+                                // row owns presentation and the review control.
                                 useSpine ? (
                                   <CaseJudgeAnswer
                                     run={workspaceTrialRun ?? null}
@@ -4749,9 +4744,6 @@ export function TestTemplateEditor({
                                       editForm?.judgeConfigOverride
                                         ?.goalCompletion?.enabled === false
                                     }
-                                    shouldRequest={judgeIntentRunIds.current.has(
-                                      currentTestCase?._id ?? "",
-                                    )}
                                     hidden={Boolean(
                                       ctx.reviewActive && ctx.judgeHidden,
                                     )}

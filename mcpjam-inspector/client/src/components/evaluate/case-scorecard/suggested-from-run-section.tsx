@@ -34,6 +34,27 @@ const NON_RUNNING: ReadonlySet<EvalIteration["status"]> = new Set([
   "skipped",
 ]);
 
+/** Only the frozen inventory can establish which gates this trial ran. */
+function trialHasGate(iteration: EvalIteration): boolean {
+  const snapshot = iteration.testCaseSnapshot;
+  if (!snapshot) return false;
+  const card = buildCaseScorecard({
+    steps: snapshot.steps ?? [],
+    toolsChoice: snapshot.isNegativeTest ? "noTool" : "unset",
+    matchOptions: snapshot.matchOptions,
+    snapshotPredicates: snapshot.predicates ?? [],
+  });
+  return card.groups.some((group) =>
+    group.rows.some((row) =>
+      row.role === "gate" &&
+      row.provenance !== "judge" &&
+      (row.provenance !== "route" ||
+        row.route?.kind === "tools" ||
+        row.route?.kind === "noTool"),
+    ),
+  );
+}
+
 export function useSuggestedScorers({
   enabled,
   batch,
@@ -71,31 +92,6 @@ export function useSuggestedScorers({
   });
 
   const card = useMemo(() => buildCaseScorecard(authored), [authored]);
-  /**
-   * Whether the case carries a gate that could establish "this trial worked".
-   *
-   * The Route row is ALWAYS `role: "gate"`, including in its `unset` and
-   * `checks` states where it restricts nothing — so counting it made a
-   * prompt-and-goal case with no checks look gated, and a passing unjudged run
-   * then supplied a success signal it had not earned. An unjudged run that
-   * called the wrong tool would go on to suggest requiring that tool.
-   *
-   * Same rule `coverageForCase` uses: a route counts only when it names tools
-   * or forbids them.
-   */
-  const authoredHasGate = useMemo(
-    () =>
-      card.groups.some((group) =>
-        group.rows.some((row) => {
-          if (row.role !== "gate" || row.provenance === "judge") return false;
-          if (row.provenance !== "route") return true;
-          const kind = row.route?.kind;
-          return kind === "tools" || kind === "noTool";
-        }),
-      ),
-    [card],
-  );
-
   const output = useMemo<SuggestOutput>(() => {
     if (!enabled || waiting || population.length === 0) {
       return { suggestions: [], diagnosis: null };
@@ -117,7 +113,7 @@ export function useSuggestedScorers({
             : { state: "absent" },
         {
           judgeCase: judgeFor?.(iteration) ?? null,
-          authoredHasGate,
+          authoredHasGate: trialHasGate(iteration),
           turnCountFromSteps,
         },
       );
@@ -138,7 +134,6 @@ export function useSuggestedScorers({
     population,
     reads,
     authored,
-    authoredHasGate,
     card,
     judgeFor,
     prompts,

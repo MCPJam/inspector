@@ -144,7 +144,18 @@ export function TrialScorecard({
     liveStepStatusById,
   ]);
 
-  const summary = useMemo(() => summarizeTrialScorecard(groups), [groups]);
+  // The total can reveal a judge gate's verdict even when its row is hidden.
+  const summary = useMemo(
+    () => summarizeTrialScorecard(
+      judgeHidden
+        ? groups.map((group) => ({
+            ...group,
+            rows: group.rows.filter((row) => row.provenance !== "judge"),
+          }))
+        : groups,
+    ),
+    [groups, judgeHidden],
+  );
 
   /**
    * The state word each group heading shows, read from the chain the strip
@@ -160,7 +171,7 @@ export function TrialScorecard({
     );
     return (stage: string) => {
       const row = byStage.get(stage);
-      if (!row) return undefined;
+      if (!row || judgeHidden) return undefined;
       return {
         label: STAGE_STATE_LABELS[row.state],
         tone:
@@ -171,14 +182,16 @@ export function TrialScorecard({
               : ("neutral" as const),
       };
     };
-  }, [chain]);
+  }, [chain, judgeHidden]);
 
   return (
     <div
       className="flex flex-col gap-3 p-3"
       data-testid="trial-scorecard"
     >
-      <StageStrip chain={chain} resetKey={iteration?._id} />
+      {!judgeHidden ? (
+        <StageStrip chain={chain} resetKey={iteration?._id} />
+      ) : null}
 
       <p
         className="text-xs text-muted-foreground"
@@ -214,7 +227,7 @@ export function TrialScorecard({
         downgraded the verdict for it — and a reader who needs that is looking
         for it.
       */}
-      {suggestionsSlot}
+      {!judgeHidden || !judgeCase ? suggestionsSlot : null}
 
       {scoresSection ? (
         <details

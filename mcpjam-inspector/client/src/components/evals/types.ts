@@ -724,6 +724,7 @@ export type CompareRunRecord = {
    * payload at launch. Overlay matching reads this for a live attempt.
    */
   launchSnapshot?: {
+    isNegativeTest?: boolean;
     steps?: TestStep[];
     predicates?: CasePredicates | Predicate[];
     matchOptions?: EvalMatchOptions;

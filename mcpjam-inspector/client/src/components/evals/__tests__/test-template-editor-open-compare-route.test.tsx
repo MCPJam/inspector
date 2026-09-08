@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
@@ -32,6 +32,7 @@ function createDeferred() {
 
 const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
+const reviewBlobAction = vi.hoisted(() => vi.fn().mockResolvedValue({ messages: [] }));
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const runEvalTestCaseMock = vi.hoisted(() => vi.fn());
@@ -183,7 +184,7 @@ vi.mock("@/lib/apis/evals-api", () => ({
 vi.mock("convex/react", () => ({
   useMutation: (name: unknown) => useMutationMock(name),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
-  useAction: () => vi.fn(),
+  useAction: () => reviewBlobAction,
   useConvexAuth: () => useConvexAuthMock,
   // ONE client, not a fresh object per render. `useConvex()` returns a stable
   // client from context in the app, and any hook that lists it as an effect
@@ -960,6 +961,48 @@ describe("TestTemplateEditor run view from route", () => {
         {...props}
       />,
     );
+
+  it("Run test saves the latest keystrokes", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn();
+    renderGoldenCase({ observeFirst: true, onRunCase });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    fireEvent.change(prompt, { target: { value: "Intermediate prompt" } });
+    fireEvent.change(prompt, { target: { value: "Final prompt to actually run" } });
+    fireEvent.click(screen.getByTestId("case-run-test"));
+    await waitFor(() => expect(onRunCase).toHaveBeenCalled());
+    expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0].steps[0].prompt)
+      .toBe("Final prompt to actually run");
+  });
+
+  it("Run test stops when save validation fails", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    const onRunCase = vi.fn();
+    renderGoldenCase({ observeFirst: true, onRunCase });
+    const prompt = await screen.findByLabelText("What does the user ask?");
+    fireEvent.change(prompt, { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("case-run-test"));
+    await waitFor(() => expect(screen.getByTestId("case-run-test")).not.toBeDisabled());
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
+    expect(onRunCase).not.toHaveBeenCalled();
+  });
+
+  it("accepting a no-tool suggestion persists a restriction", async () => {
+    const noToolSteps = [
+      { id: "s1", kind: "prompt", prompt: "Say hello" },
+    ];
+    activeCaseDoc = { ...goldenCaseDoc, steps: noToolSteps, predicates: { mode: "extend", list: [{ type: "noToolErrors" }] }, expectedOutput: "A greeting", lastMessageRun: undefined } as any;
+    const trial = { ...baseIteration, blob: "blob-1", testCaseSnapshot: { ...baseIteration.testCaseSnapshot, steps: noToolSteps, predicates: [{ type: "noToolErrors" }], expectedOutput: "A greeting" } };
+    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
+    const text = await screen.findByText("Require that no tool is called").catch(() => { throw new Error(document.body.textContent ?? "no text"); });
+    const row = text.closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Add", exact: true }));
+    await waitFor(() => expect(screen.queryByText("Require that no tool is called")).not.toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+    await waitFor(() => expect(updateTestCaseMutationMock).toHaveBeenCalled());
+    const payload = updateTestCaseMutationMock.mock.calls.at(-1)?.[0];
+    expect(payload.isNegativeTest === true || payload.predicates?.list?.some((p: any) => p.type === "onlyToolsCalled" && p.toolNames.length === 0) || payload.steps.some((s: any) => s.assertion?.type === "onlyToolsCalled" && s.assertion.toolNames.length === 0)).toBe(true);
+  });
 
   it("mounts the FORM by default — observe-first is opt-in", async () => {
     activeCaseDoc = goldenCaseDoc;

@@ -145,7 +145,7 @@ export function TrialScorecardRow({
     <li
       data-testid="trial-scorecard-row"
       data-row-key={row.key}
-      data-state={row.result.state}
+      data-state={withheld ? "notMeasured" : row.result.state}
       data-role={row.role}
       {...(row.stepId ? { "data-step-id": row.stepId } : {})}
       onMouseEnter={() => row.stepId && onSyncStep?.(row.stepId)}

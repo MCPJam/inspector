@@ -379,7 +379,15 @@ export function SuiteIterationsView({
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
-  onRerun: (suite: EvalSuite) => void;
+  onRerun: (
+    suite: EvalSuite,
+    opts?: {
+      matchOptionsOverride?: EvalMatchOptions;
+      iterationOverride?: number;
+      caseIds?: string[];
+      skipJudge?: boolean;
+    },
+  ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
@@ -531,18 +539,9 @@ export function SuiteIterationsView({
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
         caseIds?: string[];
+        skipJudge?: boolean;
       },
-    ) =>
-      (
-        onRerun as (
-          suite: EvalSuite,
-          opts?: {
-            matchOptionsOverride?: EvalMatchOptions;
-            iterationOverride?: number;
-            caseIds?: string[];
-          },
-        ) => void
-      )(s, opts),
+    ) => onRerun(s, opts),
     [onRerun],
   );
 
@@ -555,8 +554,11 @@ export function SuiteIterationsView({
    * none, so a quick run can never answer "did it accomplish the goal?".
    */
   const onRunCase = useCallback(
-    (caseId: string, opts?: { iterationOverride?: number }) => {
-      onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
+    async (
+      caseId: string,
+      opts?: { iterationOverride?: number; skipJudge?: boolean },
+    ) => {
+      await onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
     },
     [onRerunWithOverride, suite],
   );

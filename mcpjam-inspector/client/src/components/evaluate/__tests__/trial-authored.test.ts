@@ -167,6 +167,17 @@ describe("a frozen trial keeps the route it was graded against", () => {
     expect(authored.toolsChoice).toBe("noTool");
   });
 
+  it.each([true, false])("detects a no-tool-only edit without forcing History (%s)", (wasNegative) => {
+    const sameSteps = [prompt("s1", "hi")];
+    const { authored, basis } = authoredForTrial({
+      trial: persisted({ steps: sameSteps, isNegativeTest: wasNegative }),
+      draft: { steps: sameSteps, toolsChoice: wasNegative ? "unset" : "noTool" },
+      run: null,
+    });
+    expect(basis).toBe("snapshot");
+    expect(authored.toolsChoice === "noTool").toBe(wasNegative);
+  });
+
   it("reads pinned route tools out of the frozen steps", () => {
     const { authored } = authoredForTrial({
       trial: snapshotTrial({
