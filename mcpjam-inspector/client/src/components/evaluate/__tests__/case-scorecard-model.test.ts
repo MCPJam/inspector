@@ -3,11 +3,15 @@ import {
   PREDICATE_STAGE,
   USER_VALUE_STAGES,
 } from "@mcpjam/sdk/contract";
-import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import {
+  blankPredicate,
+  PREDICATE_KIND_LABELS,
+  type PredicateKind,
+} from "@/shared/predicate-kinds";
 import { hostedCriterionId } from "@/shared/hosted-criterion-id";
 import { resolveCasePredicates } from "@/shared/eval-matching";
 import type { Predicate } from "@/shared/eval-matching";
-import type { TestStep } from "@/shared/steps";
+import { WIDGET_ASSERTION_LABELS, type TestStep } from "@/shared/steps";
 import { scorerLibraryCategories } from "@/components/evals/suite-scorer-table-model";
 import {
   appendCaseScorer,
@@ -16,6 +20,7 @@ import {
   deriveRubricSource,
   removeCaseScorer,
   ROUTE_OWNED_KINDS,
+  purposeOf,
   scorerRowLabel,
   stepScope,
   updateCaseScorer,
@@ -580,5 +585,89 @@ describe("writers", () => {
     expect(
       updateCaseScorer(one, 0, { type: "responseContains", needle: "x" } as Predicate),
     ).toEqual({ mode: "extend", list: [{ type: "responseContains", needle: "x" }] });
+  });
+});
+
+describe("numbering: action", () => {
+  const prompt = (id: string): TestStep => ({
+    id,
+    kind: "prompt",
+    prompt: "ask",
+  });
+  const check = (id: string): TestStep => ({
+    id,
+    kind: "assert",
+    assertion: { type: "noToolErrors" },
+  });
+  const click = (id: string): TestStep => ({
+    id,
+    kind: "interact",
+    action: { type: "click", locator: { testId: "x" } },
+  });
+
+  const build = (steps: TestStep[], numbering?: "flat" | "action") =>
+    buildCaseScorecard({ steps, toolsChoice: "checks", numbering });
+
+  const stepNumbers = (card: ReturnType<typeof buildCaseScorecard>) =>
+    card.groups
+      .flatMap((group) => group.rows)
+      .filter((row) => row.provenance === "step")
+      .map((row) => row.stepNumber);
+
+  it("numbers a check by the ACTION it hangs under, not its own offset", () => {
+    // Flat numbering calls these checks 2, 3 and 4 — their positions. Under the
+    // spine all three hang beneath action 1, and a badge reading "4" would name
+    // a step the author cannot see.
+    const steps = [prompt("s1"), check("a1"), check("a2"), check("a3")];
+    expect(stepNumbers(build(steps, "flat"))).toEqual([2, 3, 4]);
+    expect(stepNumbers(build(steps, "action"))).toEqual([1, 1, 1]);
+  });
+
+  it("numbers a check under a click by the click's ordinal", () => {
+    // The click is action 2 but shares turn 0 with the prompt: turn numbering
+    // would put this check under the prompt and mislabel what it grades.
+    const steps = [prompt("s1"), check("a1"), click("i1"), check("a2")];
+    expect(stepNumbers(build(steps, "action"))).toEqual([1, 2]);
+  });
+
+  it("defaults to flat, so surfaces beside the Steps pane are untouched", () => {
+    const steps = [prompt("s1"), check("a1")];
+    expect(stepNumbers(build(steps))).toEqual(
+      stepNumbers(build(steps, "flat")),
+    );
+  });
+
+  it("leaves a leading check unnumbered rather than inventing an action", () => {
+    // An assert before any action belongs to no action; the row falls back to
+    // "graded where it sits" instead of claiming a step number.
+    expect(stepNumbers(build([check("a0"), prompt("s1")], "action"))).toEqual([
+      undefined,
+    ]);
+  });
+});
+
+describe("purposeOf", () => {
+  it("gives every predicate kind a purpose that is not its wire type", () => {
+    for (const kind of Object.keys(PREDICATE_KIND_LABELS) as PredicateKind[]) {
+      const purpose = purposeOf(blankPredicate(kind));
+      expect(purpose.length).toBeGreaterThan(0);
+      expect(purpose).not.toBe(kind);
+      // The purpose says why, so it must not just echo the mechanism label.
+      expect(purpose).not.toBe(PREDICATE_KIND_LABELS[kind]);
+    }
+  });
+
+  it("gives every widget assertion kind a purpose", () => {
+    for (const kind of Object.keys(WIDGET_ASSERTION_LABELS) as Array<
+      keyof typeof WIDGET_ASSERTION_LABELS
+    >) {
+      const purpose = purposeOf({ kind } as never);
+      expect(purpose.length).toBeGreaterThan(0);
+      expect(purpose).not.toBe(kind);
+    }
+  });
+
+  it("falls back to the type for a kind this build does not know", () => {
+    expect(purposeOf({ type: "notARealKind" } as never)).toBe("notARealKind");
   });
 });

@@ -42,6 +42,7 @@ import { trimmedField, type ElementLocator } from "@/shared/scripted-steps";
 import type { Predicate } from "@/shared/eval-matching";
 import {
   isWidgetAssertion,
+  newStepId,
   stepTurnIndices,
   WIDGET_ASSERTION_LABELS,
   type AssertStep,
@@ -114,12 +115,6 @@ type StepListEditorProps = {
   /** Fired when a card is hovered, to drive the replay pane's highlight. */
   onHoverStep?: (stepId: string | null) => void;
 };
-
-let idCounter = 0;
-function newStepId(kind: string): string {
-  idCounter += 1;
-  return `${kind}-${Date.now()}-${idCounter}`;
-}
 
 // ── per-kind labels / icons ───────────────────────────────────────────────────
 const STEP_META: Record<

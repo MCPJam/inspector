@@ -56,6 +56,7 @@ import {
   type Predicate,
 } from "@/shared/eval-matching";
 import {
+  actionRows,
   isAssertStep,
   isWidgetAssertion,
   isModelFree,
@@ -296,6 +297,20 @@ export type CaseScorecardInput = {
   judgeConfigOverride?: EvalJudgeConfigOverride;
   suiteJudgeConfig?: EvalJudgeConfig;
   suiteJudgeRubric?: EvalJudgeRubric;
+  /**
+   * How a step row is numbered.
+   *
+   * `"flat"` (default) numbers by position in `steps`, which is what the Steps
+   * pane shows — keep it for every surface that still renders beside that pane.
+   *
+   * `"action"` numbers by the ACTION the check sits under: the spine numbers
+   * prompts, pinned calls and clicks 1..N and nests each check beneath one of
+   * them, so a check's badge has to name its action, not its own offset. Both
+   * `buildCaseScorecard` call sites on a spine surface must pass the same
+   * value — the left pane and the trial scorecard disagreeing about which
+   * number a check wears is worse than either numbering alone.
+   */
+  numbering?: "flat" | "action";
 };
 
 /** Contradicts a "no tool should be called" answer. */
@@ -305,6 +320,64 @@ const NEGATIVE_CONTRADICTING_KINDS: ReadonlySet<PredicateKind> =
     "toolCalledAtLeastOnce",
     "firstToolWas",
   ]);
+
+/**
+ * What a check PROTECTS, in words a reader who has never authored an eval can
+ * repeat.
+ *
+ * `PREDICATE_KIND_LABELS` names the mechanism ("Response contains…"); this
+ * names the reason to have it ("Check the answer mentions …"). A suggestion
+ * leads with the purpose and shows the mechanism underneath, because a row that
+ * opens with "Response contains ORD-48213" tells the reader WHAT it does and
+ * nothing about whether they want it.
+ *
+ * Exhaustive over `PredicateKind` by construction: the `Record` type makes a
+ * new kind a compile error here, the same forcing point `PREDICATE_KIND_LABELS`
+ * and `blankPredicate` already use. The fallback below is for a kind that
+ * arrived from the wire on an older/newer build, never for a known one.
+ */
+const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
+  toolCalledWith: "Require this tool, with these arguments",
+  toolCalledAtLeastOnce: "Require this tool on future runs",
+  toolNeverCalled: "Catch this tool being called",
+  firstToolWas: "Require this tool to be reached first",
+  responseContains: "Check what the answer says",
+  responseMatches: "Check the answer's shape",
+  noToolErrors: "Catch tool failures",
+  finalAssistantMessageNonEmpty: "Catch an empty answer",
+  tokenBudgetUnder: "Track increases in token usage",
+  widgetRendered: "Verify the view renders",
+  widgetRenderLatencyUnder: "Track the view getting slower",
+  widgetNoConsoleErrors: "Catch view console errors",
+  turnCountUnder: "Track longer conversations",
+};
+
+const WIDGET_PURPOSE: Record<WidgetAssertion["kind"], string> = {
+  textVisible: "Verify the view shows this text",
+  elementVisible: "Verify the view shows this element",
+  elementHidden: "Verify the view hides this element",
+  inputValue: "Verify this field's value",
+  widgetToolCalled: "Verify the click calls the right tool",
+};
+
+/**
+ * The purpose line for either kind of authored check.
+ *
+ * Falls back to the mechanism label for an unknown kind — the same degradation
+ * `scorerRowLabel` uses — so an unrecognised predicate reads as its type rather
+ * than as an empty row.
+ */
+export function purposeOf(assertion: Predicate | WidgetAssertion): string {
+  if (isWidgetAssertion(assertion)) {
+    return (
+      WIDGET_PURPOSE[assertion.kind] ??
+      WIDGET_ASSERTION_LABELS[assertion.kind] ??
+      String(assertion.kind)
+    );
+  }
+  const kind = assertion.type as PredicateKind;
+  return PREDICATE_PURPOSE[kind] ?? PREDICATE_KIND_LABELS[kind] ?? String(kind);
+}
 
 export function stageOfPredicate(predicate: Predicate): UserValueStage {
   return PREDICATE_STAGE[predicate.type as PredicateKind] ?? "userValue";
@@ -516,9 +589,24 @@ function predicateRow(args: {
   };
 }
 
-function stepRows(steps: TestStep[]): ScorecardRow[] {
-  // Position in the flat list, so this pane and the Steps pane agree.
-  const stepNumbers = new Map(steps.map((step, index) => [step.id, index + 1]));
+function stepRows(
+  steps: TestStep[],
+  numbering: "flat" | "action" = "flat",
+): ScorecardRow[] {
+  // "flat": position in the list, so this pane and the Steps pane agree.
+  // "action": the ordinal of the action the check hangs under, so this pane and
+  // the spine agree. `actionRows` is the one projection that decides which
+  // action owns a check.
+  const stepNumbers =
+    numbering === "action"
+      ? new Map(
+          actionRows(steps).actions.flatMap((action) =>
+            action.checks.map(
+              (child) => [child.step.id, action.ordinal] as const,
+            ),
+          ),
+        )
+      : new Map(steps.map((step, index) => [step.id, index + 1] as const));
   const rows: ScorecardRow[] = [];
   for (const step of steps) {
     if (!isAssertStep(step)) continue;
@@ -681,7 +769,7 @@ export function buildCaseScorecard(input: CaseScorecardInput): CaseScorecard {
         );
 
   const steps = frozen ? input.steps : input.steps;
-  const authoredStepRows = stepRows(steps);
+  const authoredStepRows = stepRows(steps, input.numbering ?? "flat");
 
   const byStage = new Map<UserValueStage, ScorecardRow[]>();
   const push = (row: ScorecardRow) => {

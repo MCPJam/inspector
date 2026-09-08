@@ -42,6 +42,21 @@ describe("appendScenarioPredicatesAsAssertSteps", () => {
     expect(next[1]?.kind).toBe("assert");
     expect(next[2]?.kind).toBe("assert");
   });
+
+  it("mints ids that survive a SECOND migration of the same case", () => {
+    // The ids used to be `migrated-assert-${i}`, restarting at 0 every call.
+    // Migrating a case twice therefore produced two steps sharing an id: React
+    // reused the row and `removeStepById` deleted both at once.
+    const steps = [{ id: "p", kind: "prompt" as const, prompt: "hi" }];
+    const first = appendScenarioPredicatesAsAssertSteps(steps, [
+      { type: "noToolErrors" },
+    ]);
+    const second = appendScenarioPredicatesAsAssertSteps(first, [
+      { type: "responseContains", needle: "ok" },
+    ]);
+    const ids = second.map((step) => step.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });
 
 describe("stripScenarioPredicatesFromList", () => {

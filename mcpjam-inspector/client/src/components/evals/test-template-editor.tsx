@@ -98,6 +98,9 @@ import {
   resolveDisplayExpectedToolCalls,
   stepAssertionToWidgetAssertion,
   stepsToPromptTurns,
+  insertStepAfter,
+  lastStepIdOfTurn,
+  newStepId,
   stepTurnIndices,
   WIDGET_ASSERTION_LABELS,
   type InteractAction,
@@ -427,14 +430,6 @@ function buildDraftTestCase(
     models,
     caseType: "prompt",
   };
-}
-
-// Monotonic id for recorder-appended widget steps (interact/assert). Mirrors
-// the StepListEditor's scheme so appended rows get a stable React key.
-let widgetStepIdCounter = 0;
-function newWidgetStepId(kind: string): string {
-  widgetStepIdCounter += 1;
-  return `${kind}-${Date.now()}-${widgetStepIdCounter}`;
 }
 
 const validateExpectedToolCalls = (
@@ -2007,16 +2002,19 @@ export function TestTemplateEditor({
   const appendWidgetStepToTurn = useCallback(
     (turnIndex: number, step: TestStep) => {
       const currentSteps = editFormStepsRef.current;
-      const turnOf = stepTurnIndices(currentSteps);
-      let insertAt = currentSteps.length;
-      for (let i = currentSteps.length - 1; i >= 0; i--) {
-        if (turnOf[i] === turnIndex) {
-          insertAt = i + 1;
-          break;
-        }
-      }
-      const next = [...currentSteps];
-      next.splice(insertAt, 0, step);
+      // `lastStepIdOfTurn` names the turn's last step and `insertStepAfter`
+      // puts the recorded step right behind it — the same position the local
+      // reverse scan produced, pinned against that loop by a property test in
+      // `shared/__tests__/steps-spine.test.ts`. When the turn has no steps yet
+      // (or does not exist), the fallback anchors on the list's last step,
+      // which appends, as before.
+      const next = insertStepAfter(
+        currentSteps,
+        lastStepIdOfTurn(currentSteps, turnIndex) ??
+          currentSteps[currentSteps.length - 1]?.id ??
+          null,
+        step,
+      );
       setEditForm((current) =>
         current ? { ...current, steps: next } : current,
       );
@@ -2039,7 +2037,7 @@ export function TestTemplateEditor({
       setPendingPick((pick) => {
         if (!pick) return null;
         appendWidgetStepToTurn(pick.promptIndex, {
-          id: newWidgetStepId("wassert"),
+          id: newStepId("wassert"),
           kind: "assert",
           assertion: stepAssertionToWidgetAssertion(pick.toolName, assertion),
         });
@@ -2082,7 +2080,7 @@ export function TestTemplateEditor({
         return;
       }
       appendWidgetStepToTurn(turnIndex, {
-        id: newWidgetStepId("interact"),
+        id: newStepId("interact"),
         kind: "interact",
         toolName: event.toolName,
         action: step as unknown as InteractAction,

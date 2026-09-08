@@ -14,11 +14,13 @@
  */
 
 import {
+  insertStepAfter,
   isAssertStep,
   isInteractStep,
   isPromptStep,
   isToolCallStep,
   isWidgetAssertion,
+  newStepId,
   stepTurnIndices,
   WIDGET_ASSERTION_LABELS,
   type InteractAction,
@@ -145,12 +147,6 @@ export type WriteSimpleCaseView = {
   }>;
   noTool: boolean;
 };
-
-let stepIdCounter = 0;
-function newStepId(kind: string): string {
-  stepIdCounter += 1;
-  return `${kind}-${Date.now()}-${stepIdCounter}`;
-}
 
 /**
  * A `toolCalledWith` assert that actually routes the case.
@@ -482,13 +478,30 @@ export function writeSimpleCase(
       break;
     }
   }
-  const insertAt = lastToolIdx === -1 ? firstTurnEnd : lastToolIdx + 1;
-  kept.splice(
-    insertAt,
-    0,
-    ...brandNew.map((tool) => toolAssertStep(tool.id, tool)),
-  );
-  return [...lead, ...kept];
+  /**
+   * The anchor the bounded search above resolved to, as a step ID for the one
+   * shared splice (`insertStepAfter`):
+   *   - after the last tool assert in this turn, when there is one;
+   *   - else after the turn's last step, when the turn has any;
+   *   - else `null` — turn 1 is the prompt alone, so the tool goes to the front
+   *     of `kept`, which is directly after the prompt in `[...lead, ...kept]`.
+   * Each new tool then chains off the previous one's ID (an assert anchor
+   * inserts immediately after it), preserving the authored order.
+   */
+  const anchorId =
+    lastToolIdx !== -1
+      ? kept[lastToolIdx]!.id
+      : firstTurnEnd > 0
+        ? kept[firstTurnEnd - 1]!.id
+        : null;
+  let withTools = kept;
+  let previousId = anchorId;
+  for (const tool of brandNew) {
+    const step = toolAssertStep(tool.id, tool);
+    withTools = insertStepAfter(withTools, previousId, step);
+    previousId = step.id;
+  }
+  return [...lead, ...withTools];
 }
 
 export function removeStepById(steps: TestStep[], stepId: string): TestStep[] {

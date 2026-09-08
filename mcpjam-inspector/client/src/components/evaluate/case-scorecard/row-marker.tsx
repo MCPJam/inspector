@@ -32,10 +32,16 @@ const WHEN: Record<string, string> = {
   judge: "Runs last, after every check",
 };
 
-export function whenLabel(row: ScorecardRow): string {
+export function whenLabel(
+  row: ScorecardRow,
+  numbering: "flat" | "action" = "flat",
+): string {
   if (row.provenance === "step") {
-    return row.stepNumber === undefined
-      ? "Graded where it sits in the run"
+    if (row.stepNumber === undefined) return "Graded where it sits in the run";
+    // On the spine a check hangs UNDER an action, so its badge names that
+    // action ("after step 2"), not the check's own offset in the flat list.
+    return numbering === "action"
+      ? `After step ${row.stepNumber} — graded when the run reaches it`
       : `Step ${row.stepNumber} — graded when the run reaches it`;
   }
   return WHEN[row.provenance] ?? "";

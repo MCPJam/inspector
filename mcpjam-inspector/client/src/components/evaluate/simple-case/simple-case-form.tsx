@@ -10,7 +10,7 @@ import {
   type EvalMatchOptions,
   type Predicate,
 } from "@/shared/eval-matching";
-import { isInteractStep, type TestStep } from "@/shared/steps";
+import { isInteractStep, newStepId, type TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type {
@@ -295,7 +295,7 @@ export function SimpleCaseForm({
     setTools([
       ...view.tools,
       {
-        id: `assert-${Date.now()}-${view.tools.length + 1}`,
+        id: newStepId("assert"),
         toolName: name,
         arguments: {},
       },
