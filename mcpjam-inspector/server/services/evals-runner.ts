@@ -58,6 +58,11 @@ import {
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
+import {
+  collectHostedRecordingBeforeRelease,
+  forgetHostedRecording,
+  type HostedRecording,
+} from "./browserd/hosted-recording.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -1764,11 +1769,35 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
-  finishParams: Omit<EvalIterationFinishParams, "videoBytes">;
+  finishParams: Omit<
+    EvalIterationFinishParams,
+    "videoBytes" | "videoMime" | "videoMeta"
+  >;
+  /**
+   * The hosted daemon's recording, collected off the box before it was
+   * released. Used only when the local harness produced no video of its own —
+   * which, on a hosted iteration, is always.
+   */
+  hostedRecording?: HostedRecording | null;
 }): Promise<void> {
   await finalizeWithBrowserArtifacts({
     browser: args.browser,
     logScope: "evals",
+    ...(args.hostedRecording
+      ? {
+          fallbackVideo: {
+            bytes: args.hostedRecording.bytes,
+            mime: args.hostedRecording.mime,
+            meta: {
+              source: "hosted" as const,
+              fps: args.hostedRecording.fps,
+              durationMs: args.hostedRecording.durationMs,
+              distinctFrames: args.hostedRecording.distinctFrames,
+              truncated: args.hostedRecording.truncated,
+            },
+          },
+        }
+      : {}),
     sink: {
       kind: "eval",
       recorder: args.recorder,
@@ -4500,6 +4529,17 @@ const runLocalIteration = async ({
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
     if (evalSandbox?.ok) {
+      // FORGET, not collect — and the difference is deliberate. This runner is
+      // the local-BYOK path: its box is TERMINAL ONLY (see the provisioning
+      // comment above), so a hosted browser can never be advertised here and
+      // there is never a recording to take off it. And the finalize on the
+      // success path has ALREADY run by the time this `finally` fires, so a
+      // video collected here would have nowhere to go — it would be read off
+      // the box at some cost and then dropped, silently. Dropping the registry
+      // entry instead keeps a stray take from outliving its box; if this
+      // runner ever does bind a hosted browser, the collect belongs before the
+      // finalize, the way the hosted runner does it.
+      forgetHostedRecording(evalSandbox.value.sandboxRowId);
       await releaseEvalSandbox({
         sandboxRowId: evalSandbox.value.sandboxRowId,
       }).catch(() => {});
@@ -4854,10 +4894,29 @@ const runHostedIterationWithBrowser = async (
   // clean failed iteration; released right after the agent run below.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  /**
+   * The video the hosted browser recorded, if this iteration used one.
+   *
+   * Closed over rather than returned, because the box is released from three
+   * different exits (the run's own `finally`, a setup failure's catch, and the
+   * agent-run `finally`) and the file has to come off the box at whichever one
+   * fires first — after the release there is nothing left to read.
+   */
+  let hostedRecording: HostedRecording | null = null;
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
     if (evalSandbox?.ok) {
       const { sandboxRowId } = evalSandbox.value;
       evalSandbox = null;
+      // BEFORE the release, and bounded by its own deadline: after the
+      // release there is nothing left to read. The collector promises never to
+      // throw and the `catch` is here anyway — the release must not DEPEND on
+      // that promise, because a box that outlives its iteration costs money
+      // until the GC cron reaps it and no video is worth that.
+      hostedRecording =
+        hostedRecording ??
+        (await collectHostedRecordingBeforeRelease(sandboxRowId).catch(
+          () => null,
+        ));
       await releaseEvalSandbox({ sandboxRowId }).catch(() => {});
     }
   };
@@ -5602,6 +5661,10 @@ const runHostedIterationWithBrowser = async (
     recorder,
     convexClient,
     finishParams,
+    // Collected by `releaseEvalSandboxIfAny` before the box went away — the
+    // file only ever existed there, so it had to come off ahead of the
+    // release, several hundred lines above this line.
+    hostedRecording,
   });
 
   return {

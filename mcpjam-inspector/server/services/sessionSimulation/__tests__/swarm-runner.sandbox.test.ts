@@ -100,6 +100,42 @@ vi.mock("../../swarm-agent.js", async () => {
   };
 });
 
+// The hosted recording: an attempt's box is the only place its video ever
+// exists, so the collect has to happen while that box is still alive.
+const collectHostedRecordingMock = vi.fn();
+vi.mock("../../browserd/hosted-recording.js", () => ({
+  collectHostedRecordingBeforeRelease: (...args: unknown[]) =>
+    collectHostedRecordingMock(...args),
+}));
+
+// The outbox the collected video is staged on — the SAME one the local
+// harness's replay rides.
+const stageVideoMock = vi.fn();
+const outboxFlushMock = vi.fn();
+vi.mock("../../browser-artifact-outbox.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../browser-artifact-outbox.js")
+  >("../../browser-artifact-outbox.js");
+  return {
+    ...actual,
+    createBrowserArtifactOutbox: (...args: unknown[]) => {
+      const real = (
+        actual.createBrowserArtifactOutbox as never as (
+          ...a: unknown[]
+        ) => Record<string, unknown>
+      )(...args);
+      return {
+        ...real,
+        stageVideo: (...a: unknown[]) => stageVideoMock(...a),
+        flush: (...a: unknown[]) => {
+          outboxFlushMock(...a);
+          return (real.flush as (...b: unknown[]) => unknown)(...a);
+        },
+      };
+    },
+  };
+});
+
 vi.mock("../../../utils/computers/control-plane-client.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/computers/control-plane-client.js")
@@ -322,6 +358,9 @@ beforeEach(() => {
     };
   });
   releaseSandboxMock.mockReset().mockResolvedValue(undefined);
+  collectHostedRecordingMock.mockReset().mockResolvedValue(null);
+  stageVideoMock.mockReset().mockResolvedValue(undefined);
+  outboxFlushMock.mockReset();
   dataPlaneConfiguredMock.mockReset().mockReturnValue(true);
   resolveHostToolsMock.mockReset();
   resolveHarnessSandboxMock.mockReset();
@@ -1314,5 +1353,78 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
       expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
     }
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * R-3. Video evidence for an unattended attempt.
+ *
+ * The file only ever exists on the attempt's box, so the collect has to run
+ * BEFORE the release — and it must never be able to prevent one. A swarm leaks
+ * money for as long as a box outlives its attempt.
+ */
+describe("swarm runner — the attempt's recording comes off before the box does", () => {
+  const RECORDING = {
+    bytes: Buffer.from("mp4-bytes"),
+    mime: "video/mp4" as const,
+    durationMs: 9_000,
+    distinctFrames: 42,
+    fps: 15,
+    truncated: true,
+    startedAtMs: 1_700_000_000_000,
+  };
+
+  it("collects before the release, and stages it on the outbox", async () => {
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+
+    await startJourneyRun(baseOpts());
+
+    expect(collectHostedRecordingMock).toHaveBeenCalledWith("row_1");
+    // ORDER, not just presence: after the release there is nothing to read.
+    expect(
+      collectHostedRecordingMock.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(releaseSandboxMock.mock.invocationCallOrder[0]!);
+
+    expect(stageVideoMock).toHaveBeenCalledWith(RECORDING.bytes, {
+      mime: "video/mp4",
+      meta: {
+        source: "hosted",
+        fps: 15,
+        durationMs: 9_000,
+        distinctFrames: 42,
+        truncated: true,
+      },
+    });
+    expect(outboxFlushMock).toHaveBeenCalled();
+  });
+
+  it("stages nothing for an attempt that never recorded", async () => {
+    collectHostedRecordingMock.mockResolvedValue(null);
+    await startJourneyRun(baseOpts());
+    expect(stageVideoMock).not.toHaveBeenCalled();
+    expect(releaseSandboxMock).toHaveBeenCalled();
+  });
+
+  it("still releases the box when the collect throws", async () => {
+    // The collector is contractually total, but the release must not DEPEND on
+    // that: a leaked box costs money until the GC cron reaps it.
+    collectHostedRecordingMock.mockRejectedValue(new Error("daemon gone"));
+
+    await startJourneyRun(baseOpts());
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+
+  it("still releases the box when staging the video throws", async () => {
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+    stageVideoMock.mockRejectedValue(new Error("convex down"));
+
+    await startJourneyRun(baseOpts());
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
   });
 });

@@ -1793,3 +1793,60 @@ describe("ensureBrowserSession — adopting a daemon the box started", () => {
     expect(f.boot).toHaveBeenCalled();
   });
 });
+
+/**
+ * R-3. Capabilities survive the client rebuild.
+ *
+ * `withActivityTouches` wraps every hosted client and rebuilds it METHOD BY
+ * METHOD — a `BrowserdClient` instance keeps its methods on the prototype, so
+ * a spread would drop all of them. That makes the wrapper a place where a
+ * capability added to the client and not added there silently stops existing
+ * at every hosted call site, with nothing in a log to say so. For recording
+ * that is a run that quietly leaves no evidence.
+ */
+describe("ensureBrowserSession — the activity wrapper forwards every capability", () => {
+  const recordingClient = () => {
+    const record = vi.fn(async () => ({ ok: true as const }));
+    const recordStatus = vi.fn(async () => ({ active: false }));
+    return { record, recordStatus };
+  };
+
+  it("forwards record and recordStatus to the wrapped client", async () => {
+    const spies = recordingClient();
+    const f = makeFakes({ lookups: [liveLookup()] });
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      status: async () =>
+        ({
+          kind: "ok",
+          bootId: ROW.bootId,
+          protocolVersion: BROWSERD_PROTOCOL_VERSION,
+          bundleHash: HASH,
+        }) as BrowserdStatus,
+      sendCommand: async () => ({ kind: "ok" }) as never,
+      ...spies,
+    }));
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.client.record).toBeTypeOf("function");
+    expect(handle.client.recordStatus).toBeTypeOf("function");
+    await handle.client.record!({ action: "start", id: "run-1", fps: 15 });
+    await handle.client.recordStatus!();
+    // Delegated, not reimplemented: the wrapper adds touches, not behaviour.
+    expect(spies.record).toHaveBeenCalledWith({
+      action: "start",
+      id: "run-1",
+      fps: 15,
+    });
+    expect(spies.recordStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits them entirely for a client that has neither", async () => {
+    // Absent, not present-and-throwing: the caller gates on the method
+    // existing, exactly as it does for `lease`.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.client.record).toBeUndefined();
+    expect(handle.client.recordStatus).toBeUndefined();
+  });
+});

@@ -18,6 +18,7 @@ import {
 } from "../swarm-agent.js";
 import { runSwarmChecks } from "../checks/run-swarm-checks.js";
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
+import { collectHostedRecordingBeforeRelease } from "../browserd/hosted-recording.js";
 import {
   canProvisionSwarmSandboxes,
   provisionAttemptSandbox,
@@ -1349,6 +1350,45 @@ async function runJourneyFanOut(
           // abort. A leaked box costs money until the GC cron reaps it, so
           // this must not be conditional on how the session ended.
           if (attemptSandbox) {
+            // The recording FIRST: it lives on that box, and after the release
+            // there is nothing left to read. Bounded and total — a daemon that
+            // has gone away, a read that hangs, an SDK that throws all answer
+            // `null` inside the deadline. A no-op (and no network at all) for
+            // an attempt that never touched a browser.
+            //
+            // WRAPPED ANYWAY. Both the collector and the outbox promise never
+            // to throw, and the release must not DEPEND on either promise: a
+            // box that outlives its attempt costs money until the GC cron
+            // reaps it, and no video is ever worth that.
+            try {
+              const recording = await collectHostedRecordingBeforeRelease(
+                attemptSandbox.sandboxRowId,
+              );
+              if (recording) {
+                // Through the SAME outbox the local harness's replay uses:
+                // `stageVideo` uploads and holds the blob id, and the flush
+                // below attaches it — riding an artifact write if one is left,
+                // or going as a video-only write if not. Idempotent, so an
+                // attempt that somehow staged twice keeps the first.
+                await browserArtifacts.stageVideo(recording.bytes, {
+                  mime: recording.mime,
+                  meta: {
+                    source: "hosted",
+                    fps: recording.fps,
+                    durationMs: recording.durationMs,
+                    distinctFrames: recording.distinctFrames,
+                    truncated: recording.truncated,
+                  },
+                });
+                await browserArtifacts.flush();
+              }
+            } catch (err) {
+              logger.warn("[swarm.runner] hosted recording not collected", {
+                runId,
+                sandboxRowId: attemptSandbox.sandboxRowId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
             await releaseAttemptSandbox(attemptSandbox.sandboxRowId);
           }
         }
