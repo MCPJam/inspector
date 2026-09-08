@@ -75,6 +75,7 @@ export function TrialScorecard({
   liveStepStatusById,
   judgeSlot,
   scoresSection,
+  suggestionsSlot,
   syncedStepId,
   onSyncStep,
 }: {
@@ -88,6 +89,14 @@ export function TrialScorecard({
   liveStepStatusById?: Map<string, EvalStepStatus>;
   judgeSlot?: ReactNode;
   scoresSection?: ReactNode | null;
+  /**
+   * "Suggested from this run", under the graded rows.
+   *
+   * A slot rather than a hook, for the same reason `IterationDetails.scorecard`
+   * is one: the writers that accept a suggestion and the flag that gates it
+   * belong to the editor, and `RunColumn` mounts this component too.
+   */
+  suggestionsSlot?: ReactNode;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
@@ -165,6 +174,8 @@ export function TrialScorecard({
         downgraded the verdict for it — and a reader who needs that is looking
         for it.
       */}
+      {suggestionsSlot}
+
       {scoresSection ? (
         <details
           className="rounded-md border border-border/50"

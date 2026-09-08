@@ -226,6 +226,10 @@ import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
+import { appendCaseScorer } from "../evaluate/case-scorecard/case-scorecard-model";
+import { groupCaseIterations } from "./runs/group-case-iterations";
+import { SuggestedFromRunSection } from "../evaluate/case-scorecard/suggested-from-run-section";
+import type { Suggestion } from "../evaluate/case-scorecard/suggest-from-run";
 import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
   caseHasOwnAssertion,
@@ -1863,6 +1867,119 @@ export function TestTemplateEditor({
     useWorkspace,
     workspaceIsNegative,
   ]);
+  // ── suggestions ────────────────────────────────────────────────────────────
+  const suggestionBatch = useMemo(
+    () => groupCaseIterations(recentIterations)[0] ?? null,
+    [recentIterations],
+  );
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const [acceptedSuggestions, setAcceptedSuggestions] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+
+  /**
+   * Accept one or more suggestions, in ONE draft update.
+   *
+   * "Add all" cannot be a loop of single accepts: `editFormStepsRef` only
+   * refreshes after a render, so the second insert would compute its anchor
+   * from the pre-insert list and the two would collide. Folding them means a
+   * later anchor still resolves against the steps the earlier one produced.
+   */
+  const acceptSuggestions = useCallback(
+    (list: Suggestion[], via: "row" | "all" | "chain") => {
+      if (list.length === 0) return;
+      const batchKey = suggestionBatch?.key ?? "";
+      setEditForm((current) => {
+        if (!current) return current;
+        let steps = current.steps;
+        let predicates = current.predicates;
+        for (const suggestion of list) {
+          if (suggestion.kind === "route" && suggestion.route) {
+            const iteration = recentIterations.find(
+              (it) => it._id === suggestion.route!.iterationId,
+            );
+            if (iteration) {
+              steps = adoptRouteFromIteration(
+                steps,
+                iteration,
+                deriveCaseKind(
+                  resolveMatchOptions(
+                    suite?.defaultMatchOptions,
+                    current.matchOptions,
+                  ),
+                ),
+              );
+            }
+            continue;
+          }
+          if (suggestion.placement.kind === "afterStep") {
+            const anchor = suggestion.placement.anchorStepId;
+            const assertion =
+              suggestion.predicate ?? suggestion.widgetAssertion;
+            if (!assertion) continue;
+            // The anchor came from the trial's frozen snapshot; a draft edited
+            // since may no longer contain it. A turn-scoped check still means
+            // something as a whole-run check, so it falls back rather than
+            // being dropped; a widget assertion does not, and is skipped.
+            if (!steps.some((step) => step.id === anchor)) {
+              if (suggestion.predicate) {
+                predicates = appendCaseScorer(predicates, suggestion.predicate);
+              }
+              continue;
+            }
+            steps = insertStepAfter(steps, anchor, {
+              id: newStepId("assert"),
+              kind: "assert",
+              assertion,
+            } as TestStep);
+            continue;
+          }
+          if (suggestion.predicate) {
+            predicates = appendCaseScorer(predicates, suggestion.predicate);
+          }
+        }
+        return { ...current, steps, predicates };
+      });
+      setAcceptedSuggestions((current) => {
+        const next = new Set(current);
+        for (const suggestion of list) {
+          next.add(`${batchKey}|${suggestion.key}`);
+        }
+        return next;
+      });
+      for (const suggestion of list) {
+        track("eval_suggestion_accepted", {
+          kind: suggestion.predicate?.type ?? suggestion.kind,
+          role: suggestion.role,
+          stability_held: suggestion.stability.held,
+          stability_of: suggestion.stability.of,
+          placement: suggestion.placement.kind,
+          stage: suggestion.stage,
+          via,
+        });
+      }
+    },
+    [suggestionBatch?.key, recentIterations, suite?.defaultMatchOptions],
+  );
+
+  const dismissSuggestion = useCallback(
+    (suggestion: Suggestion) => {
+      const batchKey = suggestionBatch?.key ?? "";
+      setDismissedSuggestions((current) =>
+        new Set(current).add(`${batchKey}|${suggestion.key}`),
+      );
+      track("eval_suggestion_dismissed", {
+        kind: suggestion.predicate?.type ?? suggestion.kind,
+        role: suggestion.role,
+        placement: suggestion.placement.kind,
+        stage: suggestion.stage,
+      });
+    },
+    [suggestionBatch?.key],
+  );
+
   /**
    * "Run test": save, then run THIS case as a suite run.
    *
@@ -4476,6 +4593,50 @@ export function TestTemplateEditor({
                                 suiteRuns,
                               )}
                               envelope={ctx.envelope}
+                              suggestionsSlot={
+                                useSpine ? (
+                                  <SuggestedFromRunSection
+                                    enabled
+                                    batch={suggestionBatch}
+                                    authored={
+                                      authoredForTrial({
+                                        trial: workspaceSelectedTrial,
+                                        draft: workspaceDraftScorecardInput,
+                                        run: workspaceTrialRun ?? null,
+                                      }).authored
+                                    }
+                                    judgeFor={(iteration) =>
+                                      resolveIterationJudge(
+                                        iteration,
+                                        suiteRuns,
+                                      )
+                                    }
+                                    selectedBlob={
+                                      ctx.envelope
+                                        ? {
+                                            iterationId:
+                                              workspacePersistedIteration._id,
+                                            blob: ctx.envelope as never,
+                                          }
+                                        : null
+                                    }
+                                    prompts={(editForm?.steps ?? [])
+                                      .filter((step) => step.kind === "prompt")
+                                      .map((step) =>
+                                        "prompt" in step ? step.prompt : "",
+                                      )}
+                                    dismissed={dismissedSuggestions}
+                                    accepted={acceptedSuggestions}
+                                    onAccept={(suggestion) =>
+                                      acceptSuggestions([suggestion], "row")
+                                    }
+                                    onAcceptAll={(all) =>
+                                      acceptSuggestions(all, "all")
+                                    }
+                                    onDismiss={dismissSuggestion}
+                                  />
+                                ) : null
+                              }
                               judgeSlot={
                                 ctx.reviewActive ? (
                                   // Keyed by trial: a switch remounts the
