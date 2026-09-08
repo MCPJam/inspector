@@ -560,7 +560,7 @@ export function InlineJudgeBadge({
 const WORKFLOW_TONE: Record<WorkflowInsight["efficiency"], string> = {
   optimal: "text-success",
   acceptable: "text-muted-foreground",
-  inefficient: "text-amber-600 dark:text-amber-400",
+  inefficient: "text-warning",
   excessive: "text-destructive",
 };
 

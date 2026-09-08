@@ -58,6 +58,8 @@ export function EnvironmentPicker({
   disabled = false,
   busy = false,
   emptyLabel = "No environments · pick some",
+  headingLabel,
+  emptyProjectLabel = "No environments in this project yet.",
   className,
   triggerTestId,
   triggerAriaLabel,
@@ -76,6 +78,9 @@ export function EnvironmentPicker({
   /** Shows the spinner while the caller persists. */
   busy?: boolean;
   emptyLabel?: string;
+  /** Popover heading. Defaults to Environments / Environments · run order. */
+  headingLabel?: string;
+  emptyProjectLabel?: string;
   className?: string;
   /** Test hook + a11y label for the trigger, for callers that key on them. */
   triggerTestId?: string;
@@ -222,7 +227,8 @@ export function EnvironmentPicker({
         portalled={!inModal}
       >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {multi ? "Environments · run order" : "Environments"}
+          {headingLabel ??
+            (multi ? "Environments · run order" : "Environments")}
         </div>
         {environments === undefined ? (
           <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
@@ -232,7 +238,7 @@ export function EnvironmentPicker({
           archivedSelected.length === 0 &&
           orphanSelectedIds.length === 0 ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            No environments in this project yet.
+            {emptyProjectLabel}
           </p>
         ) : (
           <div className="max-h-64 space-y-0.5 overflow-y-auto">

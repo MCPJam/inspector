@@ -102,7 +102,7 @@ afterEach(cleanup);
 describe("RunCaseRowBody", () => {
   it("counts the trials a failure shape covers", () => {
     render(<RunCaseRowBody row={row()} iterations={ITERATIONS} />);
-    expect(screen.getByText("3 trials broke at Selection")).toBeInTheDocument();
+    expect(screen.getByText("3 iterations broke at Selection")).toBeInTheDocument();
     expect(
       screen.getByText("evidence below is from the first of them"),
     ).toBeInTheDocument();
@@ -192,7 +192,7 @@ describe("RunCaseRowBody", () => {
     expect(screen.queryByText("What to change")).toBeNull();
     expect(screen.queryByText("Worth checking")).toBeNull();
     expect(
-      screen.getByText(/1 trial did not complete, and no stage/),
+      screen.getByText(/1 iteration did not complete, and no stage/),
     ).toBeInTheDocument();
   });
 

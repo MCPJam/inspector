@@ -1134,7 +1134,7 @@ export const EVAL_RUN_DECISION_VERDICT_SOURCE_LABELS = Object.freeze({
  */
 export const EVAL_RUN_MEASUREMENT_UNIT_LABELS = Object.freeze({
   caseVariant: { one: "case variant", many: "case variants" },
-  trial: { one: "trial", many: "trials" },
+  trial: { one: "iteration", many: "iterations" },
 } satisfies Record<EvalRunMeasurementUnit, { one: string; many: string }>);
 
 /** @see EVAL_RUN_DECISION_UNDECIDED_REASONS */
