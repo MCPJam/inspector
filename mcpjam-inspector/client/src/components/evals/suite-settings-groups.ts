@@ -9,10 +9,8 @@ export const SUITE_SETTINGS_GROUPS = [
   { id: "triggers", label: "Triggers", rows: ["schedule", "githubChecks"] },
 ] as const;
 
-/** Trigger configuration is retained but hidden from suite settings. */
-export const VISIBLE_SUITE_SETTINGS_GROUPS = SUITE_SETTINGS_GROUPS.filter(
-  (group) => group.id !== "triggers",
-);
+/** All suite settings groups are reachable from the settings sheet. */
+export const VISIBLE_SUITE_SETTINGS_GROUPS = SUITE_SETTINGS_GROUPS;
 
 export type SuiteSettingsGroupId = (typeof SUITE_SETTINGS_GROUPS)[number]["id"];
 

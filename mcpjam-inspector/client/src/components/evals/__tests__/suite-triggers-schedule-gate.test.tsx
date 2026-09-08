@@ -143,12 +143,7 @@ function renderTriggersTab() {
   return container;
 }
 
-// SKIPPED: the Evaluate settings sheet hides the Triggers group
-// (`VISIBLE_SUITE_SETTINGS_GROUPS` in suite-settings-groups.ts), so there is
-// no nav button to reach the rows these cases assert on. The section itself
-// is retained behind `activeGroupId === "triggers"`; re-enable this block when
-// the group returns to the sheet.
-describe.skip("Triggers tab — Schedule flag", () => {
+describe("Triggers tab — Schedule flag", () => {
   beforeEach(() => {
     class FakeIntersectionObserver {
       observe() {}

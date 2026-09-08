@@ -402,7 +402,7 @@ describe("eval suite settings manifest — render parity", () => {
     expect(container.querySelector('[data-setting-key="computerEnvironment"]')).toBeNull();
   });
 
-  it("keeps triggers hidden without schedule permission", () => {
+  it("keeps the schedule visible but disabled without schedule permission", () => {
     mocks.capabilities.mockReturnValue(
       readyCapabilities({
         permissions: {
@@ -419,8 +419,13 @@ describe("eval suite settings manifest — render parity", () => {
       }),
     );
     const { container } = renderSettingsSheet();
-    expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
-    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).not.toContain("Triggers");
+    showSettingsKey(container, "schedule");
+    const schedule = container.querySelector('[data-setting-key="schedule"]');
+    expect(schedule).toBeTruthy();
+    expect(schedule?.getAttribute("data-disabled-reason")).toBe(
+      "You don't have permission to change this",
+    );
+    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).toContain("Triggers");
   });
 
   it("behaves exactly as before when capabilities are unavailable", () => {
@@ -433,7 +438,10 @@ describe("eval suite settings manifest — render parity", () => {
     );
     const keys = collectAllSettingKeys(container);
     expect(keys).not.toContain("computerEnvironment");
-    expect(keys).not.toContain("schedule");
+    // Capabilities being unavailable preserves the pre-capabilities behavior:
+    // the row is still reachable because the settings group is visible, but
+    // it carries no refusal reason until the capability query answers.
+    expect(keys).toContain("schedule");
   });
 
   it("puts the setup client table on the Clients row", () => {
