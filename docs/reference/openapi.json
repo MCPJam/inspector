@@ -11651,7 +11651,7 @@
         "name": "x-mcpjam-ci",
         "in": "header",
         "required": false,
-        "description": "The CI job this launch is running inside, as compact JSON (max 2 KB): `provider`, `commitSha`, `branch`, `runUrl`, plus `pipelineId` / `jobId` (the GitHub-flavoured `runId` / `job` are accepted as aliases). It becomes the run's `ciMetadata`, which is what makes the run findable by commit sha — the index `mcpjam eval gate --baseline-sha` resolves through.\n\nDropped rather than rejected when unparseable or oversized. Keys with no home in the run shape (`repository`, `workflow`, `pullRequestNumber`) are ignored rather than folded into a neighbour: a `jobId` that sometimes means the workflow name is worse than an absent one.",
+        "description": "The CI job this launch is running inside, as compact JSON (max 2 KB): `provider`, `commitSha`, `branch`, `runUrl`, plus `pipelineId` / `jobId` (the GitHub-flavoured `runId` / `job` are accepted as aliases). It becomes the run's `ciMetadata`, which is what makes the run findable by commit sha — the index `mcpjam cloud eval gate --baseline-sha` resolves through.\n\nDropped rather than rejected when unparseable or oversized. Keys with no home in the run shape (`repository`, `workflow`, `pullRequestNumber`) are ignored rather than folded into a neighbour: a `jobId` that sometimes means the workflow name is worse than an absent one.",
         "schema": {
           "type": "string"
         },

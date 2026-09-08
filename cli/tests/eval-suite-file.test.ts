@@ -1637,6 +1637,12 @@ async function startFileRunFixture(options?: {
   batchBodies: unknown[];
   updateBodies: unknown[];
   deletedCaseIds: string[];
+  /**
+   * The `declaredSuiteId` query param on each case DELETE — the file's proof
+   * that it owns the suite it is reconciling. A DELETE has no body, so this is
+   * where the marker has to travel.
+   */
+  deleteMarkers: Array<string | null>;
   suitePatches: unknown[];
   runBodies: unknown[];
   close: () => Promise<void>;
@@ -1646,6 +1652,7 @@ async function startFileRunFixture(options?: {
   const batchBodies: unknown[] = [];
   const updateBodies: unknown[] = [];
   const deletedCaseIds: string[] = [];
+  const deleteMarkers: Array<string | null> = [];
   const suitePatches: unknown[] = [];
   const runBodies: unknown[] = [];
   let environmentIds: string[] = [];
@@ -1835,6 +1842,7 @@ async function startFileRunFixture(options?: {
     ) {
       const caseId = url.pathname.split("/").pop() ?? "";
       deletedCaseIds.push(caseId);
+      deleteMarkers.push(url.searchParams.get("declaredSuiteId"));
       for (const [declaredId, row] of casesByDeclaredId) {
         if (row.id === caseId) {
           casesByDeclaredId.delete(declaredId);
@@ -1993,6 +2001,7 @@ async function startFileRunFixture(options?: {
     batchBodies,
     updateBodies,
     deletedCaseIds,
+    deleteMarkers,
     suitePatches,
     runBodies,
     close: () =>
@@ -2193,6 +2202,10 @@ describe("eval run --file", () => {
                 servers: ["srv_billing"],
               },
             ],
+            // The sync names the suite it owns on the host attachment write
+            // too: a file-owned suite refuses configuration writes from
+            // anywhere else, and this is a configuration write.
+            declaredSuiteId: "s_billing",
           },
         ]);
         assert.equal(
@@ -2624,6 +2637,72 @@ describe("eval run --file", () => {
     }
   });
 
+  /**
+   * The sync now IDENTIFIES ITSELF on every write.
+   *
+   * The platform refuses configuration writes to a suite a file owns, because
+   * the sync below hard-deletes any case the file does not declare — an edit
+   * made from the app is one this run would silently destroy. The sync goes
+   * through those same public routes, so it names the suite it is reconciling,
+   * and the write is allowed only because the id is that suite's own.
+   */
+  test("every case write the file sync makes names the suite it owns", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_stale", declaredId: "c_stale", title: "Stale" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        // Declares `c_refund` (an update) plus a new case (a create), and drops
+        // `c_stale` (a delete) — all three write shapes in one run.
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_new\n    title: New\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Brand new.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+
+        // CREATE — one marker for the batch, not one per case: it says who is
+        // writing, and a batch cannot have two owners.
+        assert.equal(fixture.batchBodies.length, 1);
+        const batch = fixture.batchBodies[0] as {
+          declaredSuiteId?: string;
+          cases: Array<Record<string, unknown>>;
+        };
+        assert.equal(batch.declaredSuiteId, "s_billing");
+        for (const testCase of batch.cases) {
+          assert.equal(testCase.declaredSuiteId, undefined);
+        }
+
+        // UPDATE
+        assert.ok(fixture.updateBodies.length >= 1);
+        for (const body of fixture.updateBodies) {
+          assert.equal(
+            (body as { declaredSuiteId?: string }).declaredSuiteId,
+            "s_billing"
+          );
+        }
+
+        // DELETE — on the query string, because a DELETE has no body. This is
+        // the write the lock exists to describe: the file removing a case the
+        // app is not allowed to touch.
+        assert.deepEqual(fixture.deletedCaseIds, ["row_c_stale"]);
+        assert.deepEqual(fixture.deleteMarkers, ["s_billing"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("a newly declared disabled case is created but not launched", async () => {
     const fixture = await startFileRunFixture({
       existingCases: [
@@ -3048,7 +3127,10 @@ describe("file-owned case bodies and idempotency", () => {
     const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
     assert.equal(loaded.ok, true);
     if (!loaded.ok) return;
-    const labelled = { ...loaded.resolved.cases[0], kind: "regression" as const };
+    const labelled = {
+      ...loaded.resolved.cases[0],
+      kind: "regression" as const,
+    };
     assert.equal(fileCaseToCreateBody(labelled).kind, "regression");
     assert.equal(fileCaseToUpdateBody(labelled).kind, "regression");
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).kind, null);

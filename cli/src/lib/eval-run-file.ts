@@ -463,6 +463,17 @@ export async function syncFileOwnedCases(
      * `enabledCaseIds`.
      */
     declaredCaseIds: ReadonlySet<string>;
+    /**
+     * The suite-file id that owns this suite — this file's own `suite.id`.
+     *
+     * The sync writes through the SAME public routes the app does (one code
+     * path, one set of validations), and the platform now refuses those writes
+     * on a CI-owned suite: an edit made from the app is one this sync would
+     * silently delete on the next run. Naming the suite we are syncing marks
+     * these writes as the owner's, and the platform allows them only because
+     * the id is the suite's own.
+     */
+    declaredSuiteId: string;
     signal?: AbortSignal;
   }
 ): Promise<{
@@ -524,7 +535,12 @@ export async function syncFileOwnedCases(
         {
           projectId: params.projectId,
           suiteId: params.suiteId,
-          body: { cases: chunk.map(fileCaseToCreateBody) },
+          body: {
+            cases: chunk.map(fileCaseToCreateBody),
+            // ONE marker for the request, not one per case: it says who is
+            // writing, and a batch cannot have two owners.
+            declaredSuiteId: params.declaredSuiteId,
+          },
         },
         { signal: params.signal }
       );
@@ -563,7 +579,10 @@ export async function syncFileOwnedCases(
           projectId: params.projectId,
           suiteId: params.suiteId,
           caseId: row.id,
-          body: fileCaseToUpdateBody(file),
+          body: {
+            ...fileCaseToUpdateBody(file),
+            declaredSuiteId: params.declaredSuiteId,
+          },
         },
         { signal: params.signal }
       );
@@ -600,6 +619,9 @@ export async function syncFileOwnedCases(
           projectId: params.projectId,
           suiteId: params.suiteId,
           caseId: row.id,
+          // On the query string — a DELETE has no body. This is the write the
+          // lock exists to describe: the file removing a case the app cannot.
+          declaredSuiteId: params.declaredSuiteId,
         },
         { signal: params.signal }
       );
@@ -1060,6 +1082,7 @@ export async function executeEvalRunFromFile(
     suiteId: synced.suite.id,
     cases: outgoingCases,
     declaredCaseIds: new Set(outgoingCases.map((testCase) => testCase.id)),
+    declaredSuiteId: authored.suite.id,
     signal: context.signal,
   });
 
@@ -1091,6 +1114,7 @@ export async function executeEvalRunFromFile(
               }
             : {}),
         })),
+        declaredSuiteId: authored.suite.id,
       },
       { client: context.client, signal: context.signal }
     );
@@ -1101,6 +1125,7 @@ export async function executeEvalRunFromFile(
         project: project.id,
         suite: synced.suite.id,
         environments: [fileEnvironment],
+        declaredSuiteId: authored.suite.id,
       },
       { client: context.client, signal: context.signal }
     );

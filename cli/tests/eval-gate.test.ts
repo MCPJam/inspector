@@ -344,6 +344,9 @@ test("only score-derived policies request the iterations fetch", () => {
   assert.equal(policyNeedsIterations({ maximumP95LatencyMs: 5000 }), true);
 });
 
+// `satisfies`, not a bare literal: `PlatformEvalRun.source` is now the real
+// union, and a widened `string` here would make every spread of this fixture
+// fail to type against it.
 const RUN = {
   id: "run_1",
   suiteId: "suite_1",
@@ -355,7 +358,7 @@ const RUN = {
   notes: null,
   createdAt: 0,
   completedAt: 1,
-};
+} satisfies PlatformEvalRun;
 
 test("a pass-rate gate works against a run with no integrity verdict", () => {
   // The whole point of shipping the gate before the backend integrity check:
