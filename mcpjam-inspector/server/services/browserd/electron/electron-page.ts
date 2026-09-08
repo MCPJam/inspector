@@ -953,6 +953,20 @@ export function createElectronPage(
               })
               .catch(() => undefined)) as { nodeId?: number } | undefined;
             if (focused?.nodeId === focusNodeId) return;
+            // AN ANSWER OF "NOTHING" AND NO ANSWER AT ALL ARE DIFFERENT
+            // THINGS, and only the first is safe to walk past. `undefined`
+            // here means the QUERY failed — a closed session, a document
+            // replaced under the root id — and that is unknown focus, not
+            // absent focus. Whatever holds the caret then still receives the
+            // text.
+            if (focused === undefined) {
+              throw new Error(
+                (await nodeIsGone(focusNodeId))
+                  ? `not found: ${selector} left the document before it ` +
+                    `could be filled`
+                  : `${selector}: could not confirm focus before filling it`,
+              );
+            }
             // NOTHING FOCUSED IS NOT SOMETHING ELSE FOCUSED, and only the
             // second is a reason to refuse.
             //
@@ -965,9 +979,22 @@ export function createElectronPage(
             // are. `Emulation.setFocusEmulationEnabled` above is what keeps
             // this answer meaningful; where it does not take, the guard goes
             // quiet instead of taking the feature down with it.
+            //
             // Falsy, not `undefined`: `DOM.querySelector` answers "nothing
             // matched" with node id 0, not by omitting the field.
-            if (!focused?.nodeId) return;
+            if (!focused.nodeId) {
+              // But a target that has GONE must not come back as a quiet
+              // success. Nothing is focused, so nothing would be written, and
+              // an act that reported ok while writing nothing is worse than
+              // one that failed: the model believes the field is filled.
+              if (await nodeIsGone(focusNodeId)) {
+                throw new Error(
+                  `not found: ${selector} left the document before it could ` +
+                    `be filled`,
+                );
+              }
+              return;
+            }
             // Same fork as the focus rejection: a page that removed the field
             // during its own handler reaches here instead, and it is still a
             // re-render the model should re-observe rather than a fault it
@@ -1004,6 +1031,20 @@ export function createElectronPage(
           // this catches every synchronous steal, which is the one a page
           // gets for free.
           await focusHeld();
+          // AND, FOR AN INHERITED-EDITABLE TARGET, THAT THE NAMED NODE IS
+          // STILL THERE.
+          //
+          // `focusHeld` watches the editing HOST, which is what holds the
+          // caret — and the host outlives its children. A descendant that was
+          // re-rendered away between classification and here leaves the host
+          // focused and perfectly valid, and the select-all would then replace
+          // the host's contents on behalf of a node that no longer exists.
+          if (focusNodeId !== nodeId && (await nodeIsGone(nodeId))) {
+            throw new Error(
+              `not found: ${selector} left the document before it could be ` +
+                `filled`,
+            );
+          }
           await cdp.send("Input.insertText", { text });
         })(),
         ACT_TIMEOUT_MS,

@@ -595,6 +595,83 @@ describe("electron page — the keyboard", () => {
     ).toHaveLength(1);
   });
 
+  it("does not walk past a focus query that FAILED", async () => {
+    // An answer of "nothing" and no answer at all are different things.
+    // A rejected query means unknown focus, not absent focus — whatever holds
+    // the caret still receives the text.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "DOM.querySelector" && params?.selector === ":focus") {
+        throw new Error("Could not find node with given id");
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#name", "Ada")).rejects.toThrow(
+      /could not confirm focus|not found/,
+    );
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
+  it("does not report a quiet success when the target has gone", async () => {
+    // Nothing focused means nothing would be written. Reporting ok there is
+    // worse than failing: the model believes the field is filled.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    let focused = false;
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "DOM.focus") focused = true;
+      if (method === "DOM.querySelector" && params?.selector === ":focus") {
+        await send(method, params);
+        return { nodeId: 0 };
+      }
+      // The node went away after the focus call.
+      if (method === "DOM.describeNode" && focused) {
+        throw new Error("Could not find node with given id");
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#name", "Ada")).rejects.toThrow(/not found/);
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
+  it("refuses when the inherited-editable target itself was re-rendered away", async () => {
+    // `focusHeld` watches the editing HOST, and a host outlives its children.
+    // A descendant removed between classification and the write leaves the
+    // host focused and perfectly valid — and the select-all would replace the
+    // host's contents on behalf of a node that no longer exists.
+    const contents = new FakeBrowserWebContents();
+    const dbg = inheritedEditable(contents);
+    const send = dbg.sendCommand.bind(dbg);
+    let focused = false;
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "DOM.focus") focused = true;
+      // The host (7) is still fine; the named span (42) has gone.
+      if (method === "DOM.describeNode" && focused && params?.nodeId === 42) {
+        throw new Error("Could not find node with given id");
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#editor", "hello")).rejects.toThrow(
+      /not found/,
+    );
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
   it("calls a vanished field NOT FOUND, so the model looks again", async () => {
     // Error prose is load-bearing: `chromium-driver` reads
     // /timeout|not found|no element|strict mode/ as `target_not_found`, which
