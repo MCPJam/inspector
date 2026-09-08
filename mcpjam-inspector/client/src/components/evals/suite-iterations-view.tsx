@@ -1544,7 +1544,13 @@ export function SuiteIterationsView({
         // means by not answering — never as permission.
         capabilities.verdictPolicyV2?.canUpgrade
         ? undefined
-        : capabilities.verdictPolicyV2?.deploymentMode === "off"
+        : // ABSENT reads the same as `off` — both mean this deployment does
+          // not offer the upgrade. Only a backend that ANSWERED with a mode
+          // supports the other sentence: saying "already on v2" because the
+          // block was missing asserts something about the SUITE on the word
+          // of a deployment that never reported one, which is the same
+          // mistake as reading a missing `ownership` as permission.
+          (capabilities.verdictPolicyV2?.deploymentMode ?? "off") === "off"
           ? DEPLOYMENT_REASON_COPY
           : "This suite is already on verdict policy v2";
 

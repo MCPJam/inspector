@@ -319,3 +319,30 @@ describe("the review dialog does not outlive its suite", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+/**
+ * ABSENCE IS NOT AN ASSERTION ABOUT THE SUITE.
+ *
+ * Guarding `verdictPolicyV2` with `?.` stopped the crash but left the reason
+ * copy falling through to "This suite is already on verdict policy v2" — a
+ * claim about the SUITE, made on the word of a deployment that never reported
+ * a mode. A missing block means the deployment does not offer the upgrade,
+ * which is what `DEPLOYMENT_REASON_COPY` already says, and is the same rule
+ * applied to a missing `ownership` block elsewhere in this change.
+ */
+describe("a capabilities answer with no verdictPolicyV2", () => {
+  it("says the deployment does not offer it, not that the suite is already on it", () => {
+    const withoutPolicy = readyCapabilities();
+    delete (withoutPolicy.capabilities as Record<string, unknown>)
+      .verdictPolicyV2;
+    mocks.capabilities.mockReturnValue(withoutPolicy);
+
+    const { container } = renderSettingsSheet();
+    openSettingsRow(container, "minimumIterations");
+
+    expect(
+      screen.queryByText(/already on verdict policy v2/i),
+    ).toBeNull();
+    expect(container.textContent).toContain("Not available on this deployment");
+  });
+});
