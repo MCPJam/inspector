@@ -1,0 +1,154 @@
+import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { runCli } from "./support/task-cli-harness.js";
+
+/** A state file per run, so these never touch a developer's real consent. */
+async function stateFile(
+  contents: Record<string, unknown> = { version: 1 },
+): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-cli-"));
+  const file = path.join(dir, "browser.json");
+  await writeFile(file, JSON.stringify(contents));
+  return file;
+}
+
+function env(file: string): NodeJS.ProcessEnv {
+  return { ...process.env, MCPJAM_BROWSER_STATE_FILE: file };
+}
+
+test("browser commands are registered and documented", async () => {
+  const result = await runCli(["browser", "--help"]);
+  assert.equal(result.exitCode, 0);
+  for (const verb of [
+    "open",
+    "observe",
+    "act",
+    "navigate",
+    "note",
+    "trace",
+    "close",
+    "consent",
+  ]) {
+    assert.match(result.stdout, new RegExp(`\\b${verb}\\b`));
+  }
+});
+
+test("the CLI never grants its own consent — it says where to get one", async () => {
+  // The Inspector's consent screen is where a person authorizes the agent
+  // browser. A CLI that could mint the capability would be that screen's own
+  // bypass, so a missing one is an error that points at the UI.
+  const file = await stateFile();
+  const result = await runCli(
+    ["--format", "json", "browser", "open", "--project", "p"],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /has not been authorized/i);
+  assert.match(result.stderr + result.stdout, /mcpjam browser consent/);
+});
+
+test("`browser consent` stores what a person granted in the UI", async () => {
+  const file = await stateFile();
+  const result = await runCli(
+    ["--format", "json", "browser", "consent", "--token", "cap-xyz"],
+    undefined,
+    { env: env(file) },
+  );
+  assert.equal(result.exitCode, 0);
+  const { readBrowserState } = await import(
+    "../src/lib/browser-session-store.js"
+  );
+  assert.equal(readBrowserState(file).consent, "cap-xyz");
+});
+
+test("a command with no open session says so instead of guessing one", async () => {
+  const file = await stateFile({ version: 1, consent: "cap" });
+  const result = await runCli(
+    ["--format", "json", "browser", "observe", "--project", "p"],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /No open browser session/i);
+  assert.match(result.stderr + result.stdout, /browser open/);
+});
+
+test("two targets on one act is a usage error, not a silent pick", async () => {
+  // Picking one silently would aim the click somewhere the caller did not ask
+  // for, which looks exactly like a click that missed.
+  const file = await stateFile({
+    version: 1,
+    consent: "cap",
+    sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
+  });
+  const result = await runCli(
+    [
+      "--format",
+      "json",
+      "browser",
+      "act",
+      "--project",
+      "p",
+      "--verb",
+      "click",
+      "--ref",
+      "e1",
+      "--selector",
+      "#save",
+    ],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /Give one target/i);
+});
+
+test("coordinates must both be numbers", async () => {
+  const file = await stateFile({
+    version: 1,
+    consent: "cap",
+    sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
+  });
+  const result = await runCli(
+    [
+      "--format",
+      "json",
+      "browser",
+      "act",
+      "--project",
+      "p",
+      "--verb",
+      "click",
+      "--x",
+      "nope",
+      "--y",
+      "5",
+    ],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /--x and --y must both be numbers/);
+});
+
+test("act and navigate default to folding in an a11y observation", async () => {
+  // One round trip, one ledger row, and refs for the next act — a screenshot
+  // carries none.
+  for (const verb of ["act", "navigate"]) {
+    const help = await runCli(["browser", verb, "--help"]);
+    assert.equal(help.exitCode, 0);
+    assert.match(help.stdout, /--observe-after/);
+    assert.match(help.stdout, /default: "a11y"/);
+  }
+});
+
+test("act and navigate expose an idempotency key for a safe retry", async () => {
+  for (const verb of ["act", "navigate"]) {
+    const help = await runCli(["browser", verb, "--help"]);
+    assert.match(help.stdout, /--command-id/);
+  }
+});
