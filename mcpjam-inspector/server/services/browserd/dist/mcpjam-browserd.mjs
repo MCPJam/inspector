@@ -1549,12 +1549,13 @@ function guardStaleness(driver, lease) {
         driver.observeForRefusal?.(command, wantsFor(action.observe))
       ).catch(() => void 0);
       if (fresh?.leaseBlocked) return fresh;
+      const bound = fresh?.stateToken !== void 0;
       return {
         ok: false,
         staleObservation: true,
         error: "stale_observation",
-        stateToken: fresh?.stateToken ?? current,
-        ...fresh?.output !== void 0 ? { output: fresh.output } : {}
+        stateToken: bound ? fresh.stateToken : current,
+        ...bound && fresh.output !== void 0 ? { output: fresh.output } : {}
       };
     }
     return driver.execute(command);

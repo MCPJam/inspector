@@ -130,6 +130,40 @@ describe("guardStaleness", () => {
     expect(driver.execute).not.toHaveBeenCalled();
   });
 
+  it("drops an UNBOUND capture rather than pinning it to the old token", async () => {
+    // `afterAct` omits the state token when the page moved under the capture,
+    // on purpose: no token honestly describes what that picture shows.
+    // Forwarding the picture anyway while falling back to the CURRENT token
+    // hands the model two page states in one answer — a picture of B pinned
+    // to A. And A is live, so the next act decided from that picture pins to
+    // A, matches, and sails through this very guard: the stale targeting L3
+    // exists to refuse, admitted by the refusal meant to prevent it.
+    const live = token({ navCounter: 9, domHash: "moved" });
+    const observeForRefusal = vi.fn(async () => ({
+      ok: true as const,
+      // A real capture, and deliberately no `stateToken`.
+      output: { url: "https://x.test/step-2", screenshot: "aGk=" },
+      settled: false,
+    }));
+    const driver = fakeDriver({
+      currentStateToken: vi.fn(async () => live),
+      observeForRefusal,
+    });
+
+    const result = await guardStaleness(driver)(actCmd(token()));
+
+    // Degrades to exactly the bare refusal this had before the fresh look was
+    // added: a token, and "look again".
+    expect(result).toEqual({
+      ok: false,
+      staleObservation: true,
+      error: "stale_observation",
+      stateToken: live,
+    });
+    expect(result).not.toHaveProperty("output");
+    expect(driver.execute).not.toHaveBeenCalled();
+  });
+
   it("asks for the shape the ACT asked for", async () => {
     // A model that wanted a tree back from its act wants a tree back from the
     // refusal too; handing it a screenshot instead is a different answer to

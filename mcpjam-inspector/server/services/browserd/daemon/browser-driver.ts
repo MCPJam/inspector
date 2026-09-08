@@ -148,12 +148,33 @@ export function guardStaleness(
       // observed, and saying "stale" here would send the model to re-read a
       // page it is not allowed to see.
       if (fresh?.leaseBlocked) return fresh;
+      // THE TOKEN AND THE PICTURE TRAVEL TOGETHER OR NOT AT ALL.
+      //
+      // A recovery read that could not bind its capture comes back with no
+      // `stateToken` — on purpose, because the page moved under the capture
+      // and no token honestly describes what it shows. Falling back to
+      // `current` while still forwarding that output would hand the model two
+      // different page states in one answer: a picture of B pinned to A.
+      //
+      // And A is the LIVE token, freshly read. So the next act, decided from
+      // that picture, pins to A, matches, and sails through this very guard —
+      // the stale targeting L3 exists to refuse, admitted by the refusal
+      // meant to prevent it. Worse than the bare token this used to send,
+      // because the model has no way to tell the picture is not the page.
+      //
+      // Unbound, the capture is dropped and the refusal degrades to exactly
+      // what it was before the fresh look was added: a token, and "look
+      // again". Which is the honest answer when nobody can say what the page
+      // looks like.
+      const bound = fresh?.stateToken !== undefined;
       return {
         ok: false,
         staleObservation: true,
         error: "stale_observation",
-        stateToken: fresh?.stateToken ?? current,
-        ...(fresh?.output !== undefined ? { output: fresh.output } : {}),
+        stateToken: bound ? fresh!.stateToken : current,
+        ...(bound && fresh!.output !== undefined
+          ? { output: fresh!.output }
+          : {}),
       };
     }
     return driver.execute(command);
