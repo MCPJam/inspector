@@ -108,9 +108,17 @@ export type SuiteCapabilities = {
     ciOwned: boolean;
     declaredSuiteId: string | null;
     /**
-     * The actions the platform refuses, named. Enumerated by the backend rather
-     * than re-derived here so an action added to the lock reaches an older
-     * client as a disabled control rather than as a button that 409s.
+     * The actions the platform refuses, named — the wire's own enumeration,
+     * carried through verbatim.
+     *
+     * NOT what the UI locks on, and deliberately not: every control keys on
+     * `ciOwned` (or, on a backend that predates this block, `isCiOwnedSuite`
+     * over the suite row), because the lock has to hold when this block is
+     * absent and a per-action gate that silently unlocks everything on an older
+     * deployment is worse than a coarse one that holds. What the list is good
+     * for is saying WHICH write was refused when one is — the refusal carries
+     * the same `action` — and for seeing at a glance what a deployment
+     * actually enforces.
      */
     lockedActions: string[];
   };

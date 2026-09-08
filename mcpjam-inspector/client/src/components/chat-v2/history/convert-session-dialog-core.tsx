@@ -382,7 +382,13 @@ export function ConvertSessionDialogCore({
     !isSubmitting &&
     (destinationMode === "new"
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
-      : Boolean(selectedSuiteId) &&
+      : // The ENTRY, not the id. A suite can leave `availableSuites` while the
+        // dialog is open — a CI sync stamps it file-owned, or someone deletes
+        // it — and the id in state then names a destination that is no longer
+        // offered. `missingServers` is computed from the entry, so it goes
+        // quietly empty at the same moment, and the submit would sail past the
+        // server check straight into a backend refusal.
+        Boolean(selectedSuiteEntry) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 
   const requiresContentTransferAck =

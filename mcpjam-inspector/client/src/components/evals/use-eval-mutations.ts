@@ -7,19 +7,24 @@ import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 const CI_OWNED_SUITE_READ_ONLY = "CI_OWNED_SUITE_READ_ONLY";
 
 /**
- * Turn the CI-ownership refusal into the sentence the disabled controls
- * already use, then rethrow.
+ * Report the CI-ownership refusal for the one write whose errors nobody else
+ * reports, then rethrow.
  *
- * The UI disables these controls, so in normal use this never fires. It fires
- * when the two disagree — a suite that became CI-owned in another tab, a client
- * older than the lock, a backend that starts refusing something this build does
- * not know about yet. Convex redacts plain errors in production, so without
- * this the person gets "Server Error" for a decision that has a clear cause and
- * two clear remedies.
+ * Applied to `createTestCase` ALONE, and the narrowness is the point. The
+ * refusal is a `ConvexError`, so its message survives to the client on
+ * `err.data` — which is why the backend throws one — and every other caller
+ * here already renders that message through `getBillingErrorMessage`. Wrapping
+ * those too produced two toasts for one refusal, the wrapper's short line and
+ * then the platform's fuller one ("its configuration lives in your
+ * repository"), with the better sentence arriving second.
  *
- * RETHROWN, not swallowed: every caller has its own catch that decides what
- * else to do (revert an optimistic edit, keep a dialog open), and returning
- * normally here would tell them the write succeeded.
+ * `createTestCase` is the exception because `generateAndPersistEvalTests`
+ * deliberately swallows a per-case failure — it is generating many, and one
+ * that will not persist should not abort the batch — so without this a locked
+ * suite would answer "Generate tests" with silence and zero new cases.
+ *
+ * RETHROWN, not swallowed: the caller decides what else to do, and returning
+ * normally would tell it the write succeeded.
  */
 function withCiOwnedToast<TArgs, TResult>(
   mutation: (args: TArgs) => Promise<TResult>,
@@ -61,24 +66,20 @@ export function useEvalMutations({
     "testSuites:updateTestSuite" as any,
   );
 
-  // Wrapped once, at the seam, rather than at each of the ~dozen call sites:
-  // the refusal is a property of the mutation, not of who called it. Only the
-  // writes the lock can refuse are wrapped — `duplicateTestSuite` is the escape
-  // hatch and must never be, and the run mutations are deliberately allowed.
   const mutations = useMemo(() => {
     if (!isDirectGuest) {
       return {
-        deleteSuiteMutation: withCiOwnedToast(convexDeleteSuite),
+        deleteSuiteMutation: convexDeleteSuite,
         deleteRunMutation: convexDeleteRun,
         cancelRunMutation: convexCancelRun,
-        // NOT wrapped: duplicate is the escape hatch out of the lock, and the
-        // platform never refuses it.
+        // Duplicate is the escape hatch out of the lock, and the platform never
+        // refuses it.
         duplicateSuiteMutation: convexDuplicateSuite,
         createTestCaseMutation: withCiOwnedToast(convexCreateTestCase),
-        deleteTestCaseMutation: withCiOwnedToast(convexDeleteTestCase),
-        duplicateTestCaseMutation: withCiOwnedToast(convexDuplicateTestCase),
+        deleteTestCaseMutation: convexDeleteTestCase,
+        duplicateTestCaseMutation: convexDuplicateTestCase,
         createTestSuiteMutation: convexCreateTestSuite,
-        updateTestSuiteMutation: withCiOwnedToast(updateTestSuiteMutation),
+        updateTestSuiteMutation,
       };
     }
 
@@ -87,15 +88,15 @@ export function useEvalMutations({
     };
 
     return {
-      deleteSuiteMutation: withCiOwnedToast(convexDeleteSuite),
+      deleteSuiteMutation: convexDeleteSuite,
       deleteRunMutation: guestUnsupported,
       cancelRunMutation: guestUnsupported,
       duplicateSuiteMutation: guestUnsupported,
       createTestCaseMutation: withCiOwnedToast(convexCreateTestCase),
-      deleteTestCaseMutation: withCiOwnedToast(convexDeleteTestCase),
+      deleteTestCaseMutation: convexDeleteTestCase,
       duplicateTestCaseMutation: guestUnsupported,
       createTestSuiteMutation: convexCreateTestSuite,
-      updateTestSuiteMutation: withCiOwnedToast(updateTestSuiteMutation),
+      updateTestSuiteMutation,
     };
   }, [
     isDirectGuest,

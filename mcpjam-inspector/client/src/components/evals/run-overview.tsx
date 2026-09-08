@@ -873,6 +873,31 @@ export function RunOverview({
                                 </Tooltip>
                               );
                             }
+                            // No profile for `createdBy` — a departed member,
+                            // or a row the user map has not loaded. The
+                            // CREDENTIAL is still known, and it is the more
+                            // useful half here: a run with no readable author
+                            // is exactly when "via API key ····1234" answers
+                            // the question the avatar cannot.
+                            const credential = runCredentialLabel(run);
+                            if (credential) {
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Avatar className="size-6">
+                                      <AvatarFallback className="text-[10px]">
+                                        ?
+                                      </AvatarFallback>
+                                    </Avatar>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      {credential}
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            }
                             return (
                               <Avatar className="size-6">
                                 <AvatarFallback className="text-[10px]">

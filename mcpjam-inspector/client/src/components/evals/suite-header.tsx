@@ -193,14 +193,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     settingsDraftName,
   } = props;
 
-  // Authoring CTAs — Generate and New case — are configuration writes, and a
-  // CI-owned suite refuses them. Hidden rather than disabled here because the
-  // header is a dense action row with no room to explain each one; the badge
-  // beside the title and the settings sheet carry the explanation.
   const showTestCaseCtas =
-    !configLocked &&
-    (runsViewMode === "test-cases" ||
-      (unifiedSuiteDashboard && viewMode === "overview"));
+    runsViewMode === "test-cases" ||
+    (unifiedSuiteDashboard && viewMode === "overview");
+
+  /**
+   * Whether the AUTHORING CTAs — Generate and New case — may show.
+   *
+   * Separate from `showTestCaseCtas`, which also gates `overviewRunAllCta`.
+   * Folding the CI lock into that flag suppressed Run all on a CI-owned suite,
+   * which is the one thing this lock must never do: a suite you cannot run is
+   * broken, not locked.
+   *
+   * Hidden rather than disabled, because the header is a dense action row with
+   * no room to explain each control; the CI badge beside the title and the
+   * settings sheet carry the reason.
+   */
+  const showTestCaseAuthoringCtas = showTestCaseCtas && !configLocked;
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -318,6 +327,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               aria-label="Suite name"
               className="h-8 min-w-0 w-full max-w-full rounded-md border border-input bg-background px-2 text-lg font-semibold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring"
             />
+          ) : configLocked ? (
+            // A heading, not a button. The settings sheet stays open on a
+            // CI-owned suite so every row can say WHY it is disabled — but an
+            // editable name inside it would be the one control that still looks
+            // live, and its save is refused like all the rest.
+            <h2
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold tracking-tight"
+              title={nameValue}
+            >
+              {nameValue}
+            </h2>
           ) : (
             <button
               type="button"
@@ -671,8 +691,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   const overviewHasCaseTools =
     overviewRunAllCta != null ||
-    (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
-    (showTestCaseCtas && Boolean(onCreateTestCase));
+    (showTestCaseAuthoringCtas && Boolean(onGenerateTestCases)) ||
+    (showTestCaseAuthoringCtas && Boolean(onCreateTestCase));
 
   const overviewSuiteNavButtons = overviewHasSuiteNav ? (
     <>
@@ -740,7 +760,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewGenerateButton =
-    showTestCaseCtas && onGenerateTestCases ? (
+    showTestCaseAuthoringCtas && onGenerateTestCases ? (
       <div className="inline-flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -792,7 +812,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewNewCaseButton =
-    showTestCaseCtas && onCreateTestCase ? (
+    showTestCaseAuthoringCtas && onCreateTestCase ? (
       <Button
         type="button"
         size="sm"

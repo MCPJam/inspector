@@ -104,7 +104,7 @@ describe("SuiteHeader", () => {
           ...baseRun,
           summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
         }}
-      />
+      />,
     );
     expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
   });
@@ -118,14 +118,14 @@ describe("SuiteHeader", () => {
           summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
         }}
         omitRunDetailIdentity
-      />
+      />,
     );
     expect(
-      screen.queryByRole("heading", { name: /Run run-1/i })
+      screen.queryByRole("heading", { name: /Run run-1/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/1 passed · 1 failed/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Replay this run" })
+      screen.getByRole("button", { name: "Replay this run" }),
     ).toBeInTheDocument();
   });
 
@@ -136,12 +136,12 @@ describe("SuiteHeader", () => {
         hideRunActions
         showTestCaseCtas
         omitRunDetailIdentity
-      />
+      />,
     );
 
     expect(screen.getByText("Asana MCP Evals")).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: /Run run-1/i })
+      screen.queryByRole("heading", { name: /Run run-1/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -154,10 +154,10 @@ describe("SuiteHeader", () => {
           summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
         }}
         runDetailKpiStrip={<div data-testid="run-kpi-strip">kpis</div>}
-      />
+      />,
     );
     expect(
-      screen.queryByText(/1 passed · 1 failed · 50%/)
+      screen.queryByText(/1 passed · 1 failed · 50%/),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("run-kpi-strip")).toBeInTheDocument();
   });
@@ -170,7 +170,7 @@ describe("SuiteHeader", () => {
           ...baseRun,
           replayedFromRunId: "n573zfck8sdhjg7by2s31ex2yx83m6sh",
         }}
-      />
+      />,
     );
 
     expect(screen.getByText("Replay of")).toBeTruthy();
@@ -198,7 +198,7 @@ describe("SuiteHeader", () => {
     renderWithProviders(<SuiteHeader {...baseProps} hideRunActions />);
 
     expect(
-      screen.queryByRole("button", { name: "Replay this run" })
+      screen.queryByRole("button", { name: "Replay this run" }),
     ).toBeNull();
   });
 
@@ -208,11 +208,11 @@ describe("SuiteHeader", () => {
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-      />
+      />,
     );
 
     expect(
-      screen.getByRole("button", { name: "Replay latest run" })
+      screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
   });
 
@@ -225,7 +225,7 @@ describe("SuiteHeader", () => {
         selectedRunDetails={null}
         suite={{ ...baseSuite, name: longName }}
         readOnlyConfig
-      />
+      />,
     );
 
     const heading = screen.getByRole("heading", { level: 2, name: longName });
@@ -240,11 +240,11 @@ describe("SuiteHeader", () => {
         viewMode="overview"
         selectedRunDetails={null}
         hideRunActions
-      />
+      />,
     );
 
     expect(
-      screen.queryByRole("button", { name: "Replay latest run" })
+      screen.queryByRole("button", { name: "Replay latest run" }),
     ).toBeNull();
   });
 
@@ -260,7 +260,7 @@ describe("SuiteHeader", () => {
         runsViewMode="runs"
         casesSidebarHidden
         onShowCasesSidebar={onShowCasesSidebar}
-      />
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Cases" }));
@@ -278,7 +278,7 @@ describe("SuiteHeader", () => {
         viewMode="overview"
         selectedRunDetails={null}
         onOpenExportSuite={onOpenExportSuite}
-      />
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Setup SDK" }));
@@ -296,7 +296,7 @@ describe("SuiteHeader", () => {
         onGenerateTestCases={vi.fn()}
         canGenerateTestCases
         isGeneratingTestCases
-      />
+      />,
     );
 
     const generateBtn = screen.getByRole("button", { name: /generate/i });
@@ -320,14 +320,14 @@ describe("SuiteHeader", () => {
         onCreateTestCase={onCreate}
         onGenerateTestCases={onGenerate}
         canGenerateTestCases
-      />
+      />,
     );
 
     expect(
-      screen.getByRole("button", { name: "New case" })
+      screen.getByRole("button", { name: "New case" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /generate/i })
+      screen.getByRole("button", { name: /generate/i }),
     ).toBeInTheDocument();
   });
 
@@ -354,7 +354,7 @@ describe("SuiteHeader", () => {
           } as any,
         ]}
         connectedServerNames={new Set(["asana"])}
-      />
+      />,
     );
 
     const runAll = screen.getByRole("button", {
@@ -363,6 +363,80 @@ describe("SuiteHeader", () => {
     expect(runAll).toBeEnabled();
     await user.click(runAll);
     expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
+  });
+
+  it("keeps Run all on a CI-owned suite while hiding the authoring CTAs", async () => {
+    const user = userEvent.setup();
+    const onRerun = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        onRerun={onRerun}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        configLocked
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        testCases={[
+          {
+            _id: "c1",
+            models: [{ provider: "openai", model: "gpt-4" }],
+          } as any,
+        ]}
+        connectedServerNames={new Set(["asana"])}
+      />,
+    );
+
+    // THE thing this lock must never do. Run all shares a visibility flag with
+    // the authoring CTAs, so gating that flag wholesale on `configLocked` made
+    // a CI-owned suite unrunnable from the unified dashboard — broken rather
+    // than locked.
+    const runAll = screen.getByRole("button", {
+      name: /Run all cases in this suite/i,
+    });
+    expect(runAll).toBeEnabled();
+    await user.click(runAll);
+    expect(onRerun).toHaveBeenCalledWith(baseSuite, {});
+
+    // Authoring, on the other hand, is a configuration write the platform
+    // refuses — so those two are gone.
+    expect(screen.queryByRole("button", { name: "New case" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /generate/i })).toBeNull();
+  });
+
+  it("offers Duplicate to edit as the way out of a CI-owned suite", async () => {
+    const user = userEvent.setup();
+    const onDuplicateSuite = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        hideRunActions
+        unifiedSuiteDashboard
+        // `baseProps` sets `readOnlyConfig` — the stricter, surface-level lock,
+        // which hides Duplicate along with everything else. This row is about
+        // the CI lock on an otherwise normal surface.
+        readOnlyConfig={false}
+        configLocked
+        onDuplicateSuite={onDuplicateSuite}
+        connectedServerNames={new Set(["asana"])}
+      />,
+    );
+
+    // A lock with no way out is a dead end, and "go and change your repository"
+    // is not an answer for someone who wants to try one thing.
+    await user.click(
+      screen.getByRole("button", { name: /Duplicate to edit/i }),
+    );
+    expect(onDuplicateSuite).toHaveBeenCalledWith(baseSuite);
   });
 
   it("blocks Run all when the parent-derived evalRunsDisabledReason is set", () => {
@@ -388,11 +462,11 @@ describe("SuiteHeader", () => {
           } as any,
         ]}
         connectedServerNames={new Set(["asana"])}
-      />
+      />,
     );
 
     expect(
-      screen.getByRole("button", { name: /Run all cases in this suite/i })
+      screen.getByRole("button", { name: /Run all cases in this suite/i }),
     ).toBeDisabled();
   });
 
@@ -420,7 +494,7 @@ describe("SuiteHeader", () => {
           } as any,
         ]}
         connectedServerNames={new Set(["asana"])}
-      />
+      />,
     );
 
     const runAll = screen.getByRole("button", {
@@ -451,7 +525,7 @@ describe("SuiteHeader", () => {
           } as any,
         ]}
         connectedServerNames={new Set(["asana"])}
-      />
+      />,
     );
 
     const header = screen.getByTestId("suite-overview-header");
@@ -463,8 +537,8 @@ describe("SuiteHeader", () => {
     expect(leftCluster).toHaveClass("min-w-0");
     expect(
       Array.from(leftCluster.querySelectorAll<HTMLElement>("*")).some((el) =>
-        el.className.includes("max-w-[20rem]")
-      )
+        el.className.includes("max-w-[20rem]"),
+      ),
     ).toBe(true);
 
     const actions = screen.getByTestId("suite-overview-actions");
@@ -478,9 +552,18 @@ describe("SuiteHeader", () => {
     const runAll = screen.getByRole("button", {
       name: /Run all cases in this suite/i,
     });
-    expect(setupSdk.compareDocumentPosition(generate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(generate.compareDocumentPosition(newCase) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(newCase.compareDocumentPosition(runAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      setupSdk.compareDocumentPosition(generate) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      generate.compareDocumentPosition(newCase) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      newCase.compareDocumentPosition(runAll) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.queryByTestId("suite-environment-bar")).toBeNull();
   });
 
@@ -511,11 +594,11 @@ describe("SuiteHeader", () => {
             },
           ],
         }}
-      />
+      />,
     );
 
     expect(
-      screen.queryByRole("button", { name: /Compare attached clients/i })
+      screen.queryByRole("button", { name: /Compare attached clients/i }),
     ).toBeNull();
   });
 
@@ -543,11 +626,11 @@ describe("SuiteHeader", () => {
         ]}
         connectedServerNames={new Set(["asana"])}
         iterationOverride={3}
-      />
+      />,
     );
 
     await user.click(
-      screen.getByRole("button", { name: /Run all cases in this suite/i })
+      screen.getByRole("button", { name: /Run all cases in this suite/i }),
     );
 
     expect(onRerun).toHaveBeenCalledWith(baseSuite, { iterationOverride: 3 });

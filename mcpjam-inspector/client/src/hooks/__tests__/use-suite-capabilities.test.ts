@@ -29,7 +29,6 @@ import {
   hasJudgeSeverityCapability,
   useSuiteCapabilities,
 } from "../use-suite-capabilities";
-import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 describe("useSuiteCapabilities", () => {
   it("reports `unavailable` when the backend answers null", async () => {
@@ -130,46 +129,5 @@ describe("hasJudgeSeverityCapability", () => {
         },
       } as never),
     ).toBe(true);
-  });
-});
-
-/**
- * The `ownership` block, and — more importantly — what happens without it.
- *
- * The two repos release independently, so a client will meet a backend that
- * predates this block. The lock must hold anyway: `isCiOwnedSuite` on the suite
- * row is the client's OWN answer, and `ownership` only adds the platform's
- * enumeration of what it refuses. Depending on the block alone would leave a
- * whole deploy window where CI-owned suites looked editable and every save
- * failed.
- */
-describe("ownership on the capabilities object", () => {
-  it("is absent on a backend that predates it, and the suite still locks", () => {
-    const capabilities = { permissions: {} } as never as {
-      ownership?: { ciOwned: boolean };
-    };
-    expect(capabilities.ownership).toBeUndefined();
-    // The client's own predicate is the fallback, and it is not a fallback in
-    // the weak sense — it is the same rule, mirrored.
-    expect(isCiOwnedSuite({ declaredSuiteId: "s_checkout" })).toBe(true);
-    expect(isCiOwnedSuite({ source: "sdk" })).toBe(true);
-  });
-
-  it("names what the platform refuses, so an older client disables rather than 409s", () => {
-    const capabilities = {
-      ownership: {
-        ciOwned: true,
-        declaredSuiteId: "s_checkout",
-        lockedActions: ["suite.edit", "case.create", "case.edit"],
-      },
-    } as never as {
-      ownership: { ciOwned: boolean; lockedActions: string[] };
-    };
-    expect(capabilities.ownership.ciOwned).toBe(true);
-    // Enumerated by the backend rather than re-derived here: an action added to
-    // the lock reaches an older client as a disabled control rather than as a
-    // button whose only outcome is a refusal.
-    expect(capabilities.ownership.lockedActions).toContain("suite.edit");
-    expect(capabilities.ownership.lockedActions).not.toContain("run.launch");
   });
 });

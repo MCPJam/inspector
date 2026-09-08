@@ -1403,12 +1403,16 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated suite
         if (newSuite && newSuite._id) {
+          // The tab the caller is actually in, not a hardcoded "evals".
+          // Duplicate is now the escape hatch out of a CI-owned suite in
+          // Evaluate, and landing the copy in the legacy tab would answer
+          // "let me edit this" by moving the person somewhere else.
           navigateEvalRoute(
             {
               type: "suite-overview",
               suiteId: newSuite._id,
             },
-            "evals"
+            evalsNavigationContext
           );
         }
       } catch (error) {
@@ -1420,7 +1424,11 @@ export function useEvalHandlers({
         setDuplicatingSuiteId(null);
       }
     },
-    [duplicatingSuiteId, mutations.duplicateSuiteMutation]
+    [
+      duplicatingSuiteId,
+      mutations.duplicateSuiteMutation,
+      evalsNavigationContext,
+    ]
   );
 
   // Cancel handler
