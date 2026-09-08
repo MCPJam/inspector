@@ -156,6 +156,13 @@ export function tierArgs(tier: VideoTier): string[] {
  *                      accepts.
  *   `-g 120`           a keyframe every four seconds at 30fps, which bounds
  *                      how stale the ring's replay can be.
+ *   `-threads 1`       ONE encoder thread, pinned. `-tune zerolatency` leaves
+ *                      x264's thread count at `auto`, which is 1.5x the cores
+ *                      — on a 2 vCPU box that is three encoder threads
+ *                      competing with Chromium and the desktop for two cores,
+ *                      and the thing that starves is the capture loop feeding
+ *                      this very encoder. One thread keeps up at 30fps and
+ *                      leaves the rest of the box to the agent.
  *   `aud=1`            an access-unit delimiter before each picture. Without
  *                      it there is no reliable byte to split a stream on.
  *   `repeat-headers=1` SPS/PPS in front of every keyframe, so a late joiner
@@ -203,6 +210,10 @@ export function ffmpegArgs(options: {
     "0",
     "-x264-params",
     "aud=1:repeat-headers=1",
+    // Before the tier args and the output, so a tier that ever grows its own
+    // rate-control flags cannot end up on the far side of it.
+    "-threads",
+    "1",
     ...tier,
     "-f",
     "h264",

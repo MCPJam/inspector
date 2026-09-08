@@ -236,6 +236,33 @@ describe("ShareSection", () => {
     expect(toast.error).toHaveBeenCalledWith("invite denied");
   });
 
+  it("keeps the email invite while access is invited-only", () => {
+    renderShare();
+
+    expect(
+      screen.getByPlaceholderText("Add people, emails..."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("share-copy")).toBeInTheDocument();
+  });
+
+  it.each(["link_guests", "anyone_with_link"])(
+    "drops the email invite but keeps copy link for %s",
+    (currentPreset) => {
+      renderShare({
+        envelope: envelope({ mode: "anyone_with_link" }),
+        currentPreset,
+      });
+
+      expect(
+        screen.queryByPlaceholderText("Add people, emails..."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Invite", exact: true }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("share-copy")).toBeInTheDocument();
+    },
+  );
+
   it("removes an accepted member", async () => {
     const user = userEvent.setup();
     const member: ShareMemberView = {

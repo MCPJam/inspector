@@ -226,9 +226,10 @@ function ShareActions({
  * Insights empty state — the two ways to get a first session, in the order
  * they cost the reader: run it yourself, or send it to a tester.
  *
- * The header's `Share` button is always there too; this panel repeats copy /
- * invite because a first-run page whose only next step is behind a button in
- * the corner reads as a dead end.
+ * The header's `Share` button is always there too; this panel repeats copy —
+ * and, unless the link is already open to anyone, invite — because a first-run
+ * page whose only next step is behind a button in the corner reads as a dead
+ * end.
  *
  * The composer is a LINK dressed as a chat input, not an input. Typing into a
  * real field whose text we then discard (the guest runtime takes no prefill)
@@ -349,7 +350,11 @@ export function ScenarioShareEmptyPanel({
           </span>
           <ShareActions
             id="user-testing-share-empty"
-            showInvite={isAuthenticated}
+            // This is the screen a study lands on right after it is created.
+            // Having already chosen "anyone with the link", being asked for an
+            // email here reads as a second, redundant step — copying the link
+            // is the whole job (BB-205).
+            showInvite={isAuthenticated && scenario.mode !== "anyone_with_link"}
             {...share}
           />
         </div>

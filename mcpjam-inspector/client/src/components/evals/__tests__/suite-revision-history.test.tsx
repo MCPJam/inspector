@@ -153,7 +153,8 @@ describe("fieldLabel", () => {
     // Asserted against the manifest row rather than a literal, so a rename on
     // the settings page is a rename here without a second edit. Both the
     // aliased spelling and the shared one go through the manifest.
-    expect(fieldLabel("defaultPredicates")).toBe(manifestLabel("checks"));
+    expect(fieldLabel("defaultPredicates")).toBe(manifestLabel("predicateChecks"));
+    expect(fieldLabel("disabledStageChecks")).toBe("Checks by stage");
     expect(fieldLabel("environmentIds")).toBe(manifestLabel("environments"));
     expect(fieldLabel("environment")).toBe(
       manifestLabel("computerEnvironment"),

@@ -23,6 +23,7 @@
  * problems conversationally instead of breaking the turn.
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 import { HOSTED_MODE } from "../../config.js";
 import { type ExecutionScope } from "../execution-scope.js";
@@ -128,7 +129,10 @@ export function buildBashTool(
     // policy exactly like MCP/skill tools do. The LOCAL engine goes further:
     // approval is ALWAYS on — a model-driven shell on the user's real machine
     // has no auto-approve in v1, whatever the host config says.
-    needsApproval: isLocal ? true : opts.requireToolApproval === true,
+    needsApproval: needsApprovalFor(
+      isLocal ? "always" : "setting",
+      opts.requireToolApproval === true,
+    ),
     execute: async (
       { command, timeoutSeconds },
       { toolCallId, abortSignal }

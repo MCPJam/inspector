@@ -18,7 +18,8 @@
  *
  * Per-tool gates (all inside this module, by design):
  *   - web_search: requires Convex auth ctx (bills MCPJam credits server-side;
- *     guests are rejected by the Convex route at execute time).
+ *     guests are rejected by the Convex route at execute time). Inherits the
+ *     host's `requireToolApproval` via ctx, like bash.
  *   - bash: TWO paths. With `ctx.sandboxBinding` (a trusted, in-process-only
  *     binding to an already-provisioned EPHEMERAL sandbox) it binds to that
  *     disposable box and the personal computer is never consulted. Without one
@@ -69,7 +70,6 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
-import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -229,21 +229,18 @@ export interface BuiltInToolContext {
    */
   mcpjamPlatformClient?: PlatformApiClient;
   /**
-   * How approval reaches the user for `browser_*` tools this turn. ABSENT ⇒
+   * Whether a person is watching this turn, for `browser_*` tools. ABSENT ⇒
    * the browser capability is NOT advertised, whatever the host config says
-   * (see `built-in-tools/browser.ts`): approval on the hosted engines is
-   * classified by name, and a surface that threads nothing would let a model
-   * drive a real browser ungated. Interactive surfaces pass `attested` and
-   * thread the returned classification; unattended runs pass their declared
-   * policy.
+   * (see `built-in-tools/browser.ts`).
+   *
+   * Nothing is threaded back: each tool carries its own build-time
+   * `needsApproval`, and every engine reads that. What this answers is the
+   * question the builder cannot answer for itself — an interactive surface
+   * passes `attested` and gets a persistent, signed-in browser whose every
+   * verb asks first; an unattended run passes its declared policy and gets an
+   * ephemeral one, keyed per run, with only the tools that policy permits.
    */
   browserApprovalDelivery?: BrowserApprovalDelivery;
-  /**
-   * Receives the approval classification for the browser tools that were
-   * built, so the caller can merge it into the engine's single
-   * `uiToolApprovals` slot. Absent on surfaces that do not advertise them.
-   */
-  onBrowserApprovals?: (approvals: UiToolApprovalClassification) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
    * drive the SAME computer as the same uid, so a shell can read the driven
@@ -351,6 +348,7 @@ export function resolveHostTools(
         // session — so without this it is offered to the model and then
         // fails at execution for every link visitor.
         ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
+        requireToolApproval: ctx.requireToolApproval,
       });
       continue;
     }
@@ -734,10 +732,7 @@ export function resolveHostTools(
             }
           : {}),
       });
-      if (browser) {
-        Object.assign(out, browser.tools);
-        ctx.onBrowserApprovals?.(browser.approvals);
-      }
+      if (browser) Object.assign(out, browser.tools);
       continue;
     }
     if (isMcpjamToolId(id)) {

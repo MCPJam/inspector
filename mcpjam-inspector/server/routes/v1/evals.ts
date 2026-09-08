@@ -24,6 +24,10 @@ import {
 } from "./eval-score-projection.js";
 import { toStageProjection } from "./eval-stage-projection.js";
 import {
+  toFrictionSignalsProjection,
+  toSuspectedConditionProjection,
+} from "./eval-friction-projection.js";
+import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
   parseDecisionSummaryLimit,
@@ -1816,6 +1820,13 @@ function toIterationDto(iteration: IterationDoc) {
     error: iteration.error ?? null,
     ...toScoreProjection(iteration.metadata),
     ...toStageProjection(iteration.metadata),
+    // Observable patterns in this trial's tool calls — a report beside the
+    // verdict, never an input to one. ABSENT for every iteration that
+    // predates the measurement; a reader must not render that as zero.
+    ...toFrictionSignalsProjection(iteration.metadata),
+    // The SUSPECTED condition behind one of those patterns, when step 2's
+    // advisory judge ran. Never a cause, never a verdict input.
+    ...toSuspectedConditionProjection(iteration.metadata),
   };
 }
 
@@ -1829,7 +1840,14 @@ function toStepResultDto(step: EvalStepReplay) {
     ? {
         ...(ev.toolCalls?.length ? { toolCalls: ev.toolCalls } : {}),
         ...(ev.screenshotUrl ? { screenshotUrl: ev.screenshotUrl } : {}),
-        ...(ev.videoUrl ? { videoUrl: ev.videoUrl } : {}),
+        ...(ev.videoUrl
+          ? {
+              videoUrl: ev.videoUrl,
+              // With the URL, never without: metadata for a video this row
+              // does not carry describes a recording nobody can reach.
+              ...(ev.videoMeta ? { videoMeta: ev.videoMeta } : {}),
+            }
+          : {}),
         ...(typeof ev.videoOffsetMs === "number"
           ? { videoOffsetMs: ev.videoOffsetMs }
           : {}),

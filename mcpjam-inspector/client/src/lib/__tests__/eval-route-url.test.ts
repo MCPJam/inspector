@@ -190,6 +190,31 @@ describe("eval-route-url", () => {
         iteration: "i_42",
       })
     ).toBe("/evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42");
+    expect(
+      buildEvaluatePath({
+        type: "test-edit",
+        suiteId: "preview:asana:create-and-assign",
+        testId: "case-create-task",
+        fromEvalServer: "srv-a",
+      }),
+    ).toBe(
+      "/evaluate/suite/preview%3Aasana%3Acreate-and-assign/test/case-create-task/edit?fromEvalServer=srv-a",
+    );
+  });
+
+  it("parses a first-run return onto today's case editor", () => {
+    expect(
+      parseEvalRouteFromUrl(
+        "/evaluate",
+        "/evaluate/suite/preview%3Aasana%3Acreate-and-assign/test/case-create-task/edit",
+        "?fromEvalServer=srv-a",
+      ),
+    ).toEqual({
+      type: "test-edit",
+      suiteId: "preview:asana:create-and-assign",
+      testId: "case-create-task",
+      fromEvalServer: "srv-a",
+    });
   });
 
   it("parses runs-mode commit detail query state", () => {
@@ -284,6 +309,18 @@ describe("eval-route-url", () => {
       type: "create",
     });
     expect(
+      parseEvalRouteFromUrl(
+        "/evaluate",
+        "/evaluate/eval-server/srv-a",
+      ),
+    ).toEqual({
+      type: "eval-server",
+      serverId: "srv-a",
+    });
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/eval-server/srv-a"),
+    ).toEqual({ type: "list" });
+    expect(
       parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123/runs/r_9")
     ).toEqual({
       type: "run-detail",
@@ -297,6 +334,12 @@ describe("eval-route-url", () => {
   it("builds /evaluate paths and degrades its commit route to the list", () => {
     expect(buildEvaluatePath({ type: "list" })).toBe("/evaluate");
     expect(buildEvaluatePath({ type: "create" })).toBe("/evaluate/create");
+    expect(
+      buildEvaluatePath({ type: "eval-server", serverId: "srv-a" }),
+    ).toBe("/evaluate/eval-server/srv-a");
+    expect(buildEvalsPath({ type: "eval-server", serverId: "srv-a" })).toBe(
+      "/evals",
+    );
     expect(
       buildEvaluatePath({ type: "suite-overview", suiteId: "s_123" })
     ).toBe("/evaluate/suite/s_123");

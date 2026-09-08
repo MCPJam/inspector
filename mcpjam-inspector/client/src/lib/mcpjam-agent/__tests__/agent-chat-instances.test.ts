@@ -1,3 +1,4 @@
+import { useEvalAgentScopes, pinEvalTurn } from "../eval-scope";
 /**
  * The hoisted agent Chat instance store: identity, config freshness, LRU
  * pinning, and the home → side-panel handoff fired by navigation-capable
@@ -134,6 +135,19 @@ describe("agent-chat-instances", () => {
     });
     config.projectId = "p2";
     expect(mockState.lastTransportOptions.body().projectId).toBe("p2");
+  });
+
+  it("offers only eval capabilities to scoped sessions and keeps general sessions separate", () => {
+    registerTool();
+    registerTool({ name: "ui_eval_context", readOnly: true, mayNavigate: false });
+    const scope = { kind: "evals" as const, version: 1 as const, id: "scope", projectId: "p1", suiteId: "s1", suiteName: "Support" };
+    useEvalAgentScopes.getState().set("eval-scoped", scope);
+    pinEvalTurn("eval-scoped");
+    getOrCreateAgentChat("eval-scoped");
+    expect(mockState.lastTransportOptions.body().uiTools.map((tool: any) => tool.name)).toEqual(["ui_eval_context"]);
+    expect(mockState.lastTransportOptions.body().evalScope).toEqual(scope);
+    getOrCreateAgentChat("general");
+    expect(mockState.lastTransportOptions.body().uiTools.map((tool: any) => tool.name)).toEqual(["ui_navigate"]);
   });
 
   it("body carries the tour system prompt for tour sessions only", () => {

@@ -58,6 +58,11 @@ import {
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
+import {
+  collectHostedRecordingThenRelease,
+  forgetHostedRecording,
+  type HostedRecording,
+} from "./browserd/hosted-recording.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -145,6 +150,7 @@ import type {
   StageAuthoredCase,
   StageSetupSignals,
   EvalSuiteFileToolPolicy,
+  FrictionResultEntry,
 } from "@mcpjam/sdk/contract";
 import {
   buildHarnessToolPolicySnapshots,
@@ -1764,11 +1770,35 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
-  finishParams: Omit<EvalIterationFinishParams, "videoBytes">;
+  finishParams: Omit<
+    EvalIterationFinishParams,
+    "videoBytes" | "videoMime" | "videoMeta"
+  >;
+  /**
+   * The hosted daemon's recording, collected off the box before it was
+   * released. Used only when the local harness produced no video of its own —
+   * which, on a hosted iteration, is always.
+   */
+  hostedRecording?: HostedRecording | null;
 }): Promise<void> {
   await finalizeWithBrowserArtifacts({
     browser: args.browser,
     logScope: "evals",
+    ...(args.hostedRecording
+      ? {
+          fallbackVideo: {
+            bytes: args.hostedRecording.bytes,
+            mime: args.hostedRecording.mime,
+            meta: {
+              source: "hosted" as const,
+              fps: args.hostedRecording.fps,
+              durationMs: args.hostedRecording.durationMs,
+              distinctFrames: args.hostedRecording.distinctFrames,
+              truncated: args.hostedRecording.truncated,
+            },
+          },
+        }
+      : {}),
     sink: {
       kind: "eval",
       recorder: args.recorder,
@@ -4500,6 +4530,17 @@ const runLocalIteration = async ({
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
     if (evalSandbox?.ok) {
+      // FORGET, not collect — and the difference is deliberate. This runner is
+      // the local-BYOK path: its box is TERMINAL ONLY (see the provisioning
+      // comment above), so a hosted browser can never be advertised here and
+      // there is never a recording to take off it. And the finalize on the
+      // success path has ALREADY run by the time this `finally` fires, so a
+      // video collected here would have nowhere to go — it would be read off
+      // the box at some cost and then dropped, silently. Dropping the registry
+      // entry instead keeps a stray take from outliving its box; if this
+      // runner ever does bind a hosted browser, the collect belongs before the
+      // finalize, the way the hosted runner does it.
+      forgetHostedRecording(evalSandbox.value.sandboxRowId);
       await releaseEvalSandbox({
         sandboxRowId: evalSandbox.value.sandboxRowId,
       }).catch(() => {});
@@ -4854,11 +4895,30 @@ const runHostedIterationWithBrowser = async (
   // clean failed iteration; released right after the agent run below.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  /**
+   * The video the hosted browser recorded, if this iteration used one.
+   *
+   * Closed over rather than returned, because the box is released from three
+   * different exits (the run's own `finally`, a setup failure's catch, and the
+   * agent-run `finally`) and the file has to come off the box at whichever one
+   * fires first — after the release there is nothing left to read.
+   */
+  let hostedRecording: HostedRecording | null = null;
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
     if (evalSandbox?.ok) {
       const { sandboxRowId } = evalSandbox.value;
       evalSandbox = null;
-      await releaseEvalSandbox({ sandboxRowId }).catch(() => {});
+      // Collect BEFORE the release — after it there is nothing left to read —
+      // and release REGARDLESS of how the collect went. Both facts live in the
+      // helper, which is where they are tested: a collector that throws or
+      // hangs past its bound yields no video and the box is released on the
+      // same schedule, because a box that outlives its iteration costs money
+      // until the GC cron reaps it and no video is worth that.
+      const collected = await collectHostedRecordingThenRelease({
+        sandboxRowId,
+        release: () => releaseEvalSandbox({ sandboxRowId }),
+      });
+      hostedRecording = hostedRecording ?? collected;
     }
   };
   let prepared: PrepareChatV2Result;
@@ -5147,6 +5207,15 @@ const runHostedIterationWithBrowser = async (
     | { source?: "model" | "setup"; code?: string; httpStatus?: number }
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  /**
+   * Wire results for the friction signals, keyed as the GRADED call array
+   * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
+   * capture never armed, in which case the deriver falls back to the
+   * transcript and reports `resultsUnavailable` for the identifier half.
+   */
+  const evidenceResults = new Map<string, FrictionResultEntry>();
+  /** Set when ANY turn's evidence read came back incomplete. */
+  const evidenceHadHole = { value: false };
   // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
   // `prepareChatV2` try.
   // Per-turn streaming play-by-play for the executeSteps handlers (headless in batch).
@@ -5340,6 +5409,8 @@ const runHostedIterationWithBrowser = async (
       messageHistory,
       traceMessageHistory,
       capturedSpans,
+      evidenceResults,
+      evidenceHadHole,
       accumulatedUsage,
       toolsCalledByPrompt,
     },
@@ -5526,6 +5597,31 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     prompts: promptTraceSummaries,
+    // Where the friction signals read their tool results from. THREE TIERS,
+    // and the middle one is the reason this is threaded at all:
+    //
+    //   capture on + complete  → the wire record, with per-call timing, which
+    //                            is the only thing that can establish
+    //                            availability on a harness run;
+    //   capture on + a hole    → notMeasured, because a partial record would
+    //                            answer "nobody used this identifier" from
+    //                            calls we know are missing;
+    //   capture off            → nothing, so the deriver falls back to the
+    //                            transcript: retries stay measured and the
+    //                            identifier half honestly says it did not look.
+    ...(harnessEvidenceDecision?.captureEnabled
+      ? {
+          frictionEvidence: evidenceHadHole.value
+            ? ({
+                kind: "notMeasured",
+                reason: "evidenceIncomplete",
+              } as const)
+            : ({
+                kind: "harnessEvidence",
+                resultsByToolCallId: evidenceResults,
+              } as const),
+        }
+      : {}),
     // UVH-IN2: the layer that raised the fatal error, so the chain can say a
     // provider outage was ours rather than filing it against the server.
     ...(iterationStepError ? { stepError: iterationStepError } : {}),
@@ -5602,6 +5698,10 @@ const runHostedIterationWithBrowser = async (
     recorder,
     convexClient,
     finishParams,
+    // Collected by `releaseEvalSandboxIfAny` before the box went away — the
+    // file only ever existed there, so it had to come off ahead of the
+    // release, several hundred lines above this line.
+    hostedRecording,
   });
 
   return {
