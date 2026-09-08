@@ -123,7 +123,17 @@ vi.mock("convex/react", () => ({
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: () => ({
     isLoading: mockOrgsLoading.value,
-    sortedOrganizations: [{ _id: "org-1", myRole: mockMyRole.value }],
+    // `[]` while loading, exactly as the real hook does — it returns an empty
+    // array until the query resolves. Handing back a populated list mid-load
+    // would make the unresolved window untestable.
+    // Both ids the switching cases below render with, so an org switch stays a
+    // switch rather than a silent drop out of the list.
+    sortedOrganizations: mockOrgsLoading.value
+      ? []
+      : [
+          { _id: "org-1", myRole: mockMyRole.value },
+          { _id: "org-2", myRole: mockMyRole.value },
+        ],
   }),
   // The real predicate, not a stub: what is under test here is that the page
   // asks it and honours the answer.
@@ -1761,6 +1771,15 @@ describe("GithubChecksRoute permissions", () => {
         name: /Disconnect mcpjam\/mcp-check-fixture/,
       })
     ).toBeDisabled();
+    // The row's suite picker is a write too — `setRepoSuite` — and is the one
+    // control on this page that had no `disabled` of its own to extend.
+    expect(
+      screen.getByRole("combobox", {
+        name: /Suite for mcpjam\/mcp-check-fixture/,
+      })
+    ).toBeDisabled();
+    // Nothing to fill in either, when the Connect it feeds is dead.
+    expect(screen.getByRole("combobox", { name: "Repository" })).toBeDisabled();
 
     // The greyed page has to explain itself, or it reads as broken.
     expect(
@@ -1793,9 +1812,11 @@ describe("GithubChecksRoute permissions", () => {
     mockOrgsLoading.value = true;
     renderRoute();
 
+    // Closed: the role is not known yet, so the page may not act on it.
     expect(
       await screen.findByRole("button", { name: /Install on a GitHub account/ })
-    ).toBeInTheDocument();
+    ).toBeDisabled();
+    // Silent: we do not yet know the notice applies, so it must not flash.
     expect(
       screen.queryByText(/only an organization owner or admin can change it/i)
     ).not.toBeInTheDocument();

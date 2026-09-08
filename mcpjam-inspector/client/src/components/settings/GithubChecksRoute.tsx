@@ -947,6 +947,7 @@ export function GithubChecksRoute({
               <div className="flex items-center gap-3 shrink-0">
                 <Select
                   value={row.suiteId}
+                  disabled={!canManage}
                   onValueChange={(value) => void handleSuiteChange(row, value)}
                 >
                   <SelectTrigger
@@ -1043,7 +1044,11 @@ export function GithubChecksRoute({
               each have a `widgets`, and the id is what the connect is actually
               keyed on — selecting by name would make the account label below
               purely decorative and let one pick resolve to the other repo. */}
-          <Select value={pickerRepo} onValueChange={setPickerRepo}>
+          <Select
+            value={pickerRepo}
+            disabled={!canManage}
+            onValueChange={setPickerRepo}
+          >
             <SelectTrigger className="w-72" aria-label="Repository">
               <SelectValue placeholder="Select a repository" />
             </SelectTrigger>
@@ -1059,7 +1064,11 @@ export function GithubChecksRoute({
             </SelectContent>
           </Select>
 
-          <Select value={pickerSuite} onValueChange={setPickerSuite}>
+          <Select
+            value={pickerSuite}
+            disabled={!canManage}
+            onValueChange={setPickerSuite}
+          >
             <SelectTrigger className="w-56" aria-label="Suite">
               <SelectValue placeholder="Select a suite" />
             </SelectTrigger>
@@ -1074,6 +1083,7 @@ export function GithubChecksRoute({
 
           <Select
             value={pickerPolicy}
+            disabled={!canManage}
             onValueChange={(value) =>
               setPickerPolicy(value as GithubCheckOutagePolicy)
             }
