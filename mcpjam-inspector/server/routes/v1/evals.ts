@@ -102,6 +102,7 @@ import {
 } from "../shared/eval-case-batch.js";
 import {
   RunEvalsRequestSchema,
+  passCriteriaSchema,
   prepareEvalRun,
   authorEvalSuite,
   createConvexClients,
@@ -357,45 +358,173 @@ function normalizeRunMatchOptionsOverride(
 
 const MAX_V1_TESTS = 100;
 
+/**
+ * The PUBLIC case-authoring names, accepted on both inline-test items as
+ * aliases for the legacy names those items are written in.
+ *
+ * Both items used to be bare `z.object`s, and a bare object STRIPS unknown
+ * keys silently. Their vocabulary is the legacy one (`runs`,
+ * `isNegativeTest`, `predicates`) while every other case-authoring route on
+ * this file speaks the public one (`iterations`, `isNegative`, `checks`) —
+ * the same names a caller reads back on a GET. The two sets are disjoint, so
+ * a caller who wrote down what the API returned lost ALL of it on a 201.
+ *
+ * The worst of those is not a dropped field. `isNegative` is what makes a
+ * case pass when a tool is NOT called, so dropping it stores the case with
+ * the opposite meaning — a 201 for a suite that asserts the reverse of what
+ * was sent. That is why the items are `.strict()` now: an unknown key is a
+ * 400, never a silent inversion.
+ */
+const inlineTestAliasShape = {
+  /** Alias for `isNegativeTest`. */
+  isNegative: z.boolean().optional(),
+  /** Alias for `runs`. */
+  iterations: z.number().int().min(1).max(10).optional(),
+  /** Alias for `predicates`. */
+  checks: casePredicatesSchema.optional(),
+} as const;
+
+/**
+ * Public case fields this surface accepts only to REJECT with a useful
+ * message.
+ *
+ * None of them has anywhere to land here: the inline-test contract
+ * (`RunEvalsRequestSchema.shape.tests`) and `authorEvalSuite` carry no
+ * `repetitions`, `passThreshold` or `kind`, so accepting one would put the
+ * silent drop back. Declared rather than left to `.strict()` because
+ * `Unrecognized key: "passThreshold"` does not tell a caller where the field
+ * DOES work, and being sent to the wrong route is exactly how this body got
+ * written in the first place.
+ */
+const inlineTestUnsupportedShape = {
+  repetitions: z.number().optional(),
+  passThreshold: z.number().optional(),
+  kind: z.enum(["capability", "regression"]).optional(),
+} as const;
+
+/** Public name → the legacy name it aliases, for the both-spellings check. */
+const INLINE_TEST_ALIASES = [
+  ["isNegative", "isNegativeTest"],
+  ["iterations", "runs"],
+  ["checks", "predicates"],
+] as const;
+
+/**
+ * Reject a body that spells one field twice, and one that sends a per-case
+ * policy field this surface cannot author.
+ *
+ * Sending both spellings is refused rather than resolved by precedence:
+ * `{ runs: 3, iterations: 5 }` is a caller who believes both landed, and
+ * picking one silently is the same class of bug as stripping it.
+ */
+function refineInlineTest(
+  test: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  for (const [publicName, legacyName] of INLINE_TEST_ALIASES) {
+    if (test[publicName] !== undefined && test[legacyName] !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: [publicName],
+        message: `Send ${publicName} or ${legacyName}, not both — they are two spellings of one field.`,
+      });
+    }
+  }
+  for (const name of Object.keys(inlineTestUnsupportedShape)) {
+    if (test[name] !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: [name],
+        message: `${name} cannot be set on an inline test. Author the case through POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases, which persists it.`,
+      });
+    }
+  }
+}
+
+/**
+ * Fold the public names onto the legacy ones the normalizers below read.
+ *
+ * {@link refineInlineTest} has already rejected a body carrying both
+ * spellings of a field, so `??` is a total resolution rather than a silent
+ * precedence rule.
+ */
+function foldInlineTestAliases<
+  T extends {
+    runs?: number;
+    isNegativeTest?: boolean;
+    predicates?: z.infer<typeof casePredicatesSchema>;
+    iterations?: number;
+    isNegative?: boolean;
+    checks?: z.infer<typeof casePredicatesSchema>;
+  },
+>(test: T): T {
+  return {
+    ...test,
+    runs: test.iterations ?? test.runs,
+    isNegativeTest: test.isNegative ?? test.isNegativeTest,
+    predicates: test.checks ?? test.predicates,
+  };
+}
+
 // Public inline-test shape for run-create. The case body is the `steps`
 // contract (`TestStep[]`); model/provider/runs are required (no suite-level
 // defaults exist on the run path). `stepsToInternalCaseFields` projects each
 // case onto the internal run-schema fields before `prepareEvalRun`.
-const publicInlineTestSchema = z.object({
-  title: z.string().min(1),
-  steps: stepsSchema.min(1),
-  runs: z.number().int().positive().max(10),
-  model: z.string().min(1),
-  provider: z.string().min(1),
-  expectedOutput: z.string().optional(),
-  isNegativeTest: z.boolean().optional(),
-  scenario: z.string().optional(),
-  // Analytics-only label frozen into the authored case/run snapshot. `null`
-  // is not meaningful on an inline create, so this uses the stored form.
-  intent: caseIntentSchema.optional(),
-  advancedConfig: z
-    .object({
-      system: z.string().optional(),
-      temperature: z.number().optional(),
-      toolChoice: z.any().optional(),
-    })
-    .passthrough()
-    .optional(),
-  matchOptions: matchOptionsSchema.optional(),
-  predicates: casePredicatesSchema.optional(),
-});
+const publicInlineTestSchema = z
+  .strictObject({
+    title: z.string().min(1),
+    steps: stepsSchema.min(1),
+    // Required here — unlike the suite-create item — because a run has no
+    // suite-level default to fall back to. `iterations` may be sent instead.
+    runs: z.number().int().positive().max(10).optional(),
+    model: z.string().min(1),
+    provider: z.string().min(1),
+    expectedOutput: z.string().optional(),
+    isNegativeTest: z.boolean().optional(),
+    scenario: z.string().optional(),
+    // Analytics-only label frozen into the authored case/run snapshot. `null`
+    // is not meaningful on an inline create, so this uses the stored form.
+    intent: caseIntentSchema.optional(),
+    advancedConfig: z
+      .object({
+        system: z.string().optional(),
+        temperature: z.number().optional(),
+        toolChoice: z.any().optional(),
+      })
+      .passthrough()
+      .optional(),
+    matchOptions: matchOptionsSchema.optional(),
+    predicates: casePredicatesSchema.optional(),
+    ...inlineTestAliasShape,
+    ...inlineTestUnsupportedShape,
+  })
+  .superRefine((test, ctx) => {
+    refineInlineTest(test, ctx);
+    // `runs` stayed required in spirit: exactly one of the two spellings has
+    // to be present, because there is no suite default on the run path.
+    if (test.runs === undefined && test.iterations === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["runs"],
+        message:
+          "Provide runs (or iterations) — an inline test on a run has no suite default to inherit.",
+      });
+    }
+  });
 type PublicInlineTest = z.infer<typeof publicInlineTestSchema>;
 
 /** Project a public inline test (`steps`) onto the internal run-schema test. */
 function publicInlineTestToRunTest(
-  test: PublicInlineTest,
+  input: PublicInlineTest,
 ): RunEvalsRequest["tests"][number] {
+  const test = foldInlineTestAliases(input);
   const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
   return {
     title: test.title,
     steps: withImplicitRenderAssertForSingleToolCall(test.steps as TestStep[]),
     query: derived.query,
-    runs: test.runs,
+    // Non-null by the schema refinement: one of `runs` / `iterations` is set.
+    runs: test.runs!,
     model: test.model,
     provider: test.provider,
     expectedToolCalls: derived.expectedToolCalls ?? [],
@@ -514,36 +643,44 @@ const createEvalSuiteSchema = z.strictObject({
     .optional(),
   model: z.string().min(1),
   provider: z.string().optional(),
-  passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
+  passCriteria: passCriteriaSchema.optional(),
   // Accepted for forward-compat; the current Convex suite/case mutations do
   // not persist tags, so this is a no-op today (documented as such).
   tags: z.array(z.string()).optional(),
+  // STRICT, like the object around it. As a bare `z.object` this item silently
+  // stripped every key it did not name — and the names it does not name are
+  // exactly the public ones a caller reads back on a GET. See
+  // {@link inlineTestAliasShape} for what that cost.
   tests: z
     .array(
-      z.object({
-        title: z.string().min(1),
-        // The unified test-step model. The first `prompt` step is the case
-        // query; `toolCalledWith` asserts are the expected tool calls; a
-        // single model-free `toolCall` step is a render-check.
-        steps: stepsSchema.min(1),
-        runs: z.number().int().min(1).max(10).optional(),
-        model: z.string().optional(),
-        provider: z.string().optional(),
-        expectedOutput: z.string().optional(),
-        isNegativeTest: z.boolean().optional(),
-        scenario: z.string().optional(),
-        intent: caseIntentSchema.optional(),
-        advancedConfig: z
-          .object({
-            system: z.string().optional(),
-            temperature: z.number().optional(),
-            toolChoice: z.any().optional(),
-          })
-          .passthrough()
-          .optional(),
-        matchOptions: matchOptionsSchema.optional(),
-        predicates: casePredicatesSchema.optional(),
-      }),
+      z
+        .strictObject({
+          title: z.string().min(1),
+          // The unified test-step model. The first `prompt` step is the case
+          // query; `toolCalledWith` asserts are the expected tool calls; a
+          // single model-free `toolCall` step is a render-check.
+          steps: stepsSchema.min(1),
+          runs: z.number().int().min(1).max(10).optional(),
+          model: z.string().optional(),
+          provider: z.string().optional(),
+          expectedOutput: z.string().optional(),
+          isNegativeTest: z.boolean().optional(),
+          scenario: z.string().optional(),
+          intent: caseIntentSchema.optional(),
+          advancedConfig: z
+            .object({
+              system: z.string().optional(),
+              temperature: z.number().optional(),
+              toolChoice: z.any().optional(),
+            })
+            .passthrough()
+            .optional(),
+          matchOptions: matchOptionsSchema.optional(),
+          predicates: casePredicatesSchema.optional(),
+          ...inlineTestAliasShape,
+          ...inlineTestUnsupportedShape,
+        })
+        .superRefine(refineInlineTest),
     )
     .min(1)
     .max(MAX_V1_TESTS),
@@ -624,11 +761,7 @@ const syncFileOwnedSuiteSchema = z
       .strict()
       .optional(),
     minIterations: z.number().int().min(1).max(10).optional(),
-    defaultPassCriteria: z
-      .object({
-        minimumPassRate: z.number(),
-      })
-      .optional(),
+    defaultPassCriteria: passCriteriaSchema.optional(),
   })
   .strict()
   .superRefine((body, ctx) => {
@@ -655,7 +788,8 @@ function normalizeCreateTestsToRunTests(
   tests: CreateEvalSuiteBody["tests"],
   suite: { model: string; provider?: string },
 ): RunEvalsRequest["tests"] {
-  return tests.map((test) => {
+  return tests.map((input) => {
+    const test = foldInlineTestAliases(input);
     const runs = test.runs ?? 1;
     // Trimmed — and rejected when blank — for the same reason as
     // `toPersistedModelEntry`: this id is what gets stored on the case and
@@ -2102,7 +2236,23 @@ function toSuiteDetailDto(
       ? suite.environmentIds.map(String)
       : [],
     settings: {
+      // `null` on a v2 suite, whatever the column still holds.
+      //
+      // `applyVerdictPolicySettings` upgrades a suite by ADDING
+      // `verdictPolicyDefaults`; it cannot remove `defaultPassCriteria`,
+      // because the platform's `updateTestSuite` types that argument
+      // `v.optional(passCriteriaValidator)` — there is no null to send, so
+      // there is no way to clear it from here. The column therefore keeps a
+      // percent that NOTHING reads once the suite is v2.
+      //
+      // Reporting it anyway put a dead percent beside the live fraction in
+      // `verdictPolicyDefaults` and left a reader to guess which one decides.
+      // Worse, `mcpjam cloud eval export` reads exactly this field and writes
+      // it into a suite file as `defaults.passThreshold` — a file claiming a
+      // threshold the platform does not use. A v2 suite has no legacy floor in
+      // effect, and `null` is what "no floor in effect" already means here.
       minimumAccuracy:
+        !isEvalVerdictPolicyV2(suite.verdictPolicyVersion) &&
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
           ? suite.defaultPassCriteria.minimumPassRate
           : null,
@@ -2364,6 +2514,60 @@ function deriveProvider(model: string, explicit: string | undefined): string {
   return explicit || providerForModelId(model);
 }
 
+/**
+ * Trials one hosted case may be asked to run, whichever field spells it.
+ *
+ * The hosted ceiling, NOT the suite-file contract's `MAX_REPETITIONS` (100).
+ * Those are two different limits about two different things: a file may
+ * DECLARE up to 100 repetitions, and `mcpjam cloud eval run` refuses to launch
+ * more than this many against the hosted API (`HOSTED_ITERATIONS_CAP` in
+ * `cli/src/lib/eval-run-file.ts`, "named, not clamped"). This route is that
+ * hosted API, so it is the CLI's number that belongs here — otherwise the
+ * ceiling a caller hits depends on which client they used.
+ */
+const HOSTED_TRIALS_PER_CASE_CAP = 10;
+
+/**
+ * The per-case policy fields only a verdict-policy-v2 suite can act on.
+ *
+ * Each entry names the field and what a v2 suite would do with it, so the
+ * rejection below can say more than "not supported".
+ */
+const V2_ONLY_CASE_FIELDS = [
+  ["repetitions", "the exact number of trials this case runs"],
+  ["passThreshold", "the fraction of trials this case must pass"],
+] as const;
+
+/**
+ * Refuse a per-case policy field the suite cannot act on.
+ *
+ * Both fields were accepted, forwarded, stored and echoed back by a GET on ANY
+ * suite — but the backend only reads them under `verdictPolicyVersion: 2`. On
+ * a legacy suite the trial count comes from `runs` and `minIterations`, so
+ * `repetitions` sat inert while the read that echoed it back was exactly the
+ * evidence a caller used to conclude it had landed.
+ *
+ * A 4xx naming the upgrade is the only honest answer: the alternative is
+ * storing a number the run will not use and reporting it as though it will.
+ * Deliberately NOT auto-upgrading the suite — changing how every case in a
+ * suite is decided is not a side effect of editing one case.
+ */
+function assertCasePolicyFieldsSupported(
+  suite: SuiteDoc | null,
+  body: { repetitions?: number; passThreshold?: number },
+  label = "",
+): void {
+  if (isEvalVerdictPolicyV2(suite?.verdictPolicyVersion)) return;
+  for (const [field, meaning] of V2_ONLY_CASE_FIELDS) {
+    if (body[field] === undefined) continue;
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `${label}${field} sets ${meaning}, which only a suite on verdict policy 2 reads — this suite is on the legacy policy, where the trial count comes from iterations and the suite's minimumIterations. Upgrade the suite first (PATCH the suite with settings.repetitions and settings.passThreshold), or drop ${field}.`,
+    );
+  }
+}
+
 // Public case body (create + update share this; create requires title).
 // The case body is the `steps` contract (`TestStep[]`); it REPLACES the old
 // `kind` / `prompt` / `turns` / `expectedToolCalls` / `renderCheck` vocabulary.
@@ -2374,8 +2578,29 @@ const publicCaseBodyShape = {
   // `assert` steps (e.g. `toolCalledWith`) hold the expectations.
   steps: stepsSchema.min(1).optional(),
   expectedOutput: z.string().optional(),
-  iterations: z.number().int().min(1).max(10).optional(),
-  repetitions: z.number().int().min(1).max(100).optional(),
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(HOSTED_TRIALS_PER_CASE_CAP)
+    .optional(),
+  /**
+   * Policy-v2 ONLY, and rejected on a legacy suite rather than stored inert —
+   * see {@link assertCasePolicyFieldsSupported}.
+   *
+   * Capped at the same ceiling as `iterations`. It used to allow 100, the
+   * suite-FILE contract's `MAX_REPETITIONS`, while the CLI refused anything
+   * above 10 against this very API (`HOSTED_ITERATIONS_CAP`). Two ceilings on
+   * one hosted field means the answer to "how many trials may I ask for?"
+   * depended on which client asked.
+   */
+  repetitions: z
+    .number()
+    .int()
+    .min(1)
+    .max(HOSTED_TRIALS_PER_CASE_CAP)
+    .optional(),
+  /** Policy-v2 ONLY. See {@link assertCasePolicyFieldsSupported}. */
   passThreshold: z.number().min(0).max(1).optional(),
   isNegative: z.boolean().optional(),
   scenario: z.string().optional(),
@@ -3865,7 +4090,7 @@ const createEvalRunGroupSchema = z
       .optional(),
     skillsOverride: z.literal("exclude").optional(),
     notes: z.string().optional(),
-    passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
+    passCriteria: passCriteriaSchema.optional(),
     idempotencyKey: z.string().min(1).max(256).optional(),
     ephemeralEnvironment: z.boolean().optional(),
     /**
@@ -7603,6 +7828,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     throw error;
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  assertCasePolicyFieldsSupported(suite, body);
 
   const defaultModels =
     body.models === undefined
@@ -7691,6 +7917,12 @@ evals.post(
       throw error;
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    // Checked for EVERY case before any of them is authored, like
+    // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
+    // leaves the caller reconciling a partial write it cannot retry cleanly.
+    body.cases.forEach((testCase, index) =>
+      assertCasePolicyFieldsSupported(suite, testCase, `cases[${index}]: `),
+    );
 
     // Resolved at most ONCE for the whole batch, and only when some case
     // actually needs it — the single route's per-call lookup would otherwise
@@ -7804,6 +8036,18 @@ evals.patch(
       suiteId,
       caseId,
     );
+    // The CASE was loaded above; the SUITE was not. Both create paths already
+    // read it for their scope guard, so a PATCH was the one door through which
+    // an inert `repetitions` could still reach storage.
+    //
+    // Read only when the body actually carries a policy field, so an ordinary
+    // title edit does not pay for a second round trip.
+    if (body.repetitions !== undefined || body.passThreshold !== undefined) {
+      assertCasePolicyFieldsSupported(
+        await readSuiteInProject(token, projectId, suiteId),
+        body,
+      );
+    }
     const args = buildCaseMutationArgs(body, {
       forCreate: false,
       existingCaseType:

@@ -343,6 +343,22 @@ export interface PlatformEvalRunSummary {
   passed: number | null;
   failed: number | null;
   createdAt: number | null;
+  /**
+   * The run's VERDICT, as distinct from its lifecycle `status` — the same
+   * field {@link PlatformEvalRun.result} carries, projected onto the
+   * latest-run summary.
+   *
+   * Worth reading even though `passed`/`failed` are right here: under
+   * `verdictPolicyVersion: 2` a run can finish `completed` and still be
+   * `"inconclusive"`, and NO derivation over the counts can produce that. A
+   * consumer that re-derives a verdict from `passed`/`failed` turns "we could
+   * not measure this" into a pass or a failure the platform explicitly
+   * declined to declare.
+   *
+   * Absent on API deployments that predate the field; `null` on a run that
+   * predates it.
+   */
+  result?: string | null;
 }
 
 export interface PlatformEvalSuite {
@@ -1504,7 +1520,16 @@ export type PlatformEvalSuiteGroundednessJudge = {
 };
 
 export interface PlatformEvalSuiteSettings {
-  /** Minimum pass rate as a percentage, 0–100. */
+  /**
+   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   *
+   * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
+   * still holds: a v2 suite is decided by
+   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
+   * an upgrade leaves behind is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * threshold no run uses.
+   */
   minimumAccuracy: number | null;
   /**
    * Suite-level FLOOR on per-case iterations, 1–10: every case runs at least
