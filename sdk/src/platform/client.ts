@@ -236,14 +236,6 @@ export interface PlatformCiMetadata {
 }
 
 /**
- * Header names for the two launch-context fields.
- *
- * HEADERS, not body fields, and that is load-bearing: both `/v1` eval-run
- * bodies are `.strict()`, so a new body field is a 400 on any deployment that
- * predates it — self-hosted and staging included — while an unknown header is
- * ignored everywhere. A cosmetic label must never be able to fail a launch.
- */
-/**
  * The suite FILE this process is the sync for.
  *
  * A client-construction option rather than an operation input, and that is the
@@ -260,6 +252,14 @@ export interface PlatformFileSync {
   declaredSuiteId: string;
 }
 
+/**
+ * Header names for the two launch-context fields.
+ *
+ * HEADERS, not body fields, and that is load-bearing: both `/v1` eval-run
+ * bodies are `.strict()`, so a new body field is a 400 on any deployment that
+ * predates it — self-hosted and staging included — while an unknown header is
+ * ignored everywhere. A cosmetic label must never be able to fail a launch.
+ */
 export const PLATFORM_LAUNCH_HEADERS = {
   launcher: "x-mcpjam-launcher",
   ci: "x-mcpjam-ci",
