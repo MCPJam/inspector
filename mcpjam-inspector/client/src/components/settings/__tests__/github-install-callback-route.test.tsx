@@ -428,6 +428,115 @@ describe("the OAuth leg", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks an already-connected account instead of offering the click", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+        { installationId: 12, accountLogin: "dana", accountType: "User" },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+
+    await screen.findByText("acme");
+    // The taken row stays VISIBLE — it is an account they administer, and
+    // hiding it would read as GitHub losing it rather than it being taken.
+    expect(await screen.findByText(/Dana's Org/)).toBeInTheDocument();
+
+    const buttons = screen.getAllByRole("button", { name: "Connect" });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toBeDisabled();
+    expect(buttons[1]).toBeEnabled();
+  });
+
+  it("points the disabled button at the reason it is disabled", async () => {
+    // The note renders AFTER the button, so without the association a screen
+    // reader reaches "Connect, unavailable" and never learns why — which is
+    // the only thing a blocked row exists to say.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+        { installationId: 12, accountLogin: "dana", accountType: "User" },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    const [taken, free] = screen.getAllByRole("button", { name: "Connect" });
+    const noteId = taken.getAttribute("aria-describedby");
+    expect(noteId).toBeTruthy();
+    expect(document.getElementById(noteId as string)?.textContent).toMatch(
+      /Dana's Org/
+    );
+    // A connectable row describes nothing — there is no reason to give.
+    expect(free).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("never fires a claim the backend would refuse", async () => {
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    // The point of the whole change: no round trip, and no navigation away to
+    // a dead-end failure screen.
+    expect(mockClaimProvenInstallation).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("names no organization when the backend named none", async () => {
+    // An absent `organizationName` is the ANSWER — the caller is not a member
+    // of the holding org — not a lookup that failed. The row must not imply
+    // one exists to go and look at.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: {},
+        },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+
+    const note = await screen.findByText(
+      /already connected to another MCPJam organization/i
+    );
+    expect(note).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    // It points at the party the person can actually reach.
+    expect(note.textContent).toMatch(/owner of the acme GitHub account/i);
+  });
+
   it("shows a non-disclosing conflict exactly as the backend worded it", async () => {
     mockCompleteUserAuthorization.mockRejectedValue(
       Object.assign(new Error("Server Error"), {

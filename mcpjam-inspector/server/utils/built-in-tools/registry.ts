@@ -89,6 +89,25 @@ import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-too
 export interface TrustedSandboxBinding {
   /** Vendor sandbox id the bash tool execs against. */
   sandboxId: string;
+  /**
+   * The CONTROL-PLANE row for the same box.
+   *
+   * The vendor id above is what a command execs against; this is what the
+   * browser session is RECORDED against, and what every teardown path keys on.
+   * A browser needs both — a daemon addressable by nothing durable is one no
+   * replica can find and nothing can ever release.
+   *
+   * Optional only because bash never needed it; a browser binding always
+   * carries it.
+   */
+  sandboxRowId?: string;
+  /**
+   * WHICH IMAGE this box booted, so the resolver can tell a browser-capable
+   * machine from a shell. Absent ⇒ `terminal`, which is every binding that
+   * predates desktop boxes. A `browser` tool on a terminal box would fail with
+   * nothing saying why (no X server), so this is checked rather than assumed.
+   */
+  runtimeKind?: "terminal" | "desktop-browser";
   /** Working directory for commands (the personal path's semantics). */
   workdir?: string;
   /**
@@ -564,6 +583,39 @@ export function resolveHostTools(
         });
         continue;
       }
+      // ── WHICH BOX, decided FIRST (mirrors the bash branch) ────────────
+      //
+      // A run that brought its OWN box is a different machine from the
+      // member's project computer, and almost every gate below is about the
+      // project computer. Reading the binding first is what lets those gates
+      // stay about the thing they describe instead of accumulating "…unless a
+      // sandbox" clauses.
+      const sandboxBrowser =
+        !isLocalBrowser && ctx.sandboxBinding?.sandboxRowId
+          ? ctx.sandboxBinding
+          : undefined;
+      if (
+        !isLocalBrowser &&
+        ctx.sandboxBinding &&
+        (!sandboxBrowser ||
+          ctx.sandboxBinding.runtimeKind !== "desktop-browser")
+      ) {
+        // The run HAS a box, and it is the wrong kind (or predates the row id
+        // a browser session needs). A browser on a terminal image fails with
+        // nothing saying why — there is no X server for Chromium to draw on —
+        // so say it here rather than let the model spend a turn discovering it.
+        logger.warn(
+          "[built-in-tools] browser suppressed: this run's sandbox is not a desktop box",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not advertised: this run's sandbox is not a desktop " +
+            "(browser) box, and a browser cannot run on a terminal image.",
+        });
+        continue;
+      }
       // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep
       // `bash` (behavior-preserving for hosts that already have it) and drop
       // `browser`, unless this deployment accepted the boundary.
@@ -576,8 +628,17 @@ export function resolveHostTools(
       // calls its handler in-process). The boundary here is device consent
       // plus per-action approval, and refusing the pair would only mean a user
       // who attached both gets neither of the two things they asked for.
+      //
+      // NOT applied to a PER-RUN BOX either, and for a different reason: the
+      // risk is a shell reading a HUMAN's cookies and daemon token, and a
+      // disposable box holds no human profile — it is created for one run,
+      // signed into nothing, and destroyed with it. (The backend cannot even
+      // persist the pair: `validateBuiltInToolScope` refuses bash + browser on
+      // one host config, so this arm is unreachable today and stated so the
+      // exemption is a decision rather than an accident if that ever changes.)
       if (
         !isLocalBrowser &&
+        !sandboxBrowser &&
         ids.includes(BASH_TOOL_NAME) &&
         !ctx.allowComputerToolCoTenancy
       ) {
@@ -591,18 +652,32 @@ export function resolveHostTools(
         ctx.onToolSuppressed?.({ id, reason });
         continue;
       }
-      if (ctx.isJourneySession && !ctx.sandboxBinding) {
-        // Same reasoning as bash: every session in a run would otherwise share
-        // the LAUNCHER's single computer — and therefore one browser profile.
+      // AN UNATTENDED RUN NEEDS A BOX OF ITS OWN, whatever surface it came
+      // from. Generalized from the journey-only gate it replaces: an eval is
+      // in exactly the same position, and the hosted engine has ONE computer
+      // per project+member — so without a binding every unattended run in a
+      // project would drive the same Chromium and the same cookie jar, and the
+      // ephemeral request that isolation needs would relaunch the daemon a
+      // person may be using.
+      if (
+        !isLocalBrowser &&
+        !sandboxBrowser &&
+        (ctx.isJourneySession ||
+          ctx.browserApprovalDelivery?.kind === "unattended")
+      ) {
         ctx.onToolSuppressed?.({
           id,
           reason:
-            "browser is disabled in simulated (swarm) sessions without a disposable " +
-            "sandbox of their own: sessions would share one browser profile.",
+            "browser is not advertised to an unattended run without a disposable " +
+            "sandbox of its own: runs would share one browser profile.",
         });
         continue;
       }
-      if (!computer) {
+      // A COMPUTER attachment, for the project-computer path only. A per-run
+      // box IS the computer here, and it arrives on `ctx` rather than on the
+      // host config — which is the whole point: nothing in a member-readable
+      // snapshot can forge one.
+      if (!sandboxBrowser && !computer) {
         logger.warn(
           "[built-in-tools] browser requested without a computer attached; skipping",
           { projectId: ctx.projectId },
@@ -646,6 +721,17 @@ export function resolveHostTools(
           : {}),
         ...(ctx.onToolSuppressed
           ? { onToolSuppressed: ctx.onToolSuppressed }
+          : {}),
+        // The run's OWN box, when it has one. Trusted by construction: it
+        // rides `ctx`, never `config`, so only an in-process caller that just
+        // provisioned can set it.
+        ...(sandboxBrowser
+          ? {
+              sandboxTarget: {
+                sandboxRowId: sandboxBrowser.sandboxRowId!,
+                sandboxId: sandboxBrowser.sandboxId,
+              },
+            }
           : {}),
       });
       if (browser) {
