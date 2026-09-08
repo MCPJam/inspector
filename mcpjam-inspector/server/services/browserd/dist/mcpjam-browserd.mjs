@@ -294,6 +294,7 @@ import { join } from "node:path";
 var MIN_RECORD_FPS = 1;
 var MAX_RECORD_FPS = 30;
 var DEFAULT_RECORD_FPS = 15;
+var SWEEP_MIN_AGE_MS = 10 * 6e4;
 var DEFAULT_FINALIZE_GRACE_MS = 2e3;
 function recorderArgs(options) {
   return [
@@ -400,8 +401,12 @@ function createVideoRecorder(options) {
     for (const name of names) {
       if (!name.endsWith(".mp4")) continue;
       if (name.includes(`-${nonce}-`)) continue;
+      const path = join(options.dir, name);
       try {
-        await removeFile(join(options.dir, name));
+        const { mtimeMs } = await statFile(path);
+        if (mtimeMs === void 0) continue;
+        if (now() - mtimeMs < SWEEP_MIN_AGE_MS) continue;
+        await removeFile(path);
       } catch {
       }
     }

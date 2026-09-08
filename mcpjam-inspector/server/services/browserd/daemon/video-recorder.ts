@@ -110,7 +110,7 @@ export interface VideoRecorderOptions {
   ) => RecorderProcess;
   ffmpegPath?: string;
   /** Injected for the same reason: the size of a file no test wrote. */
-  statFile?: (path: string) => Promise<{ size: number }>;
+  statFile?: (path: string) => Promise<{ size: number; mtimeMs?: number }>;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -156,6 +156,17 @@ export const MAX_RECORD_FPS = 30;
 export const DEFAULT_RECORD_FPS = 15;
 
 /** How long shutdown waits for ffmpeg to write its last fragment. */
+/**
+ * How long a take is left alone before the sweep will touch it.
+ *
+ * Comfortably longer than `HOSTED_RECORDING_COLLECT_TIMEOUT_MS` (45 s), which
+ * is the whole window in which a collector can be reading a file — it stops
+ * the take, connects to the box and reads, all under that one deadline. A file
+ * older than this therefore has no reader left that could still be waiting on
+ * it, whatever the call order upstream turns out to be.
+ */
+export const SWEEP_MIN_AGE_MS = 10 * 60_000;
+
 export const DEFAULT_FINALIZE_GRACE_MS = 2_000;
 
 /**
@@ -369,7 +380,7 @@ export function createVideoRecorder(
   let disposed = false;
 
   /**
-   * Drop the takes of BOOTS THAT ARE GONE, and only those.
+   * Drop takes that are OLD AND NOT OURS.
    *
    * Nothing deletes a recording otherwise: the collector reads the file and
    * leaves it, and `recordDir` sits beside the Chromium profile, so it
@@ -379,17 +390,27 @@ export function createVideoRecorder(
    * boot. A crash-looping daemon would fill the disk at the size cap each
    * time round.
    *
-   * The rule is deliberately narrow: a file is swept only when its name
-   * carries a nonce that is not ours. Those are unreachable by construction —
-   * the collector names a file by the `path` a stop returned, and only the
-   * LIVE daemon answers a stop, so no reader can still be asking for a dead
-   * boot's take. This boot's own earlier takes are left alone precisely
-   * because a reader CAN still be on one: that is the race the per-take name
-   * exists to win, and a sweep that undid it would trade a wrong file for a
-   * missing one.
+   * TWO GATES, AND AGE IS THE LOAD-BEARING ONE. The first version of this
+   * swept on the nonce alone, reasoning that a dead boot's take is
+   * unreachable because only the live daemon answers a stop. That was wrong
+   * in the way that costs evidence: a collector takes the `path` from a stop
+   * and reads it afterwards, so it can still be mid-read on a file whose boot
+   * has since been replaced — the daemon cannot see that read and must not
+   * bet on it having finished.
    *
-   * Best-effort throughout. A directory that cannot be listed, or a file that
-   * will not unlink, must never cost a run its recording.
+   * So a file goes only when it is older than any read could still be
+   * outstanding on (`SWEEP_MIN_AGE_MS`, far past the collector's own 45 s
+   * deadline). A `stat` that cannot say how old it is keeps the file: the
+   * disk is worth less than the recording.
+   *
+   * The nonce gate stays as the second: this boot's own takes are never
+   * touched however old they look, because a reader CAN be on one — that is
+   * the race the per-take name exists to win, and undoing it here would trade
+   * a wrong file for a missing one.
+   *
+   * Best-effort throughout. A directory that cannot be listed, a file that
+   * cannot be stat'ed, or one that will not unlink must never cost a run its
+   * recording.
    */
   const sweepDeadBoots = async (): Promise<void> => {
     let names: string[];
@@ -401,10 +422,17 @@ export function createVideoRecorder(
     for (const name of names) {
       if (!name.endsWith(".mp4")) continue;
       if (name.includes(`-${nonce}-`)) continue;
+      const path = join(options.dir, name);
       try {
-        await removeFile(join(options.dir, name));
+        const { mtimeMs } = await statFile(path);
+        // Unknown age is treated as NEW. A sweep that guesses wrong here
+        // deletes a run's only evidence; one that guesses wrong the other way
+        // leaves a file on a box that is about to be thrown away.
+        if (mtimeMs === undefined) continue;
+        if (now() - mtimeMs < SWEEP_MIN_AGE_MS) continue;
+        await removeFile(path);
       } catch {
-        // Someone else's, read-only, already gone — all fine.
+        // Cannot stat, read-only, already gone — all fine.
       }
     }
   };

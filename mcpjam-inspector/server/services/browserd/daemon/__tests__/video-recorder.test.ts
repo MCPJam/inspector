@@ -15,6 +15,7 @@ import {
   createProgressReader,
   createVideoRecorder,
   recorderArgs,
+  SWEEP_MIN_AGE_MS,
 } from "../video-recorder";
 
 /** A stand-in for ffmpeg. */
@@ -481,11 +482,22 @@ describe("sweeping the takes of dead boots", () => {
   // The sweep awaits one unlink at a time, so counting microtasks would couple
   // the test to how many files it walks. A macrotask drains all of them.
   const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
-  const sweepBuild = (names: string[], nonce = "b00t") => {
+  // The fake clock in `build()` starts at 1_000, so "old" has to be a time
+  // before that: ages are measured against `now()`, not the wall clock.
+  const OLD = -SWEEP_MIN_AGE_MS;
+  const sweepBuild = (
+    names: string[],
+    over: { nonce?: string; ages?: Record<string, number> } = {},
+  ) => {
     const removed: string[] = [];
     const { recorder, ffmpeg } = build({
-      nonce,
+      nonce: over.nonce ?? "b00t",
       listDir: async () => names,
+      statFile: async (path: string) => ({
+        size: 10,
+        // Everything is ancient unless a test says otherwise.
+        mtimeMs: over.ages?.[path] ?? OLD,
+      }),
       removeFile: async (path: string) => {
         removed.push(path);
       },
@@ -522,6 +534,55 @@ describe("sweeping the takes of dead boots", () => {
     await settled();
 
     expect(removed).toEqual(["/rec/run-1-gone-1.mp4"]);
+  });
+
+  it("NEVER removes a file young enough for a collector to still be reading", async () => {
+    // The gate that matters. A collector takes the `path` from a stop and
+    // reads it afterwards, so a take whose boot has been replaced can still
+    // have a reader on it — and the daemon cannot see that read.
+    const { recorder, removed } = sweepBuild(["run-1-gone-1.mp4"], {
+      ages: { "/rec/run-1-gone-1.mp4": 1_000 - SWEEP_MIN_AGE_MS + 1 },
+    });
+    recorder.start({ id: "run-1", fps: 15 });
+    await settled();
+
+    expect(removed).toEqual([]);
+  });
+
+  it("keeps a file whose age it cannot establish", async () => {
+    // The disk is worth less than the recording, so an unknown age reads as
+    // new rather than as fair game.
+    const removed: string[] = [];
+    const { recorder } = build({
+      nonce: "b00t",
+      listDir: async () => ["run-1-gone-1.mp4"],
+      statFile: async () => ({ size: 10 }),
+      removeFile: async (path: string) => {
+        removed.push(path);
+      },
+    });
+    recorder.start({ id: "run-1", fps: 15 });
+    await settled();
+
+    expect(removed).toEqual([]);
+  });
+
+  it("keeps a file it cannot stat at all", async () => {
+    const removed: string[] = [];
+    const { recorder } = build({
+      nonce: "b00t",
+      listDir: async () => ["run-1-gone-1.mp4"],
+      statFile: async () => {
+        throw new Error("EIO");
+      },
+      removeFile: async (path: string) => {
+        removed.push(path);
+      },
+    });
+    recorder.start({ id: "run-1", fps: 15 });
+    await settled();
+
+    expect(removed).toEqual([]);
   });
 
   it("leaves anything that is not a take alone", async () => {
