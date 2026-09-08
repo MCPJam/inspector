@@ -315,6 +315,18 @@ The **CI** tab (when enabled for your project) shows only CI-active suites — s
 
 The commit rail in the CI tab groups runs by commit SHA and only includes CI (SDK-sourced) runs. Playground runs on mixed suites are excluded from the rail so they don't appear as spurious manual-commit groups.
 
+### Run verdicts
+
+A completed run carries one of three verdicts:
+
+| Verdict | Badge | Meaning |
+|---------|-------|---------|
+| **Passed** | Green | The run cleared its pass-criteria threshold |
+| **Failed** | Red | The run did not clear its threshold |
+| **Inconclusive** | Amber | The run finished but could not be measured well enough to decide either way — too few gradeable trials, too many evaluator errors, or the validity phase withheld a verdict. This is not a failure: no defect was observed |
+
+An inconclusive run does not quote a pass-criteria threshold in its badge, because the threshold was never applied to it.
+
 ### Pass Rate vs Accuracy
 
 The metric label shown in run headers, the runs table, charts, and hero stats follows the **run's source**, not the suite's creation source:
