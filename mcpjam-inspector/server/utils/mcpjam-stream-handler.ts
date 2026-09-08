@@ -186,8 +186,14 @@ function isApprovalFreeMetaToolName(
  *   - in `requiredNames` → approval, flag or no flag;
  *   - in `freeNames` → never (a read-only snapshot buys nothing by pausing);
  *   - unknown name → a real tool: follow the flag, exempting meta-tools.
+ *
+ * EXPORTED as a test seam only. It is THE approval gate for this engine, and
+ * `__tests__/tool-approval-matrix.test.ts` pins its contract directly next to
+ * the end-to-end rows that drive it through a whole turn — a divergence between
+ * the two is the bug the matrix exists to catch. No production caller outside
+ * this module.
  */
-function toolCallNeedsApproval(
+export function toolCallNeedsApproval(
   name: string,
   progressivePlan: ProgressiveToolPlan | undefined,
   uiToolApprovals: UiToolApprovalClassification | undefined,

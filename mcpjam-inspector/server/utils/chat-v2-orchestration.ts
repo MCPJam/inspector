@@ -39,9 +39,7 @@ import {
 } from "./chat-helpers.js";
 import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
-import {
-  withServerSkills,
-} from "./server-skill-tools.js";
+import { withServerSkills } from "./server-skill-tools.js";
 import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
@@ -638,7 +636,8 @@ export function buildWidgetInteractionContextSystemPrompt(
 
   const sections = calls.map((call) => {
     const result = call.result as
-      { content?: Array<Record<string, unknown>> } | undefined;
+      | { content?: Array<Record<string, unknown>> }
+      | undefined;
     const content = result?.content ?? [];
     const lines = [
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
@@ -1114,6 +1113,36 @@ function approvalGuidance(
     : "Every `ui_*` action applies immediately, so be deliberate about mutating ones — describe what you're about to do when it isn't obviously what the user asked for.";
 }
 
+/**
+ * The turn's approval declaration for its SKILL tools.
+ *
+ * Pinned skill tools NEVER require approval — pure reads of frozen content
+ * under an auto-deny eval run, where a prompt is a hang rather than a
+ * question. Every other skill tool follows the host's switch.
+ *
+ * Extracted from `prepareChatV2` as the one addressable declaration site for
+ * this family, so the approval matrix can drive it the way the engines see it.
+ *
+ * Raises only: a tool that already declared its own approval keeps it when the
+ * switch is off, which is what leaves a function-form declaration (the
+ * server-origin skill refs in `effective-skill-tools.ts`) intact.
+ */
+export function applySkillToolApproval(
+  skillTools: Record<string, unknown>,
+  opts: { pinned: boolean; requireToolApproval: boolean },
+): Record<string, unknown> {
+  if (opts.pinned || !opts.requireToolApproval) return skillTools;
+  return Object.fromEntries(
+    Object.entries(skillTools).map(([name, tool]) => [
+      name,
+      {
+        ...(tool && typeof tool === "object" ? tool : {}),
+        needsApproval: true,
+      },
+    ]),
+  );
+}
+
 export interface PrepareChatV2Result {
   allTools: ToolSet;
   enhancedSystemPrompt: string;
@@ -1300,17 +1329,17 @@ export async function prepareChatV2(
     ? skillsSource.kind === "pinned"
       ? getPinnedSkillToolsAndPrompt(skillsSource.skills, modelContextTokens)
       : skillsSource.kind === "resolved" ||
-          skillsSource.kind === "pinned-effective"
-        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
-            ...(skillsSource.abortSignal
-              ? { signal: skillsSource.abortSignal }
-              : {}),
-            // The discovery listing is budgeted against THIS model's context
-            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-            // model definition; the budget helper falls back to 8,000 chars.
-            ...modelContextTokens,
-          })
-        : { tools: {}, systemPromptSection: "" }
+        skillsSource.kind === "pinned-effective"
+      ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+          ...(skillsSource.abortSignal
+            ? { signal: skillsSource.abortSignal }
+            : {}),
+          // The discovery listing is budgeted against THIS model's context
+          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+          // model definition; the budget helper falls back to 8,000 chars.
+          ...modelContextTokens,
+        })
+      : { tools: {}, systemPromptSection: "" }
     : // No source is no SKILLS OF ITS OWN — not a fallback. The old chain
       // ended `cloudSkills ? … : HOSTED_MODE ? {} : localFS` — exclusive arms
       // chosen by DEPLOYMENT rather than by what the user had, which is why a
@@ -1328,20 +1357,13 @@ export async function prepareChatV2(
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
-  // Pinned skill tools NEVER require approval (pure reads of frozen content; the
-  // eval run is auto-deny). Otherwise the normal approval wrap applies.
-  const approvalWrappedSkillTools: Record<string, unknown> =
-    requireToolApproval && !skillsArePinned
-      ? Object.fromEntries(
-          Object.entries(skillTools).map(([name, tool]) => [
-            name,
-            {
-              ...(tool && typeof tool === "object" ? tool : {}),
-              needsApproval: true,
-            },
-          ]),
-        )
-      : (skillTools as Record<string, unknown>);
+  const approvalWrappedSkillTools = applySkillToolApproval(
+    skillTools as Record<string, unknown>,
+    {
+      pinned: skillsArePinned,
+      requireToolApproval: requireToolApproval === true,
+    },
+  );
 
   // Skills over MCP (SEP-2640), LIVE path. A COMPOSING wrapper, not a fifth
   // arm of the chain above: the chain is an exclusive choice, but a turn can
@@ -1410,7 +1432,7 @@ export async function prepareChatV2(
         budgetChars: Math.max(
           0,
           skillMetadataBudgetChars(modelContextTokens.modelContextTokens) -
-            (skillsPromptSection?.length ?? 0)
+            (skillsPromptSection?.length ?? 0),
         ),
       })
     : "";
