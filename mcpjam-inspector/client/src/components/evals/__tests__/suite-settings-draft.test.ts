@@ -37,12 +37,12 @@ const BASE: SuiteSettingsValues = {
   minIterations: 3,
   computerEnvironmentId: undefined,
   defaultMatchOptions: undefined,
-    defaultPredicates: [],
-    judgeConfig: undefined,
-    judgeRubric: undefined,
-    verdictPolicyVersion: undefined,
-    verdictPolicyDefaults: undefined,
-    gatePolicy: undefined,
+  defaultPredicates: [],
+  judgeConfig: undefined,
+  judgeRubric: undefined,
+  verdictPolicyVersion: undefined,
+  verdictPolicyDefaults: undefined,
+  gatePolicy: undefined,
 };
 
 const SUITE_ID = "suite-a";
@@ -613,6 +613,54 @@ describe("describeChange — verdict policy defaults", () => {
     expect(describeDraft(draft)[0]).toMatchObject({
       key: "gatePolicy",
       after: "None",
+    });
+  });
+});
+
+describe("stage-check selections", () => {
+  test("old suites enable all checks and saved opt-outs reload", () => {
+    expect(readSuiteSettingsValues({}).disabledStageChecks).toBeUndefined();
+    expect(
+      readSuiteSettingsValues({ disabledStageChecks: [] }).disabledStageChecks,
+    ).toBeUndefined();
+    expect(
+      readSuiteSettingsValues({
+        disabledStageChecks: ["response.errors", "connection.oauth"],
+      }).disabledStageChecks,
+    ).toEqual(["connection.oauth", "response.errors"]);
+  });
+
+  test("saves only the selection, describes it, and discards it", () => {
+    const draft = edit(draftOf(), "disabledStageChecks", ["connection.oauth"]);
+    expect(toUpdateArgs(draft, "suite-1")).toEqual({
+      suiteId: "suite-1",
+      disabledStageChecks: ["connection.oauth"],
+    });
+    expect(describeDraft(draft)).toMatchObject([
+      {
+        label: "Checks by stage",
+        before: "All checks enabled",
+        after: "Disabled: OAuth connection",
+      },
+    ]);
+    expect(
+      suiteSettingsReducer(draft, { type: "discard" }).current
+        .disabledStageChecks,
+    ).toBeUndefined();
+    expect(dirtyKeys(edit(draft, "disabledStageChecks", undefined))).toEqual(
+      [],
+    );
+  });
+
+  test("restoring all checks sends an explicit empty list", () => {
+    const draft = edit(
+      draftOf({ disabledStageChecks: ["connection.oauth"] }),
+      "disabledStageChecks",
+      undefined,
+    );
+    expect(toUpdateArgs(draft, "suite-1")).toEqual({
+      suiteId: "suite-1",
+      disabledStageChecks: [],
     });
   });
 });

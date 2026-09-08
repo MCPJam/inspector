@@ -100,11 +100,9 @@ const ITERATIONS = [
 afterEach(cleanup);
 
 describe("RunCaseRowBody", () => {
-  it("counts the iterations a failure shape covers", () => {
+  it("counts the trials a failure shape covers", () => {
     render(<RunCaseRowBody row={row()} iterations={ITERATIONS} />);
-    expect(
-      screen.getByText("3 iterations broke at Selection"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("3 iterations broke at Selection")).toBeInTheDocument();
     expect(
       screen.getByText("evidence below is from the first of them"),
     ).toBeInTheDocument();

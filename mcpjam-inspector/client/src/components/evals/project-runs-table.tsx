@@ -1,9 +1,56 @@
+import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { Input } from "@mcpjam/design-system/input";
+import {
+  readRunGitMetadata,
+  RunGitMetadata,
+  RunPlatformBadge,
+} from "./run-git-metadata";
+import { EvalListFilter, ALL_EVAL_FILTER_VALUES } from "./eval-list-filter";
+import {
+  buildRunPassRateChanges,
+  type RunPassRateChange,
+} from "./run-pass-rate-changes";
+import { useProjectRunHistory } from "./use-project-run-history";
+import { MetricStrip } from "./metric-strip";
+import {
+  buildSuiteMetricStripData,
+  buildAggregateMetricStripData,
+  type MetricStripData,
+} from "./metric-strip-data";
+import {
+  buildSuiteRunHistoryRows,
+  formatRunHistoryMetric,
+  type SuiteRunHistoryRow,
+} from "../evaluate/suite-detail-model";
+import { resultCounts } from "../evaluate/run-results-matrix-model";
+import { RunClientsCell } from "./run-clients-cell";
+import {
+  groupProjectRuns,
+  projectRunRollup,
+  ProjectRunSuiteGroup,
+} from "./project-run-suite-groups";
+import { useHostList } from "@/hooks/useClients";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import {
+  RunHistoryTable,
+  RunHistorySummary,
+  RunHistoryStat,
+  runHistorySurfaceClass,
+  runHistoryToolbarClass,
+  runHistoryFilterClass,
+  runHistoryFooterClass,
+} from "./run-history-table";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+} from "@mcpjam/design-system/dropdown-menu";
 import { useMemo, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
-import { GitBranch, Loader2 } from "lucide-react";
+import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -15,12 +62,16 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@mcpjam/design-system/select";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatRunId, formatTime } from "./helpers";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { RunSourceBadge } from "./run-source-badge";
+import {
+  apiKeyTail,
+  originsForFilters,
+  runAgentName,
+  RUN_ORIGIN_FILTERS,
+} from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
   RunDecisionVerdictBadge,
@@ -63,6 +114,14 @@ export interface ProjectRunRow {
     passRate: number;
   } | null;
   source: EvalSuiteRun["source"] | null;
+  /**
+   * The DECLARED launcher and the VERIFIED attribution. Both `| null` AND
+   * optional: a backend that predates run provenance sends neither key, so a
+   * reader that assumed the field existed would crash the whole table against
+   * an older deployment.
+   */
+  launcher?: EvalSuiteRun["launcher"] | null;
+  attribution?: EvalSuiteRun["attribution"] | null;
   ciMetadata: EvalSuiteRun["ciMetadata"] | null;
   createdBy: string;
   createdByName: string | null;
@@ -71,17 +130,6 @@ export interface ProjectRunRow {
   completedAt: number | null;
   durationMs: number | null;
 }
-
-const SOURCE_FILTERS: Array<{
-  value: NonNullable<EvalSuiteRun["source"]>;
-  label: string;
-}> = [
-  { value: "sdk", label: "SDK" },
-  { value: "ui", label: "UI" },
-  { value: "api", label: "API" },
-  { value: "schedule", label: "Scheduled" },
-  { value: "github_check", label: "GitHub" },
-];
 
 const ALL_SUITES = "__all__";
 
@@ -152,8 +200,13 @@ export function ProjectRunsTable({
   projectId,
   onSelectRun,
   decisionSummaryEnabled = false,
+  embedded = false,
+  historyMetricsEnabled = false,
 }: {
   projectId: string;
+  historyMetricsEnabled?: boolean;
+  /** Use the parent page scroll when shown below the suite cards. */
+  embedded?: boolean;
   onSelectRun: (args: { suiteId: string; runId: string }) => void;
   /**
    * Read D9's canonical verdict and counts for terminal rows, one row at a
@@ -164,12 +217,40 @@ export function ProjectRunsTable({
    */
   decisionSummaryEnabled?: boolean;
 }) {
+  const [suiteExpansion, setSuiteExpansion] = useState<Map<string, boolean>>(
+    new Map(),
+  );
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
+  const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [serverFilter, setServerFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [repositoryFilter, setRepositoryFilter] = useState(
+    ALL_EVAL_FILTER_VALUES,
+  );
+  const [branchFilter, setBranchFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [commitFilter, setCommitFilter] = useState("");
+
+  /**
+   * The chip selection, as the backend's `origins` argument.
+   *
+   * SENT TO THE QUERY, not applied to the rows it returns. Filtering the
+   * loaded page was a false negative with real consequences: a suite whose only
+   * GitHub runs were older than the first 50 rows answered "No runs match these
+   * filters", which reads as "we never ran this from CI" rather than "they are
+   * further down". An empty selection sends no argument at all, so an older
+   * backend that does not know it is unaffected.
+   */
+  const origins = useMemo(
+    () => originsForFilters([...sourceFilter]),
+    [sourceFilter],
+  );
 
   const { results, status, loadMore } = usePaginatedQuery(
     "testSuites:listProjectRuns" as any,
-    { projectId } as any,
+    {
+      projectId,
+      ...(origins.length > 0 ? { origins } : {}),
+    } as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
 
@@ -185,21 +266,284 @@ export function ProjectRunsTable({
     return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [rows]);
 
-  const filtered = useMemo(
+  const sourceAndSuiteRows = useMemo(
     () =>
-      rows.filter((row) => {
-        if (suiteFilter !== ALL_SUITES && row.suiteId !== suiteFilter) {
-          return false;
-        }
-        if (sourceFilter.size === 0) return true;
-        return sourceFilter.has(row.source ?? "ui");
+      // Suite only. Origin is decided by the query above, so a row that got
+      // here already matches the chips — re-checking it client-side would be a
+      // second predicate free to disagree with the one that chose the page.
+      rows.filter(
+        (row) => suiteFilter === ALL_SUITES || row.suiteId === suiteFilter,
+      ),
+    [rows, suiteFilter],
+  );
+
+  // Hydrate loaded history before display filters: options and comparison baselines
+  // must not disappear when another row is hidden.
+  const history = useProjectRunHistory(projectId, rows, historyMetricsEnabled);
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const { hosts } = useHostList({
+    isAuthenticated: historyMetricsEnabled,
+    projectId,
+  });
+  // Derived once per data/filter change, not per render. The chain below
+  // groups every loaded run and builds a metric point per launch; re-running
+  // it on each keystroke in the commit filter, and on the 15-second refresh
+  // of active runs, also handed the child rows fresh Map identities that
+  // defeated their own memoization.
+  const {
+    historyRows,
+    clientOptions,
+    serverOptions,
+    repositoryOptions,
+    branchOptions,
+    hasGitFilter,
+    showGitContext,
+    filtered,
+    suiteGroups,
+    launches,
+    metricData,
+    passRateChanges,
+    loadedRunCount,
+  } = useMemo(() => {
+    const hostNamesById = new Map(
+      hosts.map((host) => [host.hostId, host.name]),
+    );
+    const historyRuns = [...history.details.values()].map(
+      (detail) => detail.run,
+    );
+    const historyIterations = [...history.details.values()].flatMap(
+      (detail) => detail.iterations,
+    );
+    const historyRows = new Map(
+      buildSuiteRunHistoryRows(
+        historyRuns,
+        historyIterations,
+        {},
+        hostNamesById,
+        projectEnvironmentsEnabled,
+      ).map((row) => {
+        const iterations = history.details.get(row.runId)?.iterations ?? [];
+        return [
+          row.runId,
+          iterations.length
+            ? {
+                ...row,
+                passRate: Math.round(
+                  (resultCounts(iterations).passed / iterations.length) * 100,
+                ),
+              }
+            : row,
+        ];
       }),
-    [rows, sourceFilter, suiteFilter],
+    );
+    const runServers = new Map(
+      [...history.details].map(([id, detail]) => [
+        id,
+        detail.run.configSnapshot?.environment?.servers ?? [],
+      ]),
+    );
+    const clientOptions = [
+      ...new Set(
+        [...historyRows.values()].flatMap((row) =>
+          row.client ? [row.client] : [],
+        ),
+      ),
+    ].sort();
+    const serverOptions = [...new Set([...runServers.values()].flat())].sort();
+    const gitByRunId = new Map(
+      rows.map((row) => [row._id, readRunGitMetadata(row.ciMetadata)]),
+    );
+    const repositoryOptions = [
+      ...new Set(
+        [...gitByRunId.values()].flatMap((git) =>
+          git.repository ? [git.repository] : [],
+        ),
+      ),
+    ].sort();
+    const branchOptions = [
+      ...new Set(
+        [...gitByRunId.values()].flatMap((git) =>
+          git.branch ? [git.branch] : [],
+        ),
+      ),
+    ].sort();
+    const hasGitFilter =
+      repositoryFilter !== ALL_EVAL_FILTER_VALUES ||
+      branchFilter !== ALL_EVAL_FILTER_VALUES ||
+      Boolean(commitFilter.trim());
+    const showGitContext =
+      sourceFilter.has("github") ||
+      hasGitFilter ||
+      rows.some(
+        (row) => row.source === "github_check" || row.ciMetadata != null,
+      );
+    const matching = sourceAndSuiteRows.filter(
+      (row) =>
+        (clientFilter === ALL_EVAL_FILTER_VALUES ||
+          historyRows.get(row._id)?.client === clientFilter) &&
+        (serverFilter === ALL_EVAL_FILTER_VALUES ||
+          runServers.get(row._id)?.includes(serverFilter)) &&
+        (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
+          gitByRunId.get(row._id)?.repository === repositoryFilter) &&
+        (branchFilter === ALL_EVAL_FILTER_VALUES ||
+          gitByRunId.get(row._id)?.branch === branchFilter) &&
+        (!commitFilter.trim() ||
+          gitByRunId
+            .get(row._id)
+            ?.commitSha?.toLowerCase()
+            .startsWith(commitFilter.trim().toLowerCase())),
+    );
+    const matchingIds = new Set(matching.map((row) => row._id));
+    const allSuiteGroups = groupProjectRuns(rows, history.details);
+    // Filters select complete runs, never an individual execution within one.
+    const filtered = historyMetricsEnabled
+      ? allSuiteGroups.flatMap((suite) =>
+          suite.launches
+            .filter((launch) =>
+              launch.runs.some((row) => matchingIds.has(row._id)),
+            )
+            .flatMap((launch) => launch.runs),
+        )
+      : matching;
+    const suiteGroups = groupProjectRuns(filtered, history.details);
+    const launches = suiteGroups
+      .flatMap((suite) => suite.launches)
+      .sort((a, b) => a.runs[0].createdAt - b.runs[0].createdAt);
+    const measuredLaunches = launches.flatMap((launch) => {
+      if (launch.runs.some((row) => !history.details.has(row._id))) return [];
+      const runs = launch.runs.map((row) => history.details.get(row._id)!.run);
+      const measured = runs.flatMap(
+        (run) => history.details.get(run._id)?.iterations ?? [],
+      );
+      // Only this launch's iterations: both builders filter by run id, so
+      // handing them the whole history made every launch rescan everything.
+      const data =
+        runs.length === 1
+          ? buildSuiteMetricStripData(runs, measured)
+          : buildAggregateMetricStripData(runs, measured);
+      const counts = resultCounts(measured);
+      return data
+        ? [
+            {
+              point: measured.length
+                ? {
+                    ...data.latest,
+                    passed: counts.passed,
+                    failed: counts.failed,
+                    total: measured.length,
+                    passRate: Math.round(
+                      (counts.passed / measured.length) * 100,
+                    ),
+                  }
+                : data.latest,
+              label: `${
+                launch.runs[0].suiteName ?? "Deleted suite"
+              } · Run #${Math.min(...runs.map((run) => run.runNumber))}`,
+            },
+          ]
+        : [];
+    });
+    const series = measuredLaunches.map((launch) => launch.point);
+    const metricData: MetricStripData | null = series.length
+      ? {
+          latest: series[series.length - 1],
+          series,
+          delta:
+            series.length > 1
+              ? series[series.length - 1].passRate -
+                series[series.length - 2].passRate
+              : null,
+          showTrend: series.length > 1,
+          runLabels: measuredLaunches.map((launch) => launch.label),
+        }
+      : null;
+    const comparisonRows = new Map(historyRows);
+    const completeRuns = allSuiteGroups.flatMap((suite) =>
+      suite.launches.map((launch) => {
+        const representative = [...launch.runs].sort(
+          (a, b) => a.runNumber - b.runNumber || a._id.localeCompare(b._id),
+        )[0];
+        const metrics = projectRunRollup(launch.runs, history.details);
+        const historyRow = historyRows.get(representative._id);
+        if (historyRow)
+          comparisonRows.set(representative._id, {
+            ...historyRow,
+            passRate: metrics?.passRate ?? null,
+          });
+        return representative;
+      }),
+    );
+    const passRateChanges = buildRunPassRateChanges(
+      historyMetricsEnabled ? completeRuns : rows,
+      comparisonRows,
+    );
+    const loadedRunCount = allSuiteGroups.reduce(
+      (sum, suite) => sum + suite.launches.length,
+      0,
+    );
+    return {
+      historyRows,
+      clientOptions,
+      serverOptions,
+      repositoryOptions,
+      branchOptions,
+      hasGitFilter,
+      showGitContext,
+      filtered,
+      suiteGroups,
+      launches,
+      metricData,
+      passRateChanges,
+      loadedRunCount,
+    };
+  }, [
+    rows,
+    sourceAndSuiteRows,
+    history.details,
+    hosts,
+    projectEnvironmentsEnabled,
+    historyMetricsEnabled,
+    sourceFilter,
+    clientFilter,
+    serverFilter,
+    repositoryFilter,
+    branchFilter,
+    commitFilter,
+  ]);
+  const isSuiteExpanded = (suiteId: string) =>
+    suiteExpansion.get(suiteId) ?? true;
+  const allSuitesExpanded = suiteGroups.every((group) =>
+    isSuiteExpanded(group.suiteId),
+  );
+  const renderRun = (row: ProjectRunRow, nested = false) => (
+    <ProjectRunTableRow
+      key={row._id}
+      row={row}
+      grouped={historyMetricsEnabled}
+      nested={nested}
+      historyMetricsEnabled={historyMetricsEnabled}
+      showGitContext={showGitContext}
+      historyRow={historyRows.get(row._id)}
+      passRateChange={passRateChanges.get(row._id)}
+      projectId={projectId}
+      decisionSummaryEnabled={decisionSummaryEnabled}
+      onSelectRun={onSelectRun}
+    />
   );
 
   const isLoadingFirstPage = status === "LoadingFirstPage";
   const canLoadMore = status === "CanLoadMore";
-  const isFiltering = sourceFilter.size > 0 || suiteFilter !== ALL_SUITES;
+  const isFiltering =
+    sourceFilter.size > 0 ||
+    suiteFilter !== ALL_SUITES ||
+    clientFilter !== ALL_EVAL_FILTER_VALUES ||
+    serverFilter !== ALL_EVAL_FILTER_VALUES ||
+    hasGitFilter;
+  const hasClientSideFilter =
+    suiteFilter !== ALL_SUITES ||
+    clientFilter !== ALL_EVAL_FILTER_VALUES ||
+    serverFilter !== ALL_EVAL_FILTER_VALUES ||
+    hasGitFilter;
 
   const toggleSource = (value: string) => {
     setSourceFilter((prev) => {
@@ -210,15 +554,22 @@ export function ProjectRunsTable({
     });
   };
 
-  if (isLoadingFirstPage) {
+  if (isLoadingFirstPage && !historyMetricsEnabled) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div
+        className={cn(
+          "flex items-center justify-center",
+          embedded ? "min-h-40" : "h-full",
+        )}
+        role="status"
+        aria-label="Loading runs"
+      >
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && !isLoadingFirstPage && !isFiltering) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="mx-auto max-w-md p-6 text-center">
@@ -238,127 +589,364 @@ export function ProjectRunsTable({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 px-6 pb-6 pt-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground">
-          Source
-        </span>
-        {SOURCE_FILTERS.map((filter) => {
-          const active = sourceFilter.has(filter.value);
-          return (
-            <button
-              key={filter.value}
-              type="button"
-              aria-pressed={active}
-              onClick={() => toggleSource(filter.value)}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
-                active
-                  ? "border-primary/50 bg-primary/10 text-foreground"
-                  : "border-border/60 bg-transparent text-muted-foreground hover:bg-muted/50",
-              )}
-            >
-              {filter.label}
-            </button>
-          );
-        })}
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">
-            Suite
-          </span>
-          <Select value={suiteFilter} onValueChange={setSuiteFilter}>
-            <SelectTrigger
-              aria-label="Filter by suite"
-              className="h-8 w-[200px] text-xs"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_SUITES}>All suites</SelectItem>
-              {suiteOptions.map(([id, name]) => (
-                <SelectItem key={id} value={id}>
-                  {name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/*
-        Say what the filters actually cover. They run over the pages loaded
-        so far, so with more pages outstanding "no SDK runs" would otherwise
-        read as a fact about the project rather than about this page.
-      */}
-      {isFiltering && canLoadMore ? (
-        <p className="text-[11px] text-muted-foreground">
-          Filtering the {rows.length} most recent runs loaded so far — load more
-          below to widen the search.
-        </p>
-      ) : null}
-
-      <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/60">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-background">
-            <TableRow>
-              <TableHead className="w-[110px]">Run</TableHead>
-              <TableHead>Suite</TableHead>
-              <TableHead className="w-[90px]">Source</TableHead>
-              <TableHead className="w-[100px]">Result</TableHead>
-              {/*
-                Neutral, because the metric is per ROW here. A single "Pass
-                rate" header would mislabel every non-SDK row: `metricLabel`
-                calls those "Accuracy" (per-iteration) rather than pass rate
-                (per-case), and this table is the one surface that mixes both.
-              */}
-              <TableHead className="w-[150px]">Metric</TableHead>
-              <TableHead className="w-[170px]">Started</TableHead>
-              <TableHead className="w-[90px]">Duration</TableHead>
-              <TableHead className="w-[140px]">Run by</TableHead>
-              <TableHead className="w-[180px]">CI</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={9}
-                  className="h-24 text-center text-sm text-muted-foreground"
+    <div
+      className={cn(
+        "flex min-w-0 flex-col",
+        !embedded && "h-full min-h-0 overflow-y-auto px-6 pb-6 pt-5",
+      )}
+    >
+      <section
+        className={runHistorySurfaceClass}
+        aria-label="Project run history"
+      >
+        <div className={runHistoryToolbarClass}>
+          {historyMetricsEnabled ? (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">
+                {suiteGroups.length} suites · roll-ups across matching loaded
+                runs
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() =>
+                  setSuiteExpansion(
+                    new Map(
+                      suiteGroups.map((group) => [
+                        group.suiteId,
+                        !allSuitesExpanded,
+                      ]),
+                    ),
+                  )
+                }
+              >
+                {allSuitesExpanded ? "Collapse all" : "Expand all"}
+              </Button>
+            </div>
+          ) : embedded ? (
+            <h2 className="text-xs font-semibold text-secondary-foreground">
+              Run history
+            </h2>
+          ) : (
+            <span />
+          )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={runHistoryFilterClass}
+                  aria-label="Filter by platform"
                 >
-                  No runs match these filters.
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map((row) => (
-                <ProjectRunTableRow
-                  key={row._id}
-                  row={row}
-                  projectId={projectId}
-                  decisionSummaryEnabled={decisionSummaryEnabled}
-                  onSelectRun={onSelectRun}
+                  Platform
+                  {sourceFilter.size > 0 ? ` · ${sourceFilter.size}` : ""}
+                  <ChevronDown className="size-3" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {RUN_ORIGIN_FILTERS.map((filter) => (
+                  <DropdownMenuCheckboxItem
+                    key={filter.value}
+                    checked={sourceFilter.has(filter.value)}
+                    onCheckedChange={() => toggleSource(filter.value)}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    {filter.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Select value={suiteFilter} onValueChange={setSuiteFilter}>
+              <SelectTrigger
+                size="sm"
+                aria-label="Filter by suite"
+                className={runHistoryFilterClass}
+              >
+                <span className="truncate">
+                  {suiteFilter === ALL_SUITES
+                    ? "Suite"
+                    : suiteOptions.find(([id]) => id === suiteFilter)?.[1] ??
+                      "Suite"}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_SUITES}>All suites</SelectItem>
+                {suiteOptions.map(([id, name]) => (
+                  <SelectItem key={id} value={id}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {historyMetricsEnabled && (
+              <>
+                <EvalListFilter
+                  label="Client"
+                  value={clientFilter}
+                  options={clientOptions}
+                  onChange={setClientFilter}
+                  disabled={history.loading}
                 />
-              ))
+                <EvalListFilter
+                  label="Server"
+                  value={serverFilter}
+                  options={serverOptions}
+                  onChange={setServerFilter}
+                  disabled={history.loading}
+                />
+              </>
             )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {canLoadMore ? (
-        <div className="flex justify-center">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => loadMore(PROJECT_RUNS_PAGE_SIZE)}
+            {showGitContext && (
+              <>
+                <EvalListFilter
+                  label="Repository"
+                  value={repositoryFilter}
+                  options={repositoryOptions}
+                  onChange={setRepositoryFilter}
+                />
+                <EvalListFilter
+                  label="Branch"
+                  value={branchFilter}
+                  options={branchOptions}
+                  onChange={setBranchFilter}
+                />
+                <Input
+                  aria-label="Filter by commit"
+                  placeholder="Commit SHA"
+                  value={commitFilter}
+                  onChange={(event) => setCommitFilter(event.target.value)}
+                  className="h-7 w-32 rounded-full text-[11px]"
+                />
+              </>
+            )}
+            {isFiltering && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[11px]"
+                onClick={() => {
+                  setSourceFilter(new Set());
+                  setSuiteFilter(ALL_SUITES);
+                  setClientFilter(ALL_EVAL_FILTER_VALUES);
+                  setServerFilter(ALL_EVAL_FILTER_VALUES);
+                  setRepositoryFilter(ALL_EVAL_FILTER_VALUES);
+                  setBranchFilter(ALL_EVAL_FILTER_VALUES);
+                  setCommitFilter("");
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+        </div>
+        {!historyMetricsEnabled && (
+          <RunHistorySummary aria-label="Filtered run summary">
+            <RunHistoryStat value={filtered.length} label="runs shown" />
+            <RunHistoryStat
+              value={new Set(filtered.map((row) => row.suiteId)).size}
+              label="suites"
+            />
+            <RunHistoryStat
+              value={
+                new Set(
+                  filtered.map((row) => row.source ?? row.suiteSource ?? "ui"),
+                ).size
+              }
+              label="platforms"
+            />
+            <RunHistoryStat
+              value={
+                filtered.filter((row) =>
+                  ["pending", "running", "grading"].includes(row.status),
+                ).length
+              }
+              label="in progress"
+            />
+          </RunHistorySummary>
+        )}
+        {historyMetricsEnabled && (rows.length > 0 || isLoadingFirstPage) && (
+          <div
+            className="@container/history-metrics border-b border-border/50"
+            aria-label="Filtered run metrics"
           >
-            Load more
-          </Button>
+            <p className="px-5 pt-3 text-[10px] text-muted-foreground">
+              {history.loading || isLoadingFirstPage
+                ? "Loading run metrics…"
+                : metricData
+                ? `Latest measured run · trends across ${metricData.series.length} filtered runs`
+                : "No measured iterations in these runs."}
+            </p>
+            {history.errorCount > 0 && (
+              <p className="px-5 py-2 text-xs text-muted-foreground">
+                Metrics unavailable for {history.errorCount} runs.
+                <button
+                  type="button"
+                  className="ml-2 underline"
+                  onClick={history.retry}
+                >
+                  Retry metrics
+                </button>
+              </p>
+            )}
+            {!metricData && (history.loading || isLoadingFirstPage) && (
+              <div
+                className="grid h-32 grid-cols-5 gap-6 px-5 py-5"
+                aria-hidden="true"
+              >
+                {[0, 1, 2, 3, 4].map((index) => (
+                  <div key={index} className="space-y-4">
+                    <Skeleton className="h-3 w-16" />
+                    <Skeleton className="h-6 w-20" />
+                    <Skeleton className="h-3 w-full" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {metricData && (
+              <MetricStrip
+                data={metricData}
+                surface="embedded"
+                context="history"
+                testId="project-run-history-metrics"
+              />
+            )}
+          </div>
+        )}
+        {/*
+          Only for the filters that run over the loaded page. The platform
+          chips are a query argument, so on their own an empty result really
+          does mean the project has no such runs, and this caveat would
+          suggest the opposite.
+        */}
+        {hasClientSideFilter && canLoadMore && (
+          <p className="px-[18px] pb-3 text-[11px] text-muted-foreground">
+            Filtering the {historyMetricsEnabled ? loadedRunCount : rows.length}{" "}
+            most recent runs loaded so far. Load more below to widen the search.
+          </p>
+        )}
+        <div className="overflow-x-auto">
+          <RunHistoryTable aria-label="Project runs">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="min-w-[180px]">
+                  {historyMetricsEnabled ? "Suite / Run / Date" : "Suite / Run"}
+                </TableHead>
+                <TableHead className="min-w-[120px]">
+                  {historyMetricsEnabled ? "Client : model" : "Platform"}
+                </TableHead>
+                {showGitContext && (
+                  <TableHead className="min-w-[200px]">Git / CI</TableHead>
+                )}
+                <TableHead>
+                  {historyMetricsEnabled ? "Status" : "Verdict"}
+                </TableHead>
+                <TableHead
+                  className={historyMetricsEnabled ? "text-right" : undefined}
+                >
+                  {historyMetricsEnabled ? "Iteration pass" : "Results"}
+                </TableHead>
+                <TableHead>
+                  {historyMetricsEnabled ? "Platform" : "Date"}
+                </TableHead>
+                <TableHead className="text-right">
+                  {historyMetricsEnabled ? "Latency p50" : "Duration"}
+                </TableHead>
+                <TableHead
+                  className={historyMetricsEnabled ? "text-right" : undefined}
+                >
+                  {historyMetricsEnabled ? "Total tokens" : "Run by"}
+                </TableHead>
+                {historyMetricsEnabled && (
+                  <TableHead className="text-right">Tool calls</TableHead>
+                )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoadingFirstPage ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={8 + (showGitContext ? 1 : 0)}
+                    className="h-32 text-center text-muted-foreground"
+                  >
+                    <span role="status">Loading runs…</span>
+                  </TableCell>
+                </TableRow>
+              ) : filtered.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={
+                      (historyMetricsEnabled ? 8 : 7) + (showGitContext ? 1 : 0)
+                    }
+                    className="h-24 text-center text-sm text-muted-foreground"
+                  >
+                    {history.loading &&
+                    (clientFilter !== ALL_EVAL_FILTER_VALUES ||
+                      serverFilter !== ALL_EVAL_FILTER_VALUES)
+                      ? "Loading matching runs…"
+                      : "No runs match these filters."}
+                  </TableCell>
+                </TableRow>
+              ) : historyMetricsEnabled ? (
+                suiteGroups.map((group) => (
+                  <ProjectRunSuiteGroup
+                    key={group.suiteId}
+                    group={group}
+                    expanded={isSuiteExpanded(group.suiteId)}
+                    onToggle={() =>
+                      setSuiteExpansion((previous) =>
+                        new Map(previous).set(
+                          group.suiteId,
+                          !isSuiteExpanded(group.suiteId),
+                        ),
+                      )
+                    }
+                    details={history.details}
+                    historyRows={historyRows}
+                    showGitContext={showGitContext}
+                    loading={history.loading}
+                    renderRun={renderRun}
+                    onSelectRun={onSelectRun}
+                  />
+                ))
+              ) : (
+                filtered.map((row) => renderRun(row))
+              )}
+            </TableBody>
+          </RunHistoryTable>
         </div>
-      ) : status === "LoadingMore" ? (
-        <div className="flex justify-center">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <div className={runHistoryFooterClass}>
+          <span>
+            {historyMetricsEnabled &&
+            (isLoadingFirstPage ||
+              rows.some((row) => !history.details.has(row._id)))
+              ? history.loading || isLoadingFirstPage
+                ? "Loading run history…"
+                : "Run history incomplete"
+              : `${
+                  historyMetricsEnabled ? launches.length : filtered.length
+                } of ${
+                  historyMetricsEnabled ? loadedRunCount : rows.length
+                } loaded runs`}
+            {status !== "Exhausted" ? " · more available" : ""}
+          </span>
+          {canLoadMore ? (
+            <button
+              type="button"
+              className="font-medium text-foreground hover:underline"
+              onClick={() => loadMore(PROJECT_RUNS_PAGE_SIZE)}
+            >
+              Load more →
+            </button>
+          ) : status === "LoadingMore" ? (
+            <span role="status" className="flex items-center gap-2">
+              <Loader2 className="size-3 animate-spin" />
+              Loading more…
+            </span>
+          ) : null}
         </div>
-      ) : null}
+      </section>
     </div>
   );
 }
@@ -379,13 +967,56 @@ export function ProjectRunsTable({
  * always showed — this never invents an aggregate for a row it could not read,
  * including the fan-out rows whose stored numbers describe one leg.
  */
+/**
+ * WHO started this run — the person, and the credential they used.
+ *
+ * The name alone was ambiguous in the one case that matters: a run made with an
+ * API key is attributed to the key's owner, so an automated launch and that
+ * person clicking Run read identically. `attribution.apiKeyId` is minted by the
+ * backend from the credential the request authenticated with — a fact, not a
+ * claim — so the second line can say which key without guessing.
+ *
+ * An MCP run names the calling agent instead, which is the more useful answer
+ * there: "claude-code" tells you what to look at; "via API key ····3f9a" tells
+ * you which key to rotate.
+ */
+function RunByCell({ row }: { row: ProjectRunRow }) {
+  const name = row.createdByName ?? "—";
+  const agent = runAgentName(row);
+  const keyTail = agent ? null : apiKeyTail(row.attribution?.apiKeyId);
+  return (
+    <span className="flex flex-col leading-tight">
+      <span className="truncate">{name}</span>
+      {agent ? (
+        <span className="truncate text-[10px] opacity-70" title={agent}>
+          via {agent}
+        </span>
+      ) : keyTail ? (
+        <span className="text-[10px] opacity-70">via API key {keyTail}</span>
+      ) : null}
+    </span>
+  );
+}
+
 function ProjectRunTableRow({
   row,
+  grouped = false,
+  nested = false,
+  historyMetricsEnabled,
+  showGitContext,
+  historyRow,
+  passRateChange,
   projectId,
   decisionSummaryEnabled,
   onSelectRun,
 }: {
   row: ProjectRunRow;
+  grouped?: boolean;
+  nested?: boolean;
+  historyMetricsEnabled: boolean;
+  showGitContext: boolean;
+  historyRow?: SuiteRunHistoryRow;
+  passRateChange?: RunPassRateChange;
   projectId: string;
   decisionSummaryEnabled: boolean;
   onSelectRun: (args: { suiteId: string; runId: string }) => void;
@@ -393,10 +1024,18 @@ function ProjectRunTableRow({
   const [visibilityRef, hasBeenVisible, onScreen] =
     useHasBeenVisible<HTMLTableRowElement>();
   const terminal = isTerminalEvalRunStatus(row.status);
-  const { status: summaryStatus, summary, error } = useEvalRunDecisionBadge({
+  const {
+    status: summaryStatus,
+    summary,
+    error,
+  } = useEvalRunDecisionBadge({
     projectId,
     runId: row._id,
-    enabled: decisionSummaryEnabled && terminal && hasBeenVisible,
+    enabled:
+      decisionSummaryEnabled &&
+      !historyMetricsEnabled &&
+      terminal &&
+      hasBeenVisible,
     // Sticky to FETCH, live to REVALIDATE: a row keeps its answer once read,
     // but only the rows on screen keep asking whether it changed.
     revalidate: onScreen,
@@ -439,22 +1078,71 @@ function ProjectRunTableRow({
         : {})}
       className={canOpen ? "cursor-pointer" : undefined}
     >
-      <TableCell className="font-mono text-xs">{formatRunId(row._id)}</TableCell>
-      <TableCell className="max-w-[220px] truncate text-xs">
-        {row.suiteName ?? (
-          <span
-            className="text-muted-foreground"
-            title="This run's suite no longer exists, so its detail view can't be opened."
-          >
-            Deleted suite
+      <TableCell className="max-w-[240px] text-xs">
+        <div className={grouped ? (nested ? "pl-12" : "pl-5") : undefined}>
+          <span className="block truncate font-medium">
+            {grouped
+              ? `Run #${row.runNumber}`
+              : row.suiteName ?? (
+                  <span
+                    className="text-muted-foreground"
+                    title="This run's suite no longer exists, so its detail view can't be opened."
+                  >
+                    Deleted suite
+                  </span>
+                )}
           </span>
-        )}
+          <span className="text-[10px] text-muted-foreground" title={row._id}>
+            {grouped
+              ? formatRunId(row._id)
+              : `#${row.runNumber} · ${formatRunId(row._id)}`}
+            {historyMetricsEnabled && (
+              <span className="block" title={formatTime(row.createdAt)}>
+                {new Date(row.createdAt).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+            )}
+          </span>
+        </div>
       </TableCell>
+      {historyMetricsEnabled ? (
+        <TableCell className="text-xs">
+          <RunClientsCell rows={historyRow ? [historyRow] : []} />
+        </TableCell>
+      ) : (
+        <TableCell>
+          <div className="flex flex-col items-start gap-1">
+            <RunPlatformBadge run={row} metadata={row.ciMetadata} />
+            {row.ciMetadata && !showGitContext && (
+              <CiMetadataDisplay
+                ciMetadata={row.ciMetadata}
+                compact
+                compactMode="chip"
+                interactive={false}
+              />
+            )}
+          </div>
+        </TableCell>
+      )}
+      {showGitContext && (
+        <TableCell>
+          {row.ciMetadata || row.source === "github_check" ? (
+            <RunGitMetadata metadata={row.ciMetadata} />
+          ) : (
+            "—"
+          )}
+        </TableCell>
+      )}
       <TableCell>
-        <RunSourceBadge source={row.source ?? undefined} />
-      </TableCell>
-      <TableCell>
-        {summary ? (
+        {historyMetricsEnabled ? (
+          <span className="text-[10px] text-muted-foreground">
+            {terminal ? "Finished" : "In progress"}
+          </span>
+        ) : summary ? (
           // The run's own verdict replaces the status-derived label outright,
           // `inconclusive` and "no verdict" included — those are answers this
           // column could not previously express at all.
@@ -472,64 +1160,138 @@ function ProjectRunTableRow({
           </span>
         )}
       </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        {canonicalCounts ? (
-          <span className="flex flex-col leading-tight">
-            <span>{canonicalCounts}</span>
-            {/*
+      {historyMetricsEnabled ? (
+        <TableCell className="text-right text-xs tabular-nums">
+          {historyRow?.passRate != null
+            ? `${Math.round(historyRow.passRate)}%`
+            : "—"}
+          {passRateChange && (
+            <span
+              className={cn(
+                "ml-2 whitespace-nowrap text-[10px]",
+                passRateChange.points > 0
+                  ? "text-success"
+                  : passRateChange.points < 0
+                  ? "text-destructive"
+                  : "text-muted-foreground",
+              )}
+              title={`Compared with run #${passRateChange.previousRunNumber} in this suite (loaded history)`}
+              aria-label={`${
+                passRateChange.points > 0
+                  ? "Up"
+                  : passRateChange.points < 0
+                  ? "Down"
+                  : "Unchanged"
+              } ${Math.abs(
+                passRateChange.points,
+              )} percentage points versus run #${
+                passRateChange.previousRunNumber
+              } in this suite`}
+            >
+              {passRateChange.points > 0
+                ? "↑"
+                : passRateChange.points < 0
+                ? "↓"
+                : "→"}
+              {Math.abs(passRateChange.points)} pp
+            </span>
+          )}
+        </TableCell>
+      ) : (
+        <TableCell className="text-xs text-muted-foreground">
+          {canonicalCounts ? (
+            <span className="flex flex-col leading-tight">
+              <span>{canonicalCounts}</span>
+              {/*
               Rendered, not a `title`: which population this number counts has
               to be readable, and a tooltip is invisible to anyone scanning the
               column or using a screen reader.
             */}
-            <span className="text-[10px] opacity-70">
-              {canonicalUnit ? `counted in ${canonicalUnit}` : null}
-            </span>
-          </span>
-        ) : summary || summaryUnavailable ? (
-          // Either the summary ARRIVED and reported no counts — a legacy run
-          // that recorded none, or a run with no verdict, for which the
-          // contract forbids them outright — or the read settled unreadable.
-          // Absence stays absence either way: the stored aggregate is a
-          // different reading of this run, and printing it beside a canonical
-          // verdict (or beside "we could not read one") puts two answers in
-          // one row.
-          <span className="flex flex-col leading-tight">
-            <span>—</span>
-            <span className="text-[10px] opacity-70">no counts reported</span>
-          </span>
-        ) : row.summary ? (
-          <span className="flex flex-col leading-tight">
-            <span>
-              {Math.round(row.summary.passRate)}%{" "}
-              <span className="text-[10px]">
-                ({row.summary.passed}/{row.summary.total})
+              <span className="text-[10px] opacity-70">
+                {canonicalUnit ? `counted in ${canonicalUnit}` : null}
               </span>
             </span>
-            <span className="text-[10px] opacity-70">{metricLabel(row)}</span>
-          </span>
-        ) : (
-          "—"
-        )}
-      </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        {formatTime(row.createdAt)}
-      </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        {row.durationMs != null ? formatDuration(row.durationMs) : "—"}
-      </TableCell>
-      <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
-        {row.createdByName ?? "—"}
-      </TableCell>
-      <TableCell>
-        {row.ciMetadata ? (
-          <CiMetadataDisplay
-            ciMetadata={row.ciMetadata}
-            compact
-            compactMode="chip"
-            interactive={false}
-          />
-        ) : null}
-      </TableCell>
+          ) : summary || summaryUnavailable ? (
+            // Either the summary ARRIVED and reported no counts — a legacy run
+            // that recorded none, or a run with no verdict, for which the
+            // contract forbids them outright — or the read settled unreadable.
+            // Absence stays absence either way: the stored aggregate is a
+            // different reading of this run, and printing it beside a canonical
+            // verdict (or beside "we could not read one") puts two answers in
+            // one row.
+            <span className="flex flex-col leading-tight">
+              <span>—</span>
+              <span className="text-[10px] opacity-70">no counts reported</span>
+            </span>
+          ) : row.summary ? (
+            <span className="flex flex-col leading-tight">
+              <span>
+                {Math.round(row.summary.passRate)}%{" "}
+                <span className="text-[10px]">
+                  ({row.summary.passed}/{row.summary.total})
+                </span>
+              </span>
+              <span className="text-[10px] opacity-70">{metricLabel(row)}</span>
+            </span>
+          ) : (
+            "—"
+          )}
+        </TableCell>
+      )}
+      {historyMetricsEnabled ? (
+        <>
+          <TableCell>
+            <div className="flex flex-col items-start gap-1">
+              <RunPlatformBadge run={row} metadata={row.ciMetadata} />
+              {row.ciMetadata && !showGitContext && (
+                <CiMetadataDisplay
+                  ciMetadata={row.ciMetadata}
+                  compact
+                  compactMode="chip"
+                  interactive={false}
+                />
+              )}
+            </div>
+          </TableCell>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {formatRunHistoryMetric(historyRow?.latencyMs ?? null, "duration")}
+          </TableCell>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {formatRunHistoryMetric(historyRow?.tokens ?? null, "number")}
+          </TableCell>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {formatRunHistoryMetric(historyRow?.toolCalls ?? null, "number")}
+          </TableCell>
+        </>
+      ) : (
+        <>
+          <TableCell className="text-xs text-muted-foreground">
+            <time
+              dateTime={new Date(row.createdAt).toISOString()}
+              title={formatTime(row.createdAt)}
+            >
+              <span className="block">
+                {new Date(row.createdAt).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+              <span className="text-[10px]">
+                {new Date(row.createdAt).toLocaleTimeString(undefined, {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+            </time>
+          </TableCell>
+          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+            {row.durationMs != null ? formatDuration(row.durationMs) : "—"}
+          </TableCell>
+          <TableCell className="max-w-[140px] text-xs text-muted-foreground">
+            <RunByCell row={row} />
+          </TableCell>
+        </>
+      )}
     </TableRow>
   );
 }

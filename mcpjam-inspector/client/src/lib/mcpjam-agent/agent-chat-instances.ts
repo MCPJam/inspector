@@ -1,3 +1,4 @@
+import { compactEvalContextMessages } from "./eval-chat-context";
 /**
  * Module-level store of live MCPJam Agent `Chat` instances, keyed by
  * chatSessionId.
@@ -15,6 +16,8 @@
  * the instance's closures: the transport `body()` and callbacks read it at
  * call time, and `useMcpjamAgentSession` keeps it in sync each render.
  */
+import { evalTurnScope } from "./eval-scope";
+import { EVAL_AGENT_TOOL_NAMES } from "@/shared/eval-agent-scope";
 import { Chat } from "@ai-sdk/react";
 import type { UIMessage } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
@@ -124,6 +127,12 @@ export interface AgentChatEntry {
 }
 
 const instances = new Map<string, AgentChatEntry>();
+
+/** Stop an abandoned conversation without creating or hydrating an instance. */
+export function stopAgentChat(sessionId: string) {
+  void instances.get(sessionId)?.chat.stop();
+}
+
 
 /**
  * When a navigation-capable UI tool fires while the session is rendered on a
@@ -269,6 +278,17 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     transport: new DefaultChatTransport({
       api: AGENT_API_PATH,
       fetch: authFetch,
+      prepareSendMessagesRequest: ({ id, messages, trigger, messageId, body }) => ({
+        body: {
+          ...body,
+          id,
+          messages: evalTurnScope(chatSessionId)
+            ? compactEvalContextMessages(messages)
+            : messages,
+          trigger,
+          messageId,
+        },
+      }),
       body: () => ({
         model: config.model,
         projectId: config.projectId,
@@ -277,7 +297,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         // WebMCP UI tools snapshot, drained fresh at POST time (same
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
-        uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
+        evalScope: evalTurnScope(chatSessionId),
+        uiTools: useUiToolsRegistry.getState().snapshotForChatBody().filter(tool => evalTurnScope(chatSessionId) ? EVAL_AGENT_TOOL_NAMES.has(tool.name) : !EVAL_AGENT_TOOL_NAMES.has(tool.name) || tool.name === "ui_ask_user"),
         // Guided-tour instructions for this session, if any (the route
         // prepends body.systemPrompt to the agent identity prompt). Read at
         // POST time so the tour context survives reloads and Recent Chats

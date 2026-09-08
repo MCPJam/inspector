@@ -45,7 +45,11 @@ function samplePredicate(kind: string): Predicate {
 describe("library categories", () => {
   it("places every PREDICATE_KINDS member in exactly one category", () => {
     const seen = new Map<string, string>();
-    for (const category of scorerLibraryCategories()) {
+    // Ask about EVERY kind, not only the ones offered by default: this guard
+    // is about categorisation being total, and an opt-in kind that no default
+    // surface lists still has to land in exactly one category when a surface
+    // does ask for it.
+    for (const category of scorerLibraryCategories(PREDICATE_KINDS)) {
       for (const kind of category.kinds) {
         expect(seen.has(kind), `${kind} listed in ${seen.get(kind)} and ${category.id}`).toBe(
           false,

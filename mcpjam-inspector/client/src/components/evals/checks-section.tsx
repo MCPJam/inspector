@@ -311,7 +311,7 @@ export function CheckRow({
           : cn(
               "rounded-md border p-3",
               error
-                ? "border-red-500/40 bg-red-500/5"
+                ? "border-destructive/40 bg-destructive/5"
                 : "border-border/60 bg-muted/10",
             ),
       )}
@@ -344,7 +344,7 @@ export function CheckRow({
           />
 
           {error ? (
-            <div className="text-[11px] text-red-600 dark:text-red-400">
+            <div className="text-[11px] text-destructive">
               {error}
             </div>
           ) : null}
@@ -367,6 +367,108 @@ export function CheckRow({
           </Button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The allowed set for `onlyToolsCalled`.
+ *
+ * An EMPTY set is a real claim — "no tool should be called" — not an unset
+ * state, so the row says which one it is rather than leaving a blank list to
+ * be read either way.
+ */
+function OnlyToolsField({
+  value,
+  onChange,
+  availableTools,
+  readOnly,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  availableTools?: string[];
+  readOnly: boolean;
+}) {
+  const [toolName, setToolName] = useState("");
+  const options = (availableTools ?? []).filter(
+    (tool) => !value.includes(tool),
+  );
+  const addTool = () => {
+    const name = toolName.trim();
+    if (!readOnly && name && !value.includes(name)) {
+      onChange([...value, name]);
+      setToolName("");
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] text-muted-foreground">
+        {value.length === 0
+          ? "No tool should be called."
+          : "Any tool outside this list fails the check."}
+      </p>
+      {value.length > 0 ? (
+        <ul className="flex flex-wrap gap-1">
+          {value.map((tool) => (
+            <li key={tool}>
+              <button
+                type="button"
+                disabled={readOnly}
+                aria-label={`Remove ${tool}`}
+                onClick={() => onChange(value.filter((t) => t !== tool))}
+                className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
+              >
+                {tool}
+                {readOnly ? null : <span aria-hidden>×</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {!readOnly && !availableTools?.length ? (
+        <div className="flex items-center gap-1.5">
+          <Input
+            aria-label="Allowed tool name"
+            value={toolName}
+            onChange={(event) => setToolName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTool();
+              }
+            }}
+            className="h-7 text-xs"
+            placeholder="Tool name"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={!toolName.trim() || value.includes(toolName.trim())}
+            onClick={addTool}
+          >
+            Allow tool
+          </Button>
+        </div>
+      ) : null}
+      {readOnly || options.length === 0 ? null : (
+        <select
+          aria-label="Allow another tool"
+          value=""
+          onChange={(event) => {
+            if (event.target.value) onChange([...value, event.target.value]);
+          }}
+          className="h-7 w-full rounded border border-border bg-background px-1.5 text-xs"
+        >
+          <option value="">Allow another tool…</option>
+          {options.map((tool) => (
+            <option key={tool} value={tool}>
+              {tool}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
@@ -397,6 +499,18 @@ function CheckFields({
           onChange={onChange}
           availableTools={availableTools}
           toolArgSchemas={toolArgSchemas}
+          readOnly={readOnly}
+        />
+      );
+    case "onlyToolsCalled":
+      // Present everywhere a check can be READ, so a case authored on the
+      // Evaluate spine still edits correctly if it is opened on /evals. Where
+      // it can be ADDED is narrower — see `spineLibraryKinds`.
+      return (
+        <OnlyToolsField
+          value={predicate.toolNames}
+          onChange={(toolNames) => onChange({ ...predicate, toolNames })}
+          availableTools={availableTools}
           readOnly={readOnly}
         />
       );
@@ -1088,7 +1202,7 @@ function RawArgsJsonEditor({
       <textarea
         id={argsId}
         className={`min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
-          jsonError ? "border-red-500/60" : "border-border/60"
+          jsonError ? "border-destructive/60" : "border-border/60"
         }`}
         value={draftJson}
         onChange={(e) => {
@@ -1114,7 +1228,7 @@ function RawArgsJsonEditor({
         disabled={readOnly}
       />
       {jsonError ? (
-        <div className="text-[11px] text-red-600 dark:text-red-400">
+        <div className="text-[11px] text-destructive">
           {jsonError}
         </div>
       ) : null}
@@ -1200,7 +1314,7 @@ function ResponseMatchesFields({
         disabled={readOnly}
       />
       {regexError ? (
-        <div className="text-[11px] text-red-600 dark:text-red-400">
+        <div className="text-[11px] text-destructive">
           {regexError}
         </div>
       ) : null}
@@ -1474,7 +1588,7 @@ export function CaseChecksSection({
           />
         </div>
         {suiteScenarioAsserts.length > 0 ? (
-          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          <p className="text-[11px] text-warning">
             Suite defaults include {suiteScenarioAsserts.length} scenario check
             {suiteScenarioAsserts.length === 1 ? "" : "s"} — review in Suite
             settings.

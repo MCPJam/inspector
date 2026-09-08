@@ -72,3 +72,68 @@ describe("PassCriteriaBadge — a run held for its judge", () => {
     },
   );
 });
+
+describe("PassCriteriaBadge — a run that could not be measured", () => {
+  // Verdict policy 2 can conclude `inconclusive`: the run finished and there
+  // was not enough valid signal to decide it either way. Folding that into
+  // `failed` reports a defect nothing observed, so neither verdict word may
+  // appear anywhere the user (or a screen reader) can reach it.
+  //
+  // Asserted as a NEGATIVE on the two verdict words rather than a positive on
+  // "Inconclusive": the bug was a fall-through, and only a negative catches the
+  // next branch that falls through the same way.
+  it.each(["compact", "detailed"] as const)(
+    "says neither Passed nor Failed in the %s variant",
+    (variant) => {
+      const { container } = render(
+        <PassCriteriaBadge
+          run={makeRun({
+            status: "completed",
+            result: "inconclusive",
+            verdictPolicyVersion: 2,
+            passCriteria: { minimumPassRate: 80 },
+            summary: { total: 4, passed: 1, failed: 3, passRate: 0.25 },
+          })}
+          variant={variant}
+        />,
+      );
+
+      const ariaLabels = [...container.querySelectorAll("[aria-label]")].map(
+        (el) => el.getAttribute("aria-label") ?? "",
+      );
+      const reachableText = [container.textContent ?? "", ...ariaLabels].join(
+        " ",
+      );
+
+      expect(reachableText).not.toMatch(/passed/i);
+      expect(reachableText).not.toMatch(/failed/i);
+      expect(reachableText).toMatch(/Inconclusive/);
+    },
+  );
+
+  // The threshold lives in the compact badge's aria-label, so this has to read
+  // the same reachable surface the assertions above do — `textContent` alone
+  // passes trivially and guards nothing.
+  it("does not quote a pass-criteria threshold it never applied", () => {
+    const { container } = render(
+      <PassCriteriaBadge
+        run={makeRun({
+          status: "completed",
+          result: "inconclusive",
+          passCriteria: { minimumPassRate: 80 },
+          summary: { total: 4, passed: 1, failed: 3, passRate: 0.25 },
+        })}
+        variant="compact"
+      />,
+    );
+
+    const ariaLabels = [...container.querySelectorAll("[aria-label]")].map(
+      (el) => el.getAttribute("aria-label") ?? "",
+    );
+    const reachableText = [container.textContent ?? "", ...ariaLabels].join(
+      " ",
+    );
+
+    expect(reachableText).not.toContain("80%");
+  });
+});
