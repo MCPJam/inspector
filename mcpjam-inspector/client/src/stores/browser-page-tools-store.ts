@@ -50,6 +50,15 @@ export interface LiveWebmcpSignal {
    * is active". So a person working in a second tab saw the signal from theirs
    * and the DEFINITIONS from the first, labelled live beside a view of the
    * page they were actually on.
+   *
+   * ABSENT MEANS "THIS BEAT DOES NOT SAY", never "no tab". Not every path
+   * carries a `tabs` block — the local relay synthesizes only `webmcp`, and an
+   * older relay carries neither — so a beat without one INHERITS the tab the
+   * last beat named. Treating absence as a value of its own made two beat
+   * shapes on one stream alternate the tab between set and unset, and since
+   * the tab takes part in the equality below, every alternation counted as a
+   * change: an epoch bump and a page-tools read per heartbeat, which is the
+   * poll this whole store exists to avoid.
    */
   tabId?: string;
 }
@@ -88,8 +97,18 @@ export const useBrowserPageToolsStore = create<BrowserPageToolsState>(
   (set, get) => ({
     live: {},
     epoch: {},
-    noteLive: (key, signal) => {
+    noteLive: (key, incoming) => {
       const previous = get().live[key];
+      // SILENCE INHERITS. A beat that carries no `tabs` block does not know
+      // which tab it measured; it is not saying the tab went away. Folding the
+      // last known one in HERE, before any comparison, is what keeps two beat
+      // shapes on one stream (the local relay synthesizes `webmcp` only; an
+      // older relay carries neither) from alternating the tab between set and
+      // unset and bumping the epoch on every single heartbeat.
+      const signal: LiveWebmcpSignal =
+        incoming.tabId === undefined && previous?.tabId !== undefined
+          ? { ...incoming, tabId: previous.tabId }
+          : incoming;
       // IDENTICAL SIGNALS ARE A NO-OP, all the way down to not calling `set`.
       // This runs on every heartbeat of a stream that beats several times a
       // second; a store write per beat would re-render every subscriber for a

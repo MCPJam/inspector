@@ -152,3 +152,42 @@ describe("the signal names the tab it measured", () => {
     expect(useBrowserPageToolsStore.getState().live[KEY]?.tabId).toBeUndefined();
   });
 });
+
+describe("a beat that does not name a tab is not a tab that went away", () => {
+  it("does NOT flap the epoch when two beat shapes alternate on one stream", () => {
+    // The local relay synthesizes `webmcp` onto its stats and never `tabs`; an
+    // older relay carries neither. On a stream where both shapes arrive, an
+    // absent tab treated as a value of its own alternates set/unset — and
+    // since the tab takes part in the equality, EVERY alternation counted as a
+    // change: one epoch bump and one page-tools read per heartbeat, which is
+    // the poll this store exists to avoid.
+    const beat = { webmcp: { revision: 2, hash: "h", count: 1 } };
+    noteWebmcpStats(KEY, { ...beat, tabs: { active: "t2" } }, "boot-1");
+    expect(epoch()).toBe(1);
+    for (let index = 0; index < 5; index += 1) {
+      noteWebmcpStats(KEY, beat, "boot-1"); // no `tabs`
+      noteWebmcpStats(KEY, { ...beat, tabs: { active: "t2" } }, "boot-1");
+    }
+    expect(epoch(), "the epoch flapped between beat shapes").toBe(1);
+  });
+
+  it("keeps the last known tab, so the read stays aimed at it", () => {
+    // Inheriting is not merely quieter, it is more correct: the read that
+    // follows must still go to the tab the person is on, and a beat that did
+    // not mention one has said nothing about that.
+    noteWebmcpStats(
+      KEY,
+      { webmcp: { revision: 2, hash: "h", count: 1 }, tabs: { active: "t2" } },
+      "boot-1",
+    );
+    noteWebmcpStats(KEY, { webmcp: { revision: 3, hash: "h3", count: 2 } }, "boot-1");
+    expect(useBrowserPageToolsStore.getState().live[KEY]?.tabId).toBe("t2");
+    // And a beat that names a DIFFERENT tab still moves it.
+    noteWebmcpStats(
+      KEY,
+      { webmcp: { revision: 3, hash: "h3", count: 2 }, tabs: { active: "t3" } },
+      "boot-1",
+    );
+    expect(useBrowserPageToolsStore.getState().live[KEY]?.tabId).toBe("t3");
+  });
+});
