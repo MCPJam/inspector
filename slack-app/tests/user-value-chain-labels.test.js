@@ -69,15 +69,30 @@ for (const [name, vocabulary, fork, upstream] of FORKS) {
 }
 
 test('the fork covers exactly the vocabularies the chain sentence reads', () => {
-  // The other two vocabularies (`stageStates`, `verdictDecisionReasons`) are
-  // deliberately NOT forked: the chain sentence names a location and a reason,
-  // and a state would only ever read "failed" there. Pinned so a future line
-  // that starts rendering states has to add the fork and its guard together.
+  // `stageStates` and `verdictDecisionReasons` are deliberately NOT forked:
+  // the chain sentence names a location and a reason, and a state would only
+  // ever read "failed" there.
+  //
+  // Nor are the three the friction work registered — `frictionSignalKinds`,
+  // `frictionNotMeasuredReasons` and `suspectedConditions`. Those answer a
+  // different question from the chain sentence: not WHERE the request stopped
+  // being served, but whether the agent may have taken a detour on the way and
+  // what is suspected behind it. Slack's line reports the break; a per-trial
+  // detour is a run-page reading, and forking its words into a zero-dependency
+  // package that never prints them would be three more hand-maintained copies
+  // to keep in step for nothing.
+  //
+  // The LIST is pinned, not the exemptions: a future Slack line that starts
+  // rendering any of these has to add the fork and its guard together, which
+  // is the whole point of this assertion.
   assert.deepEqual(Object.keys(DECISION_LABEL_VOCABULARIES).sort(), [
     'failureCategories',
+    'frictionNotMeasuredReasons',
+    'frictionSignalKinds',
     'stageReasons',
     'stageStates',
     'stages',
+    'suspectedConditions',
     'verdictDecisionReasons',
   ]);
 });
