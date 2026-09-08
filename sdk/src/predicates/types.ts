@@ -627,6 +627,12 @@ export type ToolErrorRecord = {
   kind: ToolErrorKind;
   /** Optional human-readable detail surfaced in the predicate reason. */
   message?: string;
+  /**
+   * The failing call's id, when the producer had it. Joins the error to the
+   * ONE call whose arguments it should be read against; without it a check
+   * over several calls to the same tool cannot say which invocation failed.
+   */
+  toolCallId?: string;
 };
 
 /** Token usage totals for an iteration. */

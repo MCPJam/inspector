@@ -18,10 +18,18 @@
  * basis rides with every number so nobody reads it as one.
  *
  * A NARRATED CALL PRODUCES NOTHING. A harness that reports it called a tool,
- * without a result or a timed span, yields no row here and marks the channel
- * incomplete. A fabricated zero would be worse than an absent measurement:
- * checks fail closed on absence in the honest direction (`status: "error"`),
- * and they cannot do that if we invent the row.
+ * without a result or a timed span, yields no row here. A fabricated zero
+ * would be worse than an absent measurement: checks fail closed on absence in
+ * the honest direction (`status: "error"`), and they cannot do that if we
+ * invent the row.
+ *
+ * `*Captured` answers a NARROWER question than "is this evidence complete":
+ * it says only that we LOOKED at the channel. A trace can carry a `spans`
+ * array with no tool span in it, or messages with no `tool-result` part, and
+ * that is `true` with zero rows. Which of the observed calls a row exists for
+ * is a question the CHECK answers, against `toolCalls` — an empty channel
+ * with calls in it is unmeasured there, never "nothing ran". Do not widen
+ * these flags into a completeness claim they cannot support.
  */
 
 import type { EvalTraceSpan } from "@/shared/eval-trace";

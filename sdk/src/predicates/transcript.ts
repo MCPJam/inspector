@@ -203,9 +203,14 @@ function capResultText(result: TranscriptToolResult): TranscriptToolResult {
  * How completely one channel was captured.
  *
  * Three states, because they are three different facts: nobody looked
- * (`absent`), we looked and the rows are all here (`complete`), we looked and
- * the cap bit (`partial`). Only `complete` licenses reading "no rows" as
- * "nothing happened".
+ * (`absent`), we looked and the rows we have are uncapped (`complete`), we
+ * looked and the cap bit (`partial`).
+ *
+ * `complete` is a claim about THIS CHANNEL, not about the run: it says no row
+ * was dropped on the way here, not that every observed call produced one. A
+ * check reading "no rows" as "nothing happened" needs both — the channel
+ * complete AND no calls in its scope — which is why the evaluator consults
+ * `toolCalls` before it scores an empty scope.
  */
 function stateFor(
   captured: boolean | undefined,

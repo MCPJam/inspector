@@ -357,6 +357,55 @@ function callScope(
     : all.filter((c) => c.toolName === toolName);
 }
 
+/**
+ * What an EMPTY evidence scope means for a check that grades rows.
+ *
+ * Three readings, and only one of them is a verdict. A channel nobody captured
+ * is unmeasured. A channel captured completely whose scope holds no rows AND
+ * no calls is a scored absence — nothing ran, so there is nothing to grade.
+ * The same empty scope with CALLS in it is unmeasured too: those calls
+ * happened and we hold no measurement of them. Reading that third case as
+ * "nothing ran" is how a ceiling passes on an iteration nobody measured, and
+ * how a content check reports "returned no results" about a result we never
+ * extracted.
+ */
+function emptyScopeIsScored(
+  transcript: IterationTranscript,
+  channel: "toolResults" | "toolCallTimings",
+  toolName: string | undefined
+): { scored: true } | { scored: false; reason: string } {
+  const label = channel === "toolResults" ? "tool result" : "per-call timing";
+  if (captureState(transcript, channel) !== "complete") {
+    return {
+      scored: false,
+      reason: `no ${label}s captured for ${scopeLabel(toolName)}`,
+    };
+  }
+  const calls = callScope(transcript, toolName).length;
+  if (calls > 0) {
+    return {
+      scored: false,
+      reason:
+        `${calls} observed call(s) to ${scopeLabel(toolName)} ` +
+        `carry no ${label}`,
+    };
+  }
+  return { scored: true };
+}
+
+/**
+ * ` (2 of 5 observed call(s) measured)`, or `""` when coverage is total.
+ *
+ * A budget graded over fewer rows than there were calls is still a real
+ * reading, but the count in the reason must not read as coverage it does not
+ * have — an errored call carries no result, and a narrated one no timing.
+ */
+function coverageNote(measured: number, observed: number): string {
+  return observed > measured
+    ? ` (${measured} of ${observed} observed call(s) measured)`
+    : "";
+}
+
 /** The advertised tool, by name, or `undefined` when it was not advertised. */
 function inventoryEntry(
   transcript: IterationTranscript,
@@ -854,18 +903,21 @@ export function evaluatePredicate(
 
     case "toolLatencyUnder": {
       const scope = timingScope(transcript, predicate.toolName);
+      const timed = callScope(transcript, predicate.toolName).length;
       if (scope.length === 0) {
-        // Zero calls in scope with a COMPLETE capture is a scored absence:
-        // nothing ran, so nothing was slow. An incomplete capture is not —
-        // that is a measurement we failed to take.
-        const complete =
-          captureState(transcript, "toolCallTimings") === "complete";
-        if (!complete) {
+        // Zero TIMED calls is a scored absence only when zero calls were
+        // observed: nothing ran, so nothing was slow. Calls we watched happen
+        // and did not time are a measurement we failed to take, and a ceiling
+        // must not pass on one.
+        const empty = emptyScopeIsScored(
+          transcript,
+          "toolCallTimings",
+          predicate.toolName
+        );
+        if (!empty.scored) {
           return evidenceError(
             predicate,
-            `no per-call timing captured for ${scopeLabel(
-              predicate.toolName
-            )}; cannot verify latency < ${predicate.ms}ms`
+            `${empty.reason}; cannot verify latency < ${predicate.ms}ms`
           );
         }
         return pass(
@@ -878,18 +930,20 @@ export function evaluatePredicate(
       const slowest = scope.reduce((worst, t) =>
         t.durationMs > worst.durationMs ? t : worst
       );
+      const coverage = coverageNote(scope.length, timed);
       return slowest.durationMs < predicate.ms
         ? pass(
             predicate,
             `${scope.length} call(s) under ${predicate.ms}ms ` +
-              `(slowest "${slowest.toolName}" at ${slowest.durationMs}ms)`
+              `(slowest "${slowest.toolName}" at ${slowest.durationMs}ms)` +
+              coverage
           )
         : fail(
             predicate,
             `"${slowest.toolName}" took ${slowest.durationMs}ms, not under ` +
               `${predicate.ms}ms (${
                 scope.filter((t) => t.durationMs >= predicate.ms).length
-              }/${scope.length} call(s) over budget)`
+              }/${scope.length} call(s) over budget)${coverage}`
           );
     }
 
@@ -905,13 +959,18 @@ export function evaluatePredicate(
       }
       const scope = resultScope(transcript, predicate.toolName);
       if (scope.length === 0) {
-        const state = captureState(transcript, "toolResults");
-        if (state !== "complete") {
+        const empty = emptyScopeIsScored(
+          transcript,
+          "toolResults",
+          predicate.toolName
+        );
+        if (!empty.scored) {
           return evidenceError(
             predicate,
-            `no tool results captured for ${scopeLabel(
-              predicate.toolName
-            )}; cannot look for "${truncate(predicate.needle, MAX_VALUE_CHARS)}"`
+            `${empty.reason}; cannot look for "${truncate(
+              predicate.needle,
+              MAX_VALUE_CHARS
+            )}"`
           );
         }
         return fail(
@@ -950,13 +1009,15 @@ export function evaluatePredicate(
     case "toolResultMatchesSchema": {
       const scope = resultScope(transcript, predicate.toolName);
       if (scope.length === 0) {
-        const state = captureState(transcript, "toolResults");
-        if (state !== "complete") {
+        const empty = emptyScopeIsScored(
+          transcript,
+          "toolResults",
+          predicate.toolName
+        );
+        if (!empty.scored) {
           return evidenceError(
             predicate,
-            `no tool results captured for ${scopeLabel(
-              predicate.toolName
-            )}; cannot validate against the authored schema`
+            `${empty.reason}; cannot validate against the authored schema`
           );
         }
         return fail(
@@ -1019,14 +1080,17 @@ export function evaluatePredicate(
 
     case "toolResultSizeUnder": {
       const scope = resultScope(transcript, predicate.toolName);
+      const returned = callScope(transcript, predicate.toolName).length;
       if (scope.length === 0) {
-        const state = captureState(transcript, "toolResults");
-        if (state !== "complete") {
+        const empty = emptyScopeIsScored(
+          transcript,
+          "toolResults",
+          predicate.toolName
+        );
+        if (!empty.scored) {
           return evidenceError(
             predicate,
-            `no tool results captured for ${scopeLabel(
-              predicate.toolName
-            )}; cannot verify size < ${predicate.maxBytes} bytes`
+            `${empty.reason}; cannot verify size < ${predicate.maxBytes} bytes`
           );
         }
         return pass(
@@ -1058,14 +1122,16 @@ export function evaluatePredicate(
             `largest result "${largest.toolName}" is ` +
               `${largest.size.bytes.toLocaleString()} bytes ` +
               `(${basis}, ${estimatedTokens(largest.size.bytes)}), ` +
-              `under ${predicate.maxBytes.toLocaleString()}`
+              `under ${predicate.maxBytes.toLocaleString()}` +
+              coverageNote(scope.length, returned)
           )
         : fail(
             predicate,
             `result "${largest.toolName}" is ` +
               `${largest.size.bytes.toLocaleString()} bytes ` +
               `(${basis}, ${estimatedTokens(largest.size.bytes)}), not under ` +
-              `${predicate.maxBytes.toLocaleString()}`
+              `${predicate.maxBytes.toLocaleString()}` +
+              coverageNote(scope.length, returned)
           );
     }
 
@@ -1172,11 +1238,22 @@ export function evaluatePredicate(
     }
 
     case "noRepeatedIdenticalCall": {
-      const calls = callScope(transcript, predicate.toolName);
+      // Adjacency is a property of the TRANSCRIPT, so it is read off the full
+      // call list. Scoping narrows which repeat is REPORTED; it must not
+      // change what "back-to-back" means, and filtering first would do exactly
+      // that — splicing out the calls between two identical ones and reporting
+      // a repeat that never happened.
+      const calls = transcript.toolCalls ?? [];
       for (let i = 1; i < calls.length; i++) {
         const previous = calls[i - 1]!;
         const current = calls[i]!;
         if (previous.toolName !== current.toolName) continue;
+        if (
+          predicate.toolName !== undefined &&
+          current.toolName !== predicate.toolName
+        ) {
+          continue;
+        }
         if (canonicalArgs(previous, i - 1) !== canonicalArgs(current, i)) {
           continue;
         }
@@ -1189,7 +1266,12 @@ export function evaluatePredicate(
             `with ${brief(current.arguments ?? {})}`
         );
       }
-      return pass(predicate, "no identical call was repeated back-to-back");
+      return pass(
+        predicate,
+        `no identical call to ${scopeLabel(
+          predicate.toolName
+        )} was repeated back-to-back`
+      );
     }
 
     case "toolCallCountUnder": {
@@ -1343,8 +1425,20 @@ export function evaluatePredicate(
           schema && typeof schema === "object" && schema.properties
             ? Object.keys(schema.properties as Record<string, unknown>)
             : [];
-        const sent = (transcript.toolCalls ?? [])
-          .filter((c) => !error.toolName || c.toolName === error.toolName)
+        // A declared key is a property of the TOOL, so it reads soundly
+        // whichever call failed.
+        if (keys.some((key) => message.includes(key.toLowerCase()))) continue;
+        // A sent VALUE is a property of ONE call, and may only be read off the
+        // call that failed: the id join, or the only call to that tool.
+        const candidates = (transcript.toolCalls ?? []).filter(
+          (c) => !error.toolName || c.toolName === error.toolName
+        );
+        const joined =
+          (error.toolCallId === undefined
+            ? undefined
+            : candidates.find((c) => c.toolCallId === error.toolCallId)) ??
+          (candidates.length === 1 ? candidates[0] : undefined);
+        const sent = (joined ? [joined] : candidates)
           .flatMap((c) => Object.values(c.arguments ?? {}))
           .filter(
             (value): value is string | number =>
@@ -1352,9 +1446,19 @@ export function evaluatePredicate(
               typeof value === "number"
           )
           .map((value) => String(value).toLowerCase());
-        const names =
-          keys.some((key) => message.includes(key.toLowerCase())) ||
-          sent.some((value) => message.includes(value));
+        const names = sent.some((value) => message.includes(value));
+        if (names && !joined) {
+          // Some call to this tool sent that value and nothing says it was
+          // this one's. Crediting the server for naming an input it may never
+          // have been given is the attribution this evaluator must not
+          // manufacture — so the row is unscorable, not a pass.
+          return evidenceError(
+            predicate,
+            `a tool error names a value sent by one of ${candidates.length} ` +
+              `calls to "${error.toolName}" and carries no call id; cannot ` +
+              "tell whether it named its own input"
+          );
+        }
         if (!names) {
           // WHAT WAS SEEN, and no more. Naming an input is not the same as
           // recovery quality: "Rate limited. Retry in 30 seconds." names
@@ -1381,15 +1485,48 @@ export function evaluatePredicate(
         );
       }
       const calls = callScope(transcript, predicate.toolName);
+      const results = transcript.toolResults ?? [];
+      // A page is graded against ITS OWN result. Matching by name alone pairs
+      // every call with the FIRST result of that tool, so page two is graded
+      // against page one's payload — a missing continuation reported on the
+      // wrong request, or a real one missed. Call ids join them exactly; where
+      // the capture carries none, same-named results are consumed in call
+      // order, each at most once. A call that carries an id in an
+      // id-carrying capture and matches nothing produced no result: it is
+      // skipped rather than handed the next call's page.
+      const fullyIdJoined =
+        results.length > 0 && results.every((r) => r.toolCallId !== undefined);
+      const consumed = new Set<number>();
+      const resultFor = (
+        call: TranscriptToolCall
+      ): TranscriptToolResult | undefined => {
+        const take = (index: number): TranscriptToolResult | undefined => {
+          if (index < 0) return undefined;
+          consumed.add(index);
+          return results[index];
+        };
+        if (call.toolCallId !== undefined) {
+          const byId = results.findIndex(
+            (r) => r.toolCallId === call.toolCallId
+          );
+          if (byId >= 0) return take(byId);
+          // Where every row carries an id, no match means this call produced
+          // no result at all — it is skipped, not handed another call's page.
+          if (fullyIdJoined) return undefined;
+        }
+        return take(
+          results.findIndex(
+            (r, index) => !consumed.has(index) && r.toolName === call.toolName
+          )
+        );
+      };
       let inspected = 0;
       for (const call of calls) {
+        // Every call consumes its row, limit or not: skipping one would shift
+        // the pairing for every call after it.
+        const result = resultFor(call);
         const limit = requestedLimit(call);
         if (limit === undefined) continue;
-        const result = (transcript.toolResults ?? []).find((r) =>
-          call.toolCallId && r.toolCallId
-            ? r.toolCallId === call.toolCallId
-            : r.toolName === call.toolName
-        );
         if (!result) continue;
         const payload = resultPayload(result);
         if (!payload.found) continue;

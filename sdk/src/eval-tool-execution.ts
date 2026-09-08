@@ -31,18 +31,22 @@ function unwrapToolOutput(output: unknown): unknown {
  *   - `content-error` — an MCP `CallToolResult` with `isError: true`: the tool
  *     ran and reported a domain error the protocol-correct way.
  */
-export function classifyToolFailurePart(
-  part: unknown,
-): { kind: ToolErrorKind; toolName?: string } | null {
+export function classifyToolFailurePart(part: unknown): ToolErrorRecord | null {
   if (!isRecord(part) || typeof part.type !== "string") return null;
   if (part.type !== "tool-result") return null;
 
   const toolName =
     typeof part.toolName === "string" ? part.toolName : undefined;
-  const record = (
-    kind: ToolErrorKind,
-  ): { kind: ToolErrorKind; toolName?: string } =>
-    toolName ? { kind, toolName } : { kind };
+  // The call id rides along so a check can read the error against the
+  // arguments of the call that actually failed, not against every call to
+  // that tool.
+  const toolCallId =
+    typeof part.toolCallId === "string" ? part.toolCallId : undefined;
+  const record = (kind: ToolErrorKind): ToolErrorRecord => ({
+    kind,
+    ...(toolName ? { toolName } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
+  });
 
   // Transport / execution failures → protocol-error.
   if (typeof part.error === "string" && part.error.trim())
@@ -141,13 +145,7 @@ function messageToolErrorRecords(
     if (typeof msg.content === "string" || !Array.isArray(msg.content)) continue;
     for (const part of msg.content) {
       const classified = classifyToolFailurePart(part);
-      if (classified) {
-        records.push(
-          classified.toolName
-            ? { kind: classified.kind, toolName: classified.toolName }
-            : { kind: classified.kind }
-        );
-      }
+      if (classified) records.push(classified);
     }
   }
   return records;
@@ -161,12 +159,13 @@ function spanToolErrorRecords(
   for (const span of spans) {
     if (span.category !== "tool" || span.status !== "error") continue;
     const name = (span as { name?: unknown }).name;
+    const toolCallId = (span as { toolCallId?: unknown }).toolCallId;
     // An errored tool span = the execution failed → protocol-error.
-    records.push(
-      typeof name === "string"
-        ? { kind: "protocol-error", toolName: name }
-        : { kind: "protocol-error" }
-    );
+    records.push({
+      kind: "protocol-error",
+      ...(typeof name === "string" ? { toolName: name } : {}),
+      ...(typeof toolCallId === "string" ? { toolCallId } : {}),
+    });
   }
   return records;
 }
