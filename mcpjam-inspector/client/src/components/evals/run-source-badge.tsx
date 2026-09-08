@@ -2,9 +2,21 @@ import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import {
   RUN_ORIGIN_META,
-  resolveRunOrigin,
+  resolveRunProvenance,
   type RunOriginInput,
+  type RunProvenanceTier,
 } from "@/lib/evals/run-origin";
+
+/**
+ * How we know, in the reader's terms. The stamped tier says nothing: the
+ * server-stamped source is the ordinary case, and "recorded by the server" on
+ * every UI run is noise rather than information.
+ */
+const PROVENANCE_QUALIFIER: Record<RunProvenanceTier, string> = {
+  verified: "Verified by the credential this run authenticated with.",
+  declared: "Declared by the launching client.",
+  stamped: "",
+};
 
 /**
  * What LAUNCHED a run, as metadata rather than as a separate surface.
@@ -17,6 +29,11 @@ import {
  * chip row resolves the SAME way, so a row can never be labelled one thing and
  * filtered as another.
  *
+ * The tooltip names the LAYER that answered, not the origin's identity. `MCP`
+ * arrives both ways — proven by the credential, and declared by whoever called
+ * — and calling the proven one "declared" would understate the only row we can
+ * actually vouch for.
+ *
  * Takes the run's provenance fields rather than a bare `source`: the `source`
  * prop is kept as a convenience for the callers that only have that (a legacy
  * row, a projection that predates the columns), and reads exactly as it did
@@ -28,16 +45,17 @@ export function RunSourceBadge({
   attribution,
   className,
 }: RunOriginInput & { className?: string }) {
-  const origin = resolveRunOrigin({ source, launcher, attribution });
+  const { origin, tier } = resolveRunProvenance({
+    source,
+    launcher,
+    attribution,
+  });
   const meta = RUN_ORIGIN_META[origin];
+  const qualifier = PROVENANCE_QUALIFIER[tier];
   return (
     <Badge
       variant="outline"
-      title={
-        meta.declared
-          ? `${meta.title}. Declared by the launching client.`
-          : meta.title
-      }
+      title={qualifier ? `${meta.title}. ${qualifier}` : meta.title}
       className={cn(
         "shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide",
         meta.className,

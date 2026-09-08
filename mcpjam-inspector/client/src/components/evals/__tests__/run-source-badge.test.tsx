@@ -63,6 +63,32 @@ describe("RunSourceBadge", () => {
     expect(screen.getByTitle(/Declared by the launching client/i)).toBeTruthy();
   });
 
+  it("says a VERIFIED label is verified, not declared", () => {
+    render(
+      <RunSourceBadge
+        source="api"
+        launcher={{ kind: "mcp" }}
+        attribution={{ surface: "mcp" }}
+      />,
+    );
+    // Same badge text as a declared MCP run, opposite epistemic claim: this is
+    // the one row we can actually vouch for, and calling it "declared" would
+    // hand the reader the weaker statement of the two.
+    expect(
+      screen.getByTitle(
+        /Verified by the credential this run authenticated with/i,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByTitle(/Declared by the launching client/i)).toBeNull();
+  });
+
+  it("survives an unknown, prototype-named source", () => {
+    // `RUN_ORIGIN_META[resolveRunOrigin(...)]` used to be indexable with an
+    // inherited member; rendering is the assertion.
+    render(<RunSourceBadge source="constructor" />);
+    expect(screen.getByText("UI")).toBeTruthy();
+  });
+
   it("prefers a VERIFIED channel over what the client declared", () => {
     render(
       <RunSourceBadge

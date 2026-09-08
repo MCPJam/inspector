@@ -5,6 +5,7 @@ import {
   RUN_ORIGIN_META,
   maskApiKeyId,
   resolveRunOrigin,
+  resolveRunProvenance,
 } from "../run-origin";
 
 /**
@@ -90,22 +91,57 @@ describe("the origin vocabulary", () => {
     }
   });
 
-  it("offers a chip for every origin a client can produce, and no others", () => {
-    // `slack` and `discord` exist only when a verified credential says so —
-    // nothing can declare them — so a chip for either could never match.
-    expect([...RUN_ORIGIN_FILTERS].sort()).toEqual(
-      ["api", "cli", "github", "mcp", "schedule", "sdk", "ui"].sort(),
-    );
+  it("offers a chip for EVERY origin it can badge", () => {
+    // The invariant, not a list: an origin that can appear on a row and not in
+    // the chip row is a label the reader can see and cannot act on, which is
+    // the complaint this module exists to answer.
+    expect([...RUN_ORIGIN_FILTERS].sort()).toEqual([...RUN_ORIGINS].sort());
   });
 
-  it("marks exactly the self-reported origins as declared", () => {
-    expect(RUN_ORIGIN_META.cli.declared).toBe(true);
-    expect(RUN_ORIGIN_META.mcp.declared).toBe(true);
-    // `github` is reachable BOTH ways (a PR check stamps it, an Action declares
-    // it), so it is not marked declared: the badge would then promise "the
-    // client told us" about a run the server stamped itself.
-    expect(RUN_ORIGIN_META.github.declared).toBe(false);
-    expect(RUN_ORIGIN_META.api.declared).toBe(false);
+  it("reports WHICH layer answered, not just what it answered", () => {
+    // The same origin arrives by different routes, and the badge has to be
+    // able to tell them apart: `github` is stamped for a PR check and declared
+    // for an Action, `mcp` is verified for a credentialled agent and declared
+    // for anything that just says so.
+    expect(resolveRunProvenance({ source: "github_check" })).toEqual({
+      origin: "github",
+      tier: "stamped",
+    });
+    expect(
+      resolveRunProvenance({
+        source: "api",
+        launcher: { kind: "github_action" },
+      }),
+    ).toEqual({ origin: "github", tier: "declared" });
+    expect(
+      resolveRunProvenance({ source: "api", launcher: { kind: "mcp" } }),
+    ).toEqual({ origin: "mcp", tier: "declared" });
+    expect(
+      resolveRunProvenance({
+        source: "api",
+        launcher: { kind: "cli" },
+        attribution: { surface: "mcp" },
+      }),
+    ).toEqual({ origin: "mcp", tier: "verified" });
+  });
+
+  it("treats a prototype-named value as unrecognized, not as a hit", () => {
+    // These strings come off the wire. Looked up in a plain object they answer
+    // with something inherited and truthy, and the badge would then index its
+    // label table with a function — one bad row taking out the whole table.
+    for (const hostile of ["constructor", "toString", "__proto__", "valueOf"]) {
+      expect(resolveRunOrigin({ source: hostile })).toBe("ui");
+      expect(
+        resolveRunOrigin({ source: "api", launcher: { kind: hostile } }),
+      ).toBe("api");
+      expect(
+        resolveRunOrigin({ source: "api", attribution: { surface: hostile } }),
+      ).toBe("api");
+      // The label table is the thing that would have blown up.
+      expect(
+        RUN_ORIGIN_META[resolveRunOrigin({ source: hostile })],
+      ).toBeTruthy();
+    }
   });
 });
 

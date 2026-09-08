@@ -293,6 +293,24 @@ describe("ProjectRunsTable", () => {
     );
   });
 
+  it("keeps the chips visible when a filter matches nothing", async () => {
+    const user = userEvent.setup();
+    setRows([makeRow({ source: "sdk", suiteName: "CI suite" })]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // The server now applies the chips, so a chip that matches nothing empties
+    // the rows entirely. Falling into the "No runs yet" hero would replace the
+    // chip row itself and leave no way to un-filter — a trap the client-side
+    // filter could never spring, because it always had rows behind it.
+    await user.click(screen.getByRole("button", { name: "CLI" }));
+    setRows([]);
+    await user.click(screen.getByRole("button", { name: "MCP" }));
+
+    expect(screen.getByRole("button", { name: "CLI" })).toBeTruthy();
+    expect(screen.queryByText("No runs yet")).toBeNull();
+    expect(inTable().getByText("No runs match these filters.")).toBeTruthy();
+  });
+
   it("shows an empty state before any run exists", () => {
     setRows([]);
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);

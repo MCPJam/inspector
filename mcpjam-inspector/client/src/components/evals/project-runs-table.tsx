@@ -265,7 +265,15 @@ export function ProjectRunsTable({
     );
   }
 
-  if (rows.length === 0) {
+  // "No runs yet" is a claim about the PROJECT, so it may only be made when
+  // nothing is filtering. This used to be safe because the chips sieved an
+  // already-loaded page; now they narrow the query, so a chip that matches
+  // nothing empties `rows` — and showing the hero would replace the chip row
+  // itself, leaving no way to un-filter. The filtered-empty case falls through
+  // to the table, whose own body says "No runs match these filters".
+  const isFiltering = sourceFilter.size > 0 || suiteFilter !== ALL_SUITES;
+
+  if (rows.length === 0 && !isFiltering) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="mx-auto max-w-md p-6 text-center">
