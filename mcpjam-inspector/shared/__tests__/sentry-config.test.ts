@@ -232,15 +232,15 @@ describe("groupDomMutationConflicts", () => {
     ).toEqual(["dom-mutation-conflict", "prod"]);
   });
 
-  it("keeps the ambiguous WebKit wording out of the Blink group", () => {
-    // WebKit uses this sentence for the whole NotFoundError class, so it
-    // collapses under its own key — a storage bug landing here must not read
-    // as a React conflict.
+  it("leaves the ambiguous WebKit wording ungrouped", () => {
+    // WebKit uses this sentence for the whole NotFoundError class, so a match
+    // cannot prove a DOM mutation. Grouping on it would fold an IndexedDB
+    // failure into this issue; those keep their frame-based grouping.
     expect(
       groupDomMutationConflicts(
         domMutationEvent("The object can not be found here."),
       ).fingerprint,
-    ).toEqual(["webkit-not-found", "prod"]);
+    ).toBeUndefined();
   });
 
   it("keeps dev out of the production group", () => {

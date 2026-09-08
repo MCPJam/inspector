@@ -182,15 +182,15 @@ export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
 const BLINK_DOM_MUTATION_CONFLICT =
   /^Failed to execute '(?:removeChild|insertBefore)' on 'Node'/;
 
-/**
- * WebKit emits one generic sentence for the whole `NotFoundError` class, so a
- * match is only probably this defect — IndexedDB raises `NotFoundError` too,
- * and nothing left in a minified frame separates the two. It gets its own key
- * rather than joining the Blink events: the collapse still fires, and a
- * storage bug hiding in here stays attributable instead of being read as a
- * React conflict.
+/*
+ * WebKit's wording is deliberately NOT matched. It emits one generic sentence
+ * for the whole `NotFoundError` class ("The object can not be found here."),
+ * so a match cannot tell a DOM mutation conflict from an IndexedDB failure,
+ * and nothing survives minification to separate them. Grouping on it would
+ * make a storage bug unattributable to buy a collapse worth 4 of the 23
+ * production events; the Blink wording carries the other 19. Frame-based
+ * grouping is the better answer for the ambiguous ones.
  */
-const WEBKIT_NOT_FOUND = /^The object can not be found here\.$/;
 
 /**
  * Minimal structural view of the event `beforeSend` receives.
@@ -236,14 +236,9 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
   if (exception?.type !== "NotFoundError") return event;
 
   const value = exception.value ?? "";
-  const group = BLINK_DOM_MUTATION_CONFLICT.test(value)
-    ? "dom-mutation-conflict"
-    : WEBKIT_NOT_FOUND.test(value)
-      ? "webkit-not-found"
-      : undefined;
-  if (!group) return event;
+  if (!BLINK_DOM_MUTATION_CONFLICT.test(value)) return event;
 
-  event.fingerprint = [group, event.environment ?? "unknown"];
+  event.fingerprint = ["dom-mutation-conflict", event.environment ?? "unknown"];
   return event;
 }
 
