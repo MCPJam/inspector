@@ -1886,8 +1886,7 @@ export function ChatInput({
                           >
                             Pause before tool calls. Browser, page,
                             local-machine and destructive UI actions always
-                            pause; built-in searches and read-only lookups
-                            never do.
+                            pause; read-only lookups never do.
                           </p>
                         </div>
                       )}
