@@ -463,7 +463,9 @@ export function createElectronPage(
    *     got them pressed. Filling one is nonsense in any case, so they are
    *     refused whether or not they claim to be editable.
    *   - the `contenteditable` ATTRIBUTE is read from CDP first, so the common
-   *     case never asks the page at all.
+   *     case never asks the page at all — but only the values the spec
+   *     actually defines answer from it, because an invalid one means
+   *     "inherit", not "editable".
    *   - the probe runs over a node CDP resolved — never a selector the page
    *     could re-answer — and it FAILS CLOSED.
    *
@@ -497,10 +499,31 @@ export function createElectronPage(
       return "OTHER";
     }
     // The attribute, from the protocol, answers the common case without
-    // asking the page anything. `contenteditable=""` and `="true"` are both
-    // editable; only `="false"` turns it off.
-    const own = attributeOf(described?.node?.attributes, "contenteditable");
-    if (own !== undefined && own.toLowerCase() !== "false") return "FILLABLE";
+    // asking the page anything — but ONLY for the values the spec defines.
+    // `contenteditable` is an enumerated attribute: `""` and `"true"` are the
+    // true state, `"plaintext-only"` its text-only variant, `"false"` the
+    // false state. EVERY OTHER VALUE IS INVALID, and the invalid value default
+    // is the same as the missing one — inherit, meaning editable only if an
+    // ancestor is.
+    //
+    // So "present and not false" is the wrong reading, and it reopened the
+    // hole the tag list closed from the other side: `<span
+    // contenteditable="yes">` inside an `<a>` is NOT editable, but it claimed
+    // to be, skipped the probe, and got clicked — and that click bubbles to
+    // the link. `INTERACTIVE_TAGS` cannot catch it, because the span's own tag
+    // is inert; only the ancestor is not. The computed probe used to refuse
+    // this correctly, so reading the attribute at all is what broke it.
+    const own = attributeOf(
+      described?.node?.attributes,
+      "contenteditable",
+    )?.toLowerCase();
+    if (own === "" || own === "true" || own === "plaintext-only") {
+      return "FILLABLE";
+    }
+    // The false state does not inherit its way back to editable, so this is
+    // the whole answer and the probe below would only spend a round trip
+    // arriving at it.
+    if (own === "false") return "OTHER";
     // Only INHERITED editability is left, and only the page can compute it.
     // Resolved BY NODE so the lookup cannot be re-pointed, and anything short
     // of a definite `true` refuses.

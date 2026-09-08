@@ -270,6 +270,70 @@ describe("electron page — the keyboard", () => {
     expect(dbg.calls.some((c) => c.method === "DOM.resolveNode")).toBe(false);
   });
 
+  it("does not take an INVALID contenteditable value for editable", async () => {
+    // `contenteditable` is enumerated: `""`, `"true"`, `"plaintext-only"` and
+    // `"false"` are the whole vocabulary. Anything else — `"yes"`, `"inherit"`,
+    // a typo — is invalid, and invalid means INHERIT: editable only if an
+    // ancestor is. Reading "present and not false" as editable skipped the
+    // probe for a span that is not editable at all, and this span sits inside
+    // an `<a>`, so the click it collected would follow the link. The tag list
+    // cannot see that: the span's own tag is perfectly inert.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, {
+      nodeName: "SPAN",
+      attributes: ["contenteditable", "yes"],
+    })) {
+      contents.debugger.replies.set(method, reply);
+    }
+    contents.debugger.replies.set("DOM.resolveNode", {
+      object: { objectId: "obj-1" },
+    });
+    // What the element actually is, computed: not editable.
+    contents.debugger.replies.set("Runtime.callFunctionOn", {
+      result: { value: false },
+    });
+    const { page, dbg } = makePage(contents);
+
+    await expect(page.fillSelector("#label", "x")).rejects.toThrow(/<select>/);
+    expect(mouseEvents(dbg)).toHaveLength(0);
+    // The attribute did not answer; the computed property did.
+    expect(dbg.calls.some((c) => c.method === "DOM.resolveNode")).toBe(true);
+  });
+
+  it("fills a plaintext-only element, and refuses an explicit false", async () => {
+    // The two remaining spec values, both answered from the protocol without
+    // a round trip to the page: `plaintext-only` is editable, and the false
+    // state does not inherit its way back to editable.
+    const editable = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, {
+      nodeName: "DIV",
+      attributes: ["contenteditable", "plaintext-only"],
+    })) {
+      editable.debugger.replies.set(method, reply);
+    }
+    const { page: editablePage, dbg: editableDbg } = makePage(editable);
+    await editablePage.fillSelector("#note", "hello");
+    expect(
+      editableDbg.calls.some((c) => c.method === "Input.insertText"),
+    ).toBe(true);
+
+    const off = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, {
+      nodeName: "DIV",
+      attributes: ["contenteditable", "false"],
+    })) {
+      off.debugger.replies.set(method, reply);
+    }
+    const { page: offPage, dbg: offDbg } = makePage(off);
+    await expect(offPage.fillSelector("#frozen", "x")).rejects.toThrow(
+      /<select>/,
+    );
+    expect(mouseEvents(offDbg)).toHaveLength(0);
+    expect(offDbg.calls.some((c) => c.method === "DOM.resolveNode")).toBe(
+      false,
+    );
+  });
+
   it("cannot be talked out of the refusal by a page that breaks its own DOM", async () => {
     // The classification used to run as page JS through
     // `document.querySelector`, and a thrown classifier was read as "carry on"
