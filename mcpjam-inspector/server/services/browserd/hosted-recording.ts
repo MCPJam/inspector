@@ -204,12 +204,17 @@ export async function startHostedRecording(
           // wrong run, which is worse than no evidence, because nothing about
           // it looks wrong. So ask whose it is, and walk away when it is not
           // ours.
+          // Matched on the ID, never on `active`. A take that hit its size cap
+          // reports `active: false` while KEEPING its id — it is still ours
+          // and its file is still on the box, waiting to be collected. Reading
+          // "not active" as "somebody else's" would abandon exactly the
+          // truncated recording the whole `truncated` flag exists to deliver.
           const state = await client.recordStatus?.();
-          if (!state?.active || state.id !== id) {
+          if (state?.id !== id) {
             logger.info("[browser-session] browser.sandbox_recording_skipped", {
               sandboxRowId,
               status: 409,
-              error: "another take is already recording on this daemon",
+              error: "this daemon is holding a take that is not ours",
               activeId: state?.id,
             });
             return;

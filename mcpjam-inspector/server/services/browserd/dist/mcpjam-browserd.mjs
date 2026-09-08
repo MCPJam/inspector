@@ -1112,7 +1112,9 @@ var BrowserdRequestHandler = class {
    */
   async boostAfterMotion(command, outcome) {
     if (!MOTION_ACTIONS.has(command.action.kind)) return;
-    if (outcome.status !== "ok" || !outcome.result.ok) return;
+    if (outcome.status !== "ok") return;
+    if (outcome.result.staleObservation) return;
+    if (outcome.result.leaseBlocked) return;
     try {
       const viewport = await this.driver.viewportIfWatched?.(command.tabId);
       viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);

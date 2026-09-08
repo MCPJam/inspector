@@ -696,18 +696,35 @@ export class BrowserdRequestHandler {
     outcome: BrowserCommandOutcome,
   ): Promise<void> {
     if (!MOTION_ACTIONS.has(command.action.kind)) return;
-    // NOTHING RAN, NOTHING MOVED. `busy` was refused at the depth cap,
-    // `expired` lost its result to eviction, `at_capacity` was never admitted;
-    // and inside `ok`, a failed result is a lease refusal or a stale
-    // observation, which by construction touched no page. Boosting after any
-    // of them spends 45 JPEG encodes on a picture that did not change — on the
-    // cores the agent is using.
+    // NOTHING RAN, so nothing moved: `busy` was refused at the depth cap,
+    // `expired` lost its result to eviction, `at_capacity` was never admitted.
+    // Boosting after any of them spends 45 JPEG encodes on a picture that did
+    // not change, on the cores the agent is using.
+    if (outcome.status !== "ok") return;
+    // A FAILED ACT IS NOT A STILL PAGE. `ok: false` covers two different
+    // things and only one of them is "nothing happened":
     //
-    // A duplicate resolved from the queue's cache does still boost: it reports
-    // `ok` with the original result and the queue does not say which of the two
-    // it was. That is the honest limit of what is knowable here, and the cost
-    // is a second boost over a repaint that did happen.
-    if (outcome.status !== "ok" || !outcome.result.ok) return;
+    //   - refused BEFORE executing — a stale observation (the guard read the
+    //     token and declined to act) — where the page is untouched;
+    //   - ran and then failed — `act_failed` / `target_not_found` from a
+    //     Playwright throw partway through. The driver hands back a FRESH
+    //     stateToken from a fresh snapshot there, which is it telling us the
+    //     page may well have moved. A click that landed before its follow-up
+    //     timed out is exactly the moment somebody watching wants to see.
+    //
+    // So the gate names what it can prove did not move, rather than reading
+    // failure as stillness.
+    if (outcome.result.staleObservation) return;
+    // A person owns the page now. `leaseBlocked` can arrive AFTER the verb ran
+    // — the driver re-asks the lease before every capture, so a handoff
+    // landing mid-command produces exactly this — but the agent's path stays
+    // out from the moment they hold it, and their own input already buys them
+    // the same boost through `dispatchInput`.
+    if (outcome.result.leaseBlocked) return;
+    // A duplicate resolved from the queue's cache still boosts: it reports the
+    // original result and the queue does not say which of the two it was. That
+    // is the honest limit of what is knowable here, and the cost is a second
+    // boost over a repaint that did happen.
     try {
       const viewport = await this.driver.viewportIfWatched?.(command.tabId);
       viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);

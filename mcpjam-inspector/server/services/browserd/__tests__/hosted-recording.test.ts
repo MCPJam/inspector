@@ -210,6 +210,29 @@ describe("hosted recording — starting", () => {
     expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
   });
 
+  it("reclaims OUR take even after it stopped at the size cap", async () => {
+    // The two fixes meet here. A take that hit `-fs` reports `active: false`
+    // while KEEPING its id — it is still ours, and its file is still on the
+    // box. Matching the reclaim on `active` rather than on the id would
+    // abandon exactly the truncated recording the `truncated` flag exists to
+    // deliver: a complete, playable prefix of the run, dropped silently.
+    const { handle } = fakeHandle({
+      record: { ok: false, status: 409, error: "record_active" },
+      recordState: { active: false, id: "sess-1", fps: 15 },
+      stopResult: {
+        ok: true,
+        recording: { ...RECORDING, truncated: true },
+      },
+    });
+    await startHostedRecording(handle, {
+      connect: async () => fakeSandbox().sandbox,
+    });
+
+    expect(await collectHostedRecordingBeforeRelease("row-1")).toMatchObject({
+      truncated: true,
+    });
+  });
+
   it("starts a fresh take when the daemon was relaunched under the run", async () => {
     // A per-run daemon can be relaunched mid-run: a new process, no recording,
     // a new bearer. Keyed on the row alone, the stale entry would read as

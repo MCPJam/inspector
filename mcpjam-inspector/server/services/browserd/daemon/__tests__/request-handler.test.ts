@@ -1015,10 +1015,9 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
     }
   });
 
-  it("does not boost a command the queue ran and the driver refused", async () => {
-    // A lease refusal re-asked at dequeue, or a stale-observation guard: the
-    // queue reports `ok` and the RESULT says nothing was done. By
-    // construction neither touched the page.
+  it("does not boost a command refused BEFORE it ran", async () => {
+    // A stale observation: the guard read the tab's token, saw the page had
+    // moved under the model, and declined to act. The page is untouched.
     const { boosts, viewport } = boostSpy();
     const { handler } = makeHandler({
       outcome: {
@@ -1029,11 +1028,60 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
       viewportIfWatched: () => Promise.resolve(viewport),
     });
 
-    await handler.handle(
-      commandReq({ kind: "act", verb: "scroll" }),
-    );
+    await handler.handle(commandReq({ kind: "act", verb: "scroll" }));
 
     expect(boosts).toEqual([]);
+  });
+
+  it("does not boost once a person holds the browser", async () => {
+    // `leaseBlocked` can arrive AFTER the verb ran — the driver re-asks the
+    // lease before every capture — but the agent's path stays out from the
+    // moment they hold it, and their own input already buys them this boost
+    // through `dispatchInput`.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      outcome: {
+        status: "ok",
+        result: { ok: false, leaseBlocked: true, error: "lease_held" },
+        bootId: BOOT,
+      },
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "act", verb: "click" }));
+
+    expect(boosts).toEqual([]);
+  });
+
+  it("DOES boost an act that ran and then failed", async () => {
+    // A FAILED ACT IS NOT A STILL PAGE. `act_failed` / `target_not_found` come
+    // from a Playwright throw partway through — a click that landed before its
+    // follow-up timed out — and the driver hands back a fresh stateToken from
+    // a fresh snapshot, which is it saying the page may well have moved. That
+    // is exactly the moment somebody watching wants to see. Reading every
+    // `ok: false` as stillness would hold them at 10fps through it.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      outcome: {
+        status: "ok",
+        result: {
+          ok: false,
+          error: "act_failed: locator.click: Timeout 15000ms exceeded",
+          stateToken: {
+            tabId: "@session",
+            navCounter: 2,
+            urlHash: "u",
+            domHash: "d",
+          },
+        },
+        bootId: BOOT,
+      },
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "act", verb: "click" }));
+
+    expect(boosts).toEqual([[33, 1_500]]);
   });
 
   it("still answers the command when the boost throws", async () => {
