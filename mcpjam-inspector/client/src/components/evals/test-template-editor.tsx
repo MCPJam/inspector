@@ -226,9 +226,18 @@ import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
-import { appendCaseScorer } from "../evaluate/case-scorecard/case-scorecard-model";
+import {
+  appendCaseScorer,
+  buildCaseScorecard,
+  type CaseScorecardInput,
+} from "../evaluate/case-scorecard/case-scorecard-model";
+import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
+import { NextQuestionLine } from "../evaluate/case-scorecard/next-question-line";
 import { groupCaseIterations } from "./runs/group-case-iterations";
-import { SuggestedFromRunSection } from "../evaluate/case-scorecard/suggested-from-run-section";
+import {
+  SuggestedFromRunSection,
+  useSuggestedScorers,
+} from "../evaluate/case-scorecard/suggested-from-run-section";
 import type { Suggestion } from "../evaluate/case-scorecard/suggest-from-run";
 import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
@@ -1411,7 +1420,11 @@ export function TestTemplateEditor({
       if (iteration.suiteRunId) {
         const assembled = trialChains.chains.get(iteration._id);
         chain = assembled ? (
-          <TrialChainPanel chain={assembled} resetKey={iteration._id} />
+          <TrialChainPanel
+            chain={assembled}
+            resetKey={iteration._id}
+            detailByStage={useSpine ? chainDetailByStage : undefined}
+          />
         ) : null;
       } else {
         // The record handed in may be the SSE `complete` snapshot. A judge
@@ -1424,6 +1437,7 @@ export function TestTemplateEditor({
           <TrialChainPanel
             chain={chainForQuickRunIteration(live)}
             resetKey={iteration._id}
+            detailByStage={useSpine ? chainDetailByStage : undefined}
           />
         );
       }
@@ -1478,10 +1492,35 @@ export function TestTemplateEditor({
         ? expectedPathKeyFromSteps(editForm.steps)
         : undefined;
 
+    const nextQuestion =
+      useSpine && iteration ? (
+        <NextQuestionLine
+          state={{
+            hasTrial: true,
+            judgedPass: Boolean(
+              iteration.suiteRunId &&
+              resolveIterationJudge(iteration, suiteRuns)?.passed,
+            ),
+            hasFailure: iteration.result === "failed",
+            trials: suggestionBatch?.iterations.length ?? 1,
+            hasChecks: (editForm?.steps ?? []).some(
+              (step) => step.kind === "assert",
+            ),
+            hasSuggestions: chainSuggestions.output.suggestions.length > 0,
+            suiteHasGate: Boolean(suite?.defaultPredicates?.length),
+          }}
+          onAct={(action) => {
+            if (action === "trials") setNextRunOpen(true);
+            else if (action === "gate") onOpenSuiteSettings?.();
+          }}
+        />
+      ) : null;
+
     return (
       <div className="space-y-2">
         {judgeAnswer}
         {chain}
+        {nextQuestion}
         {rollup && (showRollup || showRecordAdopt) ? (
           <RouteRollupCard
             rollup={rollup}
@@ -1872,6 +1911,48 @@ export function TestTemplateEditor({
     () => groupCaseIterations(recentIterations)[0] ?? null,
     [recentIterations],
   );
+  /**
+   * The coverage line under each chain card, and the suggestions it counts.
+   *
+   * Derived here, at the top level, because both the card below the scorecard
+   * and the chain above it must read ONE list — a chain that says "2
+   * suggested" while the card shows three is worse than a chain that says
+   * nothing.
+   */
+  const chainCoverageInput = useMemo<CaseScorecardInput>(
+    () => ({
+      steps: editForm?.steps ?? [],
+      toolsChoice: simpleToolsChoice,
+      kind: editForm?.kind,
+      matchOptions: editForm?.matchOptions,
+      suiteDefaultMatchOptions: suite?.defaultMatchOptions,
+      predicates: editForm?.predicates,
+      suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+      expectedOutput: editForm?.expectedOutput,
+      judgeConfigOverride: editForm?.judgeConfigOverride,
+      suiteJudgeConfig: suite?.judgeConfig,
+      suiteJudgeRubric: suite?.judgeRubric,
+      numbering: "action",
+    }),
+    [editForm, simpleToolsChoice, suite],
+  );
+  const chainSuggestions = useSuggestedScorers({
+    enabled: useSpine,
+    batch: suggestionBatch,
+    authored: chainCoverageInput,
+    prompts: (editForm?.steps ?? [])
+      .filter((step) => step.kind === "prompt")
+      .map((step) => ("prompt" in step ? step.prompt : "")),
+  });
+  const chainDetailByStage = useMemo(
+    () =>
+      coverageDetailByStage(
+        buildCaseScorecard(chainCoverageInput),
+        chainSuggestions.output.suggestions,
+      ),
+    [chainCoverageInput, chainSuggestions.output.suggestions],
+  );
+
   const [dismissedSuggestions, setDismissedSuggestions] = useState<
     ReadonlySet<string>
   >(() => new Set());
