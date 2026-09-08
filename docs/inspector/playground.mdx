@@ -68,7 +68,7 @@ Switch between three perspectives on the same conversation from the segmented co
 
 - **Chat** — The normal thread with inline messages, tool calls, and rendered widgets.
 - **Trace** — A timestamped timeline of every step (user turns, agent turns, tool calls) with per-step and total latency and token counts. Expand any step to inspect its raw input and output.
-- **Raw** — The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Available for both live sessions and previously-saved sessions you reopen.
+- **Raw** — The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Available for both live sessions and previously-saved sessions you reopen. For reopened sessions, the synthesized payload includes the host's browser tool definitions when the host has the browser capability attached, so the tool list reflects what would actually be sent rather than showing an empty object.
 
 <Frame>
   <img
