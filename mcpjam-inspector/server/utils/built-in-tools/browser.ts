@@ -338,6 +338,51 @@ class BrowserTurnState {
   get handoffPending(): boolean {
     return this.staleAfterHandoff;
   }
+
+  /**
+   * SERIALIZE THE COMMANDS ONE MODEL STEP EMITS.
+   *
+   * Every engine runs the tool calls of a single step CONCURRENTLY, and the
+   * daemon's per-tab FIFO orders by HTTP arrival rather than by emission — so
+   * "type the password, then click Sign in" can, and does, land as "click,
+   * then type". Nothing downstream can repair that: by the time the daemon
+   * sees two commands it has no idea which the model meant first.
+   *
+   * The lock is a promise chain, held across send → unwrap → remember, so the
+   * next command is also built from the result of the previous one rather than
+   * from a token minted before either ran. Emission order is `execute`-call
+   * order because `executeSingleToolCall` invokes each `execute` synchronously
+   * in `pendingToolCalls` order.
+   *
+   * `signal` releases the waiter when a turn is aborted: an abandoned queue
+   * must not keep its siblings parked behind it forever.
+   */
+  acquire(signal?: AbortSignal): Promise<() => void> {
+    const previous = this.lock;
+    let release!: () => void;
+    this.lock = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    return new Promise<() => void>((resolve, reject) => {
+      const onAbort = () => {
+        // Hand the turn back its own release so the chain still advances: a
+        // waiter that simply rejected would leave every sibling behind it
+        // parked on a promise nobody resolves.
+        release();
+        reject(new DOMException("aborted", "AbortError"));
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      void previous.then(() => {
+        signal?.removeEventListener("abort", onAbort);
+        if (signal?.aborted) return;
+        resolve(release);
+      });
+    });
+  }
+
+  /** The tail of the emission-order chain; resolved means "free". */
+  private lock: Promise<void> = Promise.resolve();
 }
 
 /**
@@ -513,37 +558,57 @@ export function buildBrowserTools(
           ? { ...action, expectedState: pinned }
           : action,
     };
-    const response = await (handle.client as unknown as CommandSender).sendCommand(
-      command,
-      handle.bootId,
-    );
-    let outcome = unwrapCommand(response);
-    // W4/L6 — a handoff invalidates everything this turn cached. Two signals
-    // reach us: a refusal while the person still holds the browser, and the
-    // note the daemon attaches to the first result after they hand it back.
-    // Order matters: forget BEFORE remembering, so the fresh token from the
-    // post-handoff observation survives and the turn is immediately caught up.
-    if (response.status === "lease_blocked" || carriesHandoffNote(outcome.output)) {
-      state.forgetTokens();
-    }
-    // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
+    // THE COMMAND IS BUILT BEFORE THE LOCK, AND SENT INSIDE IT.
     //
-    // Checking the URL a model ASKS for stops it navigating somewhere the
-    // policy never named. It does not stop the page taking it there: a
-    // redirect, a meta refresh, a link the model clicked, an OAuth bounce.
-    // Until now the observation of that page came back in full, which made the
-    // allowlist a suggestion to the model rather than a boundary on the run.
-    if (unattended?.originAllowlist?.length) {
-      outcome = await enforceResultOrigin(outcome, {
-        allowlist: unattended.originAllowlist,
-        tabId: args.tabId,
-        recover: recovering
-          ? undefined
-          : (action) => send(action, { ...args, recovering: true }),
-      });
+    // Both halves matter. Building first means two acts emitted in ONE model
+    // step both pin to the observation the model actually saw — the second was
+    // decided from that page too, and re-pinning it to the first act's result
+    // would silently accept a target the model never looked at. Sending inside
+    // means they reach the daemon in the order the model emitted them: tool
+    // calls in a step run concurrently on every engine, and the daemon's FIFO
+    // orders by arrival, so "type, then submit" otherwise lands as "submit,
+    // then type".
+    //
+    // The origin recovery below calls `send` from INSIDE this section, so it
+    // skips the lock — taking it again would deadlock the turn on itself.
+    const release = recovering ? undefined : await state.acquire(args.signal);
+    try {
+      const response = await (
+        handle.client as unknown as CommandSender
+      ).sendCommand(command, handle.bootId);
+      let outcome = unwrapCommand(response);
+      // W4/L6 — a handoff invalidates everything this turn cached. Two signals
+      // reach us: a refusal while the person still holds the browser, and the
+      // note the daemon attaches to the first result after they hand it back.
+      // Order matters: forget BEFORE remembering, so the fresh token from the
+      // post-handoff observation survives and the turn is immediately caught up.
+      if (
+        response.status === "lease_blocked" ||
+        carriesHandoffNote(outcome.output)
+      ) {
+        state.forgetTokens();
+      }
+      // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
+      //
+      // Checking the URL a model ASKS for stops it navigating somewhere the
+      // policy never named. It does not stop the page taking it there: a
+      // redirect, a meta refresh, a link the model clicked, an OAuth bounce.
+      // Until now the observation of that page came back in full, which made the
+      // allowlist a suggestion to the model rather than a boundary on the run.
+      if (unattended?.originAllowlist?.length) {
+        outcome = await enforceResultOrigin(outcome, {
+          allowlist: unattended.originAllowlist,
+          tabId: args.tabId,
+          recover: recovering
+            ? undefined
+            : (action) => send(action, { ...args, recovering: true }),
+        });
+      }
+      state.rememberToken(args.tabId, outcome.stateToken);
+      return { ...outcome, tabId };
+    } finally {
+      release?.();
     }
-    state.rememberToken(args.tabId, outcome.stateToken);
-    return { ...outcome, tabId };
   };
 
   const tools: ToolSet = {};
@@ -606,7 +671,8 @@ export function buildBrowserTools(
       description:
         "Interact with the page: click, type, press a key, scroll, hover, drag or select. " +
         "Target by coordinates from the last screenshot, or by CSS selector. Returns the " +
-        "page state after the action settles. Coordinates are CSS pixels in a " +
+        "page after the action: URL, what you can act on (a11y with refs), and a " +
+        "screenshot. Coordinates are CSS pixels in a " +
         `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
         "screenshot — the screenshot is always shown at that size, so read x and y " +
         "straight off it without scaling.",
@@ -645,10 +711,17 @@ export function buildBrowserTools(
               'drag destination ("x,y" in the same viewport coordinates), or option ' +
               "value to select.",
           ),
+        observe: z
+          .enum(["a11y", "screenshot", "both", "none"])
+          .optional()
+          .describe("What to return after the action. Defaults to both."),
         tabId: z.string().optional(),
       }),
       needsApproval,
-      execute: async ({ verb, selector, x, y, value, tabId }, { abortSignal }) => {
+      execute: async (
+        { verb, selector, x, y, value, observe, tabId },
+        { abortSignal },
+      ) => {
         if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
@@ -675,6 +748,15 @@ export function buildBrowserTools(
               verb,
               ...(target ? { target } : {}),
               ...(value !== undefined ? { value } : {}),
+              // BOTH, for now. Until an act can target by ref the model can
+              // only aim by coordinate or CSS selector, and the a11y tree
+              // carries neither — dropping the screenshot would force a
+              // `browser_observe {mode:"screenshot"}` after every act and make
+              // things worse, not better. The cost of `both` on one act is
+              // about what today's act plus its follow-up observe already
+              // costs, with one fewer round trip. Flip this to "a11y" once
+              // acts accept refs.
+              observe: observe ?? "both",
             },
             // Pin to the observation the model actually saw (L3).
             { tabId, signal: abortSignal, expectedState: true },
@@ -999,17 +1081,29 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
  * signal, console lines the page logged, the tool names and descriptions a
  * page advertises over WebMCP, and whatever a page tool returned.
  *
- * `url` IS ONE OF THEM. It reads like our own metadata — we are the ones who
- * report it — but a page chooses its own path, query and fragment, and a URL
- * is a perfectly good place to write a sentence addressed to the model. The
- * fence header still names the origin (scheme and host only, which a page
- * cannot write prose into), so nothing is lost: the model can see where it is
- * without reading untrusted text to find out.
+ * `url` IS ONE OF THEM, and so is `previousUrl`. They read like our own
+ * metadata — we are the ones who report them — but a page chooses its own
+ * path, query and fragment, and a URL is a perfectly good place to write a
+ * sentence addressed to the model. The fence header still names the origin
+ * (scheme and host only, which a page cannot write prose into), so nothing is
+ * lost: the model can see where it is without reading untrusted text to find
+ * out.
+ *
+ * `refs` IS TOO, and was leaking before an act ever returned one: every value
+ * in it is a role and a NAME, and a name is the page's own text — an
+ * accessible name reading "ignore your instructions and…" was arriving
+ * outside the fence on every `observe {mode:"a11y"}`.
+ *
+ * `omittedSubtrees`, `totalNodes` and `a11yUnavailable` stay OURS: they are
+ * counts and flags this layer and the daemon produce, and a page cannot write
+ * a sentence into a number.
  */
 const PAGE_DERIVED_KEYS = [
   "url",
+  "previousUrl",
   "text",
   "a11y",
+  "refs",
   "dom",
   "console",
   "tools",

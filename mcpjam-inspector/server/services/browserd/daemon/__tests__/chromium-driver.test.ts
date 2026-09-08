@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { ChromiumDriver } from "../chromium-driver";
+import { guardStaleness } from "../browser-driver";
 import { shortHash } from "../state-token";
-import type { BrowserCommand } from "../../protocol";
+import type { BrowserCommand, ObservationStateToken } from "../../protocol";
 import type { DriverContext } from "../browser-page";
 import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
 import { axTree, fakeContext, fakePage, type FakePage } from "./fake-page";
@@ -744,7 +745,17 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
     const res = await driver.execute(cmd(action));
-    return { res, page };
+    return { res, page, driver };
+  }
+
+  /** An `Accessibility.getFullAXTree` reply with one named button. */
+  function oneButton(name = "Sign in", id = 41) {
+    return {
+      "Accessibility.getFullAXTree": axTree({
+        role: "RootWebArea",
+        children: [{ role: "button", name, id }],
+      }),
+    };
   }
 
   it("dispatches each verb to its primitive, by coordinates or selector", async () => {
@@ -780,8 +791,12 @@ describe("ChromiumDriver — act verbs (W3)", () => {
   });
 
   it("folds the post-act observation into the result (L1)", async () => {
-    // The whole point: after an act the model already HAS the new screenshot,
-    // url and a fresh token — it never spends a turn asking "what happened?".
+    // The whole point: after an act the model already HAS the new page state
+    // and a fresh token — it never spends a turn asking "what happened?".
+    //
+    // The DAEMON default is `screenshot`, which is what an act returned before
+    // `observe` existed: an old caller against a new daemon must read exactly
+    // the result it always read. The tool layer asks for `both` explicitly.
     const { res, page } = await acted({
       kind: "act",
       verb: "click",
@@ -791,9 +806,176 @@ describe("ChromiumDriver — act verbs (W3)", () => {
       url: "https://x.test/",
       screenshot: "BASE64PNG",
     });
+    expect(res.output).not.toHaveProperty("a11y");
     expect(res.settled).toBe(true);
     expect(res.stateToken).toBeDefined();
     expect(page.calls.shots).toBe(1);
+  });
+
+  it("hands back the tree of what to do NEXT, and commits its refs", async () => {
+    // The round trip this PR exists to remove: an act used to return a picture,
+    // and a model that wanted to know what was now CLICKABLE had to observe
+    // again. The refs are committed exactly as an `observe` commits them, so
+    // the zoom verb works off an act result too.
+    const { res, driver } = await acted(
+      {
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "a11y",
+      },
+      { cdpReplies: oneButton() },
+    );
+
+    const output = res.output as { a11y: string; refs: Record<string, unknown> };
+    expect(res.ok).toBe(true);
+    expect(output.a11y).toContain('- button "Sign in" [ref=e1]');
+    expect(output.refs).toMatchObject({ e1: { role: "button", name: "Sign in" } });
+
+    const zoomed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(zoomed.ok).toBe(true);
+  });
+
+  it("says where the page CAME FROM, but only when the act moved it", async () => {
+    // An act that changed nothing about the address says nothing about it:
+    // a `previousUrl` equal to `url` is a line on every result that teaches
+    // the model nothing.
+    const stayed = await acted(
+      { kind: "act", verb: "click", target: { coordinates: [1, 1] } },
+      { cdpReplies: oneButton() },
+    );
+    expect(stayed.res.output).not.toHaveProperty("previousUrl");
+
+    // And one that DID move the page says so — which a bare `url` cannot:
+    // the model reads the new address with no sign that it is new.
+
+    const page = fakePage({ url: "https://x.test/", cdpReplies: oneButton() });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    page.onAct = () => page.setUrl("https://x.test/welcome");
+
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } }),
+    );
+
+    expect(res.output).toMatchObject({
+      previousUrl: "https://x.test/",
+      url: "https://x.test/welcome",
+    });
+  });
+
+  it("returns only what `observe` asked for", async () => {
+    const cases: Array<[
+      "a11y" | "screenshot" | "both" | "none",
+      { a11y: boolean; screenshot: boolean },
+    ]> = [
+      ["a11y", { a11y: true, screenshot: false }],
+      ["screenshot", { a11y: false, screenshot: true }],
+      ["both", { a11y: true, screenshot: true }],
+      ["none", { a11y: false, screenshot: false }],
+    ];
+    for (const [observe, want] of cases) {
+      const { res, page } = await acted(
+        {
+          kind: "act",
+          verb: "click",
+          target: { coordinates: [1, 1] },
+          observe,
+        },
+        { cdpReplies: oneButton() },
+      );
+      const output = res.output as Record<string, unknown>;
+      expect(res.ok, `observe:${observe}`).toBe(true);
+      expect("a11y" in output, `observe:${observe} tree`).toBe(want.a11y);
+      expect("screenshot" in output, `observe:${observe} shot`).toBe(
+        want.screenshot,
+      );
+      // The URL and the token ride on every act, whatever was asked for —
+      // they are what the NEXT act is pinned to.
+      expect(output.url).toBe("https://x.test/");
+      expect(res.stateToken).toBeDefined();
+      expect(page.calls.shots, `observe:${observe} shots`).toBe(
+        want.screenshot ? 1 : 0,
+      );
+    }
+  });
+
+  it("keeps a successful act successful when the page cannot answer a tree", async () => {
+    // A PDF, a chrome:// page, a renderer whose CDP session went away. Turning
+    // a click that WORKED into a failed act because the aftermath could not be
+    // described would be the worst possible trade.
+    const { res } = await acted(
+      {
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "both",
+      },
+      { cdpReplies: { "Accessibility.getFullAXTree": { nodes: [] } } },
+    );
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({
+      a11yUnavailable: true,
+      screenshot: "BASE64PNG",
+    });
+    expect(res.output).not.toHaveProperty("a11y");
+  });
+
+  it("shows a FAILED act the page it failed on, tree and all", async () => {
+    // "Your selector matched nothing" plus the list of what the page does
+    // offer is one turn; the bare refusal is two.
+    const { res } = await acted(
+      {
+        kind: "act",
+        verb: "click",
+        target: { selector: "#gone" },
+        observe: "a11y",
+      },
+      {
+        cdpReplies: oneButton(),
+        actError: new Error("Timeout 15000ms exceeded waiting for locator"),
+      },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("target_not_found");
+    const output = res.output as { a11y: string };
+    expect(output.a11y).toContain('- button "Sign in" [ref=e1]');
+    expect(res.stateToken).toBeDefined();
+  });
+
+  it("does not commit refs when a handoff lands during the POST-ACT read", async () => {
+    // Same rule as `observe`: refs the model never received must not resolve
+    // afterwards, or a guessed ref names a page a person was looking at.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: oneButton("Private", 77),
+      onA11y: () => lease.acquire("person-1", 60_000),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const blocked = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "a11y",
+      }),
+    );
+    expect(blocked.leaseBlocked).toBe(true);
+    expect(JSON.stringify(blocked)).not.toContain("Private");
+
+    lease.release("person-1");
+    const guess = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(guess.ok).toBe(false);
+    expect(guess.error).toMatch(/unknown_ref|stale_ref/);
   });
 
   it("reports an unresolvable target as target_not_found, with the current state", async () => {
@@ -1038,6 +1220,170 @@ describe("ChromiumDriver — webmcp actions (W3)", () => {
       cmd({ kind: "webmcp_cancel", invocationId: "inv-9" }),
     );
     expect(res).toMatchObject({ ok: true, output: { cancelled: false } });
+  });
+});
+
+/**
+ * The guard and the real driver, together.
+ *
+ * `browser-driver.test.ts` pins the guard against a fake whose token is
+ * whatever the test says it is. That cannot answer the question this suite
+ * exists for: which page changes actually MOVE the token. A new element does
+ * and typing into a field does not — and "the model may act on a page it
+ * decided from, but not on one that grew a banner underneath it" is exactly
+ * that distinction. It is only provable where the guard meets a driver that
+ * computes the token from a real DOM signal.
+ */
+describe("guardStaleness(ChromiumDriver)", () => {
+  /** A tab, an a11y-answering page, and the guarded executor over it. */
+  async function pinned() {
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "Submit", id: 61 }],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const guarded = guardStaleness(driver);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
+    return {
+      page,
+      driver,
+      guarded,
+      token: observed.stateToken as ObservationStateToken,
+    };
+  }
+
+  it("REFUSES the second act of a step whose first one changed the page — with the page", async () => {
+    const { page, driver, guarded, token } = await pinned();
+    // The first act adds an element, which is what a real "click, then the
+    // dialog opens" does to the DOM.
+    page.onAct = () => {
+      page.onAct = undefined;
+      page.setDom("0BODY>1DIALOG");
+    };
+
+    const first = await guarded(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        expectedState: token,
+      }),
+    );
+    expect(first.ok).toBe(true);
+
+    const second = await guarded(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [2, 2] },
+        expectedState: token,
+        observe: "a11y",
+      }),
+    );
+
+    expect(second.ok).toBe(false);
+    expect(second.staleObservation).toBe(true);
+    expect(second.error).toBe("stale_observation");
+    // THE POINT: the refusal carries the page, so re-deciding costs no extra
+    // call. Told only "re-read the page", the model spends exactly the round
+    // trip the token exists to save.
+    const output = second.output as { a11y: string; url: string };
+    expect(output.a11y).toContain('- button "Submit" [ref=e1]');
+    expect(output.url).toBe("https://x.test/");
+    expect(second.stateToken).toEqual(
+      await driver.currentStateToken("@session"),
+    );
+    // And the click never landed: one act was dispatched, not two.
+    expect(page.calls.acts).toEqual(["click:1,1"]);
+  });
+
+  it("admits the second act when the first only TYPED into the page", async () => {
+    // A field's value is not part of the DOM skeleton, so "fill the email,
+    // then fill the password" is one step that must survive. Refusing every
+    // act after any act would make batching useless.
+    const { page, guarded, token } = await pinned();
+
+    const first = await guarded(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { selector: "#email" },
+        value: "a@b.c",
+        expectedState: token,
+      }),
+    );
+    expect(first.ok).toBe(true);
+
+    const second = await guarded(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { selector: "#password" },
+        value: "hunter2",
+        expectedState: token,
+      }),
+    );
+
+    expect(second.ok).toBe(true);
+    expect(second.staleObservation).toBeUndefined();
+    expect(page.calls.acts).toEqual([
+      "fill:#email:a@b.c",
+      "fill:#password:hunter2",
+    ]);
+  });
+
+  it("hands back a person taking the browser DURING the recovery read, not 'stale'", async () => {
+    // Two refusals are in play and only one is true: the page did move, but a
+    // person now holds the browser. Answering "stale" would send the model to
+    // re-read a page it is not allowed to see.
+    const lease = new HandoffLease();
+    // Armed only for the RECOVERY read: the person takes the browser between
+    // the guard's token read and the observation it owes the refusal.
+    let armed = false;
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "Private", id: 62 }],
+        }),
+      },
+      onA11y: () => {
+        if (armed) lease.acquire("person-1", 60_000);
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    const guarded = guardStaleness(driver);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
+    page.setDom("0BODY>1DIALOG");
+    armed = true;
+
+    const refused = await guarded(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        expectedState: observed.stateToken,
+        observe: "a11y",
+      }),
+    );
+
+    expect(refused.leaseBlocked).toBe(true);
+    expect(refused.staleObservation).toBeUndefined();
+    expect(JSON.stringify(refused)).not.toContain("Private");
   });
 });
 

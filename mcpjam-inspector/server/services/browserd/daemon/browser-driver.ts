@@ -12,6 +12,7 @@ import {
   BrowserCommandResult,
   ObservationStateToken,
   formatBrowserdError,
+  wantsFor,
 } from "../protocol";
 import type { CommandExecutor } from "./command-queue";
 import type { TabViewport } from "./viewport";
@@ -65,6 +66,19 @@ export interface BrowserDriver {
    * could not say so, and the picture would simply become a different page.
    */
   tabsSnapshot?(): { active?: string; list: Array<{ id: string; url: string }> };
+  /**
+   * Look at a tab WITHOUT acting on it, for a refusal that owes the caller a
+   * fresh page (L3's `stale_observation`).
+   *
+   * Optional for the same reason `viewport` is: a driver that cannot observe
+   * on demand — a unit fake, an engine with no such read — is still a
+   * perfectly good driver, and the guard degrades to the bare token it has
+   * always returned rather than failing.
+   */
+  observeForRefusal?(
+    command: BrowserCommand,
+    wants: { a11y: boolean; screenshot: boolean },
+  ): Promise<BrowserCommandResult>;
 }
 
 /** Structural equality of two state tokens (L3). */
@@ -86,9 +100,10 @@ export function stateTokensMatch(
  * `expectedState`, the guard reads the tab's CURRENT token first; if the page
  * has navigated or mutated structurally since the observation the act was
  * decided from, it REFUSES the act (returns `staleObservation`) instead of
- * clicking the wrong place, and hands back the fresh token so the caller
- * re-observes. Everything else — acts without an expected token, and every
- * non-act command — passes straight through.
+ * clicking the wrong place, and hands back the fresh token — and, when the
+ * driver can take one, the fresh OBSERVATION — so the caller re-decides
+ * without spending another call looking. Everything else — acts without an
+ * expected token, and every non-act command — passes straight through.
  *
  * The check lives here, above the driver, so it is pure and testable with a
  * fake driver: the real driver never has to special-case staleness.
@@ -112,11 +127,28 @@ export function guardStaleness(
     if (current !== undefined && !stateTokensMatch(current, action.expectedState)) {
       // The page moved under the model. Do NOT act; return the fresh state so
       // it can re-decide from what is actually on screen now.
+      //
+      // AND THE PAGE ITSELF, when the driver can produce one. The refusal used
+      // to carry the token alone while telling the model to re-read the page —
+      // so the recovery cost exactly the round trip the token exists to save.
+      // The fresh look is taken in the shape the act asked for, so a model
+      // that wanted a tree gets a tree back rather than a screenshot it did
+      // not ask for.
+      const fresh = await driver.observeForRefusal?.(
+        command,
+        wantsFor(action.observe),
+      );
+      // A person took the browser DURING the recovery read: that refusal wins,
+      // by the same rule as the check above — nothing was run and nothing was
+      // observed, and saying "stale" here would send the model to re-read a
+      // page it is not allowed to see.
+      if (fresh?.leaseBlocked) return fresh;
       return {
         ok: false,
         staleObservation: true,
         error: "stale_observation",
-        stateToken: current,
+        stateToken: fresh?.stateToken ?? current,
+        ...(fresh?.output !== undefined ? { output: fresh.output } : {}),
       };
     }
     return driver.execute(command);

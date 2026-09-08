@@ -139,6 +139,34 @@ export interface ObservationStateToken {
   domHash: string;
 }
 
+/**
+ * What an `act` hands back once the page has settled.
+ *
+ * `both` is what an interactive model actually needs while acts still target
+ * by coordinate or selector: the tree says what is there, the screenshot says
+ * WHERE. `none` is for a caller driving a script it already trusts.
+ */
+export type ActObserve = "a11y" | "screenshot" | "both" | "none";
+
+/**
+ * Which reads an `observe` choice asks for — the ONE place guard and driver
+ * agree on the mapping, so a new member cannot mean two things in two files.
+ *
+ * `undefined` is the wire default (`"screenshot"`), not a synonym for `none`:
+ * a command from a caller that predates the field must still come back with
+ * the picture it has always come back with.
+ */
+export function wantsFor(observe: ActObserve | undefined): {
+  a11y: boolean;
+  screenshot: boolean;
+} {
+  const mode = observe ?? "screenshot";
+  return {
+    a11y: mode === "a11y" || mode === "both",
+    screenshot: mode === "screenshot" || mode === "both",
+  };
+}
+
 export type BrowserAction =
   | { kind: "navigate"; url: string; newTab?: boolean }
   | { kind: "back" }
@@ -164,6 +192,16 @@ export type BrowserAction =
        * can re-decide. Optional: a caller that opts out accepts stale targeting.
        */
       expectedState?: ObservationStateToken;
+      /**
+       * What to CAPTURE once the act has settled, so the model does not spend a
+       * second call asking what changed.
+       *
+       * Absent means `"screenshot"` — exactly what an act returned before this
+       * existed, so an old caller against a new daemon reads today's result and
+       * a new caller against an old daemon reads today's result too (the field
+       * is simply ignored there). The tool layer always sends one explicitly.
+       */
+      observe?: ActObserve;
     }
   | {
       kind: "observe";
@@ -275,9 +313,18 @@ export interface BrowserCommandResult {
   settled?: boolean;
   /**
    * Set when an `act` was REFUSED because its `expectedState` no longer matched
-   * the live tab (L3). The action did NOT run; `output`/`stateToken` carry the
-   * fresh observation so the caller can re-decide. The HTTP layer maps a result
-   * with this flag to `409 stale_observation`.
+   * the live tab (L3). The action did NOT run.
+   *
+   * `stateToken` is the tab's CURRENT token and `output` the observation that
+   * goes with it — read the same way an act reads its own aftermath, in the
+   * shape the act asked for. The refusal used to carry the token alone, which
+   * told the model "re-read the page" and then made it spend a call doing so:
+   * the recovery from a stale observation cost exactly the round trip the
+   * token exists to save. `output` is absent only when the read itself could
+   * not happen (a driver with no way to observe, or a person taking the
+   * browser during it — which comes back as `leaseBlocked` instead).
+   *
+   * The HTTP layer maps a result with this flag to `409 stale_observation`.
    */
   staleObservation?: boolean;
   /**
