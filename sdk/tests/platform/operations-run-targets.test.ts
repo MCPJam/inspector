@@ -734,6 +734,23 @@ describe("run_eval_suite target selection", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("names the CANONICAL fields when client and clients are both sent", async () => {
+      // Folded first, this lands on the `host`/`hosts` guard and answers a
+      // caller who typed `client` and `clients` by naming two fields they
+      // never used.
+      const { client, fetchMock } = makeClient();
+      const error = await runEvalSuiteOperation
+        .execute(
+          { suite: "Smoke", client: "Claude", clients: ["ChatGPT"] },
+          { client },
+        )
+        .catch((caught: unknown) => caught);
+      expect((error as PlatformApiError).message).toBe(
+        "Pass either client (one) or clients (several), not both."
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("carries `client` through every guard the `host` spelling hits", async () => {
       const { client } = makeClient();
       for (const input of [

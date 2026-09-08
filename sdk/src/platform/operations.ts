@@ -2646,6 +2646,15 @@ function foldClientSelectors<
       "Pass either clients or its deprecated hosts alias, not both."
     );
   }
+  // BEFORE the fold, so the message names what the caller typed. Folded first,
+  // singular-with-plural is caught downstream by the `host`/`hosts` guard,
+  // which would answer a caller who wrote `client` and `clients` by telling
+  // them about two fields they never used.
+  if (input.client !== undefined && input.clients !== undefined) {
+    throw operationInputError(
+      "Pass either client (one) or clients (several), not both."
+    );
+  }
   if (input.client === undefined && input.clients === undefined) return input;
   return {
     ...input,

@@ -173,6 +173,15 @@ export function parseLLMString(
   // OpenRouter and fails at the API call instead. A parser that could tell the
   // two apart would need the hosted catalog itself, which the SDK does not
   // ship and which grows without it.
+  // An EMPTY segment is not a vendor path. `"/gpt-4o"` and `"vendor/"` reach
+  // here with `parts.length >= 2` and would otherwise be handed to OpenRouter
+  // verbatim, turning a local, obvious mistake into a remote API error.
+  if (providerName === "" || model === "") {
+    throw new Error(
+      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o") — neither segment may be empty.`
+    );
+  }
+
   return {
     type: "builtin",
     provider: HOSTED_CATALOG_PROVIDER,

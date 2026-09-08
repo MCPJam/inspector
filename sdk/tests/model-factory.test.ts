@@ -303,6 +303,18 @@ describe("model-factory", () => {
         });
       }
 
+      it("still throws for an EMPTY segment on either side", () => {
+        // `parseLLMString` is exported, so a caller can hand it these. Passing
+        // them through to OpenRouter would turn an obvious local mistake into
+        // a remote API error.
+        expect(() => parseLLMString("/qwen3-max")).toThrow(
+          "Invalid LLM string format"
+        );
+        expect(() => parseLLMString("qwen/")).toThrow(
+          "Invalid LLM string format"
+        );
+      });
+
       it("still throws for a bare id with no vendor segment", () => {
         expect(() => parseLLMString("qwen3-max")).toThrow(
           "Invalid LLM string format"
