@@ -13659,6 +13659,11 @@
           "projectId": {
             "type": ["string", "null"]
           },
+          "managedBy": {
+            "type": "string",
+            "description": "Who configures this suite. `\"ci\"` means its shape comes from a repository — a suite file declared it (`declaredId` above), or `@mcpjam/sdk` ingest authored it — and the platform REFUSES configuration writes to it: the CLI's as-code sync hard-deletes any case the file does not declare on the next `eval run --file`, so an edit made here would not merely be overwritten, it would be silently deleted.\n\nTwo ways forward when it is `\"ci\"`: edit the suite file in your repository, or `POST .../duplicate` for an app-owned copy. A client that IS the owning file sends `declaredSuiteId` on its writes and is allowed through. Running, replaying and comparing are unaffected. Absent on deployments that predate the field.",
+            "enum": ["ci", "app"]
+          },
           "environment": {
             "type": "object",
             "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",

@@ -64,7 +64,18 @@ type ConvexErrorData = {
   kind?: unknown;
   /** The stable sub-code a coded refusal carries alongside its prose. */
   reason?: unknown;
+  /** Which named action the refusal was raised for (the CI-owned lock). */
+  action?: unknown;
+  /** The suite-file id that owns a CI-owned suite, when the refusal names one. */
+  declaredSuiteId?: unknown;
 };
+
+/**
+ * The backend's refusal code for a write to a CI-owned suite (its
+ * `lib/evalPermissions.ts`). Named here rather than inlined so the one string
+ * that crosses the repo boundary is greppable from both sides.
+ */
+export const CI_OWNED_SUITE_READ_ONLY_CODE = "CI_OWNED_SUITE_READ_ONLY";
 
 /**
  * The five `gate_waiver_*` refusal codes, mirrored from `GATE_WAIVER_REFUSAL`
@@ -157,7 +168,7 @@ export interface TranslateConvexWriteErrorOptions {
  * WHICH consumer count moved to describe the edit honestly the second time.
  */
 function preconditionDetails(
-  data: Record<string, unknown> | null | undefined
+  data: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | undefined {
   const payload = data?.data;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -172,7 +183,7 @@ function preconditionDetails(
 }
 
 function billingDetails(
-  data: Record<string, unknown> | null | undefined
+  data: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | undefined {
   if (!data) return undefined;
   const details: Record<string, unknown> = {};
@@ -221,7 +232,7 @@ function formatRetryAfterSeconds(deltaMs: number): string {
 /** Seconds-until, floored at 1 — the `Retry-After` value from an instant. */
 function retryAfterFromResetsAt(
   resetsAt: unknown,
-  now: number = Date.now()
+  now: number = Date.now(),
 ): string | undefined {
   if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) {
     return undefined;
@@ -257,7 +268,7 @@ function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
  * unreachable.
  */
 export function translateImportIneligibleError(
-  error: unknown
+  error: unknown,
 ): WebRouteError | undefined {
   const data = convexErrorData(error);
   if (data?.code !== "IMPORT_INELIGIBLE") return undefined;
@@ -269,7 +280,7 @@ export function translateImportIneligibleError(
 
 export function translateConvexWriteError(
   error: unknown,
-  options: TranslateConvexWriteErrorOptions
+  options: TranslateConvexWriteErrorOptions,
 ): WebRouteError {
   // A route that already decided (a project-scope guard, a bad body) wins.
   if (error instanceof WebRouteError) return error;
@@ -327,7 +338,7 @@ export function translateConvexWriteError(
       ? new WebRouteError(
           403,
           ErrorCode.FORBIDDEN,
-          structuredMessage ?? "You do not have permission to do that."
+          structuredMessage ?? "You do not have permission to do that.",
         )
       : new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
@@ -348,7 +359,7 @@ export function translateConvexWriteError(
     return new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      structuredMessage ?? fallbackMessage
+      structuredMessage ?? fallbackMessage,
     );
   }
 
@@ -377,7 +388,7 @@ export function translateConvexWriteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       structuredMessage ?? fallbackMessage,
-      typeof reason === "string" && reason.length > 0 ? { reason } : undefined
+      typeof reason === "string" && reason.length > 0 ? { reason } : undefined,
     );
   }
 
@@ -408,7 +419,7 @@ export function translateConvexWriteError(
       // being collapsed into the neutral 404.
       ErrorCode.FORBIDDEN,
       structuredMessage ??
-        "This feature is not available for your organization."
+        "This feature is not available for your organization.",
     );
   }
 
@@ -444,7 +455,7 @@ export function translateConvexWriteError(
       structuredMessage ??
         (code === "EVAL_COMPARE_BASELINE_CONFLICT"
           ? "Pass either a baseline run id or a baseline commit SHA, not both."
-          : "The baseline commit SHA must not be blank.")
+          : "The baseline commit SHA must not be blank."),
     );
   }
 
@@ -486,7 +497,7 @@ export function translateConvexWriteError(
       429,
       ErrorCode.RATE_LIMITED,
       structuredMessage ?? "Too many requests. Slow down and retry.",
-      retryAfterMs !== undefined ? { retryAfterMs } : undefined
+      retryAfterMs !== undefined ? { retryAfterMs } : undefined,
     );
     return retryAfter
       ? error.withHeaders({ "Retry-After": retryAfter })
@@ -502,7 +513,7 @@ export function translateConvexWriteError(
       // The backend's payload names the cap, the plan and the upgrade target.
       // Dropping it leaves a caller with "Plan limit reached" and no way to
       // say WHICH limit or what to do about it.
-      details
+      details,
     );
     // A daily cap knows the INSTANT it lifts (UTC midnight), not a duration —
     // so the header is computed here rather than read off the payload. Absent
@@ -518,7 +529,43 @@ export function translateConvexWriteError(
       403,
       ErrorCode.FORBIDDEN,
       structuredMessage ?? "This feature is not included in your plan.",
-      billingDetails(data as Record<string, unknown> | null)
+      billingDetails(data as Record<string, unknown> | null),
+    );
+  }
+
+  // ── CI-owned suite (mcpjam-backend lib/evalPermissions.ts) ──────────────
+  //
+  // The suite's configuration lives in a repository: SDK ingest or a suite file
+  // authored it, and the CLI's as-code sync hard-deletes any case the file does
+  // not declare on the next `eval run --file`. So this write would not merely
+  // be overwritten later — it would be silently deleted, at a time nobody is
+  // watching.
+  //
+  // 409, not 403. The caller is not short a permission — every project member
+  // holds `suite.edit` on this suite, and telling them otherwise sends them to
+  // ask an admin for access that would change nothing. It is a state conflict
+  // with the owning file, and the two things that resolve it are both in the
+  // hint: edit the file, or duplicate the suite (`POST .../duplicate` yields an
+  // app-owned copy). The CLI's own sync passes `declaredSuiteId` and never
+  // reaches here.
+  //
+  // Placed before the generic `CONFLICT` branch so it keeps its own hint;
+  // falling through would answer with the route's generic "changed since you
+  // loaded it", which describes a stale write rather than an owned suite.
+  if (code === CI_OWNED_SUITE_READ_ONLY_CODE) {
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      structuredMessage ??
+        "This suite is managed by CI — its configuration lives in your repository.",
+      {
+        reason: CI_OWNED_SUITE_READ_ONLY_CODE,
+        hint: "Edit the suite file in your repository, or duplicate the suite to edit it here.",
+        ...(typeof data?.declaredSuiteId === "string"
+          ? { declaredSuiteId: data.declaredSuiteId }
+          : {}),
+        ...(typeof data?.action === "string" ? { action: data.action } : {}),
+      },
     );
   }
 
@@ -527,14 +574,14 @@ export function translateConvexWriteError(
       409,
       ErrorCode.CONFLICT,
       structuredMessage ?? conflictMessage,
-      preconditionDetails(data as Record<string, unknown> | null)
+      preconditionDetails(data as Record<string, unknown> | null),
     );
   }
   if (code === "VALIDATION") {
     return new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      structuredMessage ?? fallbackMessage
+      structuredMessage ?? fallbackMessage,
     );
   }
   if (code === "NOT_FOUND") {
@@ -613,11 +660,14 @@ export function translateConvexWriteError(
     // rather than dropped. `logger.warn` is Axiom-only — it deliberately does
     // NOT capture to Sentry — so this is a queryable record, not a page, which
     // is the right weight for a refusal that IS being answered correctly.
-    logger.warn(`[v1.convexWrite] unclassified ${resource} structured refusal`, {
-      resource,
-      code: code.trim(),
-      detail: redactForLog(error),
-    });
+    logger.warn(
+      `[v1.convexWrite] unclassified ${resource} structured refusal`,
+      {
+        resource,
+        code: code.trim(),
+        detail: redactForLog(error),
+      },
+    );
     // `code` travels in `details` rather than as the public error code: the v1
     // union is CLOSED (see `contract.ts`), so a backend code that is not in
     // `INTERNAL_TO_V1_CODE` has no public member to become. `details.code` is
@@ -637,7 +687,7 @@ export function translateConvexWriteError(
     return new WebRouteError(
       409,
       ErrorCode.CONFLICT,
-      cleanConvexMessage(error)
+      cleanConvexMessage(error),
     );
   }
   if (/not found|unauthorized|not a member/i.test(raw)) {
@@ -645,7 +695,7 @@ export function translateConvexWriteError(
   }
   if (
     /requires admin|only .* admins|insufficient .* permissions|cannot manage/i.test(
-      raw
+      raw,
     )
   ) {
     return adminFailureIsForbidden
@@ -654,7 +704,7 @@ export function translateConvexWriteError(
   }
   if (
     /timed out|timeout|fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|socket hang up/i.test(
-      raw
+      raw,
     )
   ) {
     return mapRuntimeError(error);
@@ -675,11 +725,7 @@ export function translateConvexWriteError(
   // prose pattern claimed.
   const proseData = (error as { data?: unknown } | null)?.data;
   if (typeof proseData === "string" && proseData.trim().length > 0) {
-    return new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      proseData.trim()
-    );
+    return new WebRouteError(400, ErrorCode.VALIDATION_ERROR, proseData.trim());
   }
 
   // ── Nothing recognized it. That is OUR bug, and it answers 500. ──────────

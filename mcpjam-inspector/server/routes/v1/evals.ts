@@ -1970,6 +1970,28 @@ function toCaseDto(testCase: CaseDoc) {
 
 type SuiteDoc = Record<string, any>;
 
+/**
+ * Is this suite configured outside the app?
+ *
+ * Mirrors the platform's `isCiOwnedSuite` (mcpjam-backend
+ * `lib/evalPermissions.ts`) exactly: a declared suite-file id, or
+ * `source: "sdk"`. DELIBERATELY NOT `lastSdkRunAt` — a UI-authored suite that
+ * CI merely reported a run into is still the app's suite, and locking it would
+ * take an editable suite away from its author because a pipeline mentioned it
+ * once.
+ *
+ * This is a DESCRIPTION for the caller, never a gate: the refusal itself is
+ * Convex's, and duplicating the rule as a route-level check would give us two
+ * places to keep it correct.
+ */
+function isCiOwnedSuiteDoc(suite: SuiteDoc): boolean {
+  return (
+    (typeof suite.declaredSuiteId === "string" &&
+      suite.declaredSuiteId.length > 0) ||
+    suite.source === "sdk"
+  );
+}
+
 function toSuiteDetailDto(
   suite: SuiteDoc,
   execConfig: any,
@@ -1984,6 +2006,23 @@ function toSuiteDetailDto(
     name: suite.name ?? null,
     description: suite.description ?? null,
     projectId: suite.projectId ? String(suite.projectId) : null,
+    /**
+     * WHO CONFIGURES THIS SUITE — `"ci"` when its shape comes from a
+     * repository (a suite file declared it, or SDK ingest authored it),
+     * `"app"` otherwise.
+     *
+     * API callers could not see this at all before, which made a 409 on a
+     * perfectly well-formed PATCH look like a bug in the API. Now the state
+     * that produces the refusal is readable BEFORE the write: a client can
+     * disable its own editor, or send `declaredSuiteId` if it is the file that
+     * owns the suite.
+     *
+     * Derived rather than stored, and derived from the same two facts the
+     * platform's own predicate uses — the declared id above and the suite's
+     * `source` — so this cannot drift into disagreeing with the refusal it is
+     * meant to predict.
+     */
+    managedBy: isCiOwnedSuiteDoc(suite) ? "ci" : "app",
     environment: {
       servers: Array.isArray(suite.environment?.servers)
         ? suite.environment.servers.map(String)
@@ -2345,6 +2384,42 @@ const publicCaseBodyShape = {
  */
 const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
 
+/**
+ * The suite-file id a write may claim, on every route that can reach a
+ * CI-owned suite.
+ *
+ * A suite authored by SDK ingest or by a suite file is configured in a
+ * repository, and the CLI's as-code sync hard-deletes any case the file does
+ * not declare on the next `eval run --file`. The platform therefore refuses
+ * configuration writes to those suites — with ONE exemption: the file that owns
+ * the suite, writing through these same public routes.
+ *
+ * So this is a PROOF, not a permission flag. The backend allows the write only
+ * when the id names the suite's OWN `declaredSuiteId`; a caller who guesses one
+ * still gets the 409, and a `source: "sdk"` suite has no declared id at all, so
+ * nothing can name it. There is no route-level refusal here for the same
+ * reason: Convex is the guard, and a second copy of the rule in front of it is a
+ * second thing to keep correct.
+ */
+const declaredSuiteIdField = z
+  .string()
+  .min(1)
+  .max(200)
+  .optional()
+  .describe(
+    "The suite-file id that owns this suite, when the caller is that file's sync. Required to edit a CI-owned suite; ignored for app-owned ones.",
+  );
+
+/** `{ fileSync: { declaredSuiteId } }`, or nothing at all. */
+function fileSyncArgs(
+  declaredSuiteId: string | undefined,
+): { fileSync: { declaredSuiteId: string } } | Record<string, never> {
+  // Omitted rather than sent as `undefined`: the platform's mutation validators
+  // are exact, so an explicit undefined fails the write on any backend that
+  // predates the field.
+  return declaredSuiteId ? { fileSync: { declaredSuiteId } } : {};
+}
+
 const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
@@ -2376,13 +2451,26 @@ const updateCaseSchema = z.strictObject({
    * provenance on every unrelated edit.
    */
   import: z.union([publicCaseImportSchema, z.null()]).optional(),
+  declaredSuiteId: declaredSuiteIdField,
 });
 
 /**
  * A case inside a `POST …/cases/batch` body. Same shape as a single create —
  * the batch surface is the single surface repeated, not a second contract.
+ *
+ * Deliberately the bare `createCaseSchema`, WITHOUT the file-sync marker: that
+ * marker describes the request, not a case, and accepting a different one per
+ * entry would invite a batch that claims two owners.
  */
 const batchCaseSchema = createCaseSchema;
+
+/**
+ * The single-create body: one case, plus the request-level file-sync marker.
+ * The batch envelope carries the same marker one level up.
+ */
+const createCaseRequestSchema = createCaseSchema.extend({
+  declaredSuiteId: declaredSuiteIdField,
+});
 
 const createCasesBatchSchema = z.strictObject({
   cases: z
@@ -2401,6 +2489,7 @@ const createCasesBatchSchema = z.strictObject({
    */
   duplicatePolicy: z.string().optional(),
   overrideReason: z.string().optional(),
+  declaredSuiteId: declaredSuiteIdField,
 });
 
 /**
@@ -2596,6 +2685,7 @@ export const updateSuiteSchema = z
      * on `applySuiteSettings`. Omitted for every other field.
      */
     revisionNote: z.string().max(500).optional(),
+    declaredSuiteId: declaredSuiteIdField,
   })
   .superRefine((body, ctx) => {
     if (body.settings?.qualityGate === undefined) return;
@@ -2662,6 +2752,7 @@ const scheduleSchema = z.strictObject({
   // suite means that environment; omitted on a multi-environment suite is a
   // 400. Only meaningful when enabling — see the handler.
   environmentId: z.string().min(1).optional(),
+  declaredSuiteId: declaredSuiteIdField,
 });
 
 const generateCasesSchema = z
@@ -7070,6 +7161,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           note: body.revisionNote,
         },
         ...takePrecondition(),
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error, "quality-gate settings writes");
@@ -7083,6 +7175,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         ...updateArgs,
         revision,
         ...takePrecondition(),
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7108,6 +7201,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         ),
         revision,
         ...takePrecondition(),
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7182,6 +7276,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         suiteId,
         environmentIds: body.environmentIds,
         revision,
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7214,7 +7309,12 @@ evals.post(
     // Strict over the caller's own body (no synthesized path params), matching
     // the `additionalProperties: false` the spec publishes for it.
     const body = parseWithSchema(
-      z.object({ environmentId: z.string().min(1) }).strict(),
+      z
+        .object({
+          environmentId: z.string().min(1),
+          declaredSuiteId: declaredSuiteIdField,
+        })
+        .strict(),
       await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
@@ -7228,7 +7328,11 @@ evals.post(
     try {
       result = (await convexClient.mutation(
         "testSuites:attachEnvironment" as any,
-        { suiteId, environmentId: body.environmentId },
+        {
+          suiteId,
+          environmentId: body.environmentId,
+          ...fileSyncArgs(body.declaredSuiteId),
+        },
       )) as { attached?: boolean; environmentIds?: unknown };
     } catch (error) {
       // Deploy skew: a backend without the atomic append. Named explicitly
@@ -7277,6 +7381,9 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   try {
     await convexClient.mutation("testSuites:deleteTestSuite" as any, {
       suiteId,
+      // A DELETE has no body, so the marker rides the query string — the one
+      // place a caller can put it on this verb.
+      ...fileSyncArgs(c.req.query("declaredSuiteId") || undefined),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7351,6 +7458,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       ...(scheduleEnvironmentId
         ? { environmentId: scheduleEnvironmentId }
         : {}),
+      ...fileSyncArgs(body.declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7420,7 +7528,10 @@ evals.get(
 evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(createCaseSchema, await readJsonObjectBody(c));
+  const body = parseWithSchema(
+    createCaseRequestSchema,
+    await readJsonObjectBody(c),
+  );
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
@@ -7455,6 +7566,9 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     result = await createEvalCasesInBatches(convexClient, {
       suiteId,
       cases: [item],
+      ...(body.declaredSuiteId
+        ? { declaredSuiteId: body.declaredSuiteId }
+        : {}),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7574,6 +7688,9 @@ evals.post(
           ? { duplicatePolicy: body.duplicatePolicy }
           : {}),
         ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
+        ...(body.declaredSuiteId
+          ? { declaredSuiteId: body.declaredSuiteId }
+          : {}),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7648,6 +7765,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
+          ...fileSyncArgs(body.declaredSuiteId),
         },
       );
     } catch (error) {
@@ -7685,6 +7803,8 @@ evals.delete(
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {
         testCaseId: caseId,
+        // No body on a DELETE, so the marker rides the query string.
+        ...fileSyncArgs(c.req.query("declaredSuiteId") || undefined),
       });
     } catch (error) {
       throw translateConvexWriteError(error);

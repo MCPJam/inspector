@@ -1615,6 +1615,24 @@ export interface PlatformEvalSuiteDetail {
   name: string | null;
   description: string | null;
   projectId: string | null;
+  /**
+   * Who configures this suite.
+   *
+   * `"ci"` means its shape comes from a repository — a suite file declared it
+   * (`declaredId` above), or `@mcpjam/sdk` ingest authored it — and the
+   * platform REFUSES configuration writes to it with a 409. That is not a
+   * permission problem: the CLI's as-code sync hard-deletes any case the file
+   * does not declare on the next `eval run --file`, so an edit made through the
+   * API would not merely be overwritten, it would be silently deleted.
+   *
+   * Two ways forward: edit the suite file, or duplicate the suite for an
+   * app-owned copy. A client that IS the owning file passes `declaredSuiteId`
+   * on its writes and is allowed through. Running, replaying and comparing are
+   * unaffected either way.
+   *
+   * Absent on API deployments that predate the field.
+   */
+  managedBy?: "ci" | "app";
   /** LEGACY server selection by name. Not the project-environment attachments. */
   environment: {
     servers: string[];

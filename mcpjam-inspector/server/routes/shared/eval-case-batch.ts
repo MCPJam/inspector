@@ -175,10 +175,10 @@ const DEFAULT_POLICY = {
  * act on it.
  */
 export function withMintedCaseIds<T extends { caseId?: string }>(
-  items: T[]
+  items: T[],
 ): T[] {
   return items.map((item) =>
-    item.caseId === undefined ? { ...item, caseId: mintCaseId() } : item
+    item.caseId === undefined ? { ...item, caseId: mintCaseId() } : item,
   );
 }
 
@@ -219,7 +219,16 @@ export async function createEvalCasesInBatches(
     cases: EvalCaseBatchItem[];
     duplicatePolicy?: DuplicatePolicy | string;
     overrideReason?: string;
-  }
+    /**
+     * The suite-file id this write belongs to, when the caller IS that file.
+     *
+     * A CI-owned suite refuses case writes from the app; the CLI's as-code sync
+     * goes through this same public mutation, so it names the suite it is
+     * syncing and the backend allows the write iff the id is that suite's own.
+     * Naming someone else's id grants nothing.
+     */
+    declaredSuiteId?: string;
+  },
 ): Promise<CaseBatchResult> {
   const committed: CaseBatchCommittedEntry[] = [];
   const failed: CaseBatchFailedEntry[] = [];
@@ -250,7 +259,13 @@ export async function createEvalCasesInBatches(
           ...(args.overrideReason
             ? { overrideReason: args.overrideReason }
             : {}),
-        }
+          // Only when the caller named one: `createTestCases`'s validator is
+          // exact, so an explicit `undefined` would fail every batch against a
+          // backend that predates the field.
+          ...(args.declaredSuiteId
+            ? { fileSync: { declaredSuiteId: args.declaredSuiteId } }
+            : {}),
+        },
       );
     } catch (error) {
       // Earlier chunks are already persisted and cannot be taken back — this

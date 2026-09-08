@@ -32,7 +32,7 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js"
+    "../../shared/evals.js",
   );
   return {
     ...actual,
@@ -43,7 +43,7 @@ vi.mock("../../shared/evals.js", async () => {
 
 vi.mock("../../web/auth.js", async () => {
   const actual = await vi.importActual<typeof import("../../web/auth.js")>(
-    "../../web/auth.js"
+    "../../web/auth.js",
   );
   return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
 });
@@ -70,7 +70,7 @@ function request(
   method: string,
   path: string,
   body?: Record<string, unknown>,
-  token = "tok"
+  token = "tok",
 ): Promise<Response> {
   return Promise.resolve(
     makeApp().request(path, {
@@ -80,7 +80,7 @@ function request(
         Authorization: `Bearer ${token}`,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    })
+    }),
   );
 }
 
@@ -210,7 +210,7 @@ function batchCreateResult(args: {
  */
 function authoredCaseArgs(index = 0): any {
   const call = convexMutationMock.mock.calls.find(
-    (c) => c[0] === "testSuites:createTestCases"
+    (c) => c[0] === "testSuites:createTestCases",
   );
   return call?.[1]?.cases?.[index];
 }
@@ -218,7 +218,7 @@ function authoredCaseArgs(index = 0): any {
 /** The args of the most recent `testSuites:updateTestCase` call. */
 function updateArgs(): any {
   const calls = convexMutationMock.mock.calls.filter(
-    (c) => c[0] === "testSuites:updateTestCase"
+    (c) => c[0] === "testSuites:updateTestCase",
   );
   return calls[calls.length - 1]?.[1];
 }
@@ -251,10 +251,10 @@ describe("v1 eval-edit routes", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     convexQueryMock.mockImplementation((name: string) =>
-      defaultQueryImpl(name)
+      defaultQueryImpl(name),
     );
     convexMutationMock.mockImplementation((name: string, args?: any) =>
-      defaultMutationImpl(name, args)
+      defaultMutationImpl(name, args),
     );
   });
 
@@ -300,7 +300,7 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"
         ? Promise.resolve({ ...SUITE_DOC, projectId: "p2" })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
     expect(res.status).toBe(404);
@@ -321,11 +321,11 @@ describe("v1 eval-edit routes", () => {
           },
           judge: { enabled: false },
         },
-      }
+      },
     );
     expect(res.status).toBe(200);
     const call = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     );
     expect(call).toBeTruthy();
     const args = call![1];
@@ -346,21 +346,21 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { minimumIterations: 3 } }
+      { settings: { minimumIterations: 3 } },
     );
     expect(res.status).toBe(200);
     expect(
       convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestSuite"
-      )![1].minIterations
+        (c) => c[0] === "testSuites:updateTestSuite",
+      )![1].minIterations,
     ).toBe(3);
 
     vi.clearAllMocks();
     convexQueryMock.mockImplementation((name: string) =>
-      defaultQueryImpl(name)
+      defaultQueryImpl(name),
     );
     convexMutationMock.mockImplementation((name: string) =>
-      defaultMutationImpl(name)
+      defaultMutationImpl(name),
     );
 
     // `null` must arrive as null, not collapse to undefined — the platform
@@ -369,11 +369,11 @@ describe("v1 eval-edit routes", () => {
     const cleared = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { minimumIterations: null } }
+      { settings: { minimumIterations: null } },
     );
     expect(cleared.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args).toHaveProperty("minIterations");
     expect(args.minIterations).toBeNull();
@@ -383,12 +383,12 @@ describe("v1 eval-edit routes", () => {
     for (const value of [0, 11, 2.5]) {
       vi.clearAllMocks();
       convexQueryMock.mockImplementation((name: string) =>
-        defaultQueryImpl(name)
+        defaultQueryImpl(name),
       );
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { minimumIterations: value } }
+        { settings: { minimumIterations: value } },
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -398,14 +398,14 @@ describe("v1 eval-edit routes", () => {
   it("GET reports minimumIterations, null when the suite has no floor", async () => {
     const unset = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1"
+      "/api/v1/projects/p1/eval-suites/suite_1",
     );
     expect(((await unset.json()) as any).settings.minimumIterations).toBeNull();
 
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"
         ? Promise.resolve({ ...SUITE_DOC, minIterations: 4 })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const set = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
     expect(((await set.json()) as any).settings.minimumIterations).toBe(4);
@@ -418,11 +418,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { judge: { autoRun: true, threshold: 0.85 } } }
+      { settings: { judge: { autoRun: true, threshold: 0.85 } } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args.judgeConfig).toEqual({
       goalCompletion: {
@@ -447,16 +447,16 @@ describe("v1 eval-edit routes", () => {
               groundedness: { role: "advisory", judgeModel: "stored-g" },
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { judge: { threshold: 0.9, severity: "warn" } } }
+      { settings: { judge: { threshold: 0.9, severity: "warn" } } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args.judgeConfig).toEqual({
       goalCompletion: {
@@ -473,7 +473,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { judge: { groundedness: { enabled: true } } } }
+      { settings: { judge: { groundedness: { enabled: true } } } },
     );
     expect(res.status).toBe(400);
     expect(convexMutationMock).not.toHaveBeenCalled();
@@ -497,7 +497,7 @@ describe("v1 eval-edit routes", () => {
               },
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
     expect(res.status).toBe(200);
@@ -526,16 +526,16 @@ describe("v1 eval-edit routes", () => {
               },
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { judge: { model: "openai/gpt-5" } } }
+      { settings: { judge: { model: "openai/gpt-5" } } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args.judgeConfig).toEqual({
       goalCompletion: {
@@ -554,7 +554,7 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"
         ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
     expect(res.status).toBe(200);
@@ -574,11 +574,11 @@ describe("v1 eval-edit routes", () => {
     const resJudge = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { judge: { model: "openai/gpt-5" } } }
+      { settings: { judge: { model: "openai/gpt-5" } } },
     );
     expect(resJudge.status).toBe(200);
     const judgeArgs = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     // enabled (true) preserved from current; only judgeModel changed.
     expect(judgeArgs.judgeConfig).toEqual({
@@ -587,20 +587,20 @@ describe("v1 eval-edit routes", () => {
 
     vi.clearAllMocks();
     convexQueryMock.mockImplementation((name: string) =>
-      defaultQueryImpl(name)
+      defaultQueryImpl(name),
     );
     convexMutationMock.mockImplementation((name: string) =>
-      defaultMutationImpl(name)
+      defaultMutationImpl(name),
     );
 
     const resMatch = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { settings: { matchOptions: { arguments: "partial" } } }
+      { settings: { matchOptions: { arguments: "partial" } } },
     );
     expect(resMatch.status).toBe(200);
     const matchArgs = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     // toolCallOrder (superset) + maxExtraToolCalls (null) preserved.
     expect(matchArgs.defaultMatchOptions).toEqual({
@@ -616,12 +616,12 @@ describe("v1 eval-edit routes", () => {
       "/api/v1/projects/p1/eval-suites/suite_1",
       {
         environment: { servers: ["Excalidraw (App)"] },
-      }
+      },
     );
     expect(res.status).toBe(200);
     expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     // The platform REPLACES the environment envelope wholesale, so a partial
     // write must be layered onto the suite's current one. Sending `{ servers }`
@@ -648,11 +648,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { environment: { computerEnvironment: "playwright" } }
+      { environment: { computerEnvironment: "playwright" } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args.environment).toEqual({
       servers: ["Excalidraw (App)"],
@@ -676,16 +676,16 @@ describe("v1 eval-edit routes", () => {
               computerEnvironmentId: "img_1",
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { environment: { computerEnvironment: null } }
+      { environment: { computerEnvironment: null } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args.environment.computerEnvironmentId).toBeUndefined();
     expect(args.environment.servers).toEqual(["Excalidraw (App)"]);
@@ -703,16 +703,16 @@ describe("v1 eval-edit routes", () => {
               computerEnvironmentId: "img_1",
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { environment: { servers: ["Excalidraw (App)", "Other"] } }
+      { environment: { servers: ["Excalidraw (App)", "Other"] } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite"
+      (c) => c[0] === "testSuites:updateTestSuite",
     )![1];
     expect(args.environment.computerEnvironmentId).toBe("img_1");
     expect(args.environment.servers).toEqual(["Excalidraw (App)", "Other"]);
@@ -730,7 +730,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { environment: { computerEnvironment: "ghost" } }
+      { environment: { computerEnvironment: "ghost" } },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as any;
@@ -753,7 +753,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1",
-      { environment: { computerEnvironment: "Playwright" } }
+      { environment: { computerEnvironment: "Playwright" } },
     );
     expect(res.status).toBe(400);
     expect(convexMutationMock).not.toHaveBeenCalled();
@@ -812,7 +812,7 @@ describe("v1 eval-edit routes", () => {
                     { serverName: "New Server", projectServerId: "srv_new" },
                   ],
                 },
-              }
+              },
         );
       }
       if (name === "hosts:listHosts")
@@ -826,11 +826,11 @@ describe("v1 eval-edit routes", () => {
       {
         environment: { servers: ["New Server"] },
         hosts: [{ host: "Prod", servers: ["New Server"] }],
-      }
+      },
     );
     expect(res.status).toBe(200);
     const hostCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments
+      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments,
     );
     expect(hostCall![1].hostAttachments).toEqual([
       { namedHostId: "host_1", selectedServerIds: ["srv_new"] },
@@ -851,11 +851,11 @@ describe("v1 eval-edit routes", () => {
       "/api/v1/projects/p1/eval-suites/suite_1",
       {
         hosts: [{ host: "host_1", servers: ["srv_1"] }],
-      }
+      },
     );
     expect(res.status).toBe(200);
     const hostCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments
+      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments,
     );
     expect(hostCall![1].hostAttachments).toEqual([
       { namedHostId: "host_1", selectedServerIds: ["srv_1"] },
@@ -871,7 +871,7 @@ describe("v1 eval-edit routes", () => {
       {
         hostIds: ["host_1"],
         servers: ["Excalidraw (App)"],
-      }
+      },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code?: string; message?: string };
@@ -887,11 +887,11 @@ describe("v1 eval-edit routes", () => {
       "/api/v1/projects/p1/eval-suites/suite_1",
       {
         executionConfig: { temperature: 0.9 },
-      }
+      },
     );
     expect(res.status).toBe(200);
     const call = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "hostConfigsV2:setSuiteConfig"
+      (c) => c[0] === "hostConfigsV2:setSuiteConfig",
     );
     expect(call).toBeTruthy();
     const input = call![1].input;
@@ -906,11 +906,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-      { enabled: false }
+      { enabled: false },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:setSuiteSchedule"
+      (c) => c[0] === "testSuites:setSuiteSchedule",
     )![1];
     expect(args.enabled).toBe(false);
     const body = (await res.json()) as any;
@@ -935,11 +935,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-      { enabled: true }
+      { enabled: true },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:setSuiteSchedule"
+      (c) => c[0] === "testSuites:setSuiteSchedule",
     )![1];
     // No interval forwarded — the backend reuses the saved one.
     expect(args).toEqual({ suiteId: "suite_1", enabled: true });
@@ -968,11 +968,11 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-        { enabled: true, intervalMinutes: 60, environmentId: "env_2" }
+        { enabled: true, intervalMinutes: 60, environmentId: "env_2" },
       );
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:setSuiteSchedule"
+        (c) => c[0] === "testSuites:setSuiteSchedule",
       )![1];
       expect(args).toEqual({
         suiteId: "suite_1",
@@ -987,11 +987,11 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-        { enabled: true }
+        { enabled: true },
       );
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:setSuiteSchedule"
+        (c) => c[0] === "testSuites:setSuiteSchedule",
       )![1];
       expect(args.environmentId).toBe("env_1");
     });
@@ -1001,7 +1001,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-        { enabled: true }
+        { enabled: true },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as {
@@ -1013,8 +1013,8 @@ describe("v1 eval-edit routes", () => {
       expect(body.message).toContain("Prod");
       expect(
         convexMutationMock.mock.calls.some(
-          (c) => c[0] === "testSuites:setSuiteSchedule"
-        )
+          (c) => c[0] === "testSuites:setSuiteSchedule",
+        ),
       ).toBe(false);
     });
 
@@ -1023,12 +1023,12 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-        { enabled: true, environmentId: "env_ghost" }
+        { enabled: true, environmentId: "env_ghost" },
       );
       expect(res.status).toBe(400);
       expect(
         ((await res.json()) as { details?: { reason?: string } }).details
-          ?.reason
+          ?.reason,
       ).toBe("ENVIRONMENT_NOT_ATTACHED");
     });
 
@@ -1037,11 +1037,11 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-        { enabled: false, environmentId: "env_1" }
+        { enabled: false, environmentId: "env_1" },
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { message?: string }).message).toContain(
-        "only applies when enabling"
+        "only applies when enabling",
       );
     });
 
@@ -1051,11 +1051,11 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1",
         {
           environmentIds: ["env_1", "env_2"],
-        }
+        },
       );
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:setSuiteEnvironments"
+        (c) => c[0] === "testSuites:setSuiteEnvironments",
       )![1];
       expect(args).toEqual({
         suiteId: "suite_1",
@@ -1072,11 +1072,11 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1",
         {
           environmentIds: null,
-        }
+        },
       );
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:setSuiteEnvironments"
+        (c) => c[0] === "testSuites:setSuiteEnvironments",
       )![1];
       expect(args.environmentIds).toBeNull();
     });
@@ -1087,13 +1087,13 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1",
         {
           environmentIds: [],
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(
         convexMutationMock.mock.calls.some(
-          (c) => c[0] === "testSuites:setSuiteEnvironments"
-        )
+          (c) => c[0] === "testSuites:setSuiteEnvironments",
+        ),
       ).toBe(false);
     });
 
@@ -1110,7 +1110,7 @@ describe("v1 eval-edit routes", () => {
                 environmentId: "env_2",
               },
             })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
 
       const res = await request(
@@ -1119,13 +1119,13 @@ describe("v1 eval-edit routes", () => {
         {
           name: "Renamed",
           environmentIds: ["env_1"],
-        }
+        },
       );
 
       expect(res.status).toBe(400);
       expect(
         ((await res.json()) as { details?: { reason?: string } }).details
-          ?.reason
+          ?.reason,
       ).toBe("SCHEDULE_ENVIRONMENT_PINNED");
       // The whole PATCH is a no-op: the rename must NOT have landed just
       // because it happened to be applied before the environment write.
@@ -1139,7 +1139,7 @@ describe("v1 eval-edit routes", () => {
               ...SUITE_DOC,
               schedule: { enabled: true, intervalMinutes: 60 },
             })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
 
       const res = await request(
@@ -1147,13 +1147,13 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1",
         {
           environmentIds: ["env_1", "env_2"],
-        }
+        },
       );
 
       expect(res.status).toBe(400);
       expect(
         ((await res.json()) as { details?: { reason?: string } }).details
-          ?.reason
+          ?.reason,
       ).toBe("SCHEDULE_ENVIRONMENT_PIN_REQUIRED");
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
@@ -1172,7 +1172,7 @@ describe("v1 eval-edit routes", () => {
                 environmentId: "env_2",
               },
             })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
 
       const res = await request(
@@ -1180,12 +1180,12 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1",
         {
           environmentIds: ["env_1"],
-        }
+        },
       );
 
       expect(res.status).toBe(200);
       const args = convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:setSuiteEnvironments"
+        (c) => c[0] === "testSuites:setSuiteEnvironments",
       )![1];
       expect(args.environmentIds).toEqual(["env_1"]);
     });
@@ -1196,13 +1196,13 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1",
         {
           name: "Renamed",
-        }
+        },
       );
       expect(res.status).toBe(200);
       expect(
         convexMutationMock.mock.calls.some(
-          (c) => c[0] === "testSuites:setSuiteEnvironments"
-        )
+          (c) => c[0] === "testSuites:setSuiteEnvironments",
+        ),
       ).toBe(false);
     });
 
@@ -1217,11 +1217,11 @@ describe("v1 eval-edit routes", () => {
                 environmentId: "env_2",
               },
             })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       const body = (await res.json()) as any;
       expect(body.environmentIds).toEqual(["env_1", "env_2"]);
@@ -1233,12 +1233,12 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestSuite"
         ? Promise.resolve({ ...SUITE_DOC, schedule: undefined })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/schedule",
-      { enabled: true }
+      { enabled: true },
     );
     expect(res.status).toBe(400);
   });
@@ -1257,7 +1257,7 @@ describe("v1 eval-edit routes", () => {
               argumentMatching: "partial",
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
     const body = (await res.json()) as any;
@@ -1268,11 +1268,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { matchOptions: { arguments: "exact" } }
+      { matchOptions: { arguments: "exact" } },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestCase"
+      (c) => c[0] === "testSuites:updateTestCase",
     )![1];
     // CASE_DOC.matchOptions toolCallOrder/maxExtraToolCalls preserved.
     expect(args.matchOptions).toEqual({
@@ -1288,11 +1288,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { steps: [{ id: "s1", kind: "prompt", prompt: "updated" }] }
+      { steps: [{ id: "s1", kind: "prompt", prompt: "updated" }] },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestCase"
+      (c) => c[0] === "testSuites:updateTestCase",
     )![1];
     expect(args.caseType).toBeUndefined();
     expect(args.steps).toEqual([
@@ -1318,7 +1318,7 @@ describe("v1 eval-edit routes", () => {
             arguments: {},
           },
         ],
-      }
+      },
     );
     expect(res.status).toBe(400);
   });
@@ -1337,7 +1337,7 @@ describe("v1 eval-edit routes", () => {
               renderTimeoutMs: 5000,
             },
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "PATCH",
@@ -1353,11 +1353,11 @@ describe("v1 eval-edit routes", () => {
             renderTimeoutMs: 5000,
           },
         ],
-      }
+      },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestCase"
+      (c) => c[0] === "testSuites:updateTestCase",
     )![1];
     expect(args.probeConfig).toBeUndefined();
     expect(args.caseType).toBeUndefined();
@@ -1391,11 +1391,11 @@ describe("v1 eval-edit routes", () => {
             expectedToolCalls: [{ toolName: "list", arguments: {} }],
             promptTurns: [],
           })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
     );
     const body = (await res.json()) as any;
     expect(body.steps[0]).toMatchObject({
@@ -1413,14 +1413,14 @@ describe("v1 eval-edit routes", () => {
   it("DELETE suite returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
-      "/api/v1/projects/p1/eval-suites/suite_1"
+      "/api/v1/projects/p1/eval-suites/suite_1",
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: "suite_1", deleted: true });
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:deleteTestSuite"
-      )
+        (c) => c[0] === "testSuites:deleteTestSuite",
+      ),
     ).toBe(true);
   });
 
@@ -1429,7 +1429,7 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "hostConfigsV2:getSuiteConfig"
         ? Promise.resolve({ ...EXEC_CONFIG, modelId: "claude-sonnet-4-5" })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "POST",
@@ -1448,7 +1448,7 @@ describe("v1 eval-edit routes", () => {
             },
           },
         ],
-      }
+      },
     );
     expect(res.status).toBe(201);
     const args = authoredCaseArgs();
@@ -1489,12 +1489,12 @@ describe("v1 eval-edit routes", () => {
           title: "vendor",
           steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
           models: [{ model }],
-        }
+        },
       );
       expect(res.status).toBe(201);
       const args = authoredCaseArgs();
       expect(args.models).toEqual([{ model, provider }]);
-    }
+    },
   );
 
   it("falls back to the vendor PREFIX for a qualified id nothing knows", async () => {
@@ -1511,7 +1511,7 @@ describe("v1 eval-edit routes", () => {
         // verbatim, so passing it would satisfy the assertion without ever
         // reaching the fallback under test.
         models: [{ model: "newvendor/some-model" }],
-      }
+      },
     );
     expect(res.status).toBe(201);
     const args = authoredCaseArgs();
@@ -1528,7 +1528,7 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "hostConfigsV2:getSuiteConfig"
         ? Promise.resolve({ ...EXEC_CONFIG, modelId: "org-private-model" })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "POST",
@@ -1536,7 +1536,7 @@ describe("v1 eval-edit routes", () => {
       {
         title: "inherits",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
-      }
+      },
     );
     expect(res.status).toBe(201);
     const args = authoredCaseArgs();
@@ -1553,7 +1553,7 @@ describe("v1 eval-edit routes", () => {
         title: "padded",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
         models: [{ model: "  openai/gpt-5  " }],
-      }
+      },
     );
     expect(res.status).toBe(201);
     const args = authoredCaseArgs();
@@ -1587,20 +1587,20 @@ describe("v1 eval-edit routes", () => {
         title: "blank",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
         models: [entry],
-      }
+      },
     );
     expect(res.status).toBe(400);
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases"
-      )
+        (c) => c[0] === "testSuites:createTestCases",
+      ),
     ).toBe(false);
   });
 
   it("GET cases returns scrubbed public case DTOs", async () => {
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1/cases"
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -1625,11 +1625,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "PATCH",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-      { matchOptions: null, checks: null }
+      { matchOptions: null, checks: null },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestCase"
+      (c) => c[0] === "testSuites:updateTestCase",
     )![1];
     expect(args.matchOptions).toBeNull();
     expect(args.predicates).toBeNull();
@@ -1663,11 +1663,11 @@ describe("v1 eval-edit routes", () => {
             arguments: {},
           },
         ],
-      }
+      },
     );
     expect(res.status).toBe(200);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:updateTestCase"
+      (c) => c[0] === "testSuites:updateTestCase",
     )![1];
     // The toolCall step keeps the case a render-check (kind unchanged).
     expect(args.probeConfig).toBeUndefined();
@@ -1682,7 +1682,7 @@ describe("v1 eval-edit routes", () => {
   it("DELETE case returns a minimal acknowledgement", async () => {
     const res = await request(
       "DELETE",
-      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: "case_1", deleted: true });
@@ -1715,7 +1715,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "normal" }
+      { mode: "normal" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -1725,8 +1725,8 @@ describe("v1 eval-edit routes", () => {
     expect(generateEvalTestsMock).toHaveBeenCalled();
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases"
-      )
+        (c) => c[0] === "testSuites:createTestCases",
+      ),
     ).toBe(true);
     const createArgs = authoredCaseArgs();
     expect(createArgs.steps).toHaveLength(2);
@@ -1780,7 +1780,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "normal" }
+      { mode: "normal" },
     );
     expect(res.status).toBe(200);
 
@@ -1835,7 +1835,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      {}
+      {},
     );
 
     expect(res.status).toBe(200);
@@ -1847,7 +1847,7 @@ describe("v1 eval-edit routes", () => {
     ]);
     expect(convexQueryMock).not.toHaveBeenCalledWith(
       "testSuites:getSuiteRunServerSelection",
-      expect.anything()
+      expect.anything(),
     );
   });
 
@@ -1866,12 +1866,12 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { servers: ["srv_1"] }
+      { servers: ["srv_1"] },
     );
 
     expect(res.status).toBe(400);
     expect(
-      ((await res.json()) as { details?: { reason?: string } }).details?.reason
+      ((await res.json()) as { details?: { reason?: string } }).details?.reason,
     ).toBe("ENVIRONMENT_SERVERS_NOT_OVERRIDABLE");
     // No connection, no tool discovery, no credit spent.
     expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
@@ -1881,11 +1881,11 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { environmentId: "env_1", servers: ["srv_1"] }
+      { environmentId: "env_1", servers: ["srv_1"] },
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as { message?: string }).message).toContain(
-      "mutually exclusive"
+      "mutually exclusive",
     );
   });
 
@@ -1918,7 +1918,7 @@ describe("v1 eval-edit routes", () => {
           "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
         },
         body: JSON.stringify({ mode: "normal" }),
-      }
+      },
     );
     expect(res.status).toBe(200);
 
@@ -1972,11 +1972,11 @@ describe("v1 eval-edit routes", () => {
           "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
         },
         body: JSON.stringify({ mode: "normal" }),
-      }
+      },
     );
     expect(res.status).toBe(200);
     const ledgerCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:recordCaseGeneration"
+      (c) => c[0] === "testSuites:recordCaseGeneration",
     );
     expect(ledgerCall?.[1].drafts).toEqual([]);
 
@@ -2001,7 +2001,7 @@ describe("v1 eval-edit routes", () => {
           "x-mcpjam-idempotency-key": "proposal:act_2:generate_eval_cases",
         },
         body: JSON.stringify({ mode: "normal" }),
-      }
+      },
     );
     // 502 SERVER_UNREACHABLE — the repo's retryable upstream-failure status.
     expect(blocked.status).toBe(502);
@@ -2040,7 +2040,7 @@ describe("v1 eval-edit routes", () => {
           "x-mcpjam-idempotency-key": "proposal:act_1:generate_eval_cases",
         },
         body: JSON.stringify({ mode: "normal" }),
-      }
+      },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -2051,8 +2051,8 @@ describe("v1 eval-edit routes", () => {
     // And no duplicate ledger write for the replay.
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:recordCaseGeneration"
-      )
+        (c) => c[0] === "testSuites:recordCaseGeneration",
+      ),
     ).toBe(false);
   });
 
@@ -2102,7 +2102,7 @@ describe("v1 eval-edit routes", () => {
           ...(init.headers ?? {}),
         },
         body: JSON.stringify({ mode: "normal", ...(init.body ?? {}) }),
-      }
+      },
     );
   }
 
@@ -2112,8 +2112,8 @@ describe("v1 eval-edit routes", () => {
     expect(ledgerKeys()).toContain("cli-run-7");
     expect(
       convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:recordCaseGeneration"
-      )?.[1].idempotencyKey
+        (c) => c[0] === "testSuites:recordCaseGeneration",
+      )?.[1].idempotencyKey,
     ).toBe("cli-run-7");
   });
 
@@ -2159,8 +2159,8 @@ describe("v1 eval-edit routes", () => {
     expect(ledgerKeys()).toEqual([]);
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:recordCaseGeneration"
-      )
+        (c) => c[0] === "testSuites:recordCaseGeneration",
+      ),
     ).toBe(false);
   });
 
@@ -2197,7 +2197,7 @@ describe("v1 eval-edit routes", () => {
           Authorization: "Bearer tok",
         },
         body: JSON.stringify({ mode: "normal", idempotencyKey: "cli-run-7" }),
-      }
+      },
     );
     expect(res.status).toBe(200);
     expect((await res.json()).created).toHaveLength(1);
@@ -2213,12 +2213,12 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "servers:getProjectServers"
         ? Promise.resolve([{ _id: "srv_1", name: "Excalidraw (App)" }])
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "normal", servers: ["Excalidraw (App)"] }
+      { mode: "normal", servers: ["Excalidraw (App)"] },
     );
     expect(res.status).toBe(200);
     // createAuthorizedManager receives the resolved ID, not the name.
@@ -2239,7 +2239,7 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getSuiteRunServerSelection"
         ? Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     convexMutationMock.mockImplementation((name: string, args?: any) => {
       if (name === "testSuites:createTestCases")
@@ -2249,7 +2249,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "normal" }
+      { mode: "normal" },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -2279,7 +2279,7 @@ describe("v1 eval-edit routes", () => {
       {
         caseMix: { simple: 3, negative: 1 },
         varyUserStyles: true,
-      }
+      },
     );
     expect(res.status).toBe(200);
     const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
@@ -2306,7 +2306,7 @@ describe("v1 eval-edit routes", () => {
     await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "normal" }
+      { mode: "normal" },
     );
     const forwarded = generateEvalTestsMock.mock.calls.at(-1)?.[1];
     expect(forwarded?.generationOptions).toBeUndefined();
@@ -2333,7 +2333,7 @@ describe("v1 eval-edit routes", () => {
     await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "negative", caseMix: { negative: 4 } }
+      { mode: "negative", caseMix: { negative: 4 } },
     );
     // Routed to the plan-driven generator, NOT the legacy negative-only one.
     expect(generateNegativeEvalTestsMock).not.toHaveBeenCalled();
@@ -2379,7 +2379,7 @@ describe("v1 eval-edit routes", () => {
       await request(
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-        { mode: "negative", caseMix }
+        { mode: "negative", caseMix },
       );
       // A caseMix with no bucket > 0 must not supersede mode: the negative-only
       // generator is used, and no empty generationOptions leaks downstream.
@@ -2387,7 +2387,7 @@ describe("v1 eval-edit routes", () => {
       expect(generateEvalTestsMock).not.toHaveBeenCalled();
       const forwarded = generateNegativeEvalTestsMock.mock.calls.at(-1)?.[1];
       expect(forwarded?.generationOptions).toBeUndefined();
-    }
+    },
   );
 
   it("mode:negative + caseMix persists per-draft negativity (positives keep tool calls)", async () => {
@@ -2427,7 +2427,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
-      { mode: "negative", caseMix: { simple: 1, negative: 1 } }
+      { mode: "negative", caseMix: { simple: 1, negative: 1 } },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -2463,7 +2463,7 @@ describe("v1 eval-edit routes", () => {
       {
         title: "no id",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
-      }
+      },
     );
     expect(res.status).toBe(201);
     // This first-party surface mints rather than leaving the case identity-less.
@@ -2478,7 +2478,7 @@ describe("v1 eval-edit routes", () => {
         id: "c_from_suite_file",
         title: "declared",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
-      }
+      },
     );
     expect(res.status).toBe(201);
     const args = authoredCaseArgs();
@@ -2495,13 +2495,13 @@ describe("v1 eval-edit routes", () => {
         id: "not a valid id",
         title: "bad id",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
-      }
+      },
     );
     expect(res.status).toBe(400);
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases"
-      )
+        (c) => c[0] === "testSuites:createTestCases",
+      ),
     ).toBe(false);
   });
 
@@ -2533,7 +2533,7 @@ describe("v1 eval-edit routes", () => {
         id: "c_taken",
         title: "dupe",
         steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
-      }
+      },
     );
     expect(res.status).toBe(409);
     const body = (await res.json()) as any;
@@ -2564,7 +2564,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases",
-      { title: "bad", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] }
+      { title: "bad", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
     );
     expect(res.status).toBe(400);
   });
@@ -2573,11 +2573,11 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       name === "testSuites:getTestCase"
         ? Promise.resolve({ ...CASE_DOC, declaredCaseId: "c_readback" })
-        : defaultQueryImpl(name)
+        : defaultQueryImpl(name),
     );
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
     );
     const body = (await res.json()) as any;
     // Two DIFFERENT identities: the row id addresses the case in a URL, the
@@ -2589,7 +2589,7 @@ describe("v1 eval-edit routes", () => {
   it("omits declaredId for a case authored before declared identity existed", async () => {
     const res = await request(
       "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
     );
     const body = (await res.json()) as any;
     expect(body).not.toHaveProperty("declaredId");
@@ -2608,11 +2608,11 @@ describe("v1 eval-edit routes", () => {
             steps: [{ id: "s1", kind: "prompt", prompt: "b" }],
           },
         ],
-      }
+      },
     );
     expect(res.status).toBe(201);
     const batchCalls = convexMutationMock.mock.calls.filter(
-      (c) => c[0] === "testSuites:createTestCases"
+      (c) => c[0] === "testSuites:createTestCases",
     );
     expect(batchCalls).toHaveLength(1);
     expect(batchCalls[0][1].cases).toHaveLength(2);
@@ -2680,7 +2680,7 @@ describe("v1 eval-edit routes", () => {
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
           { title: "b", steps: [{ id: "s1", kind: "prompt", prompt: "b" }] },
         ],
-      }
+      },
     );
     // 201, not 4xx: case "a" really was written, and a 4xx would tell the
     // caller to retry a write that already landed.
@@ -2724,7 +2724,7 @@ describe("v1 eval-edit routes", () => {
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
         ],
         duplicatePolicy: "blcok",
-      }
+      },
     );
     expect(res.status).toBe(201);
     const body = (await res.json()) as any;
@@ -2746,11 +2746,11 @@ describe("v1 eval-edit routes", () => {
         ],
         duplicatePolicy: "create_anyway",
         overrideReason: "porting a fixture verbatim",
-      }
+      },
     );
     expect(res.status).toBe(201);
     const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:createTestCases"
+      (c) => c[0] === "testSuites:createTestCases",
     )![1];
     expect(args.duplicatePolicy).toBe("create_anyway");
     expect(args.overrideReason).toBe("porting a fixture verbatim");
@@ -2776,7 +2776,7 @@ describe("v1 eval-edit routes", () => {
             },
           ],
         }),
-      }
+      },
     );
     expect(res.status).toBe(201);
     const items = allAuthoredCaseArgs();
@@ -2795,7 +2795,7 @@ describe("v1 eval-edit routes", () => {
         cases: [
           { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
         ],
-      }
+      },
     );
     expect(res.status).toBe(201);
     expect(allAuthoredCaseArgs()[0].idempotencyKey).toBeUndefined();
@@ -2810,13 +2810,13 @@ describe("v1 eval-edit routes", () => {
           title: `case-${i}`,
           steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
         })),
-      }
+      },
     );
     expect(res.status).toBe(400);
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases"
-      )
+        (c) => c[0] === "testSuites:createTestCases",
+      ),
     ).toBe(false);
   });
 
@@ -2824,7 +2824,7 @@ describe("v1 eval-edit routes", () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
-      { cases: [] }
+      { cases: [] },
     );
     expect(res.status).toBe(400);
   });
@@ -2838,7 +2838,7 @@ describe("v1 eval-edit routes", () => {
           { title: "ok", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
           { title: "no steps" },
         ],
-      }
+      },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as any;
@@ -2847,8 +2847,8 @@ describe("v1 eval-edit routes", () => {
     // the whole request, caught before the first write.
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCases"
-      )
+        (c) => c[0] === "testSuites:createTestCases",
+      ),
     ).toBe(false);
   });
 
@@ -3011,7 +3011,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/cases",
-        { title: "t", steps: [PROMPT_STEP], import: CLAIM }
+        { title: "t", steps: [PROMPT_STEP], import: CLAIM },
       );
       expect(res.status).toBe(201);
       expect(authoredCaseArgs().import).toEqual(CLAIM);
@@ -3032,7 +3032,7 @@ describe("v1 eval-edit routes", () => {
             // Native: no block at all. The batch must not manufacture one.
             { title: "c", steps: [PROMPT_STEP] },
           ],
-        }
+        },
       );
       expect(res.status).toBe(201);
       const authored = allAuthoredCaseArgs();
@@ -3048,7 +3048,7 @@ describe("v1 eval-edit routes", () => {
       const set = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-        { import: CLAIM }
+        { import: CLAIM },
       );
       expect(set.status).toBe(200);
       expect(updateArgs().import).toEqual(CLAIM);
@@ -3057,7 +3057,7 @@ describe("v1 eval-edit routes", () => {
       const cleared = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-        { import: null }
+        { import: null },
       );
       expect(cleared.status).toBe(200);
       // `null` is the REMOVE instruction, and it has to survive as null: a
@@ -3070,7 +3070,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-        { title: "Renamed" }
+        { title: "Renamed" },
       );
       expect(res.status).toBe(200);
       // Omitted ≠ null. Sending `import: null` here would silently strip the
@@ -3086,7 +3086,7 @@ describe("v1 eval-edit routes", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { import?: unknown };
@@ -3096,7 +3096,7 @@ describe("v1 eval-edit routes", () => {
     it("omits `import` entirely for a natively authored case", async () => {
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
       );
       expect(res.status).toBe(200);
       // Absent, not `null` and not an empty object: "authored here" and
@@ -3121,7 +3121,7 @@ describe("v1 eval-edit routes", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
       );
       const body = (await res.json()) as { import?: Record<string, unknown> };
       // The stored row is a superset of the public claim. Spreading it would
@@ -3141,7 +3141,7 @@ describe("v1 eval-edit routes", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
       );
       expect(res.status).toBe(200);
       expect("import" in ((await res.json()) as object)).toBe(false);
@@ -3178,7 +3178,7 @@ describe("v1 eval-edit routes", () => {
         const res = await request(
           "POST",
           "/api/v1/projects/p1/eval-suites/suite_1/cases",
-          { title: "t", steps: [PROMPT_STEP], import: claim }
+          { title: "t", steps: [PROMPT_STEP], import: claim },
         );
         expect(res.status).toBe(400);
         const json = (await res.json()) as { code?: string; message?: string };
@@ -3188,14 +3188,14 @@ describe("v1 eval-edit routes", () => {
         // authenticated launcher. Stripping the field instead of refusing it
         // would let a caller believe it had been honoured.
         expect(convexMutationMock).not.toHaveBeenCalled();
-      }
+      },
     );
 
     it("refuses an approval field on PATCH too", async () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
-        { import: { status: "approximated", note: "ok", approvedBy: "u" } }
+        { import: { status: "approximated", note: "ok", approvedBy: "u" } },
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -3205,7 +3205,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/cases",
-        { title: "t", steps: [PROMPT_STEP], import: { status: "exact" } }
+        { title: "t", steps: [PROMPT_STEP], import: { status: "exact" } },
       );
       expect(res.status).toBe(400);
       const json = (await res.json()) as { message?: string };
@@ -3227,7 +3227,7 @@ describe("v1 eval-edit routes", () => {
             sourceCaseKey: "k".repeat(512),
             note: "n".repeat(2000),
           },
-        }
+        },
       );
       expect(res.status).toBe(201);
       expect(authoredCaseArgs().import.sourceCaseKey).toHaveLength(512);
@@ -3235,13 +3235,16 @@ describe("v1 eval-edit routes", () => {
     });
 
     it.each([
-      ["sourceCaseKey", { status: "approximated", sourceCaseKey: "k".repeat(513) }],
+      [
+        "sourceCaseKey",
+        { status: "approximated", sourceCaseKey: "k".repeat(513) },
+      ],
       ["note", { status: "approximated", note: "n".repeat(2001) }],
     ] as const)("refuses %s one character over its cap", async (_l, claim) => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/cases",
-        { title: "t", steps: [PROMPT_STEP], import: claim }
+        { title: "t", steps: [PROMPT_STEP], import: claim },
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -3255,7 +3258,7 @@ describe("v1 eval-edit routes", () => {
           title: "t",
           steps: [PROMPT_STEP],
           import: { status: "approximate" },
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -3294,13 +3297,13 @@ describe("v1 eval-edit routes", () => {
       convexQueryMock.mockImplementation((name: string) =>
         name === "testSuites:getTestSuite"
           ? Promise.resolve(doc)
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
     }
 
     function suiteUpdateArgs(): any {
       return convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestSuite"
+        (c) => c[0] === "testSuites:updateTestSuite",
       )?.[1];
     }
 
@@ -3308,12 +3311,12 @@ describe("v1 eval-edit routes", () => {
       for (const settings of [{ repetitions: 3 }, { passThreshold: 0.8 }]) {
         vi.clearAllMocks();
         convexQueryMock.mockImplementation((name: string) =>
-          defaultQueryImpl(name)
+          defaultQueryImpl(name),
         );
         const res = await request(
           "PATCH",
           "/api/v1/projects/p1/eval-suites/suite_1",
-          { settings }
+          { settings },
         );
         expect(res.status).toBe(400);
         const json = (await res.json()) as { code?: string; message?: string };
@@ -3334,7 +3337,7 @@ describe("v1 eval-edit routes", () => {
             passThreshold: 0.8,
             validity: { minCompletionRate: 0.9 },
           },
-        }
+        },
       );
       expect(res.status).toBe(200);
       const args = suiteUpdateArgs();
@@ -3353,7 +3356,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { passThreshold: 0.95 } }
+        { settings: { passThreshold: 0.95 } },
       );
       expect(res.status).toBe(200);
       const args = suiteUpdateArgs();
@@ -3373,7 +3376,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { validity: { minCompletionRate: 0.99 } } }
+        { settings: { validity: { minCompletionRate: 0.99 } } },
       );
       expect(res.status).toBe(200);
       expect(suiteUpdateArgs().verdictPolicyDefaults.validity).toEqual({
@@ -3386,7 +3389,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { minimumAccuracy: 80, passThreshold: 0.8 } }
+        { settings: { minimumAccuracy: 80, passThreshold: 0.8 } },
       );
       expect(res.status).toBe(400);
       const json = (await res.json()) as { code?: string; message?: string };
@@ -3398,7 +3401,7 @@ describe("v1 eval-edit routes", () => {
     it("names the policy on the detail, without synthesizing a fraction", async () => {
       const legacy = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       const legacySettings = ((await legacy.json()) as any).settings;
       expect(legacySettings.policy).toBe("legacy");
@@ -3413,7 +3416,7 @@ describe("v1 eval-edit routes", () => {
       withSuite(V2_SUITE);
       const v2 = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       const v2Settings = ((await v2.json()) as any).settings;
       expect(v2Settings.policy).toBe("v2");
@@ -3427,7 +3430,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { minimumAccuracy: 80 } }
+        { settings: { minimumAccuracy: 80 } },
       );
       expect(res.status).toBe(400);
       const json = (await res.json()) as { code?: string; message?: string };
@@ -3449,11 +3452,11 @@ describe("v1 eval-edit routes", () => {
           name: "Renamed",
           expectedRevisionNumber: 7,
           hosts: [],
-        }
+        },
       );
       expect(res.status).toBe(200);
       const writes = convexMutationMock.mock.calls.filter(
-        (c) => c[0] === "testSuites:updateTestSuite"
+        (c) => c[0] === "testSuites:updateTestSuite",
       );
       expect(writes.length).toBeGreaterThanOrEqual(2);
       expect(writes[0][1].expectedRevisionNumber).toBe(7);
@@ -3471,12 +3474,12 @@ describe("v1 eval-edit routes", () => {
       convexQueryMock.mockImplementation((name: string) =>
         name === "testSuites:getTestSuite"
           ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 5 })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
       const stale = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { environmentIds: ["env_1"], expectedRevisionNumber: 3 }
+        { environmentIds: ["env_1"], expectedRevisionNumber: 3 },
       );
       expect(stale.status).toBe(409);
       const body = (await stale.json()) as { code?: string; message?: string };
@@ -3487,13 +3490,13 @@ describe("v1 eval-edit routes", () => {
       const current = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { environmentIds: ["env_1"], expectedRevisionNumber: 5 }
+        { environmentIds: ["env_1"], expectedRevisionNumber: 5 },
       );
       expect(current.status).toBe(200);
       expect(
         convexMutationMock.mock.calls.some(
-          (c) => c[0] === "testSuites:setSuiteEnvironments"
-        )
+          (c) => c[0] === "testSuites:setSuiteEnvironments",
+        ),
       ).toBe(true);
     });
 
@@ -3501,11 +3504,11 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { hosts: [], expectedRevisionNumber: 7 }
+        { hosts: [], expectedRevisionNumber: 7 },
       );
       expect(res.status).toBe(200);
       const writes = convexMutationMock.mock.calls.filter(
-        (c) => c[0] === "testSuites:updateTestSuite"
+        (c) => c[0] === "testSuites:updateTestSuite",
       );
       expect(writes.length).toBe(1);
       expect(writes[0][1].expectedRevisionNumber).toBe(7);
@@ -3519,14 +3522,14 @@ describe("v1 eval-edit routes", () => {
           name: "Renamed",
           hosts: [],
           environmentIds: ["env_1"],
-        }
+        },
       );
       expect(res.status).toBe(200);
       const revisions = convexMutationMock.mock.calls
         .filter(
           (c) =>
             c[0] === "testSuites:updateTestSuite" ||
-            c[0] === "testSuites:setSuiteEnvironments"
+            c[0] === "testSuites:setSuiteEnvironments",
         )
         .map((c) => c[1].revision);
       expect(revisions.length).toBeGreaterThanOrEqual(3);
@@ -3541,7 +3544,7 @@ describe("v1 eval-edit routes", () => {
       convexMutationMock.mockImplementation((name: string, args?: any) => {
         if (name === "testSuites:updateTestSuite") {
           const error: Error & { data?: unknown } = new Error(
-            "This suite changed since you loaded it."
+            "This suite changed since you loaded it.",
           );
           error.data = {
             code: "EVAL_SUITE_REVISION_CONFLICT",
@@ -3556,7 +3559,7 @@ describe("v1 eval-edit routes", () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { name: "Renamed", expectedRevisionNumber: 7 }
+        { name: "Renamed", expectedRevisionNumber: 7 },
       );
       expect(res.status).toBe(409);
       const json = (await res.json()) as {
@@ -3574,18 +3577,18 @@ describe("v1 eval-edit routes", () => {
     it("reports revisionNumber on the suite detail, null when unrecorded", async () => {
       const unset = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       expect(((await unset.json()) as any).revisionNumber).toBeNull();
 
       convexQueryMock.mockImplementation((name: string) =>
         name === "testSuites:getTestSuite"
           ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 4 })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
       const set = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       expect(((await set.json()) as any).revisionNumber).toBe(4);
     });
@@ -3601,7 +3604,7 @@ describe("v1 eval-edit routes", () => {
   describe("judge rubric on PATCH", () => {
     function suiteUpdateArgs(): any {
       return convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:updateTestSuite"
+        (c) => c[0] === "testSuites:updateTestSuite",
       )?.[1];
     }
 
@@ -3619,7 +3622,7 @@ describe("v1 eval-edit routes", () => {
               },
             },
           },
-        }
+        },
       );
       expect(res.status).toBe(200);
       const args = suiteUpdateArgs();
@@ -3634,19 +3637,19 @@ describe("v1 eval-edit routes", () => {
       const cleared = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { judge: { rubric: null } } }
+        { settings: { judge: { rubric: null } } },
       );
       expect(cleared.status).toBe(200);
       expect(suiteUpdateArgs()).toHaveProperty("judgeRubric", null);
 
       vi.clearAllMocks();
       convexQueryMock.mockImplementation((name: string) =>
-        defaultQueryImpl(name)
+        defaultQueryImpl(name),
       );
       const empty = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { settings: { judge: { rubric: { criteria: [] } } } }
+        { settings: { judge: { rubric: { criteria: [] } } } },
       );
       expect(empty.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -3656,18 +3659,21 @@ describe("v1 eval-edit routes", () => {
       for (const criteria of [
         [{ id: "not valid!", label: "x" }],
         [{ id: "ok", label: "" }],
-        [{ id: "a", label: "x" }, { id: "a", label: "y" }].slice(0, 1).concat([
-          { id: "b", label: "z".repeat(201) },
-        ]),
+        [
+          { id: "a", label: "x" },
+          { id: "a", label: "y" },
+        ]
+          .slice(0, 1)
+          .concat([{ id: "b", label: "z".repeat(201) }]),
       ]) {
         vi.clearAllMocks();
         convexQueryMock.mockImplementation((name: string) =>
-          defaultQueryImpl(name)
+          defaultQueryImpl(name),
         );
         const res = await request(
           "PATCH",
           "/api/v1/projects/p1/eval-suites/suite_1",
-          { settings: { judge: { rubric: { criteria } } } }
+          { settings: { judge: { rubric: { criteria } } } },
         );
         expect(res.status).toBe(400);
         expect(convexMutationMock).not.toHaveBeenCalled();
@@ -3677,7 +3683,7 @@ describe("v1 eval-edit routes", () => {
     it("reports the rubric back on the suite detail, null when there is none", async () => {
       const none = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       expect(((await none.json()) as any).settings.judge.rubric).toBeNull();
 
@@ -3691,11 +3697,11 @@ describe("v1 eval-edit routes", () => {
                 ],
               },
             })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
       const some = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       expect(((await some.json()) as any).settings.judge.rubric).toEqual({
         criteria: [{ id: "cites", label: "Cites a source", description: "d" }],
@@ -3741,7 +3747,7 @@ describe("v1 eval-edit routes", () => {
       convexQueryMock.mockImplementation((name: string) =>
         name === "testSuites:listSuiteRevisions"
           ? Promise.resolve(page)
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
     }
 
@@ -3749,7 +3755,7 @@ describe("v1 eval-edit routes", () => {
       withRevisions({ page: [REVISION], isDone: true, continueCursor: "" });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/revisions"
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -3779,11 +3785,11 @@ describe("v1 eval-edit routes", () => {
       });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=5&cursor=cursor-1"
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=5&cursor=cursor-1",
       );
       expect(res.status).toBe(200);
       const call = convexQueryMock.mock.calls.find(
-        (c) => c[0] === "testSuites:listSuiteRevisions"
+        (c) => c[0] === "testSuites:listSuiteRevisions",
       );
       expect(call![1]).toEqual({
         suiteId: "suite_1",
@@ -3796,11 +3802,11 @@ describe("v1 eval-edit routes", () => {
       for (const limit of ["0", "101", "abc"]) {
         vi.clearAllMocks();
         convexQueryMock.mockImplementation((name: string) =>
-          defaultQueryImpl(name)
+          defaultQueryImpl(name),
         );
         const res = await request(
           "GET",
-          `/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=${limit}`
+          `/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=${limit}`,
         );
         expect(res.status, limit).toBe(400);
       }
@@ -3810,13 +3816,13 @@ describe("v1 eval-edit routes", () => {
       withRevisions({ page: [], isDone: true, continueCursor: "" });
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=&cursor="
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=&cursor=",
       );
       // `?limit=` would otherwise coerce to 0 and be refused for a request
       // that asked for nothing in particular.
       expect(res.status).toBe(200);
       const call = convexQueryMock.mock.calls.find(
-        (c) => c[0] === "testSuites:listSuiteRevisions"
+        (c) => c[0] === "testSuites:listSuiteRevisions",
       );
       expect(call![1].paginationOpts).toEqual({ numItems: 25, cursor: null });
     });
@@ -3825,17 +3831,17 @@ describe("v1 eval-edit routes", () => {
       convexQueryMock.mockImplementation((name: string) =>
         name === "testSuites:getTestSuite"
           ? Promise.resolve({ ...SUITE_DOC, projectId: "p2" })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1/revisions"
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions",
       );
       expect(res.status).toBe(404);
       expect(
         convexQueryMock.mock.calls.find(
-          (c) => c[0] === "testSuites:listSuiteRevisions"
-        )
+          (c) => c[0] === "testSuites:listSuiteRevisions",
+        ),
       ).toBeUndefined();
     });
   });
@@ -3858,11 +3864,11 @@ describe("v1 eval-edit routes", () => {
               },
               scheduleNextDueAt: 1750,
             })
-          : defaultQueryImpl(name)
+          : defaultQueryImpl(name),
       );
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       const schedule = ((await res.json()) as any).schedule;
       // `enabled` stays TRUE on a self-paused schedule, which is exactly why
@@ -3877,7 +3883,7 @@ describe("v1 eval-edit routes", () => {
     it("reports a null state and a zero failure count when unset", async () => {
       const res = await request(
         "GET",
-        "/api/v1/projects/p1/eval-suites/suite_1"
+        "/api/v1/projects/p1/eval-suites/suite_1",
       );
       const schedule = ((await res.json()) as any).schedule;
       expect(schedule.state).toBeNull();
@@ -3945,20 +3951,279 @@ describe("v1 eval-edit routes", () => {
         expect(json.code).toBe("VALIDATION_ERROR");
         expect(json.message).toContain(key);
         expect(convexMutationMock).not.toHaveBeenCalled();
-      }
+      },
     );
 
     it("names the field path on a typed-wrong declared key", async () => {
       const res = await request(
         "PATCH",
         "/api/v1/projects/p1/eval-suites/suite_1",
-        { name: 12 }
+        { name: 12 },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
       expect(body.code).toBe("VALIDATION_ERROR");
       expect(body.message).toMatch(/^name:/);
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+  // =========================================================================
+  // CI-OWNED SUITES: the marker, and the refusal the caller can act on.
+  //
+  // The platform refuses configuration writes to a suite whose shape lives in a
+  // repository, because the CLI's as-code sync hard-deletes any case the file
+  // does not declare. These routes do not re-implement that rule — Convex is
+  // the guard, and a second copy in front of it is a second thing to keep
+  // correct. What they owe the caller is two things: FORWARD the marker that
+  // exempts the owning file, and translate the refusal into something better
+  // than a 500.
+  // =========================================================================
+  describe("CI-owned suites", () => {
+    /** The refusal exactly as the platform raises it. */
+    function ciOwnedRefusal() {
+      const error = new Error("ConvexError");
+      (error as unknown as { data: unknown }).data = {
+        code: "CI_OWNED_SUITE_READ_ONLY",
+        message:
+          "This suite is managed by CI — its configuration lives in your repository. Edit the test file, or duplicate the suite to edit it here.",
+        action: "suite.edit",
+        declaredSuiteId: "s_checkout",
+      };
+      return error;
+    }
+
+    function refuseMutations(names: string[]) {
+      convexMutationMock.mockImplementation((name: string, args?: any) => {
+        if (names.includes(name) && !args?.fileSync) {
+          return Promise.reject(ciOwnedRefusal());
+        }
+        return defaultMutationImpl(name, args);
+      });
+    }
+
+    /** The `fileSync` arg of the most recent call to `name`, if any. */
+    function fileSyncOf(name: string): unknown {
+      const calls = convexMutationMock.mock.calls.filter(
+        (call) => call[0] === name,
+      );
+      return calls[calls.length - 1]?.[1]?.fileSync;
+    }
+
+    it("reports the platform's refusal as a 409 with a remedy, not a 500", async () => {
+      refuseMutations(["testSuites:updateTestSuite"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "renamed" },
+      );
+
+      // 409, not 403. The caller is not short a permission — every project
+      // member holds `suite.edit` here — so telling them to ask an admin would
+      // send them after access that changes nothing.
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as any;
+      expect(body.code).toBe("CONFLICT");
+      expect(body.message).toMatch(/managed by CI/i);
+      expect(body.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+      // Both remedies, in the response, so a client does not have to know them.
+      expect(body.details?.hint).toMatch(/suite file/i);
+      expect(body.details?.hint).toMatch(/duplicate/i);
+      expect(body.details?.declaredSuiteId).toBe("s_checkout");
+    });
+
+    it("PATCH suite carries declaredSuiteId through as the file-sync marker", async () => {
+      refuseMutations(["testSuites:updateTestSuite"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "renamed by the file", declaredSuiteId: "s_checkout" },
+      );
+      expect(res.status).toBe(200);
+      expect(fileSyncOf("testSuites:updateTestSuite")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+    });
+
+    it("PATCH suite sends no marker at all when the caller omits it", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "renamed" },
+      );
+      expect(res.status).toBe(200);
+      // ABSENT rather than `undefined`: the platform's validators are exact, so
+      // an explicit undefined fails the write on a backend that predates it.
+      const call = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite",
+      );
+      expect(call?.[1]).not.toHaveProperty("fileSync");
+    });
+
+    it("POST case carries the marker", async () => {
+      refuseMutations(["testSuites:createTestCases"]);
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        {
+          title: "authored by the file",
+          steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          declaredSuiteId: "s_checkout",
+        },
+      );
+      expect(res.status).toBe(201);
+      expect(fileSyncOf("testSuites:createTestCases")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+    });
+
+    it("POST cases/batch carries ONE marker for the request, not one per case", async () => {
+      refuseMutations(["testSuites:createTestCases"]);
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+        {
+          declaredSuiteId: "s_checkout",
+          cases: [
+            {
+              title: "one",
+              steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+            },
+            {
+              title: "two",
+              steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+            },
+          ],
+        },
+      );
+      expect(res.status).toBe(201);
+      expect(fileSyncOf("testSuites:createTestCases")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+      // The marker describes the REQUEST. A per-case one would invite a batch
+      // that claims two owners.
+      const call = convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:createTestCases",
+      );
+      for (const item of call?.[1]?.cases ?? []) {
+        expect(item).not.toHaveProperty("declaredSuiteId");
+        expect(item).not.toHaveProperty("fileSync");
+      }
+    });
+
+    it("PATCH case carries the marker", async () => {
+      refuseMutations(["testSuites:updateTestCase"]);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { title: "renamed by the file", declaredSuiteId: "s_checkout" },
+      );
+      expect(res.status).toBe(200);
+      expect(fileSyncOf("testSuites:updateTestCase")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+    });
+
+    it("DELETE case takes the marker on the query string — a DELETE has no body", async () => {
+      refuseMutations(["testSuites:deleteTestCase"]);
+      const res = await request(
+        "DELETE",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1?declaredSuiteId=s_checkout",
+      );
+      expect(res.status).toBe(200);
+      expect(fileSyncOf("testSuites:deleteTestCase")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+    });
+
+    it("DELETE suite takes the marker on the query string", async () => {
+      refuseMutations(["testSuites:deleteTestSuite"]);
+      const res = await request(
+        "DELETE",
+        "/api/v1/projects/p1/eval-suites/suite_1?declaredSuiteId=s_checkout",
+      );
+      expect(res.status).toBe(200);
+      expect(fileSyncOf("testSuites:deleteTestSuite")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+    });
+
+    it("PATCH schedule and PUT environments carry the marker", async () => {
+      refuseMutations([
+        "testSuites:setSuiteSchedule",
+        "testSuites:setSuiteEnvironments",
+      ]);
+      const scheduleRes = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: false, declaredSuiteId: "s_checkout" },
+      );
+      expect(scheduleRes.status).toBe(200);
+      expect(fileSyncOf("testSuites:setSuiteSchedule")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+
+      const envRes = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], declaredSuiteId: "s_checkout" },
+      );
+      expect(envRes.status).toBe(200);
+      expect(fileSyncOf("testSuites:setSuiteEnvironments")).toEqual({
+        declaredSuiteId: "s_checkout",
+      });
+    });
+
+    it("reports ownership on the suite detail so a caller can see it before writing", async () => {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestSuite") {
+          return Promise.resolve({
+            ...SUITE_DOC,
+            declaredSuiteId: "s_checkout",
+          });
+        }
+        return defaultQueryImpl(name);
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+      );
+      expect(res.status).toBe(200);
+      // Without this, a 409 on a well-formed PATCH looks like a bug in the API
+      // rather than a property of the suite the caller could have read.
+      expect((await res.json()).managedBy).toBe("ci");
+    });
+
+    it("reports an app-owned suite as app-managed", async () => {
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+      );
+      expect((await res.json()).managedBy).toBe("app");
+    });
+
+    it("leaves from-file alone — it is the sync's own door", async () => {
+      convexMutationMock.mockImplementation((name: string, args?: any) => {
+        if (name === "testSuites:resolveOrCreateFileOwnedSuite") {
+          return Promise.resolve({
+            created: true,
+            suite: { ...SUITE_DOC, declaredSuiteId: "s_checkout" },
+          });
+        }
+        return defaultMutationImpl(name, args);
+      });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/eval-suites/from-file",
+        {
+          declaredSuiteId: "s_checkout",
+          name: "Checkout",
+          sourceHash: "a".repeat(64),
+        },
+      );
+      // `resolveOrCreateFileOwnedSuite` never passes through the suite
+      // authorizers: it is one of the mechanisms that OWNS these suites, and it
+      // is exempt by construction rather than by a marker.
+      expect(res.status, await res.clone().text()).toBe(201);
     });
   });
 });
