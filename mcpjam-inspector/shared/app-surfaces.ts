@@ -418,6 +418,7 @@ export const APP_SURFACES = [
     routePatterns: [
       "evaluate",
       "evaluate/create",
+      "evaluate/eval-server/:serverId",
       "evaluate/suite/:suiteId",
       "evaluate/suite/:suiteId/edit",
       "evaluate/suite/:suiteId/runs/:runId",
@@ -430,6 +431,7 @@ export const APP_SURFACES = [
       "Preview of the redesigned Evaluate tab: a suites landing with a Runs view, a full-page create-suite flow, and a suite overview built around run history. Same suites and same data as Evaluate — only the screens differ.",
     userActivities: [
       "Browse eval suites from the landing table",
+      "Start a first-run preview from a connected server",
       "Create a suite on the full-page create flow",
       "Open a suite's overview to see its run history and cases",
       "Open a run to inspect each step, tool call, and score",

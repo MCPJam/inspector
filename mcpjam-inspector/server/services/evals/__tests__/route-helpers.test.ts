@@ -276,6 +276,32 @@ describe("captureToolSnapshotForEvalAuthoring", () => {
       promptSectionMaxChars: 2048,
       fallbackReason: "tool_snapshot_partial_capture",
       fullSnapshot: toolSnapshot,
+      // ONLY the server that answered. A server we could not list has no
+      // catalog to measure, and a `bytes: 0` row would read as "this server
+      // advertises nothing" rather than "we never got an answer" — which is
+      // the difference between a measurement and a blind spot.
+      catalogBytes: [
+        {
+          serverId: "alpha",
+          bytes: expect.any(Number),
+          chars: expect.any(Number),
+          basis: "aggregated_catalog_json",
+          complete: true,
+        },
+      ],
     });
+    // Measured on what the server SENT, before the snapshot transform drops
+    // and rewrites fields — so it is larger than what we retained.
+    const row = (
+      toolSnapshotDebug as {
+        catalogBytes: Array<{ bytes: number; chars: number }>;
+      }
+    ).catalogBytes[0]!;
+    expect(row.bytes).toBeGreaterThan(0);
+    // Both units come from ONE serialization, so on an ASCII catalog they
+    // agree exactly. The point is not the equality — it is that a reader
+    // dividing `chars` for a token estimate and quoting `bytes` for a payload
+    // size is describing the same string.
+    expect(row.chars).toBe(row.bytes);
   });
 });

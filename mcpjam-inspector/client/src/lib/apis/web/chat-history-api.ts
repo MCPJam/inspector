@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/session-token";
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { WebApiError } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -116,6 +117,12 @@ export interface ChatHistoryTurnTrace {
   spanCount: number;
   modelId?: string;
   spansBlobUrl?: string | null;
+  /**
+   * The `webmcp_*` page tools this turn actually advertised, when the backend
+   * projected them (`mintedPageTool.ts`). A fact about the turn, not the live
+   * browser — see `resolvePageToolAttribution`'s header for why that matters.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 export interface ChatHistoryDetailResponse {

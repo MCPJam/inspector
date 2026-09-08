@@ -8,17 +8,21 @@
  *
  *  1. the entries reach `prepareChatV2`, which is what turns them into tools
  *     the model can see at all;
- *  2. their aliases reach the engine's `uiToolApprovals`. The hosted engines
- *     classify approval BY NAME and never read a tool's own `needsApproval`,
- *     so an unclassified page alias strands the turn: the client defers the
- *     call and waits for a pill the server never sends.
+ *  2. the tools it builds reach the engine still carrying their approval
+ *     declaration. A page tool that arrives without one strands the turn: the
+ *     client defers the call and waits for a pill the server never sends.
+ *
+ * The second one used to be a separate name set the route had to remember to
+ * thread. It is now a property of the tool, so this asserts it where the
+ * engine actually reads it — on the ToolSet the route hands over — with the
+ * REAL builder behind the mocked `prepareChatV2`.
  *
  * Same mocked-handler shape as `web-chat-turn-dispatch.test.ts`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface HandlerOptions {
-  uiToolApprovals?: { requiredNames: Set<string>; freeNames: Set<string> };
+  tools?: Record<string, { needsApproval?: unknown }>;
 }
 
 const handlers = vi.hoisted(() => ({
@@ -45,7 +49,7 @@ vi.mock("../org-model-config.js", () => ({
 
 const prepareChatV2 = vi.hoisted(() =>
   vi.fn(async (_args: { pageTools?: unknown }) => ({
-    allTools: {},
+    allTools: {} as Record<string, unknown>,
     enhancedSystemPrompt: "",
     resolvedTemperature: undefined,
     scrubMessages: (m: unknown[]) => m,
@@ -54,10 +58,29 @@ const prepareChatV2 = vi.hoisted(() =>
   })),
 );
 
-vi.mock("../chat-v2-orchestration.js", () => ({
-  prepareChatV2,
-  buildWidgetModelContextSystemPrompt: vi.fn(() => ""),
-}));
+vi.mock("../chat-v2-orchestration.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../chat-v2-orchestration")
+  >("../chat-v2-orchestration");
+  // The REAL page-tool builder behind the mock, so what the engine is handed
+  // here is what production hands it — declaration included. A stub returning
+  // `{}` would pass this file while the turn stranded in production.
+  prepareChatV2.mockImplementation(async (args: { pageTools?: unknown }) => ({
+    allTools: actual.buildPageTools(args.pageTools as never) as Record<
+      string,
+      unknown
+    >,
+    enhancedSystemPrompt: "",
+    resolvedTemperature: undefined,
+    scrubMessages: (m: unknown[]) => m,
+    progressivePlan: undefined,
+    discoveryState: undefined,
+  }));
+  return {
+    prepareChatV2,
+    buildWidgetModelContextSystemPrompt: vi.fn(() => ""),
+  };
+});
 
 vi.mock("../mcp-tool-result-model-output.js", () => ({
   convertToMcpjamModelMessages: vi.fn(async () => []),
@@ -139,15 +162,13 @@ describe("streamWebChatTurn — WebMCP page tools", () => {
 
   it("gates every page alias, so the turn cannot strand on a missing pill", async () => {
     await streamWebChatTurn(args([PAGE_TOOL]) as never);
-    const approvals = handlers.mcpjamFree.mock.calls[0]?.[0]?.uiToolApprovals;
-    expect(approvals?.requiredNames.has("page_1a2b3c4d")).toBe(true);
-    expect(approvals?.freeNames.has("page_1a2b3c4d")).toBe(false);
+    const tools = handlers.mcpjamFree.mock.calls[0]?.[0]?.tools;
+    expect(tools?.page_1a2b3c4d?.needsApproval).toBe(true);
   });
 
   it("leaves a turn with no page tools exactly as it was", async () => {
     await streamWebChatTurn(args() as never);
     expect(prepareChatV2.mock.calls[0]?.[0]?.pageTools).toBeUndefined();
-    const approvals = handlers.mcpjamFree.mock.calls[0]?.[0]?.uiToolApprovals;
-    expect(approvals?.requiredNames.size ?? 0).toBe(0);
+    expect(handlers.mcpjamFree.mock.calls[0]?.[0]?.tools).toEqual({});
   });
 });

@@ -64,5 +64,14 @@ export {
 export * from "./internal/thread-helpers";
 export * from "./internal/widget-detection";
 export * from "./internal/tool-result-utils";
+// The adapter-to-renderer channel for a readable tool result. Public because
+// the inspector's own tool card reads the same field off the same parts, and
+// three hand-rolled readers with three different gates is how BB-198 stayed
+// open on one surface while another rendered it fine.
+export {
+  readTraceDisplayText,
+  isTraceDisplayMode,
+  type TraceDisplayMode,
+} from "./internal/trace-display";
 export * from "./internal/safe-external-url";
 export * from "./internal/persisted-execution-replay";

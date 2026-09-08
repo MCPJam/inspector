@@ -5,6 +5,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Label } from "@mcpjam/design-system/label";
 
 const { serversRef, attachmentsRef, createMock, onChangeMock } = vi.hoisted(() => ({
   serversRef: { current: [] as Array<{ _id: string; name: string }> },
@@ -148,5 +149,65 @@ describe("ServerGroupPicker — click-away only commits what the user built", ()
         expect.objectContaining({ _id: "new-id" })
       )
     );
+  });
+});
+
+/**
+ * `triggerId` and the `field` variant, against the REAL trigger — the promote
+ * dialog asserts the same through a module mock, which cannot tell a labelled
+ * trigger from a labelled wrapper.
+ */
+describe("ServerGroupPicker — field variant labelling", () => {
+  it("lets a sibling <Label htmlFor> name the trigger", () => {
+    attachmentsRef.current = [
+      { _id: "a-1", name: "Stripe group", serverIds: ["s-0"] },
+    ];
+    render(
+      <>
+        <Label htmlFor="server-field">Server</Label>
+        <ServerGroupPicker
+          projectId="p-1"
+          value="a-1"
+          onChange={onChangeMock}
+          variant="field"
+          triggerId="server-field"
+        />
+      </>
+    );
+
+    // Would throw if the id landed anywhere but the trigger button.
+    expect(screen.getByLabelText("Server").tagName).toBe("BUTTON");
+  });
+
+  it("renders the field variant full-width, unlike the pill", () => {
+    attachmentsRef.current = [
+      { _id: "a-1", name: "Stripe group", serverIds: ["s-0"] },
+    ];
+    const { unmount } = render(
+      <ServerGroupPicker
+        projectId="p-1"
+        value="a-1"
+        onChange={onChangeMock}
+        variant="field"
+        triggerId="server-field"
+      />
+    );
+    const field = document.getElementById("server-field")!;
+    expect(field.className).toContain("w-full");
+    expect(field.className).not.toContain("rounded-full");
+    unmount();
+
+    // The default stays the chip every bar and lego-strip renders.
+    render(
+      <ServerGroupPicker
+        projectId="p-1"
+        value="a-1"
+        onChange={onChangeMock}
+        triggerId="pill-field"
+      />
+    );
+    const pill = document.getElementById("pill-field")!;
+    expect(pill.className).toContain("rounded-full");
+    expect(pill.className).not.toContain("w-full");
   });
 });

@@ -183,6 +183,7 @@ import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
+import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
@@ -642,6 +643,11 @@ app.route("/api/v1", v1Routes);
 // Slack account-link bridge (mirror of the mount in server/app.ts).
 app.route("/api/slack/link", slackLinkRoutes);
 app.route("/api/surface-link", surfaceLinkRoutes);
+
+// Same fail-fast as server/app.ts: refuse a non-loopback `WORKOS_API_BASE_URL`
+// at boot rather than at the first WorkOS call. Unset — every deployment — this
+// is a no-op.
+resolveWorkosApiBaseUrl(process.env);
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`

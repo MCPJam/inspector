@@ -1,3 +1,9 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "./browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -11,6 +17,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { collectToolAnnotations } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
@@ -58,6 +65,11 @@ import {
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
+import {
+  collectHostedRecordingThenRelease,
+  forgetHostedRecording,
+  type HostedRecording,
+} from "./browserd/hosted-recording.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -145,6 +157,7 @@ import type {
   StageAuthoredCase,
   StageSetupSignals,
   EvalSuiteFileToolPolicy,
+  FrictionResultEntry,
 } from "@mcpjam/sdk/contract";
 import {
   buildHarnessToolPolicySnapshots,
@@ -1764,11 +1777,35 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
-  finishParams: Omit<EvalIterationFinishParams, "videoBytes">;
+  finishParams: Omit<
+    EvalIterationFinishParams,
+    "videoBytes" | "videoMime" | "videoMeta"
+  >;
+  /**
+   * The hosted daemon's recording, collected off the box before it was
+   * released. Used only when the local harness produced no video of its own —
+   * which, on a hosted iteration, is always.
+   */
+  hostedRecording?: HostedRecording | null;
 }): Promise<void> {
   await finalizeWithBrowserArtifacts({
     browser: args.browser,
     logScope: "evals",
+    ...(args.hostedRecording
+      ? {
+          fallbackVideo: {
+            bytes: args.hostedRecording.bytes,
+            mime: args.hostedRecording.mime,
+            meta: {
+              source: "hosted" as const,
+              fps: args.hostedRecording.fps,
+              durationMs: args.hostedRecording.durationMs,
+              distinctFrames: args.hostedRecording.distinctFrames,
+              truncated: args.hostedRecording.truncated,
+            },
+          },
+        }
+      : {}),
     sink: {
       kind: "eval",
       recorder: args.recorder,
@@ -4090,6 +4127,10 @@ const runLocalIteration = async ({
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
     // doing it here is equivalent to the former post-finalize position.)
     browser.flushActiveWidgetChecks();
+    const toolAnnotations = collectToolAnnotations(
+      mcpClientManager,
+      selectedServers,
+    );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
       promptTurns,
@@ -4099,6 +4140,28 @@ const runLocalIteration = async ({
       // Skill-tool calls are exempt from tool-call expectations (a skill load is
       // agent housekeeping); active only when skill tools were advertised.
       skillToolsActive: hasSkillTools(Object.keys(prepared?.allTools ?? {})),
+      // The registry the model actually saw this iteration. Checks that
+      // compare a call against what the server DECLARED (its input schema,
+      // its `destructiveHint`) read it here and report `status: "error"` when
+      // it is absent — so it must be the ADVERTISED set, not the complete
+      // one. `prepared.allTools` is always complete; under progressive
+      // discovery the model was shown a subset, and letting a check read a
+      // declaration for a tool the model never saw is the same mistake D7
+      // narrows against one call below.
+      ...(prepared?.allTools
+        ? {
+            selectionTools: selectionDiscoveryForFinish
+              ? narrowToolsToAdvertised(
+                  prepared.allTools,
+                  selectionDiscoveryForFinish.progressivePlan,
+                  selectionDiscoveryForFinish.discoveryState,
+                )
+              : prepared.allTools,
+          }
+        : {}),
+      // The AI SDK ToolSet above drops the server's `annotations`; they come
+      // from the manager's own tools/list cache instead.
+      ...(toolAnnotations ? { selectionToolAnnotations: toolAnnotations } : {}),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -4500,6 +4563,17 @@ const runLocalIteration = async ({
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
     if (evalSandbox?.ok) {
+      // FORGET, not collect — and the difference is deliberate. This runner is
+      // the local-BYOK path: its box is TERMINAL ONLY (see the provisioning
+      // comment above), so a hosted browser can never be advertised here and
+      // there is never a recording to take off it. And the finalize on the
+      // success path has ALREADY run by the time this `finally` fires, so a
+      // video collected here would have nowhere to go — it would be read off
+      // the box at some cost and then dropped, silently. Dropping the registry
+      // entry instead keeps a stray take from outliving its box; if this
+      // runner ever does bind a hosted browser, the collect belongs before the
+      // finalize, the way the hosted runner does it.
+      forgetHostedRecording(evalSandbox.value.sandboxRowId);
       await releaseEvalSandbox({
         sandboxRowId: evalSandbox.value.sandboxRowId,
       }).catch(() => {});
@@ -4777,14 +4851,44 @@ const runHostedIterationWithBrowser = async (
   // This used to run here, unconditionally, which is why it is a thunk rather
   // than a value: the one call site below is inside the try that turns a
   // provisioning failure into a cleanly recorded failed iteration.
-  const buildBuiltInTools = (
-    sandboxBinding?: {
-      sandboxId: string;
-      sandboxRowId: string;
-      runtimeKind: "terminal" | "desktop-browser";
-    },
-  ) =>
-    resolveHostTools(
+  const buildBuiltInTools = async (sandboxBinding?: {
+    sandboxId: string;
+    sandboxRowId: string;
+    runtimeKind: "terminal" | "desktop-browser";
+  }) => {
+    // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
+    // provisioned, never the project computer: an unattended run drives a
+    // disposable desktop nothing else can reach, and asking about the project's
+    // would answer for a different browser entirely.
+    //
+    // Read-only and fail-empty (see `peekPageTools`), and skipped altogether
+    // unless the run declared a browser policy — an eval with no browser must
+    // not pay a daemon round trip to discover it has no browser.
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds: resolvedExecution.builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            // An eval is never a harness turn for this purpose: it either has
+            // the hosted loop or it has no page tools at all, and the flag
+            // below decides which.
+            isHarnessTurn: Boolean(resolvedExecution.harness),
+            hasV1PageTools: false,
+            engine: "hosted",
+            ...(builtInTarget && "projectId" in builtInTarget
+              ? { projectId: builtInTarget.projectId }
+              : { projectId: undefined }),
+            bearer: convexAuthToken,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+            // A cancelled run must not sit out the peek's full deadline before
+            // its cancellation takes effect.
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          })
+        : undefined,
+    );
+    return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
         ? {
@@ -4799,9 +4903,13 @@ const runHostedIterationWithBrowser = async (
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.
             ...(sandboxBinding ? { sandboxBinding } : {}),
+            ...(pageToolsSnapshot
+              ? { browserPageTools: pageToolsSnapshot }
+              : {}),
           }
         : null,
     );
+  };
   let builtInTools: ReturnType<typeof resolveHostTools>;
   // ── Harness execution inputs, resolved once per iteration.
   //
@@ -4854,11 +4962,30 @@ const runHostedIterationWithBrowser = async (
   // clean failed iteration; released right after the agent run below.
   let evalSandbox: Awaited<ReturnType<typeof provisionEvalSandbox>> | null =
     null;
+  /**
+   * The video the hosted browser recorded, if this iteration used one.
+   *
+   * Closed over rather than returned, because the box is released from three
+   * different exits (the run's own `finally`, a setup failure's catch, and the
+   * agent-run `finally`) and the file has to come off the box at whichever one
+   * fires first — after the release there is nothing left to read.
+   */
+  let hostedRecording: HostedRecording | null = null;
   const releaseEvalSandboxIfAny = async (): Promise<void> => {
     if (evalSandbox?.ok) {
       const { sandboxRowId } = evalSandbox.value;
       evalSandbox = null;
-      await releaseEvalSandbox({ sandboxRowId }).catch(() => {});
+      // Collect BEFORE the release — after it there is nothing left to read —
+      // and release REGARDLESS of how the collect went. Both facts live in the
+      // helper, which is where they are tested: a collector that throws or
+      // hangs past its bound yields no video and the box is released on the
+      // same schedule, because a box that outlives its iteration costs money
+      // until the GC cron reaps it and no video is worth that.
+      const collected = await collectHostedRecordingThenRelease({
+        sandboxRowId,
+        release: () => releaseEvalSandbox({ sandboxRowId }),
+      });
+      hostedRecording = hostedRecording ?? collected;
     }
   };
   let prepared: PrepareChatV2Result;
@@ -4944,7 +5071,7 @@ const runHostedIterationWithBrowser = async (
           "tool from this host config, or update the deployment.",
       );
     }
-    builtInTools = buildBuiltInTools(sandboxBinding);
+    builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
       mcpClientManager,
@@ -5147,6 +5274,15 @@ const runHostedIterationWithBrowser = async (
     | { source?: "model" | "setup"; code?: string; httpStatus?: number }
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
+  /**
+   * Wire results for the friction signals, keyed as the GRADED call array
+   * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
+   * capture never armed, in which case the deriver falls back to the
+   * transcript and reports `resultsUnavailable` for the identifier half.
+   */
+  const evidenceResults = new Map<string, FrictionResultEntry>();
+  /** Set when ANY turn's evidence read came back incomplete. */
+  const evidenceHadHole = { value: false };
   // PR 4d review fix (Codex P2 / Cursor Medium): see hoist above the
   // `prepareChatV2` try.
   // Per-turn streaming play-by-play for the executeSteps handlers (headless in batch).
@@ -5340,6 +5476,8 @@ const runHostedIterationWithBrowser = async (
       messageHistory,
       traceMessageHistory,
       capturedSpans,
+      evidenceResults,
+      evidenceHadHole,
       accumulatedUsage,
       toolsCalledByPrompt,
     },
@@ -5455,6 +5593,10 @@ const runHostedIterationWithBrowser = async (
       : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
+  const stepToolAnnotations = collectToolAnnotations(
+    mcpClientManager,
+    selectedServers,
+  );
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5462,6 +5604,19 @@ const runHostedIterationWithBrowser = async (
     matchOptions: test.matchOptions,
     // Skill-tool calls are exempt from tool-call expectations (see local path).
     skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
+    // See the local path: the declaration a schema/annotation check reads,
+    // narrowed to what progressive discovery advertised. `prepared` is always
+    // assigned on this runner, so the plan and state are read directly rather
+    // than through a captured copy.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState,
+    ),
+    // See the sibling call site: `annotations` are not on the ToolSet.
+    ...(stepToolAnnotations
+      ? { selectionToolAnnotations: stepToolAnnotations }
+      : {}),
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,
@@ -5526,6 +5681,31 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     prompts: promptTraceSummaries,
+    // Where the friction signals read their tool results from. THREE TIERS,
+    // and the middle one is the reason this is threaded at all:
+    //
+    //   capture on + complete  → the wire record, with per-call timing, which
+    //                            is the only thing that can establish
+    //                            availability on a harness run;
+    //   capture on + a hole    → notMeasured, because a partial record would
+    //                            answer "nobody used this identifier" from
+    //                            calls we know are missing;
+    //   capture off            → nothing, so the deriver falls back to the
+    //                            transcript: retries stay measured and the
+    //                            identifier half honestly says it did not look.
+    ...(harnessEvidenceDecision?.captureEnabled
+      ? {
+          frictionEvidence: evidenceHadHole.value
+            ? ({
+                kind: "notMeasured",
+                reason: "evidenceIncomplete",
+              } as const)
+            : ({
+                kind: "harnessEvidence",
+                resultsByToolCallId: evidenceResults,
+              } as const),
+        }
+      : {}),
     // UVH-IN2: the layer that raised the fatal error, so the chain can say a
     // provider outage was ours rather than filing it against the server.
     ...(iterationStepError ? { stepError: iterationStepError } : {}),
@@ -5602,6 +5782,10 @@ const runHostedIterationWithBrowser = async (
     recorder,
     convexClient,
     finishParams,
+    // Collected by `releaseEvalSandboxIfAny` before the box went away — the
+    // file only ever existed there, so it had to come off ahead of the
+    // release, several hundred lines above this line.
+    hostedRecording,
   });
 
   return {

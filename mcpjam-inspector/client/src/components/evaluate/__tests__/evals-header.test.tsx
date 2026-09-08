@@ -7,11 +7,15 @@ describe("EvalsHeader", () => {
     const onCreateSuite = vi.fn();
     render(<EvalsHeader onCreateSuite={onCreateSuite} />);
 
-    expect(screen.getByTestId("evals-header")).toBeTruthy();
+    const header = screen.getByTestId("evals-header");
+    expect(header).toBeTruthy();
+    // Same chrome as Swarm / User Testing: page surface, faint header rule.
+    expect(header.className).not.toMatch(/bg-muted/);
+    expect(header.className).toMatch(/border-b/);
     expect(screen.getByRole("heading", { name: "Evaluate" })).toBeTruthy();
     expect(
       screen.getByText(
-        "We generate cases from live discovery, or describe behaviors in chat, or import your existing tests.",
+        "The manual pass you'd do before a ship, automated and run whenever the server changes.",
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
@@ -31,10 +35,23 @@ describe("EvalsHeader", () => {
       />,
     );
 
+    const row = screen.getByTestId("evals-header-title-row");
     const suites = screen.getByRole("button", { name: /^suites$/i });
     const runs = screen.getByRole("button", { name: /^runs$/i });
+    expect(row).toContainElement(screen.getByRole("heading", { name: "Evaluate" }));
+    expect(row).toContainElement(screen.getByTestId("evals-header-title-rule"));
+    expect(row).toContainElement(suites);
+    expect(row).toContainElement(runs);
+    expect(
+      screen.getByRole("navigation", { name: "Evaluate view" }).className,
+    ).toMatch(/min-h-8/);
     expect(suites).toHaveAttribute("aria-current", "page");
     expect(runs).not.toHaveAttribute("aria-current");
+    expect(
+      screen.getByText(
+        "The manual pass you'd do before a ship, automated and run whenever the server changes.",
+      ),
+    ).toBeTruthy();
 
     fireEvent.click(runs);
     expect(onLandingViewChange).toHaveBeenCalledWith("runs");
@@ -50,7 +67,7 @@ describe("EvalsHeader", () => {
 
     expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
     expect(
-      screen.queryByText(/We generate cases from live discovery/i),
+      screen.queryByText(/manual pass you'd do before a ship/i),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^runs$/i })).toBeNull();

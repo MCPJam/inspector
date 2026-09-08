@@ -59,10 +59,10 @@ export type PredicateKind =
  * point-in-time row contradict the adjudicated matcher verdict.
  *
  * FUTURE ANALYZER-BUMP CANDIDATES, named so nobody "fixes" them here alone:
- * `noToolErrors` is arguably `call` or `response` evidence, and the three
- * `widget*` kinds are arguably `response`. Moving any of them changes where
- * historical failures are attributed, so each is a `STAGE_ANALYZER_VERSION`
- * bump with a re-derivation, not an edit to this table.
+ * the three `widget*` kinds are arguably `response`. Moving any of them
+ * changes where historical failures are attributed, so each is a
+ * `STAGE_ANALYZER_VERSION` bump with a re-derivation, not an edit to this
+ * table. (`noToolErrors` was one of these; analyzer 11 moved it.)
  */
 export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
   // ── Selection: which tool the model chose ───────────────────────────────
@@ -73,16 +73,50 @@ export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
   // forbidden-tool check it generalizes.
   onlyToolsCalled: "selection",
   firstToolWas: "selection",
+  // ── Selection: which tools the run reached ──────────────────────────────
+  //
+  // Count and route kinds file HERE, not at `call`: they are about which tools
+  // were reached and in what order, which is the selection question. `call` is
+  // about whether the call that was made was usable.
+  toolCallCountUnder: "selection",
+  toolCalledBefore: "selection",
+  noDeprecatedToolCalled: "selection",
+  noDestructiveToolCalled: "selection",
+  // ── Tool call: was the call itself well formed ──────────────────────────
+  argumentsMatchToolSchema: "call",
+  noRepeatedIdenticalCall: "call",
+  // ── Response: what the server answered with ─────────────────────────────
+  //
+  // `noToolErrors` MOVED HERE in analyzer 11, from `userValue` where it had
+  // been filed since v8. The docblock above named it as a bump candidate for
+  // exactly this reason: a tool error is the server's answer, not a statement
+  // about whether the person got what they asked for. Until the bump it
+  // failed BOTH stages on the same evidence — the analyzer already failed
+  // `response` on an observed tool error while the predicate row failed
+  // `userValue` — so one defect was counted twice and `firstFailedStage`
+  // depended on which the reader looked at first.
+  noToolErrors: "response",
+  toolLatencyUnder: "response",
+  toolResultContains: "response",
+  toolResultMatchesSchema: "response",
+  toolResultSizeUnder: "response",
+  toolErrorNamesInput: "response",
+  fullPageHasContinuation: "response",
   // ── User value: did the person get what they asked for ──────────────────
   responseContains: "userValue",
   responseMatches: "userValue",
   finalAssistantMessageNonEmpty: "userValue",
-  noToolErrors: "userValue",
   tokenBudgetUnder: "userValue",
   turnCountUnder: "userValue",
   widgetRendered: "userValue",
   widgetRenderLatencyUnder: "userValue",
   widgetNoConsoleErrors: "userValue",
+  // An answer that ends by asking the user something is a statement about
+  // what the person walked away with, so it files here — as an OBSERVATION,
+  // which is a policy fact (`OBSERVATION_PREDICATE_KINDS`) rather than a
+  // routing one. Advisory rows never decide a stage, so this entry places the
+  // grader on the settings page and nothing more.
+  noEndingQuestion: "userValue",
 };
 
 /**
@@ -116,6 +150,43 @@ export const GRADER_PRESENTATION_GROUP: Partial<
   tokenBudgetUnder: "budget",
   turnCountUnder: "budget",
 };
+
+/**
+ * The checks a NEW suite starts with when its creator says nothing about
+ * checks at all.
+ *
+ * HAND-MIRRORED from `mcpjam-backend/convex/lib/predicates.ts`
+ * (`RECOMMENDED_DEFAULT_PREDICATES`), which is where the seed is APPLIED. This
+ * copy exists so the scorer library can mark these kinds "Recommended", and so
+ * the acceptance-corpus test can prove — on this side, where the evaluator
+ * lives — that nothing enters the set above the corpus bar.
+ *
+ * NOTHING HERE GATES. The predicate gate is independent of a case's
+ * `failOnToolError`, so a seeded gating `noToolErrors` would flip a case that
+ * sets it false, hits an error, recovers and passes today. Warn preserves
+ * effective case policy: the row is visible, the verdict is untouched.
+ *
+ * `noDeprecatedToolCalled` is an observation and is here on EVIDENCE: it is the
+ * one heuristic that clears the corpus bar (zero detector errors and zero
+ * misleading firings). The other four observations do not, and a kind that
+ * starts firing misleadingly on a newly added corpus item leaves this list.
+ */
+export const RECOMMENDED_DEFAULT_PREDICATES = [
+  { type: "noToolErrors", role: "advisory", severity: "warn" },
+  { type: "argumentsMatchToolSchema", role: "advisory", severity: "warn" },
+  { type: "noDeprecatedToolCalled", role: "advisory", severity: "warn" },
+] as const satisfies ReadonlyArray<{
+  type: PredicateKind;
+  role: "advisory";
+  severity: "warn";
+}>;
+
+/** True when a new suite starts with this kind. Drives the "Recommended" chip. */
+export function isRecommendedDefaultPredicateKind(kind: string): boolean {
+  return RECOMMENDED_DEFAULT_PREDICATES.some(
+    (predicate) => predicate.type === kind
+  );
+}
 
 /** True when this predicate kind's evidence is filed at `selection`. */
 export function isSelectionStagePredicateKind(

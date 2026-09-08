@@ -73,9 +73,18 @@ const UNREACHABLE: BrowserPageToolsResponse = {
 export async function fetchHostedPageTools(
   tokens: BrowserTokenCache,
   signal?: AbortSignal,
+  /**
+   * WHICH TAB to read, when the live signal named one.
+   *
+   * Omitted, the route observes `@session` — a literal tab key in the daemon,
+   * not "whichever tab is active" — so a read that follows a signal from a
+   * second tab would answer for the first.
+   */
+  tabId?: string,
 ): Promise<BrowserPageToolsResponse> {
+  const query = tabId ? `?tabId=${encodeURIComponent(tabId)}` : "";
   const send = async (token: string) =>
-    fetch(`${HOSTED_BROWSER_BASE}/page-tools`, {
+    fetch(`${HOSTED_BROWSER_BASE}/page-tools${query}`, {
       headers: { authorization: `Bearer ${token}` },
       ...(signal ? { signal } : {}),
     });
@@ -93,7 +102,7 @@ export async function fetchHostedPageTools(
 
 /** The local browser's page tools, via the device consent capability. */
 export async function fetchLocalPageTools(
-  args: { projectId: string; holder?: string },
+  args: { projectId: string; holder?: string; tabId?: string },
   consentToken: string | null,
   signal?: AbortSignal,
 ): Promise<BrowserPageToolsResponse> {
