@@ -70,17 +70,88 @@ const ALLOWED = new Set(
  * Every allowed file must pass the guard AT EVERY CONSTRUCTION, or the
  * allowlist is a hole.
  *
- * Counted rather than merely present: `auth.ts` and `mcpjam-agent.ts` each
- * build two managers, and "the file mentions `hostedMcpBaseFetch` somewhere"
- * would have been satisfied by guarding one of them — which is close to the
- * shape of the original bug, where the conformance lane was guarded and the
- * lane beside it was not.
+ * PER CONSTRUCTION, NOT PER FILE. An earlier revision compared two counts —
+ * how many managers a file builds against how many `baseFetch:` lines it has —
+ * and review pointed out the obvious hole: a file with one guarded manager, one
+ * unguarded manager and a stray second mention of the injection passes on
+ * totals while dialling `globalThis.fetch`. A commented-out injection counted
+ * too. Since this check is the thing standing in for a test that cannot exist
+ * yet, being approximately right is not good enough: each constructor's own
+ * argument list is now what gets inspected.
  */
 const CONSTRUCTION = /new\s+MCPClientManager\s*\(/g;
-const GUARD_INJECTION = /baseFetch:\s*hostedMcpBaseFetch\(\)/g;
+const GUARD_INJECTION = /baseFetch:\s*hostedMcpBaseFetch\(\)/;
 
-function count(source, pattern) {
-  return (source.match(pattern) ?? []).length;
+/**
+ * Blank out comments and string literals so neither can satisfy — or trip —
+ * the checks below. Replaced with equal-length runs of spaces so every
+ * remaining offset still matches the original source, which is what lets the
+ * error messages carry a real line number.
+ */
+function stripCommentsAndStrings(source) {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+    if (two === "//") {
+      const end = source.indexOf("\n", i);
+      const stop = end === -1 ? source.length : end;
+      out += " ".repeat(stop - i);
+      i = stop;
+      continue;
+    }
+    if (two === "/*") {
+      const end = source.indexOf("*/", i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      out += source.slice(i, stop).replace(/[^\n]/g, " ");
+      i = stop;
+      continue;
+    }
+    const ch = source[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < source.length) {
+        if (source[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (source[j] === ch) {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      out += source.slice(i, j).replace(/[^\n]/g, " ");
+      i = j;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * The argument list of the construction whose `new MCPClientManager(` ends at
+ * `openParenIndex`, found by walking parens to the matching close. Returns
+ * `null` for an unbalanced tail, which is treated as unguarded — a file this
+ * scanner cannot parse is not a file it should be vouching for.
+ */
+function constructionArguments(source, openParenIndex) {
+  let depth = 0;
+  for (let i = openParenIndex; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openParenIndex, i + 1);
+    }
+  }
+  return null;
+}
+
+function lineOf(source, index) {
+  return source.slice(0, index).split("\n").length;
 }
 
 function* walk(dir) {
@@ -109,22 +180,27 @@ const seenAllowed = new Set();
 
 for (const dir of GUARDED_DIRS) {
   for (const file of walk(dir)) {
-    const source = readFileSync(file, "utf8");
-    const constructions = count(source, CONSTRUCTION);
-    if (constructions === 0) continue;
+    const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
+    const opens = [];
+    CONSTRUCTION.lastIndex = 0;
+    for (let m = CONSTRUCTION.exec(code); m; m = CONSTRUCTION.exec(code)) {
+      opens.push(m.index + m[0].length - 1);
+    }
+    if (opens.length === 0) continue;
+
+    const rel = relative(resolve(serverDir, ".."), file);
     const resolved = resolve(file);
     if (!ALLOWED.has(resolved)) {
-      violations.push(relative(resolve(serverDir, ".."), file));
+      violations.push(rel);
       continue;
     }
     seenAllowed.add(resolved);
-    const injections = count(source, GUARD_INJECTION);
-    if (injections < constructions) {
-      unguardedAllowed.push({
-        file: relative(resolve(serverDir, ".."), file),
-        constructions,
-        injections,
-      });
+
+    for (const open of opens) {
+      const args = constructionArguments(code, open);
+      if (args === null || !GUARD_INJECTION.test(args)) {
+        unguardedAllowed.push({ file: rel, line: lineOf(code, open) });
+      }
     }
   }
 }
@@ -151,14 +227,11 @@ if (violations.length || unguardedAllowed.length || stale.length) {
   }
   if (unguardedAllowed.length) {
     console.error(
-      "These allowlisted factories construct more managers than they guard, so\n" +
-        "at least one construction dials `globalThis.fetch`. Every one needs\n" +
-        "`baseFetch: hostedMcpBaseFetch()`:\n"
+      "These constructions dial `globalThis.fetch` — their own argument list\n" +
+        "carries no `baseFetch: hostedMcpBaseFetch()`:\n"
     );
     for (const entry of unguardedAllowed) {
-      console.error(
-        `  - ${entry.file} (${entry.constructions} constructed, ${entry.injections} guarded)`
-      );
+      console.error(`  - ${entry.file}:${entry.line}`);
     }
     console.error("");
   }

@@ -499,11 +499,15 @@ const ENVIRONMENT_ALIASES: Record<string, Environment> = {
 };
 
 export function resolveEnvironment(): Environment {
-  const fromEnv = process.env.ENVIRONMENT;
+  // TRIMMED ONCE, then used for both lookups. Trimming only the alias branch
+  // left `ENVIRONMENT=" prod "` falling through to the `dev` default while
+  // `" production "` resolved — the same silent misclassification this alias
+  // exists to remove, reintroduced one branch over.
+  const fromEnv = process.env.ENVIRONMENT?.trim();
   if (fromEnv && ALLOWED_ENVIRONMENTS.includes(fromEnv as Environment)) {
     return fromEnv as Environment;
   }
-  const aliased = fromEnv ? ENVIRONMENT_ALIASES[fromEnv.trim()] : undefined;
+  const aliased = fromEnv ? ENVIRONMENT_ALIASES[fromEnv] : undefined;
   if (aliased) {
     return aliased;
   }

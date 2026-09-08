@@ -90,11 +90,26 @@ function varyingFirstPartyMcpUrls(): Array<{ label: string; url: string }> {
     ["MCPJAM_DOCS_MCP_URL", process.env.MCPJAM_DOCS_MCP_URL],
     ["MCPJAM_SPEC_MCP_URL", process.env.MCPJAM_SPEC_MCP_URL],
   ] as const) {
-    const trimmed = value?.trim();
-    if (trimmed) entries.push({ label, url: trimmed });
+    // ANY DEFINED VALUE IS CHECKED, verbatim and untrimmed. The consumers read
+    // these as `process.env.X ?? DEFAULT`, so a whitespace-only override is
+    // truthy there and gets dialled as-is — skipping it here because it trims
+    // to empty would validate the default while the manager used the invalid
+    // value, which is the exact split this assertion exists to prevent.
+    if (value !== undefined) entries.push({ label, url: value });
   }
   return entries;
 }
+
+/**
+ * Schemes the pinned transport will dial for a PUBLIC target.
+ *
+ * Checked at boot for the same reason the addresses are: the guard refuses
+ * plaintext to a non-private host, so an `http://` first-party override is a
+ * connection that fails on every agent request. Catching only the hostname
+ * would let the deployment start and then refuse its own servers — the
+ * "loud at startup" promise, quietly half-kept.
+ */
+const ALLOWED_FIRST_PARTY_PROTOCOL = "https:";
 
 /**
  * Refuse to start a HOSTED process whose own first-party MCP servers resolve to
@@ -117,17 +132,27 @@ function varyingFirstPartyMcpUrls(): Array<{ label: string; url: string }> {
 export function assertHostedFirstPartyMcpUrls(): void {
   if (!HOSTED_MODE) return;
   for (const { label, url } of varyingFirstPartyMcpUrls()) {
-    let hostname: string;
+    let parsed: URL;
     try {
-      hostname = new URL(url).hostname;
+      parsed = new URL(url);
     } catch {
       throw new Error(
         `Refusing to start: the ${label} URL is not a valid URL. Hosted deployments must point first-party MCP servers at a publicly routable https host.`
       );
     }
+    // ADDRESS BEFORE SCHEME, because a private address is the likelier
+    // misconfiguration and its message names the variable to fix. A loopback
+    // platform URL is also plaintext, so checking the scheme first would
+    // answer a wrong-`ENVIRONMENT` deployment with a lecture about https.
+    const hostname = parsed.hostname;
     if (isBlockedEgressHost(hostname, true)) {
       throw new Error(
         `Refusing to start: the ${label} URL points at "${hostname}", which hosted egress will not dial. Set ENVIRONMENT to the deployment's real environment, or point this override at a publicly routable host.`
+      );
+    }
+    if (parsed.protocol !== ALLOWED_FIRST_PARTY_PROTOCOL) {
+      throw new Error(
+        `Refusing to start: the ${label} URL uses "${parsed.protocol}", which hosted egress will not dial to a public host. Use https.`
       );
     }
   }

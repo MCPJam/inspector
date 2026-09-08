@@ -153,6 +153,14 @@ export async function mcpEgressRateLimitMiddleware(
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
 
+  // POST ONLY, and the reason is the same one `server-connection-claim-rate-limit.ts`
+  // gives for its own method gate: the middleware is mounted on a PATH, so
+  // without this any method reaching that path spends the budget. Both guarded
+  // routes are POST — a GET or HEAD to them opens no MCP connection at all, so
+  // charging it would let a caller exhaust its own doctor quota with requests
+  // that cost us no egress, and then meet a 429 on the operation that does.
+  if (c.req.method !== "POST") return next();
+
   const key = credentialKey(c);
 
   // ORDER IS LOAD-BEARING: a credential that ALREADY has a window is charged

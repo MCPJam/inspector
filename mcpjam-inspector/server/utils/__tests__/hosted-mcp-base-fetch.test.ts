@@ -1,57 +1,22 @@
 /**
- * MJ-001: every hosted MCP client manager dials a guarded fetch.
+ * MJ-001: the guard itself, and the boot assertion that keeps a hosted
+ * deployment from starting with its own first-party servers behind it.
  *
- * THIS IS THE TEST THAT MATTERS MOST in the finding's remediation, so it is
- * written to fail for the right reason. Two properties, and the second is why
- * asserting `baseFetch !== undefined` on its own would be theatre:
- *
- *   1. every hosted factory passes a `baseFetch` that is neither absent nor the
- *      global — the mistake the finding is about;
- *   2. the value it passes actually REFUSES a private target. A future refactor
- *      that threads through a fetch which guards nothing would satisfy (1) and
- *      reintroduce the vulnerability.
- *
- * Table-driven over the factories on purpose: a seventh factory should be one
- * row here, not a new test nobody writes. The static half — a hosted file
- * cannot construct `new MCPClientManager` at all — is
+ * SCOPE, since three files share this finding's coverage: this one owns
+ * `hostedMcpBaseFetch()`'s behaviour — that it refuses, and that it is inert
+ * locally. That every hosted FACTORY threads it is
+ * `routes/web/__tests__/hosted-manager-base-fetch.test.ts`; that no hosted file
+ * can construct a manager without it is
  * `scripts/check-hosted-manager-base-fetch.mjs`, because no runtime test can
  * see a factory that does not exist yet.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { managerConstructions } = vi.hoisted(() => ({
-  managerConstructions: [] as Array<{
-    configs: Record<string, unknown>;
-    options: Record<string, unknown> | undefined;
-  }>,
-}));
-
-vi.mock("@mcpjam/sdk", async () => {
-  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
-    "@mcpjam/sdk"
-  );
-  class RecordingManager {
-    constructor(
-      configs: Record<string, unknown>,
-      options?: Record<string, unknown>
-    ) {
-      managerConstructions.push({ configs, options });
-    }
-    // The factories under test call these synchronously after constructing.
-    setElicitationCallback() {}
-    setMrtrInputCollector() {}
-    async disconnectAllServers() {}
-    async connectToServer() {}
-  }
-  return { ...actual, MCPClientManager: RecordingManager };
-});
-
 async function withHostedMode<T>(hosted: boolean, run: () => Promise<T>) {
   const previous = process.env.VITE_MCPJAM_HOSTED_MODE;
   process.env.VITE_MCPJAM_HOSTED_MODE = hosted ? "true" : "false";
   vi.resetModules();
-  managerConstructions.length = 0;
   try {
     return await run();
   } finally {
@@ -175,6 +140,37 @@ describe("assertHostedFirstPartyMcpUrls", () => {
         delete process.env[key];
       });
     }
+  });
+
+  it("refuses a plaintext override even when its host is public", async () => {
+    // Found in review: checking only the hostname let an `http://` override
+    // start the process, and the guard then refused every request it made —
+    // the "loud at startup" promise, quietly half-kept.
+    await withHostedMode(true, async () => {
+      process.env.ENVIRONMENT = "prod";
+      process.env.MCPJAM_DOCS_MCP_URL = "http://docs.mcpjam.com/mcp";
+      const { assertHostedFirstPartyMcpUrls } = await import(
+        "../hosted-mcp-base-fetch.js"
+      );
+      expect(() => assertHostedFirstPartyMcpUrls()).toThrow(/https/);
+    });
+  });
+
+  it("refuses a whitespace-only override rather than validating the default", async () => {
+    // Also from review. The consumers read `process.env.X ?? DEFAULT`, so a
+    // whitespace-only value is truthy there and gets dialled verbatim; an
+    // assertion that trimmed it to empty and skipped would have been checking
+    // a URL the process never uses.
+    await withHostedMode(true, async () => {
+      process.env.ENVIRONMENT = "prod";
+      process.env.MCPJAM_SPEC_MCP_URL = "   ";
+      const { assertHostedFirstPartyMcpUrls } = await import(
+        "../hosted-mcp-base-fetch.js"
+      );
+      expect(() => assertHostedFirstPartyMcpUrls()).toThrow(
+        /not a valid URL/
+      );
+    });
   });
 
   it("does nothing at all outside hosted mode", async () => {

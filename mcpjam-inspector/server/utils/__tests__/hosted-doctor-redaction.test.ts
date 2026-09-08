@@ -20,6 +20,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 type DoctorEnvelope = {
   probe: {
+    status?: string;
+    /** The probe's own top-level error — see the note in the redactor. */
+    error?: string;
     transport: {
       attempts: Array<{
         request: { url: string };
@@ -37,6 +40,13 @@ type DoctorEnvelope = {
 function socketFailureEnvelope(socketError: string): DoctorEnvelope {
   return {
     probe: {
+      status: "error",
+      // `createProbeErrorResult` copies the transport message here verbatim,
+      // one key above the per-attempt errors. The first version of this
+      // redaction rewrote the attempts and left this field alone, so the port
+      // oracle survived in full — every case below asserts on the whole
+      // serialised envelope for that reason, not on named fields.
+      error: socketError,
       transport: {
         attempts: [
           {
@@ -60,7 +70,9 @@ async function loadRedactor(hosted: boolean) {
   const previous = process.env.VITE_MCPJAM_HOSTED_MODE;
   process.env.VITE_MCPJAM_HOSTED_MODE = hosted ? "true" : "false";
   vi.resetModules();
-  const { redactHostedDoctorTransportDetail } = await import("../servers.js");
+  const { redactHostedDoctorTransportDetail } = await import(
+    "../hosted-doctor-redaction.js"
+  );
   return {
     redact: redactHostedDoctorTransportDetail,
     restore: () => {
@@ -122,6 +134,7 @@ describe("hosted doctor transport-detail redaction", () => {
     // in the message.
     expect(redacted.connection.detail).toBe(refusal);
     expect(redacted.error?.message).toBe(refusal);
+    expect(redacted.probe?.error).toBe(refusal);
   });
 
   it("passes through detail once the target answered as a public host", async () => {

@@ -99,6 +99,21 @@ describe("resolveEnvironment", () => {
     expect(resolveEnvironment()).toBe("prod");
   });
 
+  it("tolerates whitespace around either spelling", async () => {
+    // Found in review: the alias branch trimmed and the allowlist branch did
+    // not, so a padded exact value silently became `dev`.
+    for (const [value, expected] of [
+      [" prod ", "prod"],
+      [" production ", "prod"],
+      ["  staging  ", "staging"],
+    ] as const) {
+      vi.stubEnv("ENVIRONMENT", value);
+      vi.stubEnv("NODE_ENV", "");
+      const { resolveEnvironment } = await freshLogEvents();
+      expect(resolveEnvironment()).toBe(expected);
+    }
+  });
+
   it("still falls back for a value that is not an environment at all", async () => {
     vi.stubEnv("ENVIRONMENT", "banana");
     vi.stubEnv("NODE_ENV", "production");
