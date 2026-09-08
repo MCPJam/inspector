@@ -1606,6 +1606,15 @@ export function NewSwarmCreateFlow({
 
   /** Leaving the flow ends it — the draft is for remounts, not for history. */
   const leaveFlow = useCallback(() => {
+    // The chokepoint every exit shares — Cancel, the ← Swarms link, and any
+    // added later. A row-creating operation in flight must not be abandoned
+    // here: `handleGenerate`/`handleLaunch` await `resolveTargets` (which mints
+    // ad-hoc environment rows) and then write personas/runs, so navigating away
+    // — and firing the discard toast — while they run would leave rows created
+    // after the UI said the draft was gone. The exit buttons are disabled for
+    // this too, but guarding at the chokepoint is what keeps the NEXT exit safe
+    // without anyone remembering to gate it.
+    if (launching || generating || materializing) return;
     // Read the "is there anything to discard" signal BEFORE clearing the draft.
     const hadDraft = hasUserDraft;
     const keptGoals = (persistedTargetsRef.current?.length ?? 0) > 0;
@@ -1625,7 +1634,7 @@ export function NewSwarmCreateFlow({
       );
     }
     onCancel();
-  }, [hasUserDraft, onCancel]);
+  }, [launching, generating, materializing, hasUserDraft, onCancel]);
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
@@ -1695,11 +1704,13 @@ export function NewSwarmCreateFlow({
         // launch. `flowHeader` also renders on Describe, where `handleGenerate`
         // awaits `resolveTargets` and writes personas — leaving mid-generation
         // would fire the discard toast over a running batch, the same race this
-        // guards for launch. Matches `goToStep`'s own gate.
+        // guards for launch. Matches `goToStep`'s own gate. A disabled button is
+        // skipped by most screen readers, so point at the visible progress line
+        // for the reason (a `title` can't: `pointer-events-none` suppresses it).
         disabled={launching || generating || materializing}
-        title={
-          launching || generating || materializing
-            ? "Available once the current step finishes"
+        aria-describedby={
+          generating || materializing
+            ? "new-swarm-generate-progress"
             : undefined
         }
         className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline disabled:pointer-events-none disabled:opacity-50"
@@ -1991,6 +2002,7 @@ export function NewSwarmCreateFlow({
             <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
               {generating || materializing ? (
                 <p
+                  id="new-swarm-generate-progress"
                   className="mr-auto text-sm leading-relaxed text-muted-foreground"
                   data-testid="new-swarm-generate-progress"
                 >
@@ -2016,7 +2028,20 @@ export function NewSwarmCreateFlow({
                   {continueHint}
                 </p>
               ) : null}
-              <Button type="button" variant="ghost" onClick={leaveFlow}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={leaveFlow}
+                // Same gate as the ← Swarms link: leaving mid-generation would
+                // strand a running batch (`leaveFlow` refuses it either way, but
+                // the button has to LOOK unavailable too).
+                disabled={launching || generating || materializing}
+                aria-describedby={
+                  generating || materializing
+                    ? "new-swarm-generate-progress"
+                    : undefined
+                }
+              >
                 Cancel
               </Button>
               <Button

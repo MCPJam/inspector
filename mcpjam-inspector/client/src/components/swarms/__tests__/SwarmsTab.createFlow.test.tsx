@@ -1984,6 +1984,31 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
+  it("blocks BOTH exits while generation is in flight, and neither fires a toast", async () => {
+    // The footer Cancel and the ← Swarms link both run leaveFlow. Generation
+    // awaits resolveTargets (which can mint rows) and then writes personas, so
+    // leaving mid-generation would announce a discard over a live batch. Hold
+    // generation open to sit in that window.
+    generateSwarmPersonaBatchMock.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-generate-progress");
+
+    const cancel = screen.getByRole("button", { name: /^cancel$/i });
+    const back = screen.getByTestId("new-swarm-back-to-swarms");
+    expect(cancel).toBeDisabled();
+    expect(back).toBeDisabled();
+    // Even if a click slips past the disabled state, leaveFlow refuses while a
+    // batch is running — no discard toast, no navigation away from the flow.
+    fireEvent.click(cancel);
+    fireEvent.click(back);
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/swarms");
+  });
+
   it("re-enables the ← Swarms exit when the launch preflight fails", async () => {
     // Reused persona so Continue skips generation; the launch preflight is then
     // the resolveTargets call that fails. No saved env → the target is a client
@@ -2008,14 +2033,18 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    // Stays on Confirm with the failure surfaced (no run started) and — the
-    // whole point of moving the latch ahead of the await — the finally
-    // re-enabled the exit instead of stranding it disabled. Without the finally
-    // this button would be stuck disabled with no way out.
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    // Assert the COPY, not just "an alert": it states out loud that the failure
+    // came through the resolveTargets throw (the mock's message), and would
+    // fail if a later change skipped resolveTargets or routed to the other
+    // bail-out. The ensureAdhoc call confirms the ad-hoc resolve path ran at all
+    // rather than the preflight guard short-circuiting it.
+    expect(await screen.findByRole("alert")).toHaveTextContent("resolve failed");
+    expect(ensureAdhocEnvironmentsMock).toHaveBeenCalled();
     expect(
       screen.queryByTestId("new-swarm-running-step"),
     ).not.toBeInTheDocument();
+    // The whole point of moving the latch ahead of the await: the finally
+    // re-enabled the exit instead of stranding it disabled with no way out.
     expect(
       screen.getByTestId("new-swarm-back-to-swarms"),
     ).not.toBeDisabled();
