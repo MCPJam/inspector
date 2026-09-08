@@ -45,19 +45,24 @@ describe("toDaemonAction", () => {
       { op: "reload" },
     ] as const) {
       const mapped = toDaemonAction(command);
-      expect(mapped.ok && "observeAfter" in mapped.action && mapped.action.observeAfter).toBe(
+      expect(mapped.ok && "observe" in mapped.action && mapped.action.observe).toBe(
         "a11y",
       );
     }
   });
 
-  it("honours an explicit observeAfter", () => {
+  it("maps the contract's observeAfter onto the daemon's observe", () => {
+    // The two names are deliberate, not an oversight: the contract is versioned
+    // for agents and the daemon's unions move with each engine wave, so the
+    // mapper is the one place they meet. `main` landing `ActObserve` while this
+    // branch carried `BrowserObserveAfter` is exactly the drift that seam is
+    // for — the daemon converged, the published name did not have to.
     const mapped = toDaemonAction({
       op: "act",
       verb: "click",
       observeAfter: "none",
     });
-    expect(mapped.ok && "observeAfter" in mapped.action && mapped.action.observeAfter).toBe(
+    expect(mapped.ok && "observe" in mapped.action && mapped.action.observe).toBe(
       "none",
     );
   });
