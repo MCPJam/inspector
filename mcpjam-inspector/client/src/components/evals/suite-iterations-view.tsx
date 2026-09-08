@@ -93,6 +93,7 @@ import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import {
   CAPABILITY_REASON_COPY,
+  CI_OWNED_REASON_COPY,
   DEPLOYMENT_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
@@ -352,6 +353,8 @@ export function SuiteIterationsView({
   canDeleteRuns = true,
   canDeleteRun,
   readOnlyConfig = false,
+  configLocked = false,
+  onDuplicateSuite,
   hideRunActions = false,
   casesSidebarHidden,
   onShowCasesSidebar,
@@ -423,6 +426,27 @@ export function SuiteIterationsView({
   canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
+  /**
+   * The suite's CONFIGURATION is owned elsewhere — a suite file or SDK ingest —
+   * so every write to it is refused by the platform.
+   *
+   * DISTINCT from `readOnlyConfig`, which is a surface decision (the desktop CI
+   * tab renders a viewer) and also hides Run. This one keeps Run, Run all,
+   * replay and compare — a CI-owned suite you cannot run is broken, not locked
+   * — and disables only the controls whose writes would 409, each carrying
+   * {@link CI_OWNED_REASON_COPY} and a Duplicate escape hatch.
+   *
+   * Both may be set. `readOnlyConfig` is the stricter of the two and wins
+   * wherever they overlap.
+   */
+  configLocked?: boolean;
+  /**
+   * Duplicate this suite — the escape hatch out of {@link configLocked}.
+   *
+   * Optional: a surface with no duplicate action (the desktop CI tab) simply
+   * does not offer the CTA, rather than showing a button that does nothing.
+   */
+  onDuplicateSuite?: (suite: EvalSuite) => void;
   /** When true, suppress suite-level run/replay entry points in shared chrome. */
   hideRunActions?: boolean;
   casesSidebarHidden?: boolean;
@@ -1189,23 +1213,46 @@ export function SuiteIterationsView({
   const computerEnvironmentRowVisible = capabilitiesReady
     ? Boolean(projectId)
     : computersEnabled && Boolean(projectId);
+  /**
+   * CI ownership is threaded FIRST, ahead of every feature gate and permission
+   * check, because it is the reason that survives fixing the others.
+   *
+   * A person shown "Not enabled for this organization" on a CI-owned suite
+   * would go and enable the flag, come back, and be refused anyway — the write
+   * is 409'd by the platform whatever their role or their flags say. Ownership
+   * is the true answer, so it is the one they get.
+   *
+   * Belt AND braces on purpose: `configLocked` comes from the parent's own
+   * predicate, `capabilities.ownership?.ciOwned` from the backend. An older
+   * backend sends no `ownership` block at all, and the predicate still locks
+   * the suite; a newer backend that starts locking something the client's
+   * mirror does not know about still disables the row.
+   */
+  const ciOwned =
+    configLocked ||
+    (capabilitiesReady && capabilities.ownership?.ciOwned === true);
+  const ciOwnedReason = ciOwned ? CI_OWNED_REASON_COPY : undefined;
+
   const computerEnvironmentDisabledReason = !capabilitiesReady
-    ? undefined
-    : (featureDisabledReason(capabilities.features?.computers) ??
+    ? ciOwnedReason
+    : (ciOwnedReason ??
+      featureDisabledReason(capabilities.features?.computers) ??
       (capabilities.permissions?.["suite.configure"] === false
         ? PERMISSION_REASON_COPY
         : undefined));
   const scheduleDisabledReason = !capabilitiesReady
-    ? undefined
-    : capabilities.features?.scheduledEvals?.enabled === false
-      ? DEPLOYMENT_REASON_COPY
-      : capabilities.permissions?.["suite.schedule"] === false
-        ? PERMISSION_REASON_COPY
-        : undefined;
+    ? ciOwnedReason
+    : (ciOwnedReason ??
+      (capabilities.features?.scheduledEvals?.enabled === false
+        ? DEPLOYMENT_REASON_COPY
+        : capabilities.permissions?.["suite.schedule"] === false
+          ? PERMISSION_REASON_COPY
+          : undefined));
   const deleteDisabledReason =
-    capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
+    ciOwnedReason ??
+    (capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
       ? PERMISSION_REASON_COPY
-      : undefined;
+      : undefined);
 
   const visibleSettingsGroups = useMemo(
     () =>
@@ -1638,6 +1685,8 @@ export function SuiteIterationsView({
             allIterations={allIterations}
             aggregate={aggregate}
             testCases={cases}
+            configLocked={ciOwned}
+            onDuplicateSuite={onDuplicateSuite}
             onSetupCi={onSetupCi}
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
@@ -1846,6 +1895,7 @@ export function SuiteIterationsView({
               >
                 <SuiteDetailOverview
                   suite={suite}
+                  configLocked={ciOwned}
                   cases={cases}
                   runs={runs}
                   runsLoading={runsLoading}
@@ -2225,7 +2275,10 @@ export function SuiteIterationsView({
                           </>
                         )}
                         {isVerdictPolicyV2 ? (
-                          <div data-setting-key="validity" className="space-y-2">
+                          <div
+                            data-setting-key="validity"
+                            className="space-y-2"
+                          >
                             <p className="text-xs font-medium text-foreground">
                               Validity
                             </p>
@@ -2253,18 +2306,14 @@ export function SuiteIterationsView({
                               value: next,
                             })
                           }
-                          capabilities={
-                            capabilitiesReady ? capabilities : null
-                          }
+                          capabilities={capabilitiesReady ? capabilities : null}
                           capabilitiesState={capabilitiesState}
                         />
                       </SuiteSettingsRow>
 
                       <div data-setting-key="passOrFail" className="contents">
                         <SuitePassOrFailSection
-                          capabilities={
-                            capabilitiesReady ? capabilities : null
-                          }
+                          capabilities={capabilitiesReady ? capabilities : null}
                           unavailableReason={
                             capabilitiesState === "unavailable"
                               ? CAPABILITY_REASON_COPY.flag_unavailable
@@ -2543,7 +2592,7 @@ export function SuiteIterationsView({
                   </section>
                 ) : null}
 
-                {readOnlyConfig ? null : (
+                {readOnlyConfig || ciOwned ? null : (
                   <SuiteSettingsCommitBar
                     changeCount={draftChanges.length}
                     conflictCount={draft.conflicts.length}

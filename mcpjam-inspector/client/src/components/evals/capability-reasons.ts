@@ -33,6 +33,20 @@ export const PERMISSION_REASON_COPY =
   "You don't have permission to change this";
 
 /**
+ * The suite is configured somewhere else, so this write would be refused.
+ *
+ * Re-exported from `lib/evals/is-ci-owned-suite` so the predicate and its copy
+ * live together, and so this module — which every settings row already reads
+ * for its reason strings — stays the one place to look for them.
+ *
+ * NOT a permission sentence, and that distinction is the point: every project
+ * member holds `suite.edit` on a CI-owned suite, so "you don't have
+ * permission" would send them to ask an admin for access that changes nothing.
+ * It names both real remedies instead.
+ */
+export { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
+
+/**
  * The disabled reason for a feature gate, or `undefined` when it is usable.
  *
  * A gate that is off with NO reason still produces a sentence: an unexplained

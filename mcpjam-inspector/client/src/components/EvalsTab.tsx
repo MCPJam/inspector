@@ -80,6 +80,7 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -88,7 +89,7 @@ interface EvalsTabProps {
   projectId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   handleConnect?: (config: ServerFormData) => void;
 }
@@ -174,7 +175,7 @@ function EvalsTabContent({
   });
   const evalRunsDisabledReason = useMemo(
     () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
-    [evalIterationQuota]
+    [evalIterationQuota],
   );
   const { servers: projectServers = [] } = useProjectServers({
     isAuthenticated,
@@ -183,14 +184,14 @@ function EvalsTabContent({
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
   const createServerAttachmentMutation = useMutation(
-    "serverAttachments:createServerAttachment" as any
+    "serverAttachments:createServerAttachment" as any,
   ) as unknown as (args: {
     projectId: string;
     name: string;
     serverIds: string[];
   }) => Promise<{ _id: string }>;
   const setSuiteEnvironments = useMutation(
-    "testSuites:setSuiteEnvironments" as any
+    "testSuites:setSuiteEnvironments" as any,
   ) as unknown as (args: {
     suiteId: string;
     environmentIds: string[] | null;
@@ -234,9 +235,12 @@ function EvalsTabContent({
   const latestRunBySuiteId = useMemo(
     () =>
       new Map(
-        visibleSuites.map((entry) => [entry.suite._id, entry.latestRun ?? null])
+        visibleSuites.map((entry) => [
+          entry.suite._id,
+          entry.latestRun ?? null,
+        ]),
       ),
-    [visibleSuites]
+    [visibleSuites],
   );
 
   const handlers = useEvalHandlers({
@@ -291,7 +295,7 @@ function EvalsTabContent({
       }
       return handlers.handleRerun(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const handleRunTestCaseWithQuota = useCallback(
@@ -301,7 +305,7 @@ function EvalsTabContent({
       }
       return handlers.handleRunTestCase(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const queries = useEvalQueries({
@@ -324,12 +328,12 @@ function EvalsTabContent({
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      activeIterations
+      activeIterations,
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
-    []
+    [],
   );
 
   useEffect(() => {
@@ -364,11 +368,14 @@ function EvalsTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
-    const mostRecent = sortSuiteOverviewEntries(visibleSuites, "recently_run")[0];
+    const mostRecent = sortSuiteOverviewEntries(
+      visibleSuites,
+      "recently_run",
+    )[0];
     if (mostRecent) {
       navigatePlaygroundEvalsRoute(
         { type: "suite-overview", suiteId: mostRecent.suite._id },
-        { replace: true }
+        { replace: true },
       );
     }
   }, [route.type, overviewQueries.isOverviewLoading, visibleSuites]);
@@ -414,7 +421,7 @@ function EvalsTabContent({
     const match = visibleSuites.find(
       (entry) =>
         isQuickstartSuite(entry.suite) ||
-        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME
+        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
     );
     return match?.suite._id ?? null;
   }, [visibleSuites]);
@@ -505,8 +512,8 @@ function EvalsTabContent({
             toast.error(
               getBillingErrorMessage(
                 error,
-                "Suite created, but attaching its environments failed"
-              )
+                "Suite created, but attaching its environments failed",
+              ),
             );
           }
         }
@@ -521,7 +528,7 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments]
+    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
@@ -573,7 +580,7 @@ function EvalsTabContent({
         ...(generationOptions ? { generationOptions } : {}),
       });
     },
-    [handlers]
+    [handlers],
   );
 
   const handleGenerateMore = useCallback(async () => {
@@ -594,7 +601,7 @@ function EvalsTabContent({
     }
 
     const missingServers = suiteServers.filter(
-      (serverName) => !connectedServerNames.has(serverName)
+      (serverName) => !connectedServerNames.has(serverName),
     );
     if (missingServers.length > 0) {
       if (ensureServersReady) {
@@ -607,7 +614,7 @@ function EvalsTabContent({
       return {
         canGenerate: false,
         disabledReason: `Connect ${missingServers.join(
-          ", "
+          ", ",
         )} to generate cases for this suite.`,
       };
     }
@@ -717,7 +724,7 @@ function EvalsTabContent({
     // The runs list displays formatRunId's shortened form; accept it when
     // it identifies exactly one visible run.
     const short = [...runsById.values()].filter(
-      (run) => formatRunId(run._id) === wanted
+      (run) => formatRunId(run._id) === wanted,
     );
     if (short.length === 1) {
       return short[0];
@@ -815,7 +822,9 @@ function EvalsTabContent({
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Suite "${suiteDisplayName(entry.suite)}" has no servers attached — attach a client in the suite header before generating cases.`,
+            `Suite "${suiteDisplayName(
+              entry.suite,
+            )}" has no servers attached — attach a client in the suite header before generating cases.`,
           );
         }
         const generateSuiteId = entry.suite._id;
@@ -868,7 +877,9 @@ function EvalsTabContent({
         if (!deleted) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            `Deleting suite "${suiteDisplayName(entry.suite)}" failed — it is still present. Check for a backend or authorization error.`,
+            `Deleting suite "${suiteDisplayName(
+              entry.suite,
+            )}" failed — it is still present. Check for a backend or authorization error.`,
           );
         }
         return {
@@ -889,7 +900,8 @@ function EvalsTabContent({
       }
       const currentRun =
         route.type === "run-detail"
-          ? runsForSelectedSuite.find((run) => run._id === route.runId) ?? null
+          ? (runsForSelectedSuite.find((run) => run._id === route.runId) ??
+            null)
           : null;
       return {
         view: route.type,
@@ -947,16 +959,16 @@ function EvalsTabContent({
         testCaseIds.map(async (id) => {
           await directDeleteTestCase(id);
           return id;
-        })
+        }),
       );
       const deletedIds = new Set(
         settledDeletes.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : []
-        )
+          result.status === "fulfilled" ? [result.value] : [],
+        ),
       );
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected"
+          result.status === "rejected",
       );
 
       if (failedDeletes.length > 0) {
@@ -964,7 +976,7 @@ function EvalsTabContent({
         toast.error(
           `Failed to delete ${failedDeletes.length} test case${
             failedDeletes.length === 1 ? "" : "s"
-          }.`
+          }.`,
         );
       }
 
@@ -975,11 +987,11 @@ function EvalsTabContent({
             suiteId: selectedSuiteId,
             view: "test-cases",
           },
-          { replace: true }
+          { replace: true },
         );
       }
     },
-    [directDeleteTestCase, selectedSuiteId, selectedTestId]
+    [directDeleteTestCase, selectedSuiteId, selectedTestId],
   );
 
   const hasDetailRoute =
@@ -1145,6 +1157,10 @@ function EvalsTabContent({
           isDirectGuest={isDirectGuest}
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
+          // See `EvaluateTab`: a suite configured by a repository is locked for
+          // editing here and duplicable, but stays runnable.
+          configLocked={isCiOwnedSuite(selectedSuite)}
+          onDuplicateSuite={handlers.handleDuplicateSuite}
           cases={suiteDetails?.testCases ?? []}
           iterations={activeIterations}
           allIterations={sortedIterations}
@@ -1194,7 +1210,7 @@ function EvalsTabContent({
                 {
                   location: "test_cases_overview",
                   iterationOverride: opts?.iterationOverride,
-                }
+                },
               );
               const firstIterationId =
                 data?.iteration?._id ??
@@ -1207,7 +1223,7 @@ function EvalsTabContent({
                   {
                     openCompare: true,
                     iteration: firstIterationId,
-                  }
+                  },
                 );
               }
             })();

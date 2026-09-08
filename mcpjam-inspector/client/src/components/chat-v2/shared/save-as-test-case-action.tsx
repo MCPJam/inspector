@@ -36,6 +36,7 @@ import {
 } from "@/components/evals/client-attachments-editor";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -149,7 +150,10 @@ export function SaveAsTestCaseAction({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      // Same predicate the suite lock uses: a CI-owned suite refuses case
+      // creates, so offering one here would be a picker whose only outcome is
+      // a refusal.
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview],
   );
 
@@ -268,9 +272,9 @@ export function SaveAsTestCaseAction({
           <DialogHeader>
             <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription>
-              Captures this prompt and the assistant's tool calls. Turns
-              with no observed tool calls can't be saved here — create a
-              negative test from the Evals suite instead.
+              Captures this prompt and the assistant's tool calls. Turns with no
+              observed tool calls can't be saved here — create a negative test
+              from the Evals suite instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">

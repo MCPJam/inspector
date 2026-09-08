@@ -90,6 +90,30 @@ export type SuiteCapabilities = {
   permissions: Record<SuiteCapabilityAction, boolean> & {
     "baseline.set"?: boolean;
   };
+  /**
+   * WHO CONFIGURES THIS SUITE — a sibling of `permissions`, not part of it.
+   *
+   * `permissions` answers "what does this ROLE allow"; CI ownership is a
+   * property of the SUITE, true for an org owner and a guest alike. Keeping
+   * them apart is what lets the UI disable a control for ownership and explain
+   * it differently from a missing role — the two need different copy and have
+   * different remedies.
+   *
+   * ABSENT on a backend that predates it, and every caller must still lock the
+   * suite in that case: `isCiOwnedSuite` on the suite row is the client's own
+   * answer, and this block only ADDS the platform's enumeration of what it
+   * refuses.
+   */
+  ownership?: {
+    ciOwned: boolean;
+    declaredSuiteId: string | null;
+    /**
+     * The actions the platform refuses, named. Enumerated by the backend rather
+     * than re-derived here so an action added to the lock reaches an older
+     * client as a disabled control rather than as a button that 409s.
+     */
+    lockedActions: string[];
+  };
   features: {
     computers: SuiteFeatureGate;
     environments: SuiteFeatureGate;

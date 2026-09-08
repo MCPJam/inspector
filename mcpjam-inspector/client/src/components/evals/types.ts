@@ -244,6 +244,14 @@ export type EvalSuite = {
   latestRunId?: string;
   source?: "ui" | "sdk";
   /**
+   * The suite-file id that declared this suite (`suite.id` in the file).
+   *
+   * Present on a file-owned suite, absent on one authored in the app. Half of
+   * `isCiOwnedSuite`, and the reason it is not just `source === "sdk"`: a
+   * file-owned suite is stamped `ui` and is still configured in a repository.
+   */
+  declaredSuiteId?: string;
+  /**
    * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
    * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
    */
@@ -626,12 +634,7 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  | "timeline"
-  | "chat"
-  | "raw"
-  | "tools"
-  | "browser"
-  | "steps";
+  "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -940,10 +943,7 @@ export type EvalSuiteRun = {
   verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
-    | "user_cancelled"
-    | "run_timeout"
-    | "iteration_timeout"
-    | "stale_worker";
+    "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
   source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
   /**
    * What the launching client DECLARED itself to be — the display half of run
@@ -1033,11 +1033,7 @@ export type EvalSuiteRun = {
       testCaseId?: string;
       title: string;
       status:
-        | "new_failure"
-        | "still_failing"
-        | "fixed"
-        | "new_case"
-        | "removed_case";
+        "new_failure" | "still_failing" | "fixed" | "new_case" | "removed_case";
       summary: string;
     }>;
   };
@@ -1064,10 +1060,7 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        | "server_design"
-        | "agent_behavior"
-        | "test_design"
-        | "unknown";
+        "server_design" | "agent_behavior" | "test_design" | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -1083,10 +1076,7 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        | "server_design"
-        | "agent_behavior"
-        | "test_design"
-        | "unknown";
+        "server_design" | "agent_behavior" | "test_design" | "unknown";
     }>;
   };
   // Goal-completion judge (advisory LLM-as-judge): grades each case's final
@@ -1203,10 +1193,7 @@ export type EvalRunDiffSide = {
 
 /** Delivery channel a pinned skill reached the run through. */
 export type EvalRunSkillChannel =
-  | "host"
-  | "environment"
-  | "plugin"
-  | "mcp-server";
+  "host" | "environment" | "plugin" | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export type EvalRunSkillSide = {

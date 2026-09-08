@@ -236,6 +236,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
       handleRerun: mocks.handleRerun,
       handleCancelRun: mocks.handleCancelRun,
       handleDelete: vi.fn(),
+      handleDuplicateSuite: vi.fn(),
       handleDeleteRun: vi.fn(),
       directDeleteRun: vi.fn().mockResolvedValue(undefined),
       directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
@@ -258,12 +259,16 @@ function makeSuiteEntry(
   suiteId: string,
   overrides?: {
     source?: "ui" | "sdk";
+    declaredSuiteId?: string;
     latestRun?: { _id: string; completedAt: number } | null;
   },
 ) {
   return {
     suite: {
       _id: suiteId,
+      ...(overrides?.declaredSuiteId
+        ? { declaredSuiteId: overrides.declaredSuiteId }
+        : {}),
       createdBy: "user-1",
       name: `Suite ${suiteId}`,
       description: "",
@@ -324,12 +329,12 @@ describe("EvaluateTab", () => {
     mocks.useQuery.mockImplementation((name: unknown) =>
       name === "billing:getEvalIterationQuota"
         ? mocks.evalIterationQuota
-        : undefined
+        : undefined,
     );
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
-        makeQueryState(selectedSuiteId)
+        makeQueryState(selectedSuiteId),
     );
   });
 
@@ -338,14 +343,14 @@ describe("EvaluateTab", () => {
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
-    expect(screen.getByRole("button", { name: /^evaluate$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^evaluate$/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText("/")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Suite suite-a", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
     expect(mocks.suiteIterationsView).toHaveBeenCalled();
     expect(
       screen.queryByRole("navigation", { name: "Evaluate view" }),
@@ -356,6 +361,50 @@ describe("EvaluateTab", () => {
         expect.objectContaining({ name: "server-a" }),
         expect.objectContaining({ name: "server-b" }),
       ]),
+    });
+  });
+
+  /**
+   * A suite the repository configures is read-only HERE and runnable
+   * everywhere. The tab's job is to say so; the view below it does the
+   * disabling, and the platform does the refusing.
+   */
+  describe("CI-owned suites", () => {
+    function renderWithSuite(overrides: {
+      source?: "ui" | "sdk";
+      declaredSuiteId?: string;
+    }) {
+      mocks.useEvalQueries.mockImplementation(() => {
+        const entry = makeSuiteEntry(["server-a"], "suite-a", overrides);
+        return {
+          ...makeQueryState("suite-a"),
+          suiteOverview: [entry],
+          sortedSuites: [entry],
+          selectedSuiteEntry: entry,
+          selectedSuite: entry.suite,
+        };
+      });
+      render(<EvaluateTab projectId="ws-1" />);
+      return mocks.suiteIterationsView.mock.calls.at(-1)?.[0];
+    }
+
+    it("locks a file-declared suite", () => {
+      // Stamped `ui`, and still CI-owned: the file is what configures it.
+      const props = renderWithSuite({ declaredSuiteId: "s_checkout" });
+      expect(props?.configLocked).toBe(true);
+      // NOT `readOnlyConfig` — that is the desktop CI tab's stricter surface
+      // decision, and it also hides Run.
+      expect(props?.readOnlyConfig).toBeFalsy();
+      // And the escape hatch is wired, or the lock would be a dead end.
+      expect(typeof props?.onDuplicateSuite).toBe("function");
+    });
+
+    it("locks a suite SDK ingest authored", () => {
+      expect(renderWithSuite({ source: "sdk" })?.configLocked).toBe(true);
+    });
+
+    it("leaves an app-authored suite editable", () => {
+      expect(renderWithSuite({ source: "ui" })?.configLocked).toBe(false);
     });
   });
 
@@ -373,7 +422,9 @@ describe("EvaluateTab", () => {
 
     expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalled();
     expect(screen.getByTestId("evals-suites-landing")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Evaluate" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Evaluate" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         "We generate cases from live discovery, or describe behaviors in chat, or import your existing tests.",
@@ -511,9 +562,7 @@ describe("EvaluateTab", () => {
     ).toBeInTheDocument();
     expect(screen.queryByTestId("evals-suites-landing")).toBeNull();
     expect(screen.queryByTestId("project-runs-table")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
     expect(screen.getByRole("button", { name: /^suites$/i })).toHaveAttribute(
       "aria-current",
       "page",
@@ -605,7 +654,7 @@ describe("EvaluateTab", () => {
               : undefined,
           suiteRuns: selectedSuiteId === "suite-sdk" ? [] : undefined,
         };
-      }
+      },
     );
 
     render(<EvaluateTab projectId="ws-1" />);
@@ -650,9 +699,7 @@ describe("EvaluateTab", () => {
     expect(
       screen.getByRole("link", { name: "Test case", current: "page" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Switch suite/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch suite/ })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Suite suite-a" }));
     expect(mocks.toSuiteOverview).toHaveBeenCalledWith("suite-a");
@@ -672,7 +719,7 @@ describe("EvaluateTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "list" },
-        { replace: true }
+        { replace: true },
       );
     });
   });
@@ -690,7 +737,7 @@ describe("EvaluateTab", () => {
     expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       evalRunsDisabledReason: expect.stringMatching(
-        /^Eval iteration limit reached\. Resets /
+        /^Eval iteration limit reached\. Resets /,
       ),
     });
   });
@@ -702,7 +749,7 @@ describe("EvaluateTab", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "billing:getEvalIterationQuota",
-      { organizationId: "org-1" }
+      { organizationId: "org-1" },
     );
   });
 
@@ -713,7 +760,7 @@ describe("EvaluateTab", () => {
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error"
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
         );
       });
 
@@ -721,7 +768,7 @@ describe("EvaluateTab", () => {
 
       expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Try again" })
+        screen.getByRole("button", { name: "Try again" }),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
@@ -780,8 +827,7 @@ describe("EvaluateTab", () => {
         status: "error",
         error: { code: "execution_failed" },
       });
-      const message =
-        response.status === "error" ? response.error.message : "";
+      const message = response.status === "error" ? response.error.message : "";
       expect(message).toMatch(/Eval iteration limit reached/);
       expect(message).toMatch(/25\/25 eval iterations used/);
       // The raw un-gated run path must not have been touched.
@@ -848,9 +894,9 @@ describe("EvaluateTab", () => {
       );
       expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
       // Staged before committed, and the staging dialog is closed after.
-      expect(
-        mocks.setSuiteToDelete.mock.invocationCallOrder[0],
-      ).toBeLessThan(mocks.confirmDelete.mock.invocationCallOrder[0]);
+      expect(mocks.setSuiteToDelete.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.confirmDelete.mock.invocationCallOrder[0],
+      );
       expect(mocks.setSuiteToDelete).toHaveBeenLastCalledWith(null);
     });
 

@@ -350,6 +350,50 @@ When you run a suite against multiple host configurations at once, the Runs list
 
 The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
 
+#### Where a run came from
+
+Every run carries an origin badge. It is resolved from two different kinds of
+fact, and the difference matters when you are reading a run you did not launch:
+
+- **Stamped.** The platform records how the run entered — the app, a schedule, a
+  GitHub pull-request check, an SDK report, or the public API. Nobody can set
+  this, which is what makes it usable as an audit field. It is also coarse:
+  everything reaching the platform through `/api/v1` is *API*, so a CLI run, a
+  GitHub Action and an MCP agent all looked identical.
+- **Declared.** The launching client says what it is — **CLI**, **MCP** or
+  **GitHub** for an Action. This is what makes those three legible, and it is
+  self-reported: a declared badge says so in its tooltip. Use it to read a
+  table, not to prove anything.
+- **Verified.** Where a run arrived on a channel the platform can prove (an MCP
+  client, the Slack or Discord app), that wins over anything the client
+  declared.
+
+The **Source** filter uses the same resolution, so a chip and a badge can never
+disagree, and it filters on the server — an empty result means the project has
+no matching runs, not that this page has none.
+
+**Run by** names the person, and beneath it the credential: `via API key ····1234`
+when the run was launched with an API key, or the calling agent's name on an MCP
+run. A delegated key still runs as its holder, so without that line a fan-out
+launched by somebody's CI key and a run they clicked themselves look the same.
+
+#### Suites managed by CI
+
+A suite created from a suite file (`mcpjam cloud eval run --file`) or by the
+MCPJam SDK carries a **CI** badge, and its configuration is read-only here.
+
+That is not a permissions problem — it is where the suite is configured. The
+CLI's as-code sync reconciles the suite against the file on every run and
+deletes any case the file does not declare, so an edit made in the app would not
+merely be overwritten later: it would be silently deleted, at a time nobody is
+watching.
+
+What still works is everything that is not configuration — **Run**, **Run all**,
+replay, compare, and the whole run history. To change what the suite tests, edit
+the test file in your repository. To take it somewhere you can edit,
+**Duplicate to edit**: the copy is app-owned from birth and has no link back to
+the file.
+
 #### Cross-host matrix
 
 When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.

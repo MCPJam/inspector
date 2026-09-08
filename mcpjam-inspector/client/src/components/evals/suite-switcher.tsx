@@ -53,9 +53,7 @@ export function SuiteSwitcher({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return suites;
-    return suites.filter((e) =>
-      (e.suite.name || "").toLowerCase().includes(q),
-    );
+    return suites.filter((e) => (e.suite.name || "").toLowerCase().includes(q));
   }, [suites, search]);
 
   return (
@@ -139,7 +137,10 @@ export function SuiteSwitcher({
                         <span className="truncate text-[13px] font-medium text-foreground">
                           {name}
                         </span>
-                        <SuiteSourceBadge source={entry.suite.source} />
+                        <SuiteSourceBadge
+                          source={entry.suite.source}
+                          declaredSuiteId={entry.suite.declaredSuiteId}
+                        />
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {entry.latestRun

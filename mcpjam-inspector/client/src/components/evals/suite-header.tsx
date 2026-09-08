@@ -19,6 +19,7 @@ import {
   PanelLeft,
   Play,
   Plus,
+  Copy,
   RotateCw,
   Settings,
   Sparkles,
@@ -62,6 +63,7 @@ import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
+import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -74,7 +76,7 @@ interface SuiteHeaderProps {
       matchOptionsOverride?: EvalMatchOptions;
       iterationOverride?: number;
       refreshSnapshot?: boolean;
-    }
+    },
   ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
@@ -89,6 +91,16 @@ interface SuiteHeaderProps {
   aggregate?: SuiteAggregate | null;
   testCases?: EvalCase[];
   readOnlyConfig?: boolean;
+  /**
+   * The suite's configuration lives in a repository, so every edit is refused.
+   *
+   * DISTINCT from `readOnlyConfig`, which is a surface decision and also hides
+   * Run. This keeps Run, Run all and replay — a CI-owned suite you cannot run
+   * is broken, not locked — and turns the name into a heading, hides the
+   * settings entry point, and offers Duplicate instead.
+   */
+  configLocked?: boolean;
+  onDuplicateSuite?: (suite: EvalSuite) => void;
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
@@ -156,6 +168,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runs = [],
     testCases = [],
     readOnlyConfig = false,
+    configLocked = false,
+    onDuplicateSuite,
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
@@ -179,9 +193,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     settingsDraftName,
   } = props;
 
+  // Authoring CTAs — Generate and New case — are configuration writes, and a
+  // CI-owned suite refuses them. Hidden rather than disabled here because the
+  // header is a dense action row with no room to explain each one; the badge
+  // beside the title and the settings sheet carry the explanation.
   const showTestCaseCtas =
-    runsViewMode === "test-cases" ||
-    (unifiedSuiteDashboard && viewMode === "overview");
+    !configLocked &&
+    (runsViewMode === "test-cases" ||
+      (unifiedSuiteDashboard && viewMode === "overview"));
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -222,7 +241,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         toast.success("Suite name updated");
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to update suite name")
+          getBillingErrorMessage(error, "Failed to update suite name"),
         );
         console.error("Failed to update suite name:", error);
         setEditedName(suite.name);
@@ -241,7 +260,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         setEditedName(suite.name);
       }
     },
-    [handleNameBlur, suite.name]
+    [handleNameBlur, suite.name],
   );
 
   // Calculate suite server status from the EFFECTIVE server list —
@@ -257,8 +276,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   });
   const { hasServersConfigured, missingServers } = replayEligibility;
   const canTriggerLiveRun = hasServersConfigured;
-  const isRerunning =
-    rerunningSuiteId === suite._id || latestRunIsInProgress;
+  const isRerunning = rerunningSuiteId === suite._id || latestRunIsInProgress;
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
@@ -356,13 +374,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             "mb-4 flex min-w-0",
             runDetailKpiStrip
               ? "flex-nowrap items-center gap-3"
-              : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+              : "flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4",
           )}
         >
           <div
             className={cn(
               "flex min-w-0 flex-col gap-1",
-              runDetailKpiStrip ? "shrink-0" : "flex-1"
+              runDetailKpiStrip ? "shrink-0" : "flex-1",
             )}
           >
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -391,7 +409,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             )}
           </div>
           {runDetailKpiStrip ? (
-            <div className="min-w-0 flex-1 self-center">{runDetailKpiStrip}</div>
+            <div className="min-w-0 flex-1 self-center">
+              {runDetailKpiStrip}
+            </div>
           ) : null}
           {!hideRunActions ? (
             <div className={cn("shrink-0", !runDetailKpiStrip && "sm:pt-0.5")}>
@@ -436,23 +456,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             !isEnvironmentSuite && !hasServersConfigured;
           const isRunAllDisabled = Boolean(
             isRerunning ||
-              replayingRunId != null ||
-              runningTestCaseId != null ||
-              evalRunsDisabledReason ||
-              testCaseCount === 0 ||
-              runAllNeedsLocalServers
+            replayingRunId != null ||
+            runningTestCaseId != null ||
+            evalRunsDisabledReason ||
+            testCaseCount === 0 ||
+            runAllNeedsLocalServers,
           );
           const runAllDisabledReasonTooltip = evalRunsDisabledReason
             ? evalRunsDisabledReason
             : runAllNeedsLocalServers
-            ? "Configure suite servers before running the full suite."
-            : testCaseCount === 0
-            ? "Add a test case first."
-            : isRerunning || replayingRunId != null
-            ? "A suite or replay is already in progress."
-            : runningTestCaseId != null
-            ? "Finish the in-progress test case run first."
-            : null;
+              ? "Configure suite servers before running the full suite."
+              : testCaseCount === 0
+                ? "Add a test case first."
+                : isRerunning || replayingRunId != null
+                  ? "A suite or replay is already in progress."
+                  : runningTestCaseId != null
+                    ? "Finish the in-progress test case run first."
+                    : null;
           // `missingServers` compares the LOCAL server list against connected
           // ones. An environment suite launches against the server-side resolved
           // set instead, so a disconnected legacy entry says nothing about
@@ -542,7 +562,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                         onChange={(e) => {
                           const raw = e.target.value;
                           onIterationOverrideChange(
-                            raw === "" ? undefined : Number(raw)
+                            raw === "" ? undefined : Number(raw),
                           );
                         }}
                         aria-label="Iterations per test case for the next run"
@@ -553,7 +573,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                             <option key={n} value={n}>
                               {n}
                             </option>
-                          )
+                          ),
                         )}
                       </select>
                     </div>
@@ -563,7 +583,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     density="compact"
                     value={runMatchOptionsOverride}
                     inheritedFrom={resolveMatchOptions(
-                      suite.defaultMatchOptions
+                      suite.defaultMatchOptions,
                     )}
                     onChange={setRunMatchOptionsOverride}
                     showBadges
@@ -634,7 +654,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 // the COUNT: exactly one attached host is disclosed for real
                 // since G4c, several is the multi-target refusal.
                 hostIds={(suite.hostAttachments ?? []).map(
-                  (attachment) => attachment.namedHostId
+                  (attachment) => attachment.namedHostId,
                 )}
                 suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
               />
@@ -654,37 +674,39 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
     (showTestCaseCtas && Boolean(onCreateTestCase));
 
-  const overviewSuiteNavButtons =
-    overviewHasSuiteNav ? (
-      <>
-        {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            onClick={onShowCasesSidebar}
-          >
-            <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Cases
-          </Button>
-        ) : null}
-        {onSetupCi && !readOnlyConfig ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            onClick={onSetupCi}
-          >
-            <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Setup CI
-          </Button>
-        ) : null}
-      </>
-    ) : null;
+  const overviewSuiteNavButtons = overviewHasSuiteNav ? (
+    <>
+      {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onShowCasesSidebar}
+        >
+          <PanelLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Cases
+        </Button>
+      ) : null}
+      {onSetupCi && !readOnlyConfig ? (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5"
+          onClick={onSetupCi}
+        >
+          <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Setup CI
+        </Button>
+      ) : null}
+    </>
+  ) : null;
 
+  // Hidden when the suite is CI-owned: the sheet's every row would be
+  // disabled, and offering a settings entry point that opens a page of
+  // explanations is a worse answer than the badge already on the title.
   const overviewSettingsButton =
-    !readOnlyConfig && !isEditMode ? (
+    !readOnlyConfig && !configLocked && !isEditMode ? (
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -798,7 +820,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && hasServersConfigured ? (
+        {/*
+          "Update snapshot" repins the suite's environment and host config, so
+          it is a configuration write and the platform refuses it on a CI-owned
+          suite. Plain Run and Run all are untouched — they are the whole point
+          of keeping the suite runnable.
+        */}
+        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -894,9 +922,40 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       </>
     ) : null;
 
+  /**
+   * The escape hatch, offered exactly where the edit controls were.
+   *
+   * A lock with no way out is a dead end, and "go and change your repository"
+   * is not an answer for someone who wants to try one thing. `duplicateTestSuite`
+   * yields a copy stamped `source: 'ui'` with no declared id — app-owned from
+   * birth — so this is the whole remedy in one click.
+   *
+   * Rendered only when the parent supplied a handler: a surface with no
+   * duplicate action would otherwise show a button that does nothing.
+   */
+  const overviewDuplicateToEditCta =
+    configLocked && !readOnlyConfig && onDuplicateSuite ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={() => onDuplicateSuite(suite)}
+          >
+            <Copy className="h-3.5 w-3.5 shrink-0" />
+            Duplicate to edit
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{CI_OWNED_REASON_COPY}</TooltipContent>
+      </Tooltip>
+    ) : null;
+
   const overviewHasRightActions =
     overviewHasCaseTools ||
     Boolean(overviewSetupSdkButton) ||
+    Boolean(overviewDuplicateToEditCta) ||
     Boolean(overviewLegacyRunActions);
 
   return (
@@ -917,7 +976,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 autoFocus
                 className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
               />
-            ) : readOnlyConfig ? (
+            ) : readOnlyConfig || configLocked ? (
               <h2
                 className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
                 title={suite.name}
@@ -953,6 +1012,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
         >
           {overviewSetupSdkButton}
+          {overviewDuplicateToEditCta}
           {overviewLegacyRunActions}
           {overviewGenerateButton}
           {overviewNewCaseButton}

@@ -739,8 +739,7 @@ export const startSuiteRunWithRecorder = async ({
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
   let suiteDefaultPredicates:
-    | import("@/shared/eval-matching").Predicate[]
-    | undefined;
+    import("@/shared/eval-matching").Predicate[] | undefined;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -768,11 +767,9 @@ export const startSuiteRunWithRecorder = async ({
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
       envelope: tc.predicates as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: tc.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
     });
 
   // Build config from test cases for backward compatibility
@@ -866,9 +863,7 @@ export const startSuiteRunWithRecorder = async ({
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
-      | Record<string, unknown>
-      | null
-      | undefined,
+      Record<string, unknown> | null | undefined,
     /**
      * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
      * `bundleHash` of every plugin version this run pinned, in pin order.
@@ -894,8 +889,7 @@ export const startSuiteRunWithRecorder = async ({
      * which mean the same thing here.
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
-      | { mode?: unknown }
-      | undefined,
+      { mode?: unknown } | undefined,
     /**
      * The run's FROZEN description-experiment marker, straight off its own
      * snapshot. The runner applies `{ [toolName]: description }` and stamps

@@ -13,6 +13,7 @@ import {
   EVAL_FAIL_BAR_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /** Strip trailing timestamp suffixes from suite names for display. */
 export function stripTimestampSuffix(name: string): string {
@@ -217,13 +218,31 @@ export function SuitePassRateDeltaChip({
   );
 }
 
-export function SuiteSourceBadge({ source }: { source?: "ui" | "sdk" }) {
-  if (source !== "sdk") return null;
+/**
+ * "This suite is configured somewhere else."
+ *
+ * SUITE-level `source` is not the same fact as RUN-level `source`, and the
+ * badge has always known that — it renders **CI**, not SDK. Only the tooltip
+ * said SDK, which was the narrower of the two ways a suite can be CI-owned: a
+ * suite file declares it, or SDK ingest authored it. Both mean the same thing
+ * to a reader, which is that editing it here will not stick.
+ *
+ * The STORED value stays `'sdk'` (PostHog's `suite_source`, the export modal
+ * and the CI tab all key on it) — this is copy only.
+ */
+export function SuiteSourceBadge({
+  source,
+  declaredSuiteId,
+}: {
+  source?: "ui" | "sdk";
+  declaredSuiteId?: string;
+}) {
+  if (!isCiOwnedSuite({ source, declaredSuiteId })) return null;
   return (
     <Badge
       variant="outline"
       className="shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide"
-      title="Created via the MCPJam SDK"
+      title="Managed by CI (created from a test file or the MCPJam SDK)"
     >
       CI
     </Badge>
@@ -277,11 +296,7 @@ export function formatServerChipSummary(servers: string[]): string {
 }
 
 export type SuiteListSortKey =
-  | "severity"
-  | "recently_run"
-  | "pass_rate"
-  | "name"
-  | "most_failing";
+  "severity" | "recently_run" | "pass_rate" | "name" | "most_failing";
 
 export function suiteSeverityRank(entry: EvalSuiteOverviewEntry): number {
   if (entry.latestRun?.result === "failed") return 0;

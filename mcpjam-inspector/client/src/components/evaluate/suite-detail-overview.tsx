@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { FileUp, Loader2, MessageSquareText, Play, Sparkles } from "lucide-react";
+import {
+  FileUp,
+  Loader2,
+  MessageSquareText,
+  Play,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
@@ -41,12 +47,20 @@ import {
   type SuiteRunHistoryFilters,
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../evals/types";
 import {
   RunDecisionVerdictBadge,
   RunDecisionVerdictUnavailable,
 } from "../evals/run-decision-summary-card";
-import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
+import {
+  useEvalRunDecisionBadge,
+  useHasBeenVisible,
+} from "@/hooks/use-eval-run-decision-summary";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 
@@ -112,6 +126,7 @@ export function SuiteDetailOverview({
   runningTestCaseId = null,
   evalRunsDisabledReason = null,
   readOnlyConfig = false,
+  configLocked = false,
   projectId = null,
   decisionSummaryEnabled = false,
 }: {
@@ -136,6 +151,12 @@ export function SuiteDetailOverview({
   runningTestCaseId?: string | null;
   evalRunsDisabledReason?: string | null;
   readOnlyConfig?: boolean;
+  /**
+   * The suite is configured in a repository, so its edit controls are hidden
+   * and the badge on its title explains why. Distinct from `readOnlyConfig`,
+   * which also hides Run; this keeps Run and replay.
+   */
+  configLocked?: boolean;
   /** Threaded from `EvaluateTab`; never resolved in the browser. */
   projectId?: string | null;
   /**
@@ -276,7 +297,7 @@ export function SuiteDetailOverview({
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!readOnlyConfig ? (
+          {!readOnlyConfig && !configLocked ? (
             <Button
               type="button"
               variant="outline"
@@ -307,146 +328,158 @@ export function SuiteDetailOverview({
       </div>
 
       {showRunHistory ? (
-      <section
-        className={cn(
-          evalSurfaceCardClass,
-          "overflow-hidden bg-muted/35 dark:bg-muted/20",
-        )}
-        data-testid="suite-detail-run-history"
-      >
-        <div
+        <section
           className={cn(
-            evalSurfaceHeaderClass,
-            "flex flex-wrap items-center justify-between gap-3 border-border/30 bg-transparent px-5 py-3.5",
+            evalSurfaceCardClass,
+            "overflow-hidden bg-muted/35 dark:bg-muted/20",
           )}
+          data-testid="suite-detail-run-history"
         >
-          <h3 className="text-[15px] font-semibold tracking-tight text-foreground">
-            Run History
-          </h3>
-          {historyRows.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {filterOptions.verdicts.length > 0 ? (
-                <FilterSelect
-                  label="Verdict"
-                  value={effectiveFilters.verdict}
-                  onChange={(verdict) =>
-                    setFilters((current) => ({
-                      ...current,
-                      verdict: verdict as SuiteRunHistoryFilters["verdict"],
-                    }))
-                  }
-                  options={[
-                    { value: "all", label: "All" },
-                    ...filterOptions.verdicts.map((verdict) => ({
-                      value: verdict,
-                      label: verdictLabel(verdict),
-                    })),
-                  ]}
-                />
-              ) : null}
-              {filterOptions.clients.length > 0 ? (
-                <FilterSelect
-                  label="Client"
-                  value={effectiveFilters.client}
-                  onChange={(client) =>
-                    setFilters((current) => ({ ...current, client }))
-                  }
-                  options={[
-                    { value: "all", label: "All" },
-                    ...filterOptions.clients.map((client) => ({
-                      value: client,
-                      label: client,
-                    })),
-                  ]}
-                />
-              ) : null}
-              {filterOptions.models.length > 0 ? (
-                <FilterSelect
-                  label="Model"
-                  value={effectiveFilters.model}
-                  onChange={(model) =>
-                    setFilters((current) => ({ ...current, model }))
-                  }
-                  options={[
-                    { value: "all", label: "All" },
-                    ...filterOptions.models.map((model) => ({
-                      value: model,
-                      label: model,
-                    })),
-                  ]}
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        <SuiteRunHistorySnapshot runs={runs} allIterations={allIterations} />
-
-        {filteredRows.length === 0 ? (
           <div
-            className="bg-card px-5 py-10 text-center text-sm text-muted-foreground"
-            data-testid="suite-run-history-empty"
+            className={cn(
+              evalSurfaceHeaderClass,
+              "flex flex-wrap items-center justify-between gap-3 border-border/30 bg-transparent px-5 py-3.5",
+            )}
           >
-            {/*
+            <h3 className="text-[15px] font-semibold tracking-tight text-foreground">
+              Run History
+            </h3>
+            {historyRows.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {filterOptions.verdicts.length > 0 ? (
+                  <FilterSelect
+                    label="Verdict"
+                    value={effectiveFilters.verdict}
+                    onChange={(verdict) =>
+                      setFilters((current) => ({
+                        ...current,
+                        verdict: verdict as SuiteRunHistoryFilters["verdict"],
+                      }))
+                    }
+                    options={[
+                      { value: "all", label: "All" },
+                      ...filterOptions.verdicts.map((verdict) => ({
+                        value: verdict,
+                        label: verdictLabel(verdict),
+                      })),
+                    ]}
+                  />
+                ) : null}
+                {filterOptions.clients.length > 0 ? (
+                  <FilterSelect
+                    label="Client"
+                    value={effectiveFilters.client}
+                    onChange={(client) =>
+                      setFilters((current) => ({ ...current, client }))
+                    }
+                    options={[
+                      { value: "all", label: "All" },
+                      ...filterOptions.clients.map((client) => ({
+                        value: client,
+                        label: client,
+                      })),
+                    ]}
+                  />
+                ) : null}
+                {filterOptions.models.length > 0 ? (
+                  <FilterSelect
+                    label="Model"
+                    value={effectiveFilters.model}
+                    onChange={(model) =>
+                      setFilters((current) => ({ ...current, model }))
+                    }
+                    options={[
+                      { value: "all", label: "All" },
+                      ...filterOptions.models.map((model) => ({
+                        value: model,
+                        label: model,
+                      })),
+                    ]}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <SuiteRunHistorySnapshot runs={runs} allIterations={allIterations} />
+
+          {filteredRows.length === 0 ? (
+            <div
+              className="bg-card px-5 py-10 text-center text-sm text-muted-foreground"
+              data-testid="suite-run-history-empty"
+            >
+              {/*
               Three different states, and they must not read alike: still
               loading, never run, and filtered down to nothing. The middle one
               is the reason this card renders at all now.
             */}
-            {runsLoading
-              ? "Loading runs…"
-              : hasRuns
-                ? "No runs match these filters."
-                : "No runs yet. Run this suite — verdict, pass rate, latency and cost land here."}
-          </div>
-        ) : (
-          <div className="overflow-x-auto bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent border-border/30">
-                  <TableHead className={runHistoryHeadClass}>Date</TableHead>
-                  <TableHead className={runHistoryHeadClass}>Verdict</TableHead>
-                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
-                    Rate
-                  </TableHead>
-                  <TableHead className={runHistoryHeadClass}>Platform</TableHead>
-                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
-                    Latency
-                  </TableHead>
-                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
-                    Tokens/run
-                  </TableHead>
-                  <TableHead className={cn(runHistoryHeadClass, "text-right")}>
-                    Tool calls/run
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleRows.map((row, index) => (
-                  <TableRow
-                    key={row.runId}
-                    data-testid={`suite-run-row-${row.runId}`}
-                    className={cn(
-                      "cursor-pointer border-border/25",
-                      evalSurfaceRowHoverClass,
-                    )}
-                    onClick={() => onRunClick(row.runId)}
-                  >
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {row.dateLabel}
-                    </TableCell>
-                    <TableCell>
-                      <SuiteRunVerdictCell
-                        row={row}
-                        projectId={projectId}
-                        enabled={decisionSummaryEnabled}
-                        // The first page is on screen the moment the table
-                        // paints, so it reads eagerly. Everything "Show all"
-                        // reveals waits to be scrolled to — otherwise one
-                        // click would ask for the entire history at once.
-                        lazy={index >= SUITE_RUN_HISTORY_PAGE_SIZE}
-                      />
-                    </TableCell>
-                    {/*
+              {runsLoading
+                ? "Loading runs…"
+                : hasRuns
+                  ? "No runs match these filters."
+                  : "No runs yet. Run this suite — verdict, pass rate, latency and cost land here."}
+            </div>
+          ) : (
+            <div className="overflow-x-auto bg-card">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent border-border/30">
+                    <TableHead className={runHistoryHeadClass}>Date</TableHead>
+                    <TableHead className={runHistoryHeadClass}>
+                      Verdict
+                    </TableHead>
+                    <TableHead
+                      className={cn(runHistoryHeadClass, "text-right")}
+                    >
+                      Rate
+                    </TableHead>
+                    <TableHead className={runHistoryHeadClass}>
+                      Platform
+                    </TableHead>
+                    <TableHead
+                      className={cn(runHistoryHeadClass, "text-right")}
+                    >
+                      Latency
+                    </TableHead>
+                    <TableHead
+                      className={cn(runHistoryHeadClass, "text-right")}
+                    >
+                      Tokens/run
+                    </TableHead>
+                    <TableHead
+                      className={cn(runHistoryHeadClass, "text-right")}
+                    >
+                      Tool calls/run
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleRows.map((row, index) => (
+                    <TableRow
+                      key={row.runId}
+                      data-testid={`suite-run-row-${row.runId}`}
+                      className={cn(
+                        "cursor-pointer border-border/25",
+                        evalSurfaceRowHoverClass,
+                      )}
+                      onClick={() => onRunClick(row.runId)}
+                    >
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {row.dateLabel}
+                      </TableCell>
+                      <TableCell>
+                        <SuiteRunVerdictCell
+                          row={row}
+                          projectId={projectId}
+                          enabled={decisionSummaryEnabled}
+                          // The first page is on screen the moment the table
+                          // paints, so it reads eagerly. Everything "Show all"
+                          // reveals waits to be scrolled to — otherwise one
+                          // click would ask for the entire history at once.
+                          lazy={index >= SUITE_RUN_HISTORY_PAGE_SIZE}
+                        />
+                      </TableCell>
+                      {/*
                       DELIBERATELY still the locally derived rate, and the one
                       place this surface diverges from the project Runs table.
 
@@ -464,53 +497,52 @@ export function SuiteDetailOverview({
                       context; retiring it is a later change with its own
                       column design.
                     */}
-                    <TableCell className="text-right text-xs tabular-nums text-foreground">
-                      {row.passRate != null ? `${row.passRate}%` : "—"}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        "whitespace-nowrap text-xs",
-                        row.source === "github_check"
-                          ? "font-medium text-sky-600 dark:text-sky-400"
-                          : "text-foreground",
-                      )}
-                    >
-                      {row.platform}
-                    </TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                      {formatRunHistoryMetric(row.latencyMs, "duration")}
-                    </TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                      {formatRunHistoryMetric(row.tokens, "number")}
-                    </TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                      {formatRunHistoryMetric(row.toolCalls, "number")}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+                      <TableCell className="text-right text-xs tabular-nums text-foreground">
+                        {row.passRate != null ? `${row.passRate}%` : "—"}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          "whitespace-nowrap text-xs",
+                          row.source === "github_check"
+                            ? "font-medium text-sky-600 dark:text-sky-400"
+                            : "text-foreground",
+                        )}
+                      >
+                        {row.platform}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                        {formatRunHistoryMetric(row.latencyMs, "duration")}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                        {formatRunHistoryMetric(row.tokens, "number")}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                        {formatRunHistoryMetric(row.toolCalls, "number")}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
 
-        {hiddenRunCount > 0 ? (
-          <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
-            <button
-              type="button"
-              className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-              onClick={() => setShowAllRuns(true)}
-            >
-              view all {filteredRows.length.toLocaleString()} runs →
-            </button>
-          </div>
-        ) : null}
-      </section>
+          {hiddenRunCount > 0 ? (
+            <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
+              <button
+                type="button"
+                className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => setShowAllRuns(true)}
+              >
+                view all {filteredRows.length.toLocaleString()} runs →
+              </button>
+            </div>
+          ) : null}
+        </section>
       ) : null}
-
 
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
-          readOnly={readOnlyConfig}
+          readOnly={readOnlyConfig || configLocked}
           onDescribe={onEditCases}
           onGenerate={onGenerateTestCases}
           canGenerate={canGenerateTestCases}
@@ -520,70 +552,72 @@ export function SuiteDetailOverview({
           fillRemaining={!showRunHistory}
         />
       ) : (
-      <section
-        className={evalSurfaceCardClass}
-        data-testid="suite-detail-test-cases"
-      >
-        <div
-          className={cn(
-            evalSurfaceHeaderClass,
-            "flex items-center justify-between gap-3 px-4 py-3",
-          )}
+        <section
+          className={evalSurfaceCardClass}
+          data-testid="suite-detail-test-cases"
         >
-          <h3 className="text-sm font-semibold text-foreground">Test Cases</h3>
-          {!readOnlyConfig ? (
-            <div className="flex shrink-0 items-center gap-2">
-              {/* Generate lives here as well as in the empty hero. Reaching it
+          <div
+            className={cn(
+              evalSurfaceHeaderClass,
+              "flex items-center justify-between gap-3 px-4 py-3",
+            )}
+          >
+            <h3 className="text-sm font-semibold text-foreground">
+              Test Cases
+            </h3>
+            {!readOnlyConfig && !configLocked ? (
+              <div className="flex shrink-0 items-center gap-2">
+                {/* Generate lives here as well as in the empty hero. Reaching it
                   only through the hero would mean a suite loses the affordance
                   the moment it has its first case, which is exactly when
                   "generate more from live discovery" is most useful. */}
-              {onGenerateTestCases ? (
-                <GenerateCasesButton
-                  onGenerate={onGenerateTestCases}
-                  canGenerate={canGenerateTestCases}
-                  disabledReason={generateTestCasesDisabledReason}
-                  isGenerating={isGeneratingTestCases}
-                />
-              ) : null}
-              {onEditCases ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={onEditCases}
-                >
-                  Add case
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        <ul className="divide-y divide-border/40">
-          {testCaseRows.map((row) => (
-            <li key={row.caseId}>
-              <button
-                type="button"
-                data-testid={`suite-test-case-row-${row.caseId}`}
-                className={cn(
-                  "flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left",
-                  evalSurfaceRowHoverClass,
-                )}
-                onClick={() => onTestCaseClick(row.caseId)}
-              >
-                <span className="text-sm font-medium text-foreground">
-                  {row.title}
-                </span>
-                {row.summary ? (
-                  <span className="text-xs text-muted-foreground">
-                    {row.summary}
-                  </span>
+                {onGenerateTestCases ? (
+                  <GenerateCasesButton
+                    onGenerate={onGenerateTestCases}
+                    canGenerate={canGenerateTestCases}
+                    disabledReason={generateTestCasesDisabledReason}
+                    isGenerating={isGeneratingTestCases}
+                  />
                 ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
+                {onEditCases ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={onEditCases}
+                  >
+                    Add case
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <ul className="divide-y divide-border/40">
+            {testCaseRows.map((row) => (
+              <li key={row.caseId}>
+                <button
+                  type="button"
+                  data-testid={`suite-test-case-row-${row.caseId}`}
+                  className={cn(
+                    "flex w-full flex-col items-start gap-0.5 px-4 py-3 text-left",
+                    evalSurfaceRowHoverClass,
+                  )}
+                  onClick={() => onTestCaseClick(row.caseId)}
+                >
+                  <span className="text-sm font-medium text-foreground">
+                    {row.title}
+                  </span>
+                  {row.summary ? (
+                    <span className="text-xs text-muted-foreground">
+                      {row.summary}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   );
@@ -722,7 +756,10 @@ function SuiteEmptyCasesHero({
               >
                 <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
                   {action.id === "generate" && isGenerating ? (
-                    <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                    <Loader2
+                      className="size-4 shrink-0 animate-spin"
+                      aria-hidden
+                    />
                   ) : (
                     <action.Icon className="size-4 shrink-0" aria-hidden />
                   )}
@@ -881,4 +918,3 @@ function FilterSelect({
     </Select>
   );
 }
-

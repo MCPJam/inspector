@@ -68,9 +68,10 @@ vi.mock("../../shared/evals.js", async () => {
 });
 
 vi.mock("../../web/auth.js", async () => {
-  const actual = await vi.importActual<typeof import("../../web/auth.js")>(
-    "../../web/auth.js",
-  );
+  const actual =
+    await vi.importActual<typeof import("../../web/auth.js")>(
+      "../../web/auth.js",
+    );
   return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
 });
 

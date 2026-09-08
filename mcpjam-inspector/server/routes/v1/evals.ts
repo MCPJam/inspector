@@ -2908,7 +2908,7 @@ function buildCaseMutationArgs(
   if (body.models !== undefined) {
     args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
-    args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
+    args.models = isModelFreeStepsCase ? [] : (opts.defaultModels ?? []);
   }
 
   // On create, a null override is meaningless (nothing to clear) — omit it so
@@ -2921,11 +2921,11 @@ function buildCaseMutationArgs(
       body.matchOptions === null
         ? null
         : // Create sets a fresh override from the provided fields; update merges
-        // the partial patch onto the case's existing override so unmentioned
-        // fields aren't reset.
-        opts.forCreate
-        ? toInternalMatchOptions(body.matchOptions)
-        : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
+          // the partial patch onto the case's existing override so unmentioned
+          // fields aren't reset.
+          opts.forCreate
+          ? toInternalMatchOptions(body.matchOptions)
+          : mergeMatchOptions(opts.existingMatchOptions, body.matchOptions);
   if (body.checks !== undefined && !(opts.forCreate && body.checks === null))
     args.predicates =
       body.checks === null
@@ -3673,7 +3673,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   const suiteRerun =
     Boolean(body.suiteId) && body.tests.length === 0
       ? true
-      : body.suiteRerun ?? false;
+      : (body.suiteRerun ?? false);
 
   // Fail unknown models now, with a pointer to valid ids, rather than
   // letting the detached run die later with an opaque stream error.
@@ -4561,8 +4561,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       baseRunId
         ? "The requested baseline run was not found, is not completed, or belongs to another suite."
         : baseCommitSha
-        ? "No completed run in this suite was recorded against that commit SHA."
-        : "No earlier completed run in this suite to compare against.",
+          ? "No completed run in this suite was recorded against that commit SHA."
+          : "No earlier completed run in this suite to compare against.",
       // A SHA that resolved to nothing is deliberately THIS, not one of the
       // two 400 baseline codes: exit 3 must keep meaning "we looked and
       // established nothing", distinct from "you asked for something
@@ -4587,11 +4587,11 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       (baselineSource.policy === undefined && Boolean(baseCommitSha))
         ? "commit_sha"
         : baselineSource.policy === "run" ||
-          (baselineSource.policy === undefined && Boolean(baseRunId))
-        ? "run"
-        : baselineSource.policy === "previous_completed_same_environment"
-        ? "previous_completed_same_environment"
-        : "previous_completed",
+            (baselineSource.policy === undefined && Boolean(baseRunId))
+          ? "run"
+          : baselineSource.policy === "previous_completed_same_environment"
+            ? "previous_completed_same_environment"
+            : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
     // Echoed for `commit_sha` only. Read from the BACKEND's answer, falling
     // back to what the request asked for, so a mixed-version deployment that
@@ -5289,8 +5289,7 @@ evals.get(
     const assembled = assembleStepResults(
       steps,
       iteration.metadata as
-        | { stepResults?: any[]; skippedSteps?: any[] }
-        | undefined,
+        { stepResults?: any[]; skippedSteps?: any[] } | undefined,
       envelope as Parameters<typeof assembleStepResults>[2],
     );
     // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
@@ -6064,8 +6063,7 @@ async function readBackDescriptionExperimentArms(
         { experimentId },
       )) as Record<string, unknown> | null;
       const recorded = current?.arms as
-        | { original?: unknown; rewrite?: unknown }
-        | undefined;
+        { original?: unknown; rewrite?: unknown } | undefined;
       return current &&
         recorded?.original === arms.original &&
         recorded?.rewrite === arms.rewrite
@@ -6154,9 +6152,7 @@ function descriptionOverrideAttributionRefusal(
   message: string;
 } | null {
   const doc = run as
-    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
-    | null
-    | undefined;
+    { toolSnapshot?: unknown; toolSnapshotDebug?: unknown } | null | undefined;
   const servers = readSnapshotServers(doc?.toolSnapshot);
   const offering = servers
     .filter((server) => server.toolNames?.includes(toolName))
@@ -6179,9 +6175,7 @@ function descriptionOverrideAttributionRefusal(
   const captureResult = (
     doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
   )?.captureResult as
-    | { status?: unknown; failedServerIds?: unknown }
-    | null
-    | undefined;
+    { status?: unknown; failedServerIds?: unknown } | null | undefined;
   if (Array.isArray(captureResult?.failedServerIds)) {
     for (const id of captureResult.failedServerIds) {
       if (typeof id === "string") failed.add(id);
@@ -6464,8 +6458,7 @@ evals.post(
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);
     const suiteId = String(launching.suiteId ?? experiment.suiteId);
     const plan = (launching.plan ?? experiment.plan) as
-      | { caseScope?: string; repetitions?: number }
-      | undefined;
+      { caseScope?: string; repetitions?: number } | undefined;
     const caseScope = body.caseScope ?? plan?.caseScope ?? "all";
     const affectedCaseIds = (launching.affectedCaseIds ??
       experiment.affectedCaseIds) as string[] | undefined;
@@ -6478,8 +6471,7 @@ evals.post(
     const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
       ?.configSnapshot;
     const envRef = snapshot?.environmentRef as
-      | { environmentId?: string }
-      | undefined;
+      { environmentId?: string } | undefined;
     const namedHostId =
       (typeof (sourceRun as { namedHostId?: unknown }).namedHostId === "string"
         ? (sourceRun as { namedHostId: string }).namedHostId

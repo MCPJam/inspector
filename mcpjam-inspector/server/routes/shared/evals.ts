@@ -2856,8 +2856,7 @@ export async function runEvalTestCaseWithManager(
     matchOptions: resolveMatchOptions(
       suiteDefaultMatchOptions,
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        | MatchOptionsDTO
-        | undefined,
+        MatchOptionsDTO | undefined,
       matchOptionsOverride,
     ),
     // Thread the predicate gate into the runtime case so the runner
@@ -2868,20 +2867,16 @@ export async function runEvalTestCaseWithManager(
     successPredicates: resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
     }),
     hostConfigOverride: hostConfigOverride as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
 
@@ -3284,8 +3279,7 @@ export async function streamEvalTestCaseWithManager(
     matchOptions: resolveMatchOptions(
       suiteDefaultMatchOptions,
       (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
-        | MatchOptionsDTO
-        | undefined,
+        MatchOptionsDTO | undefined,
       matchOptionsOverride,
     ),
     // Thread the predicate gate into the runtime case so the runner evaluates
@@ -3293,20 +3287,16 @@ export async function streamEvalTestCaseWithManager(
     successPredicates: resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
       runOverride: testCaseOverrides?.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
       envelope: (testCaseOverrides?.predicates ??
         (testCase as { predicates?: unknown }).predicates) as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: (testCase as { successPredicates?: unknown })
         .successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
     }),
     hostConfigOverride: hostConfigOverride as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
 
