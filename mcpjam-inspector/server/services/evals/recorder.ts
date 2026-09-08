@@ -39,15 +39,25 @@ type IterationStatus = ContractIterationStatus;
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 
 /**
- * Did the platform refuse the launch because it does not KNOW `launcher` /
- * `ciMetadata` yet?
+ * The one Convex rejection that means "this deployment does not KNOW
+ * `launcher` / `ciMetadata`", and nothing else.
  *
- * The two repos deploy independently, so an inspector can meet a backend that
- * predates the provenance columns. Convex argument validators are exact, and
- * their rejection names the offending field, so this is narrow on purpose: it
- * must not swallow a rejection about `suiteId` or a genuine validation bug in
- * one of the fields it does understand.
+ * Anchored on the EXTRA-FIELD complaint naming one of the two, not on the name
+ * appearing somewhere in the message. Convex echoes the arguments it received
+ * and the whole validator, so every CI launch mentions `ciMetadata` in every
+ * unrelated rejection it ever gets — and once the backend does declare the
+ * columns, a value mismatch inside `ciMetadata` would read as "unsupported"
+ * and be answered by dropping it. `eval gate --baseline-sha` resolves through
+ * that commit, so a false positive here silently loses the exact thing the
+ * field exists for.
+ *
+ * Fails CLOSED, deliberately. An unrecognised message means the launch fails
+ * loudly, which is what it did before this existed and is a bug report rather
+ * than a run that quietly forgot where it came from.
  */
+const UNKNOWN_PROVENANCE_ARGUMENT =
+  /extra field\s*[`'"\u2018\u2019]?(?:launcher|ciMetadata)[`'"\u2018\u2019]?/i;
+
 function isUnknownProvenanceArgumentError(error: unknown): boolean {
   const message =
     error instanceof Error
@@ -56,12 +66,12 @@ function isUnknownProvenanceArgumentError(error: unknown): boolean {
         ? error
         : "";
   if (!message) return false;
-  if (!/launcher|ciMetadata/.test(message)) return false;
-  // Convex phrases this as "Object contains extra field `launcher` that is not
-  // in the validator." Matching the shape rather than the sentence, so a
-  // reworded message still lands here.
-  return /extra field|not in the validator|ArgumentValidationError/i.test(
-    message,
+  // Convex: "Object contains extra field `launcher` that is not in the
+  // validator." Both halves required — the adjacency above is what makes it
+  // this rejection and not a value error that happens to quote the field.
+  return (
+    UNKNOWN_PROVENANCE_ARGUMENT.test(message) &&
+    /not in the validator/i.test(message)
   );
 }
 
@@ -645,8 +655,13 @@ export const startSuiteRunWithRecorder = async ({
       // CLI or MCP launch always declares.
       //
       // Retried ONCE, and only on a rejection that names one of the two
-      // fields. `startTestSuiteRun` creates nothing before validating its
-      // args, so the first attempt left no run row behind.
+      // fields as UNKNOWN. `startTestSuiteRun` creates nothing before
+      // validating its args, so the first attempt left no run row behind.
+      //
+      // BOTH are dropped even though Convex names only the first: they are one
+      // feature and arrive on the same deployment, so a backend that refuses
+      // `launcher` refuses `ciMetadata` too, and dropping one at a time would
+      // need a second retry to get anywhere.
       const {
         launcher: _launcher,
         ciMetadata: _ciMetadata,

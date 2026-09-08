@@ -81,6 +81,40 @@ describe("startSuiteRunWithRecorder", () => {
     expect(launches[1][1]).toMatchObject({ suiteId: "suite-1" });
   });
 
+  it("does NOT retry a value error that merely QUOTES the provenance fields", async () => {
+    // The trap this detection has to avoid. Convex echoes the arguments it
+    // received and the whole validator, so once the backend declares these
+    // columns, every rejection on a CI launch mentions `ciMetadata` somewhere
+    // — including a genuine value error inside it. Reading that as "the
+    // backend doesn't support this" would answer a bad commit sha by dropping
+    // the commit, and `eval gate --baseline-sha` resolves through it.
+    const mutation = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "ArgumentValidationError: Value does not match validator. Path: .ciMetadata.commitSha\n" +
+            'Object: {ciMetadata: {commitSha: 12345}, launcher: {kind: "cli"}}\n' +
+            "Validator: v.object({ciMetadata: v.optional(...), launcher: v.optional(...)})",
+        ),
+      );
+    const convexClient = { mutation } as any;
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: "suite-1",
+        serverIds: ["alpha"],
+        launcher: { kind: "cli" },
+        ciMetadata: { provider: "github_actions" },
+      } as any),
+    ).rejects.toThrow(/Value does not match validator/);
+    expect(
+      mutation.mock.calls.filter(
+        (call: unknown[]) => call[0] === "testSuites:startTestSuiteRun",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("does NOT retry a rejection that is not about the provenance fields", async () => {
     // The retry is narrow on purpose. Swallowing an unrelated validation error
     // and quietly re-sending would turn a bug report into a second failure with
