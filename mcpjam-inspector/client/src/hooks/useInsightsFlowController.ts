@@ -203,6 +203,34 @@ export function useInsightsFlowController({
  * Rebuild latch + toast feedback. Pair with {@link useInsightsFlowController}:
  * pass the same `cohortKey` so a cohort switch invalidates in-flight work.
  */
+/**
+ * Only real options reach the mutation.
+ *
+ * `onClick={handleRebuild}` type-checks, because a zero-argument callback is
+ * assignable to a click handler, but at runtime React hands it a synthetic
+ * event. Convex then tries to serialize that event and throws "Converting
+ * circular structure to JSON" (the fiber closes a circle through the DOM
+ * node), so the analysis never starts and the surface stays unanalyzed.
+ *
+ * Call sites pass `() => onRebuild()`. This is the backstop, because the type
+ * system cannot catch the next one.
+ */
+function rebuildArgsOnly(args?: {
+  tuning?: ClusterTuning;
+  force?: boolean;
+}): { tuning?: ClusterTuning; force?: boolean } | undefined {
+  if (args == null || typeof args !== "object") return undefined;
+  const candidate = args as Record<string, unknown>;
+  // A synthetic event carries these; an options object does not.
+  if ("nativeEvent" in candidate || "currentTarget" in candidate) {
+    return undefined;
+  }
+  const picked: { tuning?: ClusterTuning; force?: boolean } = {};
+  if (args.tuning !== undefined) picked.tuning = args.tuning;
+  if (args.force !== undefined) picked.force = args.force;
+  return picked;
+}
+
 export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const rebuildInFlightRef = useRef(false);
@@ -224,7 +252,7 @@ export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
       rebuildInFlightRef.current = true;
       setRebuildBusy(true);
       try {
-        const result = await rebuild(args);
+        const result = await rebuild(rebuildArgsOnly(args));
         const { tone, message } = rebuildFeedback(result);
         toast[tone](message);
       } catch (error) {
