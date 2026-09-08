@@ -197,26 +197,111 @@ export type SelectionToolLike = {
 };
 
 /**
+ * The JSON Schema BEHIND an AI SDK tool's `inputSchema`.
+ *
+ * `convertMCPToolsToVercelTools`' automatic path — the one every live eval
+ * takes — stores `jsonSchema(normalized)`, the AI SDK `Schema` wrapper
+ * `{ jsonSchema, validate, … }`, not the schema itself. Handing that wrapper
+ * to `argumentsMatchToolSchema` validates every call against an object with
+ * no constraints, so malformed arguments PASS and the check reports the
+ * server's contract as met. Override-mode tools carry a bare schema and are
+ * passed through. `selection-tool-catalog.ts` draws the same distinction for
+ * the same reason.
+ */
+function unwrapInputSchema(inputSchema: unknown): unknown {
+  if (isRecord(inputSchema) && isRecord(inputSchema.jsonSchema)) {
+    return inputSchema.jsonSchema;
+  }
+  return inputSchema;
+}
+
+/** The subset of the client manager this module reads, structurally. */
+export type ToolAnnotationSource = {
+  listServers(): string[];
+  hasCachedToolAnnotations(serverId: string): boolean;
+  getAllToolAnnotations(
+    serverId: string,
+  ): Record<string, Record<string, unknown> | undefined>;
+};
+
+/**
+ * MCP `annotations` by tool name, from the servers whose `tools/list` we
+ * actually read.
+ *
+ * The AI SDK `ToolSet` is lossy: `dynamicTool` carries description, schema
+ * and hooks, and drops the server's `ToolAnnotations` entirely — so
+ * `destructiveHint` never reaches a check through `allTools`, and
+ * `noDestructiveToolCalled` reports an evidence error on every trial of every
+ * run. The declaration does exist; it just lives in the manager's own cache.
+ *
+ * Servers with a COLD cache contribute nothing rather than an empty map: "the
+ * server declared no annotations" and "we never asked" are different facts,
+ * and only the first licenses reading a missing `destructiveHint` as a tool
+ * that is not destructive.
+ */
+export function collectToolAnnotations(
+  manager: Partial<ToolAnnotationSource> | undefined,
+): Record<string, Record<string, unknown>> | undefined {
+  // Reading evidence must never be able to fail a run. A manager that does
+  // not implement this surface (an older path, a test double) contributes
+  // nothing, exactly as a cold cache does.
+  if (
+    typeof manager?.listServers !== "function" ||
+    typeof manager.hasCachedToolAnnotations !== "function" ||
+    typeof manager.getAllToolAnnotations !== "function"
+  ) {
+    return undefined;
+  }
+  const merged: Record<string, Record<string, unknown>> = {};
+  let read = false;
+  try {
+    for (const serverId of manager.listServers()) {
+      if (!manager.hasCachedToolAnnotations(serverId)) continue;
+      read = true;
+      for (const [name, annotations] of Object.entries(
+        manager.getAllToolAnnotations(serverId) ?? {},
+      )) {
+        if (isRecord(annotations)) merged[name] = annotations;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return read ? merged : undefined;
+}
+
+/**
  * Map the runner's live tool registry onto the transcript's inventory.
  *
- * Names only from the keys; everything else is copied as the server declared
- * it. `annotations` matter as much as the schema here: `destructiveHint` is a
- * DECLARATION, and a check about a declaration is unevaluatable without it.
+ * Names only from the keys; everything else is the server's own declaration,
+ * unwrapped from the two lossy shapes the AI SDK stores it in.
+ * `annotations` matter as much as the schema here: `destructiveHint` is a
+ * DECLARATION, and a check about a declaration is unevaluatable without it —
+ * so they come from {@link collectToolAnnotations} when the ToolSet entry has
+ * dropped them, which for a live run is always.
  */
 export function toTranscriptToolInventory(
   tools: Record<string, SelectionToolLike> | undefined,
+  annotationsByTool?: Record<string, Record<string, unknown>> | undefined,
 ): TranscriptToolInventoryEntry[] | undefined {
   if (!tools) return undefined;
-  return Object.entries(tools).map(([name, tool]) => ({
-    name,
-    ...(typeof tool?.description === "string"
-      ? { description: tool.description }
-      : {}),
-    ...(tool?.inputSchema !== undefined
-      ? { inputSchema: tool.inputSchema }
-      : {}),
-    ...(isRecord(tool?.annotations)
-      ? { annotations: tool.annotations as TranscriptToolInventoryEntry["annotations"] }
-      : {}),
-  }));
+  return Object.entries(tools).map(([name, tool]) => {
+    const inputSchema = unwrapInputSchema(tool?.inputSchema);
+    const annotations = isRecord(tool?.annotations)
+      ? tool.annotations
+      : annotationsByTool?.[name];
+    return {
+      name,
+      ...(typeof tool?.description === "string"
+        ? { description: tool.description }
+        : {}),
+      ...(inputSchema !== undefined ? { inputSchema } : {}),
+      ...(isRecord(annotations)
+        ? {
+            annotations:
+              annotations as TranscriptToolInventoryEntry["annotations"],
+          }
+        : {}),
+    };
+  });
 }

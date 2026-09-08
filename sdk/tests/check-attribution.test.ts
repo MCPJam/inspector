@@ -281,3 +281,117 @@ describe("an error names ITS call's input, or we do not know", () => {
     expect(result.status).toBeUndefined();
   });
 });
+
+describe("an incomplete scope makes only one direction of verdict", () => {
+  /** Two results, and the capture says rows were dropped on the way here. */
+  const partial = (rows: number): IterationTranscript => ({
+    toolCalls: [{ toolName: "list", arguments: {} }],
+    toolErrors: [],
+    toolResults: Array.from({ length: rows }, (_, index) => ({
+      toolName: "list",
+      text: `row ${index}`,
+      json: { ok: true },
+      size,
+    })),
+    capture: {
+      toolResults: "partial",
+      toolCallTimings: "absent",
+      toolInventory: "absent",
+    },
+  });
+
+  it("keeps a hit and refuses the absence", () => {
+    // Finding it is proof; not finding it, over rows we know were dropped,
+    // is not proof it is not there.
+    expect(
+      evaluatePredicate(partial(2), {
+        type: "toolResultContains",
+        needle: "row 1",
+      }),
+    ).toMatchObject({ passed: true });
+    const miss = evaluatePredicate(partial(2), {
+      type: "toolResultContains",
+      needle: "row 900",
+    });
+    expect(miss.status).toBe("error");
+    expect(miss.reason).toContain("absence cannot be established");
+  });
+
+  it("keeps a size failure and refuses a size pass", () => {
+    const over = evaluatePredicate(partial(2), {
+      type: "toolResultSizeUnder",
+      maxBytes: 1,
+    });
+    expect(over.passed).toBe(false);
+    expect(over).not.toHaveProperty("status");
+    expect(
+      evaluatePredicate(partial(2), {
+        type: "toolResultSizeUnder",
+        maxBytes: 4096,
+      }).status,
+    ).toBe("error");
+  });
+
+  it("refuses 'they all matched' when they were not all read", () => {
+    expect(
+      evaluatePredicate(partial(2), {
+        type: "toolResultMatchesSchema",
+        schema: { type: "object" },
+      }).status,
+    ).toBe("error");
+  });
+});
+
+describe("a truncated row is not a short one", () => {
+  const truncated: IterationTranscript = {
+    toolCalls: [{ toolName: "dump", arguments: {} }],
+    toolErrors: [],
+    toolResults: [
+      {
+        toolName: "dump",
+        text: '{"items":[1,2,3',
+        truncated: true,
+        size: { bytes: 90_000, basis: "model_visible_output", complete: true },
+      },
+    ],
+    capture: {
+      toolResults: "complete",
+      toolCallTimings: "absent",
+      toolInventory: "absent",
+    },
+  };
+
+  it("does not report a cut-off payload as 'not JSON'", () => {
+    // The server sent JSON. We stored the first 64,000 characters of it.
+    const result = evaluatePredicate(truncated, {
+      type: "toolResultMatchesSchema",
+      schema: { type: "object" },
+    });
+    expect(result.status).toBe("error");
+    expect(result.reason).not.toContain("was not JSON");
+  });
+
+  it("does not read a cut-off row as not containing the needle", () => {
+    expect(
+      evaluatePredicate(truncated, {
+        type: "toolResultContains",
+        needle: "items",
+      }),
+    ).toMatchObject({ passed: true });
+    expect(
+      evaluatePredicate(truncated, { type: "toolResultContains", needle: "99" })
+        .status,
+    ).toBe("error");
+  });
+
+  it("still grades the size, which was measured before the cap", () => {
+    // `size.bytes` is taken on the whole output part, so truncation cannot
+    // mislead it — and refusing here would make the cap unmeasurable.
+    const graded = evaluatePredicate(truncated, {
+      type: "toolResultSizeUnder",
+      maxBytes: 65_536,
+    });
+    expect(graded.passed).toBe(false);
+    expect(graded).not.toHaveProperty("status");
+  });
+});

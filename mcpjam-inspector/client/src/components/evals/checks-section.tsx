@@ -783,11 +783,19 @@ function ToolNameField({
   onChange,
   availableTools,
   readOnly,
+  label = "Tool",
 }: {
   value: string;
   onChange: (next: string) => void;
   availableTools?: string[];
   readOnly: boolean;
+  /**
+   * What this control is FOR, when a row carries more than one of them.
+   * `toolCalledBefore` renders two, and two fields both labelled "Tool" are
+   * indistinguishable to a screen reader — which is the whole of that rule's
+   * UI. The outer heading is not enough: it is not associated with the input.
+   */
+  label?: string;
 }) {
   const id = useId();
   // When a suite has attached servers and we know the tool list, prefer a
@@ -798,11 +806,11 @@ function ToolNameField({
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Tool
+        {label}
       </Label>
       {useDropdown && !readOnly ? (
         <Select value={value || undefined} onValueChange={onChange}>
-          <SelectTrigger id={id} className="h-8 text-xs">
+          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
             <SelectValue placeholder="Pick a tool…" />
           </SelectTrigger>
           <SelectContent>
@@ -817,6 +825,7 @@ function ToolNameField({
         <Input
           id={id}
           value={value}
+          aria-label={label}
           onChange={(e) => onChange(e.target.value)}
           placeholder="e.g. search"
           className="h-8 text-xs"
@@ -1572,26 +1581,41 @@ function ResultToolFilterField({
   onChange,
   availableTools,
   readOnly,
+  label = "Limit to tool (optional)",
 }: {
   value: string | undefined;
   onChange: (next: string | undefined) => void;
   availableTools?: string[];
   readOnly: boolean;
+  /**
+   * What this control is FOR, when the row uses more than one of them. Two
+   * fields both labelled "Limit to tool" are indistinguishable to a screen
+   * reader, which is the whole of the ordering rule's UI.
+   */
+  label?: string;
 }) {
   const id = useId();
-  const ALL = "__all__";
+  // The all-tools option and a real tool name live in ONE value space, so the
+  // sentinel must be unreachable by any tool name rather than merely unlikely:
+  // a server with a tool called `__all__` would otherwise clear the
+  // restriction when a reader selected it. Real names are prefixed; the
+  // sentinel is not, so no encoding of a name can collide with it.
+  const ALL = "all";
+  const encode = (toolName: string) => `tool:${toolName}`;
+  const decode = (option: string) =>
+    option === ALL ? undefined : option.slice("tool:".length);
   const useDropdown = availableTools && availableTools.length > 0;
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-[11px]">
-        Limit to tool (optional)
+        {label}
       </Label>
       {useDropdown && !readOnly ? (
         <Select
-          value={value ?? ALL}
-          onValueChange={(next) => onChange(next === ALL ? undefined : next)}
+          value={value === undefined ? ALL : encode(value)}
+          onValueChange={(next) => onChange(decode(next))}
         >
-          <SelectTrigger id={id} className="h-8 text-xs">
+          <SelectTrigger id={id} className="h-8 text-xs" aria-label={label}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1599,7 +1623,7 @@ function ResultToolFilterField({
               All tools
             </SelectItem>
             {availableTools!.map((t) => (
-              <SelectItem key={t} value={t} className="text-xs">
+              <SelectItem key={t} value={encode(t)} className="text-xs">
                 {t}
               </SelectItem>
             ))}
@@ -1609,6 +1633,7 @@ function ResultToolFilterField({
         <Input
           id={id}
           value={value ?? ""}
+          aria-label={label}
           onChange={(e) =>
             onChange(e.target.value === "" ? undefined : e.target.value)
           }
@@ -1673,26 +1698,22 @@ function ToolOrderFields({
 }) {
   return (
     <div className="space-y-2">
-      <div className="space-y-1">
-        <Label className="text-[11px]">Must be called first</Label>
-        <ToolNameField
-          value={predicate.toolName}
-          onChange={(toolName) => onChange({ ...predicate, toolName })}
-          availableTools={availableTools}
-          readOnly={readOnly}
-        />
-      </div>
-      <div className="space-y-1">
-        <Label className="text-[11px]">Before this tool</Label>
-        <ToolNameField
-          value={predicate.beforeToolName}
-          onChange={(beforeToolName) =>
-            onChange({ ...predicate, beforeToolName })
-          }
-          availableTools={availableTools}
-          readOnly={readOnly}
-        />
-      </div>
+      <ToolNameField
+        label="Must be called first"
+        value={predicate.toolName}
+        onChange={(toolName) => onChange({ ...predicate, toolName })}
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
+      <ToolNameField
+        label="Before this tool"
+        value={predicate.beforeToolName}
+        onChange={(beforeToolName) =>
+          onChange({ ...predicate, beforeToolName })
+        }
+        availableTools={availableTools}
+        readOnly={readOnly}
+      />
       <p className="text-[11px] text-muted-foreground">
         Vacuously true when the second tool is never called &mdash; the rule
         has nothing to violate.
@@ -1846,6 +1867,11 @@ function ToolResultSchemaFields({
               // Kept LOCAL rather than written through: a half-typed schema is
               // not an assertion, and persisting one would make the check
               // unusable-schema on the next run.
+              //
+              // But the row still HOLDS the last schema that parsed, and a
+              // save writes that one — so the message below says so. A form
+              // that shows one thing, saves another, and mentions neither is
+              // the worse half of this trade.
               setError(
                 parseError instanceof Error
                   ? parseError.message
@@ -1857,7 +1883,10 @@ function ToolResultSchemaFields({
           disabled={readOnly}
         />
         {error ? (
-          <p className="text-[11px] text-destructive">Not valid JSON: {error}</p>
+          <p className="text-[11px] text-destructive">
+            Not valid JSON: {error}. Saving now keeps the last schema that
+            parsed, not what is in the box.
+          </p>
         ) : (
           <p className="text-[11px] text-muted-foreground">
             Validated against the tool's structured content, then its JSON

@@ -729,12 +729,31 @@ function applicability(
     authored.isNegativeTest === true ||
     authored.toolExpectation === "required" ||
     authored.toolExpectation === "open";
+  // An AUTHORED check about the call or the response makes its stage
+  // applicable, exactly as `assertionCount` does for `userValue`. Without
+  // this, a case that authors only a response check and no tool expectation
+  // has the row filtered out of `userValue` (v11 routes it away) and the
+  // response stage pre-declared inapplicable — so a FAILED check produces no
+  // failed stage anywhere, which is the one outcome the chain must never
+  // reach.
+  //
+  // Read through `gatingPredicateResults`, the SAME filter the two derivers
+  // use, so a stage cannot be switched on by an advisory or unscorable row
+  // and then found empty — the failure mode the `response` note below warns
+  // about, in the other direction.
+  const gating = gatingPredicateResults(evidence.predicateResults);
+  const authoredCallCheck = gating.some((r) =>
+    isCallPredicateKind(r.predicate?.type)
+  );
+  const authoredResponseCheck = gating.some((r) =>
+    isResponsePredicateKind(r.predicate?.type)
+  );
   return {
     // Every run must reach a server and read its tools, whatever it asserts.
     connection: true,
     discovery: true,
     selection: authored.mode === "model_driven",
-    call: callApplies,
+    call: callApplies || authoredCallCheck,
     // A case asserting a rendered widget has something for `response` to decide
     // even when it authors no expected tool call — `deriveResponse` reads the
     // render observations directly. Gating this on `callApplies` alone would
@@ -757,7 +776,8 @@ function applicability(
     response:
       callApplies ||
       authored.expectsWidgetRender === true ||
-      hasObservedToolFailure(evidence),
+      hasObservedToolFailure(evidence) ||
+      authoredResponseCheck,
     // D8: a real ask makes `userValue` applicable even with nothing authored
     // to grade it. `notApplicable` would say "there was nothing to satisfy",
     // which is false the moment someone asked for something.

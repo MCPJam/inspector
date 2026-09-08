@@ -78,6 +78,14 @@ export interface EvalIterationVerdictInput {
    * passing would read as "nothing was declared wrong".
    */
   selectionTools?: Record<string, SelectionToolLike>;
+  /**
+   * MCP `annotations` by tool name, from {@link collectToolAnnotations}.
+   *
+   * Separate from `selectionTools` because the AI SDK `ToolSet` drops them:
+   * without this channel `destructiveHint` never reaches a check, however
+   * plainly the server declared it.
+   */
+  selectionToolAnnotations?: Record<string, Record<string, unknown>>;
 
   // ── gates ──
   iterationError: string | undefined;
@@ -137,7 +145,10 @@ export function buildEvalIterationVerdict(
           timingsCaptured: evidence.timingsCaptured,
           ...(input.selectionTools
             ? {
-                toolInventory: toTranscriptToolInventory(input.selectionTools),
+                toolInventory: toTranscriptToolInventory(
+                  input.selectionTools,
+                  input.selectionToolAnnotations,
+                ),
               }
             : {}),
         }),

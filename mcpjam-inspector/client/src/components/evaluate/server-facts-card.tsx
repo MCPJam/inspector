@@ -38,7 +38,10 @@ import {
 const TONE_CLASS: Record<RunFactLine["tone"], string> = {
   set: "text-foreground",
   empty: "text-muted-foreground",
-  attention: "text-amber-700 dark:text-amber-400",
+  // The palette's own warning role, not a fixed amber: AGENTS.md makes
+  // `design-system/src/tokens.css` the source of truth, and a literal shade
+  // stops tracking a token or preset change the moment one lands.
+  attention: "text-warning",
 };
 
 function FactLines({ lines }: { lines: RunFactLine[] }) {

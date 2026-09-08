@@ -82,8 +82,20 @@ export function useEvalRunServerFacts({
   enabled?: boolean;
 }): EvalRunServerFactsState {
   const active = Boolean(enabled && projectId && runId);
+  /**
+   * What the state below is ABOUT. Read during render, not in the effect.
+   *
+   * Clearing the document in an effect is one render too late: on the render
+   * where `runId` changes, the effect has not run yet, so `status` still says
+   * `ready` and `document` still holds the PREVIOUS run's facts — and the
+   * card renders them, briefly, under the new run's heading. A key compared
+   * synchronously means a document is only ever shown for the selection it
+   * was fetched for.
+   */
+  const requestKey = active ? `${projectId}\u0000${runId}\u0000` : null;
 
   const [document, setDocument] = useState<EvalRunServerFactsV1 | null>(null);
+  const [documentKey, setDocumentKey] = useState<string | null>(null);
   const [status, setStatus] = useState<EvalRunServerFactsStatus>("idle");
   const [error, setError] = useState<ServerFactsErrorInfo | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -95,6 +107,7 @@ export function useEvalRunServerFacts({
       requestIdRef.current += 1;
       setStatus("idle");
       setDocument(null);
+      setDocumentKey(null);
       setError(null);
       return;
     }
@@ -114,11 +127,16 @@ export function useEvalRunServerFacts({
         );
         if (requestId !== requestIdRef.current) return;
         setDocument(row);
+        setDocumentKey(requestKey);
         setStatus("ready");
       } catch (err) {
         if (controller.signal.aborted) return;
         if (requestId !== requestIdRef.current) return;
         setDocument(null);
+        // Every SETTLED outcome stamps the key, not just the happy one: an
+        // absence and an error are answers about this selection too, and a
+        // hook that left them unstamped would report `loading` forever.
+        setDocumentKey(requestKey);
         const info = toErrorInfo(err);
         if (info.kind === "notFound") {
           setError(null);
@@ -131,15 +149,26 @@ export function useEvalRunServerFacts({
     })();
 
     return () => controller.abort();
-  }, [active, projectId, runId, attempt]);
+  }, [active, projectId, runId, attempt, requestKey]);
 
   const refetch = useCallback(() => {
     if (!active) return;
     setAttempt((n) => n + 1);
   }, [active]);
 
-  const observed: EvalRunServerFactsStatus =
-    active && status === "idle" ? "loading" : status;
+  // A settled state that belongs to a different selection is not this one's,
+  // whatever the effect has managed to run so far.
+  const stale = active && documentKey !== requestKey;
+  const observed: EvalRunServerFactsStatus = !active
+    ? status
+    : stale || status === "idle"
+      ? "loading"
+      : status;
 
-  return { status: observed, document, error, refetch };
+  return {
+    status: observed,
+    document: stale ? null : document,
+    error: stale ? null : error,
+    refetch,
+  };
 }

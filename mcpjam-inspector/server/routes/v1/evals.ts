@@ -6175,6 +6175,15 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
       runId,
     });
   } catch (error) {
+    // The backend deploys FIRST, but "first" is a window, not an instant: an
+    // inspector rolled out during it reaches a deployment with no such
+    // function. That is a fact about the deployment, and a generic 500 sends
+    // the reader looking at their run for a cause that is not there.
+    if (isConvexFunctionMissing(error)) {
+      throw convexFunctionUnavailableError(
+        "This MCPJam deployment does not serve eval run server facts. That is a fact about the deployment, not about the run — do not report the run as having no server to describe.",
+      );
+    }
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(
         404,
@@ -6186,6 +6195,12 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
   }
 
   if (document === null || document === undefined) {
+    // A null is the backend's FAIL-SOFT AUTHORIZATION answer, not "no
+    // document": `getEvalRunServerFacts` returns null when `authorizeForRun`
+    // refuses, precisely so a caller cannot learn which run ids exist. An
+    // authorized run always builds a document — a run with no snapshot
+    // answers `state: "unavailable"` inside a valid one. So 404 is right
+    // here, and it is still a statement about visibility only.
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,

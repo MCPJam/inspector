@@ -394,6 +394,34 @@ function emptyScopeIsScored(
 }
 
 /**
+ * Why the rows in scope may not be the whole story, or `undefined`.
+ *
+ * A capped capture (`partial`) and a row whose text we truncated for storage
+ * both make a verdict ONE-SIDED: finding the thing is still proof it
+ * happened, but not finding it is not proof it did not. Checks below refuse
+ * only the second direction — an absence we cannot establish — and keep every
+ * verdict a missing row could not have changed.
+ */
+function incompleteScopeReason(
+  transcript: IterationTranscript,
+  channel: "toolResults" | "toolCallTimings",
+  rows: number,
+  /**
+   * Rows whose stored TEXT was cut. Passed as 0 by the checks text cannot
+   * mislead: `size.bytes` is measured on the whole part before the cap, and a
+   * timing carries no text at all.
+   */
+  truncated = 0
+): string | undefined {
+  if (captureState(transcript, channel) !== "complete") {
+    return "the capture is incomplete";
+  }
+  return truncated > 0
+    ? `${truncated} of ${rows} row(s) were truncated for storage`
+    : undefined;
+}
+
+/**
  * ` (2 of 5 observed call(s) measured)`, or `""` when coverage is total.
  *
  * A budget graded over fewer rows than there were calls is still a real
@@ -978,6 +1006,21 @@ export function evaluatePredicate(
       const slowest = scope.reduce((worst, t) =>
         t.durationMs > worst.durationMs ? t : worst
       );
+      if (slowest.durationMs < predicate.ms) {
+        const gap = incompleteScopeReason(
+          transcript,
+          "toolCallTimings",
+          scope.length
+        );
+        if (gap) {
+          return evidenceError(
+            predicate,
+            `the slowest call read took ${slowest.durationMs}ms, under ` +
+              `${predicate.ms}ms, but ${gap}; a slower one may not have been ` +
+              "read"
+          );
+        }
+      }
       const coverage = coverageNote(scope.length, timed);
       return slowest.durationMs < predicate.ms
         ? pass(
@@ -1035,23 +1078,38 @@ export function evaluatePredicate(
         return (caseSensitive ? text : text.toLowerCase()).includes(needle);
       });
       const suffix = caseSensitive ? " (case-sensitive)" : "";
-      return hit
-        ? pass(
-            predicate,
-            `"${hit.toolName}" result contains "${truncate(
-              predicate.needle,
-              MAX_VALUE_CHARS
-            )}"${suffix}`
-          )
-        : fail(
-            predicate,
-            `no result from ${scopeLabel(
+      if (hit) {
+        return pass(
+          predicate,
+          `"${hit.toolName}" result contains "${truncate(
+            predicate.needle,
+            MAX_VALUE_CHARS
+          )}"${suffix}`
+        );
+      }
+      // A hit is proof; a miss is only proof when we read everything.
+      const gap = incompleteScopeReason(
+        transcript,
+        "toolResults",
+        scope.length,
+        scope.filter((r) => r.truncated === true).length
+      );
+      if (gap) {
+        return evidenceError(
+          predicate,
+          `"${truncate(predicate.needle, MAX_VALUE_CHARS)}" was not found in ` +
+            `${scope.length} result(s) from ${scopeLabel(
               predicate.toolName
-            )} contains "${truncate(
-              predicate.needle,
-              MAX_VALUE_CHARS
-            )}"${suffix} (${scope.length} result(s) searched)`
-          );
+            )}, but ${gap}; its absence cannot be established`
+        );
+      }
+      return fail(
+        predicate,
+        `no result from ${scopeLabel(predicate.toolName)} contains "${truncate(
+          predicate.needle,
+          MAX_VALUE_CHARS
+        )}"${suffix} (${scope.length} result(s) searched)`
+      );
     }
 
     case "toolResultMatchesSchema": {
@@ -1077,6 +1135,16 @@ export function evaluatePredicate(
       for (const result of scope) {
         const payload = resultPayload(result);
         if (!payload.found) {
+          // A row we truncated for storage did not "fail to be JSON" — we cut
+          // it in half. Reporting a shape violation there would blame the
+          // server for our own cap.
+          if (result.truncated === true) {
+            return evidenceError(
+              predicate,
+              `"${result.toolName}" result was truncated for storage, so its ` +
+                "payload cannot be read back; nothing was validated"
+            );
+          }
           failures.push(`"${result.toolName}" result was not JSON`);
           continue;
         }
@@ -1108,6 +1176,21 @@ export function evaluatePredicate(
         );
       }
       if (failures.length === 0) {
+        // "Every result matched" is a claim about ALL of them.
+        const gap = incompleteScopeReason(
+          transcript,
+          "toolResults",
+          scope.length,
+          scope.filter((r) => r.truncated === true).length
+        );
+        if (gap) {
+          return evidenceError(
+            predicate,
+            `${scope.length} result(s) from ${scopeLabel(
+              predicate.toolName
+            )} match the authored schema, but ${gap}; the rest were not read`
+          );
+        }
         return pass(
           predicate,
           `${scope.length} result(s) from ${scopeLabel(
@@ -1163,6 +1246,26 @@ export function evaluatePredicate(
       const largest = scope.reduce((worst, r) =>
         r.size.bytes > worst.size.bytes ? r : worst
       );
+      // Over budget is proof whatever else we missed; under budget is a claim
+      // about the largest result there WAS.
+      if (largest.size.bytes < predicate.maxBytes) {
+        // Text truncation cannot mislead a size verdict: `size.bytes` is
+        // measured on the whole output part, before the transcript's cap.
+        const gap = incompleteScopeReason(
+          transcript,
+          "toolResults",
+          scope.length
+        );
+        if (gap) {
+          return evidenceError(
+            predicate,
+            `the largest result read is ` +
+              `${largest.size.bytes.toLocaleString()} bytes, under ` +
+              `${predicate.maxBytes.toLocaleString()}, but ${gap}; a larger ` +
+              "one may not have been read"
+          );
+        }
+      }
       const basis = largest.size.basis;
       return largest.size.bytes < predicate.maxBytes
         ? pass(

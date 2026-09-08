@@ -11,6 +11,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { collectToolAnnotations } from "./evals/transcript-evidence";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
 import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
@@ -4090,6 +4091,7 @@ const runLocalIteration = async ({
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
     // doing it here is equivalent to the former post-finalize position.)
     browser.flushActiveWidgetChecks();
+    const toolAnnotations = collectToolAnnotations(mcpClientManager);
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
       promptTurns,
@@ -4104,6 +4106,9 @@ const runLocalIteration = async ({
       // server DECLARED (its input schema, its `destructiveHint`) read it here
       // and report `status: "error"` when it is absent.
       ...(prepared?.allTools ? { selectionTools: prepared.allTools } : {}),
+      // The AI SDK ToolSet above drops the server's `annotations`; they come
+      // from the manager's own tools/list cache instead.
+      ...(toolAnnotations ? { selectionToolAnnotations: toolAnnotations } : {}),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -5460,6 +5465,7 @@ const runHostedIterationWithBrowser = async (
       : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
+  const stepToolAnnotations = collectToolAnnotations(mcpClientManager);
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5469,6 +5475,10 @@ const runHostedIterationWithBrowser = async (
     skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
     // See the local path: the declaration a schema/annotation check reads.
     selectionTools: prepared.allTools,
+    // See the sibling call site: `annotations` are not on the ToolSet.
+    ...(stepToolAnnotations
+      ? { selectionToolAnnotations: stepToolAnnotations }
+      : {}),
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,

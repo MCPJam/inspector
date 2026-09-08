@@ -138,13 +138,31 @@ export const serverFactsSetupPhaseSchema = z
   })
   .strict();
 
+/**
+ * The sentence that must travel with every token number this document carries.
+ *
+ * Exported rather than restated at each render site: a caption that says
+ * "estimate" in one surface and not another is how a reader learns to treat
+ * the number as measured.
+ */
+export const SERVER_FACTS_TOKEN_NOTE =
+  "estimate of a reference window, not measured context consumption";
+
 export const serverFactsPrecheckSchema = z
   .object({
     toolName: z.string().min(1),
     code: z.string().min(1),
     class: z.enum(SERVER_FACTS_PRECHECK_CLASSES),
-    /** Numbers only, by the producer's discipline — never free text. */
-    detail: z.record(z.string(), z.number()).optional(),
+    /**
+     * Numbers only, by the producer's discipline — never free text.
+     *
+     * The KEYS are bounded too. A precheck row reaches an LLM judge prompt,
+     * and "values are numbers" does not stop a sentence from riding in as a
+     * property name.
+     */
+    detail: z
+      .record(z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/), z.number())
+      .optional(),
     /**
      * True when whether this is a finding at all depends on the protocol
      * version, and the version was not known. Rendered as "depends on protocol
@@ -197,13 +215,23 @@ export const serverFactsServerSchema = z
         withReadOnlyHint: z.number().int().nonnegative(),
         withDestructiveHint: z.number().int().nonnegative(),
       })
-      .strict(),
+      .strict()
+      // A subset cannot outnumber the set it is drawn from. Serving "41 of 12
+      // tools declare readOnlyHint" is not a small inaccuracy — it tells a
+      // reader the coverage number in front of them means nothing.
+      .refine(
+        (a) => a.withReadOnlyHint <= a.total && a.withDestructiveHint <= a.total,
+        { message: "annotation counts cannot exceed the tool total" }
+      ),
     outputSchema: z
       .object({
         total: z.number().int().nonnegative(),
         present: z.number().int().nonnegative(),
       })
-      .strict(),
+      .strict()
+      .refine((o) => o.present <= o.total, {
+        message: "outputSchema.present cannot exceed the tool total",
+      }),
     prechecks: z.array(serverFactsPrecheckSchema).max(MAX_SERVER_FACTS_PRECHECKS),
     relatedAssessments: z
       .array(serverFactsRelatedAssessmentSchema)
@@ -229,7 +257,10 @@ export const evalRunServerFactsSchema = z
         referenceWindowTokens: z.literal(
           SERVER_FACTS_REFERENCE_WINDOW_TOKENS
         ),
-        note: z.string().min(1),
+        // The literal, not any string: the caveat is what stops a reader
+        // taking an estimate for a measurement, so a producer that rewrote it
+        // would still validate while removing the one thing the field is for.
+        note: z.literal(SERVER_FACTS_TOKEN_NOTE),
       })
       .strict(),
     setup: z
@@ -240,7 +271,16 @@ export const evalRunServerFactsSchema = z
       .strict(),
     servers: z.array(serverFactsServerSchema).max(MAX_SERVER_FACTS_SERVERS),
   })
-  .strict();
+  .strict()
+  // `state` and `reason` are one fact, and the schema says so. An
+  // `unavailable` document with no reason gives a reader nothing to act on;
+  // a `ready` one carrying a reason invites the card to render an excuse for
+  // measurements that were, in fact, taken.
+  .refine((doc) => (doc.state === "unavailable") === (doc.reason !== undefined), {
+    message:
+      "`reason` is required exactly when `state` is \"unavailable\"",
+    path: ["reason"],
+  });
 
 export type EvalRunServerFactsV1 = z.infer<typeof evalRunServerFactsSchema>;
 export type ServerFactsSetupPhase = z.infer<typeof serverFactsSetupPhaseSchema>;
@@ -250,15 +290,6 @@ export type ServerFactsRelatedAssessment = z.infer<
   typeof serverFactsRelatedAssessmentSchema
 >;
 
-/**
- * The sentence that must travel with every token number this document carries.
- *
- * Exported rather than restated at each render site: a caption that says
- * "estimate" in one surface and not another is how a reader learns to treat
- * the number as measured.
- */
-export const SERVER_FACTS_TOKEN_NOTE =
-  "estimate of a reference window, not measured context consumption";
 
 /**
  * Estimated tokens as a share of the reference window.

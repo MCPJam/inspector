@@ -13,6 +13,7 @@ import {
 import { isInteractStep, newStepId, type TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import type {
   EvalJudgeConfig,
   EvalJudgeConfigOverride,
@@ -411,6 +412,9 @@ export function SimpleCaseForm({
         availableTools={availableTools}
         readOnly={readOnly}
         checkPolicy={capabilities?.scorers?.checkPolicy === true}
+        authorableKinds={authorablePredicateKinds(
+          capabilities?.scorers?.predicateKinds,
+        )}
         overlay={overlay}
         validationAttempted={validationAttempted}
         addedRowKey={addedRowKey}

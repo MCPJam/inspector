@@ -242,10 +242,17 @@ export function EvaluateRunContent({
   // and no page-local fallback: nothing in the browser can reconstruct the
   // snapshot the run was taken against, and a fabricated stand-in would be a
   // description of a server nobody observed.
+  //
+  // NOT gated on a terminal run status, unlike every sibling above. Those read
+  // materialized rollups that only exist once a run has finished; this one
+  // describes the SNAPSHOT the run was taken against and what setup observed,
+  // both of which are true from the run's first trial. Waiting for terminal
+  // would hide the server's own facts for exactly as long as somebody is
+  // watching the run that needs them.
   const serverFacts = useEvalRunServerFacts({
     projectId,
     runId: run._id,
-    enabled: active,
+    enabled: decisionSummaryEnabled,
   });
   const routeLines = useMemo(
     () =>
