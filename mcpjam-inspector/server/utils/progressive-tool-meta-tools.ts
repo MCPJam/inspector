@@ -10,6 +10,7 @@
  */
 
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 import {
   META_TOOL_LOAD,
@@ -37,7 +38,7 @@ const searchSchema = z.object({
   query: z
     .string()
     .describe(
-      "Free-text search across tool names, descriptions, and field names."
+      "Free-text search across tool names, descriptions, and field names.",
     ),
   limit: z
     .number()
@@ -52,7 +53,7 @@ const loadSchema = z.object({
     .array(z.string())
     .min(1)
     .describe(
-      "Stable tool ids (from search_mcp_tools) to make callable on the next step."
+      "Stable tool ids (from search_mcp_tools) to make callable on the next step.",
     ),
 });
 
@@ -80,17 +81,21 @@ export interface ProgressiveMetaToolsConfig {
  * supplied `state` object — the orchestrator reads it after each step to
  * decide which tools are active for the next one.
  *
- * Important: do NOT set `needsApproval` here. The meta-tools must run even
- * when the user has approval enabled — see the module docstring.
+ * The meta-tools declare a `never` floor: gating discovery itself behind N
+ * approvals defeats the point, so they run even when the user has approval
+ * enabled — see the module docstring. Stated rather than left to silence,
+ * because every engine now reads the declaration and "nobody set it" is not
+ * distinguishable from "somebody decided".
  */
 export function createProgressiveMetaTools(
-  config: ProgressiveMetaToolsConfig
+  config: ProgressiveMetaToolsConfig,
 ): ToolSet {
   const { getCatalog, state, policy } = config;
   const result: ToolSet = {};
   result[META_TOOL_SEARCH] = tool({
     description: SEARCH_DESCRIPTION,
     inputSchema: searchSchema,
+    needsApproval: needsApprovalFor("never", false),
     execute: async ({ query, limit }): Promise<SearchMcpToolsResult> => {
       // Clamp caller-supplied limit. Zod only checks positive-int; a model
       // (or a tampered/injected one) can ask for `limit: 10_000` and force
@@ -101,7 +106,7 @@ export function createProgressiveMetaTools(
       const MAX_SEARCH_LIMIT = Math.max(policy.searchLimit * 4, 32);
       const effectiveLimit = Math.min(
         limit ?? policy.searchLimit,
-        MAX_SEARCH_LIMIT
+        MAX_SEARCH_LIMIT,
       );
       const catalog = getCatalog();
       // Rank the full match list first so `totalMatches` reflects the true
@@ -122,6 +127,7 @@ export function createProgressiveMetaTools(
   result[META_TOOL_LOAD] = tool({
     description: LOAD_DESCRIPTION,
     inputSchema: loadSchema,
+    needsApproval: needsApprovalFor("never", false),
     execute: async ({ toolIds }): Promise<LoadMcpToolsResult> => {
       const catalog = getCatalog();
       const byId = new Map<string, ToolCatalogEntry>();

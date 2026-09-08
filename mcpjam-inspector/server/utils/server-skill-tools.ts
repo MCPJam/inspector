@@ -859,6 +859,8 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // `execute` then re-checks. With a bare `true`, the user approved only the
     // model's input string and `manifestApprovalHash` never participated in the
     // decision at all.
+    //
+    // floor: always
     needsApproval: rememberApprovedManifest,
   };
 
@@ -938,6 +940,8 @@ export function withServerSkills<T extends Record<string, unknown>>(
     }),
     // Same rule as loadSkill: a supporting file is skill content, and its
     // exact manifest entry is resolved before the approval is displayed.
+    //
+    // floor: always
     needsApproval: rememberApprovedFileManifest,
   };
 

@@ -33,6 +33,8 @@
  * consume these so the two paths can never drift apart.
  */
 
+import { needsApprovalFor, type ApprovalFloor } from "./tool-approval";
+
 export const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
 /**
@@ -68,6 +70,9 @@ export function isPageToolAlias(name: string): boolean {
   return PAGE_TOOL_ALIAS_REGEX.test(name);
 }
 
+/** Floor: always. The switch is not consulted, which is the point. */
+const PAGE_TOOL_APPROVAL_FLOOR: ApprovalFloor = "always";
+
 /**
  * Whether a model-requested WebMCP page-tool call must pause for approval.
  *
@@ -91,7 +96,7 @@ export function isPageToolAlias(name: string): boolean {
  * every page tool into an auto-run.
  */
 export function pageToolCallNeedsApproval(): boolean {
-  return true;
+  return needsApprovalFor(PAGE_TOOL_APPROVAL_FLOOR, false);
 }
 
 /**
@@ -128,20 +133,18 @@ export interface UiToolAnnotations {
  * Whether a UI tool call must pause for the user's approval this turn.
  *
  * Single source of truth for BOTH sides of the approval handshake: the
- * server (per-tool `needsApproval` in `buildUiTools`, and every engine's
- * approval gate via `classifyUiToolApprovals`) and the client (the
+ * server (per-tool `needsApproval` in `buildUiTools`) and the client (the
  * executor's defer-before-execute gate). They must agree because the client
  * decides "defer" when the tool-call chunk arrives — BEFORE the server's
  * approval-request chunk reaches it. If they disagree, turns strand.
  *
- * Two modes, keyed off the turn's `requireToolApproval` flag:
- *   - strict (flag on)  — every mutating UI tool gates.
- *   - default (flag off) — only DESTRUCTIVE UI tools gate. Actions the user
- *     watches happen in their own app don't need a confirmation click; the
- *     ones they can't undo by looking at the screen do.
- *
- * Read-only tools (`ui_snapshot_app`) never gate in either mode: they
- * observe, so pausing them buys no safety and costs a click.
+ * The entry's floor decides, and the switch then raises the `setting` rows:
+ *   - DESTRUCTIVE actions gate in both modes. The ones a user cannot undo by
+ *     looking at the screen are exactly the ones a default-off flag must not
+ *     be able to wave through.
+ *   - READ-ONLY tools (`ui_snapshot_app`) never gate: they observe, so pausing
+ *     buys no safety and costs a click.
+ *   - Everything else follows the switch.
  *
  * Entries WITHOUT `annotations` keep the legacy `readOnly`-only semantics —
  * an old client's snapshot must not suddenly start gating differently.
@@ -151,23 +154,42 @@ export function uiToolCallNeedsApproval(opts: {
   annotations?: UiToolAnnotations;
   requireToolApproval: boolean;
 }): boolean {
-  const { annotations, requireToolApproval } = opts;
-  if (!annotations) {
-    return requireToolApproval && !opts.readOnly;
-  }
+  return needsApprovalFor(
+    uiToolApprovalFloor(opts),
+    opts.requireToolApproval === true,
+  );
+}
+
+/**
+ * Which floor one UI catalog entry sits at, read off its annotations.
+ *
+ * Split out from the predicate so the ANSWER and the SWITCH are separable: the
+ * entry's own nature decides the floor, and `requireToolApproval` then decides
+ * only the `setting` rows. Same values as the flag-and-annotation ladder this
+ * replaces, in the same order.
+ */
+export function uiToolApprovalFloor(opts: {
+  readOnly: boolean;
+  annotations?: UiToolAnnotations;
+}): ApprovalFloor {
+  const { annotations } = opts;
+  // Legacy `readOnly`-only entries: an old client's snapshot must not suddenly
+  // start gating differently, so a mutating one follows the switch and a
+  // read-only one never gates.
+  if (!annotations) return opts.readOnly ? "never" : "setting";
   // Destructive wins over everything, including a contradictory
   // `readOnlyHint: true`. The validator rejects `readOnlyHint` disagreeing
   // with `readOnly`, but nothing stops "read-only AND destructive" — and
   // resolving that contradiction in favor of "don't ask" is the one reading
   // that can silently delete something.
-  if (annotations.destructiveHint === true) return true;
+  if (annotations.destructiveHint === true) return "always";
   // Read-only never gates. Honor BOTH signals: a partial annotation object
   // (e.g. `{destructiveHint: false}`) leaves `readOnlyHint` undefined, and
   // ignoring the legacy flag there would gate a snapshot for no reason.
-  if (opts.readOnly || annotations.readOnlyHint === true) return false;
-  if (requireToolApproval) return true;
-  // Protocol default: absent destructiveHint means destructive.
-  return annotations.destructiveHint !== false;
+  if (opts.readOnly || annotations.readOnlyHint === true) return "never";
+  // Protocol default: absent destructiveHint means destructive, so an
+  // unannotated future tool asks in both modes rather than in neither.
+  return annotations.destructiveHint === false ? "setting" : "always";
 }
 
 /**

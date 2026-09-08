@@ -23,6 +23,7 @@
  * problems conversationally instead of breaking the turn.
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 import { HOSTED_MODE } from "../../config.js";
 import { type ExecutionScope } from "../execution-scope.js";
@@ -78,7 +79,7 @@ export interface BashToolOptions {
 
 export function buildBashTool(
   opts: BashToolOptions,
-  runner: BashRunner = e2bRunner
+  runner: BashRunner = e2bRunner,
 ): ToolSet[string] {
   // Legacy callers (no engine threaded) get exactly the old fork.
   const engine =
@@ -94,7 +95,7 @@ export function buildBashTool(
       ? "local"
       : "cloud";
   const annotate = (
-    result: RunComputerCommandResult
+    result: RunComputerCommandResult,
   ): RunComputerCommandResult =>
     HOSTED_MODE ? result : { ...result, engine: engineLabel };
   return tool({
@@ -121,17 +122,20 @@ export function buildBashTool(
         .max(MAX_COMMAND_TIMEOUT_S)
         .optional()
         .describe(
-          `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`
+          `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`,
         ),
     }),
     // A root shell on a personal machine must honor the host's approval
     // policy exactly like MCP/skill tools do. The LOCAL engine goes further:
     // approval is ALWAYS on — a model-driven shell on the user's real machine
     // has no auto-approve in v1, whatever the host config says.
-    needsApproval: isLocal ? true : opts.requireToolApproval === true,
+    needsApproval: needsApprovalFor(
+      isLocal ? "always" : "setting",
+      opts.requireToolApproval === true,
+    ),
     execute: async (
       { command, timeoutSeconds },
-      { toolCallId, abortSignal }
+      { toolCallId, abortSignal },
     ): Promise<RunComputerCommandResult> => {
       if (isLocal) {
         return annotate(
@@ -141,7 +145,7 @@ export function buildBashTool(
             commandId: toolCallId,
             timeoutSeconds,
             ...(abortSignal ? { signal: abortSignal } : {}),
-          })
+          }),
         );
       }
       const execArgs = {
@@ -156,7 +160,7 @@ export function buildBashTool(
       };
       if (engine === "e2b") {
         return annotate(
-          await runComputerCommand({ ...execArgs, source: "chat" }, runner)
+          await runComputerCommand({ ...execArgs, source: "chat" }, runner),
         );
       }
       if (engine === "delegated") {

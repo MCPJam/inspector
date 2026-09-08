@@ -55,6 +55,7 @@ import {
   uiToolCallNeedsApproval,
   type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import {
   WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
   WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES,
@@ -846,6 +847,9 @@ function toNoExecuteAiSdkTool(args: {
       },
     ),
     ...(args.needsApproval ? { needsApproval: true } : {}),
+    // A `false` floor is spelled by ABSENCE, deliberately: the AI SDK treats a
+    // missing `needsApproval` and `false` identically, and every no-execute
+    // turn built before floors existed must stay byte-identical.
     // No execute — client fulfills via onToolCall.
   });
 }
@@ -867,6 +871,10 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
     out[t.alias] = toNoExecuteAiSdkTool({
       description: `[${t.appName}] ${t.description ?? t.rawName}`,
       inputSchema: t.inputSchema,
+      // Floor: never — stated rather than left to silence. The rule this
+      // encodes is the docstring's: server-tool approval stays scoped to
+      // server tools, and an app tool is the iframe's.
+      needsApproval: needsApprovalFor("never", false),
     });
   }
   return out;
@@ -895,6 +903,9 @@ export function buildUiTools(
     out[t.name] = toNoExecuteAiSdkTool({
       description: t.description,
       inputSchema: t.inputSchema,
+      // Floor read off the entry's own annotations; the switch then raises
+      // the `setting` rows. Same function the CLIENT's defer gate calls, which
+      // is what keeps the two sides of the handshake from stranding a turn.
       needsApproval: uiToolCallNeedsApproval({
         readOnly: t.readOnly,
         annotations: t.annotations,
@@ -1050,6 +1061,7 @@ export function buildPageTools(
         entry.description ?? entry.rawName
       }`,
       inputSchema: entry.inputSchema,
+      // Floor: always.
       needsApproval: pageToolCallNeedsApproval(),
     });
   }
@@ -1131,7 +1143,11 @@ export function applySkillToolApproval(
   skillTools: Record<string, unknown>,
   opts: { pinned: boolean; requireToolApproval: boolean },
 ): Record<string, unknown> {
-  if (opts.pinned || !opts.requireToolApproval) return skillTools;
+  const raised = needsApprovalFor(
+    opts.pinned ? "never" : "setting",
+    opts.requireToolApproval,
+  );
+  if (!raised) return skillTools;
   return Object.fromEntries(
     Object.entries(skillTools).map(([name, tool]) => [
       name,
@@ -1207,7 +1223,9 @@ export async function prepareChatV2(
   // `undefined` for every default turn, which is what keeps those turns on the
   // pre-existing no-options overload. See `mcpToolOptionsFor`.
   const toolOptions = mcpToolOptionsFor({
-    needsApproval: requireToolApproval,
+    // Floor: setting. A third party's tool is the ordinary case the switch was
+    // built for — the host says whether this turn pauses before them.
+    needsApproval: needsApprovalFor("setting", requireToolApproval === true),
     includeAppOnly: respectToolVisibility === false,
     modelVisibleMcpToolResults,
     tasks,
