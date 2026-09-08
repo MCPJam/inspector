@@ -17,6 +17,7 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
 } from "../browser";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools";
+import { buildResolvedModelRequestPayload } from "../../model-request-payload";
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
 
 type SendResult = {
@@ -1260,25 +1261,43 @@ describe("the toolset's context footprint is pinned", () => {
  * the tools can never drive a browser.
  */
 describe("describeBrowserTools", () => {
+  /**
+   * The model's payload, serialized the way the provider receives it.
+   *
+   * Derived from the BUILT TOOLSET rather than from `BROWSER_TOOL_NAMES`,
+   * because the description path already maps that list: comparing it against
+   * the list proves only that the list equals itself. A verb the builder starts
+   * advertising and the name list never learns about would be sent to the model
+   * and missing from the pane, and only this direction sees it.
+   */
+  function modelPayload() {
+    const { result } = build({ engine: "hosted" });
+    return buildResolvedModelRequestPayload({
+      systemPrompt: "",
+      tools: result!.tools,
+      messages: [],
+    }).tools;
+  }
+
   it("describes every tool the model is given", () => {
     const described = describeBrowserTools("hosted");
     expect(described.map((tool) => tool.name).sort()).toEqual(
-      [...BROWSER_TOOL_NAMES].sort(),
+      Object.keys(modelPayload()).sort(),
     );
   });
 
   it("carries the same wording and schemas the model is sent", () => {
     // The point of deriving rather than copying: a pane showing different text
-    // from the model's is a debugging surface that lies about the run.
-    const { result } = build();
-    const described = describeBrowserTools("hosted");
-    for (const tool of described) {
-      const live = (result!.tools as Record<string, { description?: string }>)[
-        tool.name
-      ];
+    // — or a different schema — from the model's is a debugging surface that
+    // lies about the run. Whole schemas, not just their root type: `filter` and
+    // `rootRef` going missing from the pane's copy of an observation is exactly
+    // the drift this describe block exists to catch.
+    const sent = modelPayload();
+    for (const tool of describeBrowserTools("hosted")) {
+      const live = sent[tool.name];
       expect(live, `${tool.name} is not in the built toolset`).toBeDefined();
       expect(tool.description).toBe(live.description);
-      expect(tool.inputSchema).toMatchObject({ type: "object" });
+      expect(tool.inputSchema).toEqual(live.inputSchema);
     }
   });
 
