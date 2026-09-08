@@ -11,7 +11,10 @@
  * row lands as a wave instead of four sprites moving in lockstep.
  */
 
-import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import {
+  PersonaPixelAvatar,
+  type PersonaPixelPose,
+} from "@/components/swarms/persona-pixel-avatar";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,18 +40,21 @@ const HERO_CHARACTERS = [
  * #9ec1f0), which is `MINERALS[3]` and which the row above does not use at all
  * — so rendering any one of those four would still be the wrong colour.
  *
- * The shape is the row's own first silhouette, because a 68px raster is not
- * enough to identify a family. The frame also poses the character tilted with
- * an arm raised, which no sprite here does; both wait on the asset.
+ * The frame's character has an arm up, so this one waves — see
+ * {@link PersonaPixelPose}. Two things about it are approximations and want the
+ * real asset: a 68px raster is not enough to identify a family, so the shape is
+ * the row's own first silhouette, and the frame tilts the whole body, which
+ * nothing here does.
  */
 export const SOLO_HERO_CHARACTERS: readonly HeroCharacter[] = [
-  { seed: "swarm-hero-lapis", shapeIndex: 0, paletteIndex: 3 },
+  { seed: "swarm-hero-lapis", shapeIndex: 0, paletteIndex: 3, pose: "wave" },
 ];
 
 type HeroCharacter = {
   seed: string;
   shapeIndex: number;
   paletteIndex: number;
+  pose?: PersonaPixelPose;
 };
 
 /**
@@ -87,6 +93,7 @@ export function SwarmHeroCharacters({
             seed={character.seed}
             shapeIndex={character.shapeIndex}
             paletteIndex={character.paletteIndex}
+            pose={character.pose}
             size="lg"
           />
         </span>

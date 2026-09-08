@@ -106,3 +106,51 @@ describe("PersonaPixelAvatar", () => {
     ).toBe("running");
   });
 });
+
+/**
+ * BB-160. The Swarm Describe frame's hero graphic has one arm up, so the
+ * generator grew a `wave` pose. It shares the arm block with every avatar in
+ * the product, and the sprite is procedural off a seeded rng, so the risk worth
+ * testing is not "does the arm move" — it is whether anything ELSE moved.
+ */
+describe("PersonaPixelAvatar — wave pose", () => {
+  const sprite = (props: { shapeIndex: number; pose?: "stand" | "wave" }) =>
+    render(
+      <PersonaPixelAvatar
+        seed="swarm-hero-lapis"
+        paletteIndex={3}
+        {...props}
+      />,
+    ).container.querySelector("svg")!;
+
+  /** Body cells only — the head sits in its own animated `<g>`. */
+  const leftmostBodyColumn = (svg: SVGElement) =>
+    Math.min(
+      ...Array.from(svg.querySelectorAll(":scope > rect")).map((r) =>
+        Number(r.getAttribute("x")),
+      ),
+    );
+
+  it("stands by default, so no existing avatar is touched", () => {
+    expect(sprite({ shapeIndex: 0 }).innerHTML).toBe(
+      sprite({ shapeIndex: 0, pose: "stand" }).innerHTML,
+    );
+  });
+
+  it("moves nothing but the arms — an armless family is byte-identical", () => {
+    // Stele and Tripod carry no `arms`, so `wave` has nothing to raise. If
+    // their markup ever diverges, the pose has reached past the arm block or
+    // shifted the rng the rest of the sprite is drawn from.
+    for (const shapeIndex of [1, 3]) {
+      expect(sprite({ shapeIndex }).innerHTML).toBe(
+        sprite({ shapeIndex, pose: "wave" }).innerHTML,
+      );
+    }
+  });
+
+  it("puts the raised hand further out than the standing silhouette", () => {
+    expect(leftmostBodyColumn(sprite({ shapeIndex: 0, pose: "wave" }))).toBeLessThan(
+      leftmostBodyColumn(sprite({ shapeIndex: 0 })),
+    );
+  });
+});
