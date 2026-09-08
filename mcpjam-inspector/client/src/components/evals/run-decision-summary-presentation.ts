@@ -71,7 +71,7 @@ export const DECISION_VERDICT_TONE_CLASS: Record<
 > = {
   passed: "text-success",
   failed: "text-destructive",
-  inconclusive: "text-amber-700 dark:text-amber-400",
+  inconclusive: "text-warning",
   notEstablished: "text-muted-foreground",
 };
 
@@ -189,13 +189,13 @@ export function describeDiagnosticChain(
       ? stage !== undefined
         ? `First failed stage: ${USER_VALUE_STAGE_LABELS[stage]}${
             firstFailedStageReason(diagnostic, stage)
-              ? ` — ${firstFailedStageReason(diagnostic, stage)}`
+              ? `. ${firstFailedStageReason(diagnostic, stage)}`
               : ""
           }`
-        : "First failed stage: none was established — the run never reached the server's stages"
+        : "First failed stage: none was established. The run never reached the server's stages"
       : chain.status === "unverified"
-        ? "First failed stage: not established — the recorded stage chain did not validate, so it is withheld"
-        : "First failed stage: not established — this run recorded no stage chain";
+        ? "First failed stage: not established. The recorded stage chain did not validate, so it is withheld"
+        : "First failed stage: not established. This run recorded no stage chain";
 
   const failureCategoryLine =
     category !== undefined
@@ -368,12 +368,12 @@ export function describeScanScope(input: {
   }
   if (input.walkExhausted) {
     return (
-      `over the ${input.scannedIterations} ${unit} scanned — every page ` +
+      `over the ${input.scannedIterations} ${unit} scanned. Every page ` +
       `offered has been loaded, but the run did not report the set as complete`
     );
   }
   return (
-    `over the first ${input.scannedIterations} ${unit} scanned — this is ` +
+    `over the first ${input.scannedIterations} ${unit} scanned. This is ` +
     `not the complete set`
   );
 }
@@ -395,9 +395,9 @@ export function describeDiagnosticsScope(input: {
 }): string {
   const unit = measurementUnitLabel("trial", input.scannedIterations);
   const head = `${input.shown} non-passing of ${input.scannedIterations} ${unit} examined`;
-  if (input.serverComplete) return `${head} — this is the run's whole non-passing set.`;
+  if (input.serverComplete) return `${head}. This is the run's whole non-passing set.`;
   if (input.walkExhausted) {
-    return `${head} — every page offered has been loaded, but the run did not report the set as complete.`;
+    return `${head}. Every page offered has been loaded, but the run did not report the set as complete.`;
   }
-  return `${head} — partial: more trials have not been examined.`;
+  return `${head}. Partial: more iterations have not been examined.`;
 }

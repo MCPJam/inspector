@@ -164,7 +164,7 @@ describe("VerdictPolicyV2Controls", () => {
       />,
     );
     const input = screen.getByLabelText(
-      /fraction of a case's trials that must pass/i,
+      /fraction of a case's iterations that must pass/i,
     ) as HTMLInputElement;
     expect(input.value).toBe("50");
 
@@ -187,7 +187,7 @@ describe("VerdictPolicyV2Controls", () => {
       />,
     );
     expect(
-      screen.getByText(/A case with 3 trials needs 3 passes/),
+      screen.getByText(/A case with 3 iterations needs 3 passes/),
     ).toBeTruthy();
   });
 
@@ -201,7 +201,7 @@ describe("VerdictPolicyV2Controls", () => {
       />,
     );
     const input = screen.getByLabelText(
-      /fraction of a case's trials that must pass/i,
+      /fraction of a case's iterations that must pass/i,
     );
     await user.clear(input);
     await user.type(input, "140");

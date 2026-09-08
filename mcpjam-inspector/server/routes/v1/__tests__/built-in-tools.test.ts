@@ -29,6 +29,18 @@ import { v1OnError } from "../envelope.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools.js";
 
+/**
+ * What the definitions route describes: the whole catalog.
+ *
+ * `describeBrowserTools` builds with no engine that re-advertises and no page
+ * snapshot, which is the shape that keeps both by-name WebMCP verbs — and they
+ * go together: the invoke verb takes a name and an untyped input, and the list
+ * verb is where the model learns the name and the shape it expects. An engine
+ * that grows its set mid-turn has the pair stripped at the engine boundary,
+ * not here; this pane describes the catalog a turn starts from.
+ */
+const FIRST_CLASS_TOOL_NAMES = [...BROWSER_TOOL_NAMES];
+
 type Definition = {
   name: string;
   description?: string;
@@ -56,10 +68,10 @@ describe("GET /built-in-tools/:builtInToolId/definitions", () => {
     const items = await definitions(
       "/api/v1/built-in-tools/browser/definitions",
     );
-    // The whole set, not a curated subset: a pane listing five of six tools
-    // would be a quietly wrong account of what the model can do.
+    // The whole set the model is GIVEN, not a curated subset: a pane listing
+    // five of six tools would be a quietly wrong account of what it can do.
     expect(items.map((item) => item.name).sort()).toEqual(
-      [...BROWSER_TOOL_NAMES].sort(),
+      [...FIRST_CLASS_TOOL_NAMES].sort(),
     );
     for (const item of items) {
       expect(item.description, `${item.name} needs a description`).toBeTruthy();
@@ -90,7 +102,7 @@ describe("GET /built-in-tools/:builtInToolId/definitions", () => {
     const items = await definitions(
       "/api/v1/built-in-tools/browser/definitions?engine=banana",
     );
-    expect(items).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(items).toHaveLength(FIRST_CLASS_TOOL_NAMES.length);
   });
 
   it("404s an unknown built-in tool instead of answering an empty page", async () => {

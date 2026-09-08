@@ -23,6 +23,8 @@
  *   - Throwing/propagating errors; the caller is expected to catch and run
  *     its own OAuth-error enrichment if applicable.
  */
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -44,6 +46,7 @@ import type {
 } from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
+  type MCPJamHandlerOptions,
   warnIfChatAbortSignalMissing,
 } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
@@ -61,6 +64,7 @@ import { type ModelDefinition } from "@/shared/types";
 import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import {
   buildWidgetModelContextSystemPrompt,
+  guardPageToolRefresh,
   prepareChatV2,
   type AppToolEntry,
   type PageToolEntry,
@@ -89,12 +93,6 @@ import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-help
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
-import {
-  classifyPageToolApprovals,
-  classifyUiToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import {
@@ -321,6 +319,20 @@ export interface WebChatTurnPersistContext {
    * written down. Delivery is byte-identical whether this is present or not.
    */
   turnProvenance?: TurnSkillProvenance;
+  /**
+   * The page tools this turn advertised, for the turn trace.
+   *
+   * Like `turnProvenance`: it decides only what gets WRITTEN DOWN, never what
+   * reaches the model. Delivery is byte-identical whether it is present or not.
+   *
+   * A THUNK, read when the turn is persisted rather than when these options are
+   * built. A page tool set is the one thing here that changes DURING the turn —
+   * the model navigates and the refresher mints a new set — and an array
+   * captured at options-build time would always record the tools the turn
+   * opened with, which on any turn that navigated is precisely not the set its
+   * last steps used.
+   */
+  pageToolsAtTurn?: () => MintedPageToolRecord[] | undefined;
 }
 
 /**
@@ -376,14 +388,22 @@ export interface WebChatTurnPrepareInputs {
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   /**
-   * Approval classification for the `browser_*` tools this turn advertises,
-   * produced by `resolveHostTools`. Merged with the `ui_*` classification
-   * below: the engines have ONE `uiToolApprovals` slot, and whichever
-   * namespace filled it alone left the other falling through to the
-   * `requireToolApproval` default (off by default) — which strands a turn
-   * whose gated call never gets its approval request.
+   * Re-read the page's tools between model steps, when this turn built page
+   * tools on an engine that can grow its set.
+   *
+   * Threaded rather than derived: only the browser capability knows how to ask,
+   * and only the hosted loop can use the answer.
    */
-  browserToolApprovals?: UiToolApprovalClassification;
+  refreshTools?: MCPJamHandlerOptions["refreshTools"];
+  /**
+   * Handed the names a mid-turn page tool may not take, once `prepareChatV2`
+   * has decided them.
+   *
+   * The caller cannot compute this — the decision needs the assembled MCP, app,
+   * UI and skill sets — and needs it only to keep its PERSISTED record honest;
+   * the model's own set is filtered in here, at the refresh.
+   */
+  onPageToolNamesReserved?: (reserved: ReadonlySet<string>) => void;
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -604,36 +624,6 @@ export function stripUiContextModelParts(
 }
 
 /**
- * Per-tool approval policy for this turn's `ui_*` tools, from the VALIDATED
- * snapshot's MCP annotations — never from the raw name, which a third-party
- * server could spoof. Must be fed prepareChatV2's `effectiveUiTools` (the
- * post-collision set), not the raw snapshot: a server-executed `ui_*` tool
- * that won its name collision follows ordinary approval semantics. Consumed
- * by the MCPJam loop's approval gate (see `toolCallNeedsApproval` in
- * mcpjam-stream-handler); the BYOK `streamText` path gets the same policy
- * baked into each tool's `needsApproval` by `buildUiTools`.
- */
-function uiToolApprovalsFrom(
-  uiTools: UiToolEntry[] | undefined,
-  requireToolApproval: boolean | undefined,
-  browserToolApprovals?: UiToolApprovalClassification,
-  pageTools?: PageToolEntry[],
-): UiToolApprovalClassification {
-  // Page tools ALWAYS gate, and the hosted engines classify approval by NAME
-  // rather than reading a tool's own `needsApproval` — so a page tool that is
-  // not named here reaches them approval-less, the client defers the call, and
-  // the turn waits forever on a pill the server never sends. Same reasoning,
-  // and the same single `uiToolApprovals` slot, as `browserToolApprovals`.
-  return mergeUiToolApprovalClassifications(
-    mergeUiToolApprovalClassifications(
-      classifyUiToolApprovals(uiTools, requireToolApproval === true),
-      browserToolApprovals,
-    ),
-    classifyPageToolApprovals((pageTools ?? []).map((entry) => entry.alias)),
-  );
-}
-
-/**
  * Run a single web-chat streaming turn.
  *
  * Returns the streaming Response. Throws WebRouteError / runtime errors;
@@ -702,6 +692,9 @@ export async function streamWebChatTurn(
       uiTools: prepare.uiTools,
       pageTools: prepare.pageTools,
       builtInTools: prepare.builtInTools,
+      // The prompt section that explains `webmcp_*` tools has to be there
+      // BEFORE a navigation adds them; the refresher's presence is the fact.
+      pageToolsMayGrow: Boolean(prepare.refreshTools),
 
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
@@ -739,8 +732,47 @@ export async function streamWebChatTurn(
     scrubMessages,
     progressivePlan,
     discoveryState,
-    effectiveUiTools,
+    reservedAgainstPageTools,
   } = prepared;
+
+  // THE SAME COLLISION POLICY, APPLIED TO THE SET THE TURN GROWS INTO.
+  //
+  // `prepareChatV2` decides "a page tool loses every collision" for the tools a
+  // turn starts with; a turn that navigates gets a second set, minted by the
+  // browser capability from a page this function has not seen. Wrapping here is
+  // what makes the two the same rule rather than two rules that happen to
+  // agree — the refresher itself only reserves the browser's own verbs, and
+  // knows nothing of the MCP, app, UI and skill names beside them.
+  prepare.onPageToolNamesReserved?.(reservedAgainstPageTools);
+
+  /**
+   * The tool set an engine that RE-ADVERTISES gets: without the generic
+   * `browser_webmcp_invoke`.
+   *
+   * Decided here rather than in the route, because only here is the engine
+   * known. Which engine runs depends on `resolveOrgRuntime`, a Convex-backed
+   * lookup that happens below — so a caller assembling browser tools cannot
+   * say whether this turn's loop will consume `refreshTools`, and a flag it
+   * guessed retired the verb for local BYOK too, which does not refresh. The
+   * model then had no way to reach a page it navigated to.
+   *
+   * Applied ONLY on the two paths that pass `refreshTools` below. Everywhere
+   * else the verb stays, which is the safe direction: an extra tool costs a
+   * line in the list, and a missing one costs the page.
+   */
+  const refreshingEngineTools = (): ToolSet =>
+    refreshTools
+      ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+      : (allTools as ToolSet);
+  const refreshTools: MCPJamHandlerOptions["refreshTools"] | undefined =
+    prepare.refreshTools
+      ? async (ctx) => {
+          const refresh = await prepare.refreshTools!(ctx);
+          return refresh
+            ? guardPageToolRefresh(refresh, reservedAgainstPageTools)
+            : refresh;
+        }
+      : undefined;
 
   // The raw per-turn stream writer, captured at `onStreamWriterReady` below.
   // Present for EVERY turn that produces a stream, independent of the
@@ -1134,9 +1166,19 @@ export async function streamWebChatTurn(
         // Testing's most environment-driven surface with no record of what it
         // ran. Distinct from `resumeConfig`, which is gated because it is the
         // restorable-resume surface; this is provenance and restores nothing.
-        turnTrace: persist.turnProvenance
-          ? { ...turnTrace, ...persist.turnProvenance }
-          : turnTrace,
+        turnTrace: (() => {
+          // Read HERE, at persist time, so a turn that navigated records the
+          // set its last steps had rather than the one it opened with.
+          const pageToolsAtTurn = persist.pageToolsAtTurn?.();
+          return {
+          ...turnTrace,
+          ...(persist.turnProvenance ?? {}),
+          // An EMPTY array is meaningful and is written: "this turn advertised
+          // no page tools" is a different fact from "we do not know", and the
+          // pane says something different about each.
+          ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
+          };
+        })(),
         ...(persist.expectedVersion !== undefined
           ? { expectedVersion: persist.expectedVersion }
           : {}),
@@ -1239,7 +1281,7 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
-      tools: allTools as ToolSet,
+      tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
@@ -1250,13 +1292,10 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
-      uiToolApprovals: uiToolApprovalsFrom(
-        effectiveUiTools,
-        persist.requireToolApproval,
-        prepare.browserToolApprovals,
-        prepare.pageTools,
-      ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // The hosted loop is the ONE engine that can grow its tool set between
+      // steps, so it is the one that gets this.
+      ...(refreshTools ? { refreshTools } : {}),
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
@@ -1324,7 +1363,7 @@ export async function streamWebChatTurn(
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
-    tools: allTools as ToolSet,
+    tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,
@@ -1340,13 +1379,8 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
-    uiToolApprovals: uiToolApprovalsFrom(
-      effectiveUiTools,
-      persist.requireToolApproval,
-      prepare.browserToolApprovals,
-      prepare.pageTools,
-    ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    ...(refreshTools ? { refreshTools } : {}),
     // Harness engine only: it builds its own MCP tool set (host-executed
     // delivery) rather than consuming `allTools`, so the host's
     // tool-construction policies have to reach it separately. Inert on the

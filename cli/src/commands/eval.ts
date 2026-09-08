@@ -20,6 +20,7 @@ import {
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -58,6 +59,10 @@ import {
   type RenderedScreenshot,
   extractRenderedScreenshots,
   extractIterationVideoUrl,
+  extractIterationVideoMeta,
+  describeIterationVideo,
+  iterationVideoExtension,
+  type IterationVideoMeta,
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
@@ -1201,6 +1206,53 @@ function resolveScreenshotPath(
   }
   return out;
 }
+
+/**
+ * Where `--video` writes the iteration's recording, next to its screenshots.
+ *
+ * A DIRECTORY is required, and that is not an arbitrary restriction: `--out`
+ * may name a single file when the iteration rendered exactly one screenshot,
+ * and there is nowhere to put a second artifact beside it. Refused with the
+ * remedy rather than silently overwriting the screenshot with a video.
+ *
+ * Named for the ITERATION — one recording per iteration — with the extension
+ * the recorder that made it implies. A file named for the wrong container is
+ * one a player refuses before it has read a byte.
+ */
+function resolveIterationVideoPath(
+  out: string,
+  iterationId: string,
+  meta: IterationVideoMeta | undefined
+): string {
+  const safeId = iterationId.replace(/[^a-zA-Z0-9_-]+/g, "-") || "iteration";
+  return join(out, `${safeId}.${iterationVideoExtension(meta)}`);
+}
+
+/**
+ * `--video` needs somewhere to put a SECOND file, so `--out` names a directory.
+ *
+ * Checked BEFORE anything is downloaded. The screenshot loop tolerates an
+ * `--out` that names a single file, so without this the command would fetch
+ * every PNG, write them, and only then refuse — leaving the caller with half
+ * the evidence and an error. And a path that does not exist yet is the
+ * ORDINARY way to ask for an output directory (`--out ./evidence`): only an
+ * existing non-directory is a real conflict.
+ */
+function requireVideoOutDirectory(out: string): void {
+  if (existsSync(out) && !statSync(out).isDirectory()) {
+    throw usageError(
+      `--out must be a directory when --video is set (${out} is a file), so the recording can be saved beside the screenshots.`
+    );
+  }
+  mkdirSync(out, { recursive: true });
+}
+
+/** A recording saved beside an iteration's screenshots. */
+type SavedIterationVideo = {
+  videoUrl: string;
+  savedTo: string;
+  videoMeta?: IterationVideoMeta;
+};
 
 /** Commander collector for a repeatable `--flag value` option. */
 function collectRepeatable(value: string, previous: string[]): string[] {
@@ -4282,6 +4334,43 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  addProjectOption(
+    evals
+      .command("server-facts")
+      .description(
+        "Read the server a run was taken against — tool surface, catalog size, annotation coverage, tool-metadata signals, and what connect and discovery observed"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; run: string },
+      command
+    ) => {
+      const input = validateOpInput(
+        getEvalRunServerFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          runId: options.run,
+          ...(options.project === undefined
+            ? {}
+            : { project: options.project }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        getEvalRunServerFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        input,
+        options,
+        command
+      );
+    }
+  );
+
   const descriptionExperiment = evals
     .command("description-experiment")
     .description(
@@ -5058,6 +5147,10 @@ export function registerEvalCommands(program: Command): void {
       "Save the PNG(s) to a file or directory instead of rendering inline"
     )
     .option("--index <n>", "Show only the Nth screenshot (1-based)")
+    .option(
+      "--video",
+      "With --out, also download the iteration's replay recording next to the screenshots"
+    )
     .action(
       async (
         options: PlatformOptions & {
@@ -5066,6 +5159,7 @@ export function registerEvalCommands(program: Command): void {
           iteration: string;
           out?: string;
           index?: string;
+          video?: boolean;
         },
         command
       ) => {
@@ -5095,6 +5189,17 @@ export function registerEvalCommands(program: Command): void {
             quiet: globalOptions.quiet,
           }
         );
+
+        // BEFORE any download, so a misuse costs nothing and a caller is never
+        // left with half the evidence and an error.
+        if (options.video) {
+          if (options.out === undefined) {
+            throw usageError(
+              "--video needs --out: the recording is a file to save, not something to print. Use `eval video --run … --iteration …` for the URL."
+            );
+          }
+          requireVideoOutDirectory(options.out);
+        }
 
         let shots = extractRenderedScreenshots(result);
         if (index !== undefined) {
@@ -5132,11 +5237,44 @@ export function registerEvalCommands(program: Command): void {
             writeFileSync(path, bytes);
             saved.push({ ...shot, savedTo: path });
           }
+          // The recording, when asked for and when there is one. Named for the
+          // ITERATION rather than for a step: there is one per iteration, and
+          // the extension follows the recorder that made it (a hosted box
+          // writes MP4, the local widget harness `.webm`) — a file named for
+          // the wrong container is one a player refuses before reading a byte.
+          let video: SavedIterationVideo | undefined;
+          if (options.video) {
+            const videoUrl = extractIterationVideoUrl(result);
+            if (videoUrl) {
+              const meta = extractIterationVideoMeta(result);
+              const videoPath = resolveIterationVideoPath(
+                options.out,
+                options.iteration,
+                meta
+              );
+              const videoBytes = await fetchArtifactBytes(
+                videoUrl,
+                globalOptions.timeout,
+                "video"
+              );
+              mkdirSync(dirname(videoPath), { recursive: true });
+              writeFileSync(videoPath, videoBytes);
+              video = {
+                videoUrl,
+                savedTo: videoPath,
+                ...(meta ? { videoMeta: meta } : {}),
+              };
+            }
+          }
           if (isJson) {
-            writeResult({ ...base, items: saved });
+            writeResult({
+              ...base,
+              items: saved,
+              ...(options.video ? { video: video ?? null } : {}),
+            });
             return;
           }
-          if (saved.length === 0) {
+          if (saved.length === 0 && !video) {
             process.stdout.write(
               "No rendered widget screenshots for this iteration.\n"
             );
@@ -5147,8 +5285,21 @@ export function registerEvalCommands(program: Command): void {
               `Saved ${shot.toolName ?? "widget"} → ${shot.savedTo}\n`
             );
           }
+          if (options.video) {
+            if (video) {
+              const summary = describeIterationVideo(video.videoMeta);
+              process.stdout.write(
+                `Saved replay recording → ${video.savedTo}${
+                  summary ? `  (${summary})` : ""
+                }\n`
+              );
+            } else {
+              process.stdout.write("No replay recording for this iteration.\n");
+            }
+          }
           return;
         }
+
 
         // JSON without --out: structured screenshot URLs, no image bytes.
         if (isJson) {
@@ -5184,7 +5335,7 @@ export function registerEvalCommands(program: Command): void {
     evals
       .command("video")
       .description(
-        "Get the Playwright replay video (.webm) an eval iteration recorded — prints the URL, or downloads it with --out"
+        "Get the replay recording an eval iteration made — prints the URL, or downloads it with --out. A local widget run records a .webm; an unattended run on a hosted browser records an .mp4"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
       .requiredOption(
@@ -5194,7 +5345,7 @@ export function registerEvalCommands(program: Command): void {
   )
     .option(
       "--out <path>",
-      "Download the .webm to this file instead of printing the URL"
+      "Download the recording to this file instead of printing the URL"
     )
     .action(
       async (
@@ -5229,11 +5380,19 @@ export function registerEvalCommands(program: Command): void {
         );
 
         const videoUrl = extractIterationVideoUrl(result);
+        // What the recording says about itself. Carried on every answer,
+        // because `truncated` is the one thing a reader cannot work out from
+        // the file: a take that stopped at its size cap is a complete,
+        // playable PREFIX of the run and reads as the whole run otherwise.
+        const videoMeta = videoUrl
+          ? extractIterationVideoMeta(result)
+          : undefined;
         const base = {
           project: result.project,
           runId: result.runId,
           iterationId: result.iterationId,
         };
+        const metaFields = videoMeta ? { videoMeta } : {};
         const isJson = globalOptions.format === "json";
 
         if (!videoUrl) {
@@ -5241,9 +5400,11 @@ export function registerEvalCommands(program: Command): void {
             writeResult({ ...base, videoUrl: null });
             return;
           }
-          process.stdout.write("No replay video for this iteration.\n");
+          process.stdout.write("No replay recording for this iteration.\n");
           return;
         }
+
+        const summary = describeIterationVideo(videoMeta);
 
         if (options.out !== undefined) {
           const bytes = await fetchArtifactBytes(
@@ -5254,18 +5415,29 @@ export function registerEvalCommands(program: Command): void {
           mkdirSync(dirname(options.out), { recursive: true });
           writeFileSync(options.out, bytes);
           if (isJson) {
-            writeResult({ ...base, videoUrl, savedTo: options.out });
+            writeResult({
+              ...base,
+              videoUrl,
+              ...metaFields,
+              savedTo: options.out,
+            });
             return;
           }
-          process.stdout.write(`Saved replay video → ${options.out}\n`);
+          process.stdout.write(
+            `Saved replay recording → ${options.out}${
+              summary ? `  (${summary})` : ""
+            }\n`
+          );
           return;
         }
 
         if (isJson) {
-          writeResult({ ...base, videoUrl });
+          writeResult({ ...base, videoUrl, ...metaFields });
           return;
         }
-        process.stdout.write(`${videoUrl}\n`);
+        process.stdout.write(
+          `${videoUrl}${summary ? `\n${summary}\n` : "\n"}`
+        );
       }
     );
 

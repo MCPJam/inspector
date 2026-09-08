@@ -364,13 +364,17 @@ describe("SimpleCaseForm step-authored checks", () => {
     // Each row says who wrote it, and carries its own step number — the same
     // number the Steps pane shows for that step.
     expect(rows.every((row) => row.textContent?.includes("Step"))).toBe(true);
+    // Rows are ordered by the LINK OF THE CHAIN they measure, not by step
+    // number, so the numbers legitimately run out of order: step 4's
+    // `noToolErrors` files at `response` under analyzer 11 and step 3's
+    // `responseContains` at `userValue`, which comes after it.
     expect(
       rows.map((row) =>
         row
           .querySelector("[data-step-number]")
           ?.getAttribute("data-step-number"),
       ),
-    ).toEqual(["2", "3", "4"]);
+    ).toEqual(["2", "4", "3"]);
   });
 
   it("treats a case graded only by its checks as positive, not unset", () => {

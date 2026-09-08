@@ -202,6 +202,99 @@ export function noteLocalBrowserWatch(
   return post("watch", args, consentToken);
 }
 
+/**
+ * The sessions an agent has opened for this project, newest first.
+ *
+ * The rail knows a project; an agent's session was opened elsewhere. Without
+ * this the Activity list has nothing to read, and asking a person to paste a
+ * session id into a side panel is not a side panel anybody would use.
+ */
+export function listLocalBrowserSessions(
+  projectId: string,
+  consentToken: string | null,
+): Promise<{ sessions: LocalAgentSession[] }> {
+  return post("sessions", { projectId }, consentToken);
+}
+
+/**
+ * This session's command history, read forward from a cursor.
+ *
+ * INCREMENTAL by design: the pane polls with the last `seq` it saw, so a long
+ * session costs one small response per tick rather than re-sending its whole
+ * history. The server mirrors the daemon's bounded ring on every read, which is
+ * also how a command the MODEL issued — one that never went through the agent
+ * door — reaches this list.
+ */
+export function readLocalBrowserTrace(
+  args: {
+    projectId: string;
+    sessionId: string;
+    afterSeq?: number;
+    limit?: number;
+  },
+  consentToken: string | null,
+): Promise<LocalBrowserTracePage> {
+  return post("trace", args, consentToken);
+}
+
+export interface LocalAgentSession {
+  sessionId: string;
+  projectId: string;
+  profile: "persistent" | "ephemeral";
+  createdAt: number;
+  closedAt?: number;
+  participants: Array<{ actorId: string; kind: string; joinedAt: number }>;
+}
+
+/** One row of the session trace, as the pane needs to read it. */
+export interface LocalBrowserTraceRow {
+  kind: "command";
+  seq: number;
+  commandId: string;
+  ts: number;
+  durationMs: number;
+  source: string;
+  actor: { kind: string; id: string; label?: string };
+  command: {
+    kind: string;
+    verb?: string;
+    mode?: string;
+    url?: string;
+    value?: string;
+    redactedValue?: { redacted: true; chars: number };
+    target?: { selector?: string; a11yRef?: string; coordinates?: number[] };
+  };
+  outcome: "executed" | "refused" | "unknown";
+  ok?: boolean;
+  errorCode?: string;
+  url?: string;
+  title?: string;
+  artifacts?: {
+    screenshot?: { id: string; bytes: number; mediaType: string; evicted?: boolean };
+  };
+}
+
+/** A stretch of history the ledger knows it does not have. */
+export interface LocalBrowserTraceGap {
+  kind: "gap";
+  seq: number;
+  ts: number;
+  fromSeq: number;
+  toSeq: number;
+  reason: "ring_overflow" | "daemon_restart" | "sink_unavailable";
+}
+
+export type LocalBrowserTraceEntry =
+  | LocalBrowserTraceRow
+  | LocalBrowserTraceGap;
+
+export interface LocalBrowserTracePage {
+  entries: LocalBrowserTraceEntry[];
+  headSeq: number;
+  /** Set when the newest rows could not be written. Never silent. */
+  historyWarning?: string;
+}
+
 export function sendLocalBrowserInput(
   args: { bootId: string; holder: string; events: BrowserInputEvent[] },
   consentToken: string | null,

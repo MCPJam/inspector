@@ -365,6 +365,7 @@ export function ToolList({
               <BrowserToolsSection
                 tools={browserTools.tools}
                 page={browserTools.page}
+                live={browserTools.live}
                 engine={browserTools.engine}
                 searchQuery={searchQuery}
                 onRefreshPage={browserTools.refreshPage}

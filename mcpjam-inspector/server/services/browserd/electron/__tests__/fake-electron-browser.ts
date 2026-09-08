@@ -24,11 +24,20 @@ export function elementAt(
   x: number,
   y: number,
   size = 10,
+  /**
+   * What `DOM.describeNode` says this node IS.
+   *
+   * The fill path classifies over CDP rather than in the page, so a fixture
+   * that answers no `nodeName` models an element the protocol cannot describe
+   * — which is refused, not filled. Defaults to a plain text input, the shape
+   * the click and hover fixtures want.
+   */
+  describe: { nodeName?: string; attributes?: string[] } = { nodeName: "INPUT" },
 ): Map<string, unknown> {
   return new Map<string, unknown>([
     ["DOM.getDocument", { root: { nodeId: 1 } }],
     ["DOM.querySelector", { nodeId: 42 }],
-    ["DOM.describeNode", { node: { backendNodeId: 99 } }],
+    ["DOM.describeNode", { node: { backendNodeId: 99, ...describe } }],
     [
       "DOM.getBoxModel",
       {

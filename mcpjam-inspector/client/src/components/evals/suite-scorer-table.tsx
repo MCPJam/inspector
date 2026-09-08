@@ -28,6 +28,7 @@ import {
   type GroundednessRunEvidence,
 } from "./suite-judge-card";
 import {
+  authorablePredicateKinds,
   buildScorerTable,
   withGoalCompletionRole,
   withPredicateRole,
@@ -36,6 +37,7 @@ import {
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
 import { groupGradersByStage } from "./suite-grading-model";
+import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig } from "./types";
 
 export function SuiteScorerTable({
@@ -95,6 +97,9 @@ export function SuiteScorerTable({
   );
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
+  const authorableKinds = authorablePredicateKinds(
+    capabilities?.scorers?.predicateKinds,
+  );
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
@@ -139,6 +144,7 @@ export function SuiteScorerTable({
             <p className="text-sm text-muted-foreground">{passOrFailHint}</p>
           </div>
           <SuiteScorerLibraryMenu
+            authorableKinds={authorableKinds}
             onAdd={(kind) =>
               onPredicatesChange((previous) => [
                 ...previous,
@@ -513,6 +519,55 @@ function ThresholdCell({
         />
       );
     }
+    if (
+      predicate.type === "toolLatencyUnder" ||
+      predicate.type === "toolResultSizeUnder" ||
+      predicate.type === "toolCallCountUnder"
+    ) {
+      const { field, value, label } =
+        predicate.type === "toolLatencyUnder"
+          ? {
+              field: "ms" as const,
+              value: predicate.ms,
+              label: "Tool latency budget in ms",
+            }
+          : predicate.type === "toolResultSizeUnder"
+            ? {
+                field: "maxBytes" as const,
+                value: predicate.maxBytes,
+                label: "Tool result size budget in bytes",
+              }
+            : {
+                field: "count" as const,
+                value: predicate.count,
+                label: "Tool call budget",
+              };
+      return (
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          value={value}
+          aria-label={label}
+          className="h-7 w-24 text-xs"
+          onChange={(event) => {
+            // An empty field is `Number("") === 0`, and a budget of 0 is a
+            // check nothing can pass — the same reason the backend now
+            // refuses a non-positive `tokens` or `minCount` at the write
+            // boundary. Leave the predicate alone until the field holds a
+            // usable number, exactly as the token and turn budgets do.
+            const raw = event.target.value.trim();
+            if (raw === "") return;
+            const next = Number(raw);
+            if (!Number.isFinite(next) || next < 1) return;
+            onPredicateChange(row.predicateIndex!, {
+              ...predicate,
+              [field]: Math.floor(next),
+            } as Predicate);
+          }}
+        />
+      );
+    }
     if (predicate.type === "turnCountUnder") {
       return (
         <Input
@@ -594,9 +649,16 @@ function RoleCell({
       // reads Warn/Report here rather than being relabelled Gate.
       return <RoleChip role={row.role} />;
     }
+    // Observations get two segments, the same way groundedness does: a
+    // heuristic must not decide a release, and offering a Gate the schema is
+    // going to refuse is a control that lies.
     return (
       <RoleSegmentGroup
         value={row.role}
+        // An observation is a heuristic, so it is offered as Warn or Report
+        // and never as a Gate — the same rule the Zod schema enforces at the
+        // save, surfaced as an absent segment rather than a refused save.
+        roles={rolesForPredicateKind(predicate.type)}
         ariaLabel="Check role"
         onChange={(role) =>
           onPredicateChange(

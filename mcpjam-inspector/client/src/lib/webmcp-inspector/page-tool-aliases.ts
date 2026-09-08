@@ -18,31 +18,10 @@
  */
 import type { PageToolSnapshotEntry } from "@/shared/chat-v2";
 import type { WebMcpToolDescriptor } from "@/shared/webmcp-inspector-protocol";
-
-/**
- * FNV-1a, 32-bit, run twice over the preimage with different offsets to fill
- * eight hex characters.
- */
-function fnv1a(input: string, seed: number): number {
-  let hash = seed;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    // The classic FNV prime, as the shift-and-add form that stays in 32 bits.
-    hash +=
-      (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
-    hash >>>= 0;
-  }
-  return hash >>> 0;
-}
-
-function hex8(input: string): string {
-  const high = fnv1a(input, 0x811c9dc5);
-  const low = fnv1a(input, 0x01000193);
-  return (
-    high.toString(16).padStart(8, "0").slice(0, 4) +
-    low.toString(16).padStart(8, "0").slice(0, 4)
-  );
-}
+// The SAME digest the daemon and the server use for declared tools. It moved
+// there when the agent browser needed it too: three copies of one hash is
+// three chances for the client to compute a name the server never minted.
+import { declaredToolHex8 as hex8 } from "@/shared/declared-tools";
 
 /**
  * Deterministic in (sessionId, toolKey), so the same tool keeps its alias
