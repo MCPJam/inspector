@@ -91,6 +91,17 @@ class ActError extends Error {
 }
 
 /**
+ * A person took the browser BETWEEN the steps of a composite verb.
+ *
+ * Its own type because the answer differs from every other act failure: the
+ * refusal must carry `leaseBlocked` (the handler's 423, and the signal the
+ * tool layer drops its cached tokens on), and its prose must say that part of
+ * the form is already filled — "nothing was run" would be false, and a model
+ * told that would fill the same fields again on top of the ones that landed.
+ */
+class LeaseTakenMidAct extends Error {}
+
+/**
  * Did `fillSelector` refuse because the target is a `<select>`?
  *
  * See `fillOneField` for the two real messages this separates. The engines
@@ -447,11 +458,21 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     try {
-      await this.dispatchVerb(page, action);
+      await this.dispatchVerb(page, action, permit);
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
       // able to act on ("the button isn't there"), not a daemon fault — and
       // Playwright's own timeout prose would just confuse it.
+      if (error instanceof LeaseTakenMidAct) {
+        // NOT an act failure. Said precisely, because a composite stops
+        // halfway: the fields before the handoff are in the page, and a model
+        // told "nothing was run" would fill them a second time.
+        return this.leaseBlockedResult(
+          "a person took control of this browser partway through this action; " +
+            "any earlier steps of it have already been applied to the page — " +
+            "re-observe after they hand it back rather than repeating it",
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
       // A failure THIS FILE raised already carries its code; only an unknown
       // throw from a page primitive is classified by matching prose.
@@ -515,11 +536,25 @@ export class ChromiumDriver implements BrowserDriver {
     return observed.ok ? { settled, ...observed } : observed;
   }
 
-  /** Map an act verb onto the page primitives. */
+  /**
+   * Map an act verb onto the page primitives.
+   *
+   * `permit` is threaded in for the COMPOSITE verbs only. A single-step verb is
+   * one dispatch and the caller's check immediately precedes it; `fill_form` is
+   * a loop of awaited page writes, so a person taking the browser after the
+   * first field would otherwise have the rest of the form — and the Enter —
+   * typed into it. The check is between steps because there is no way to take
+   * back the ones already made.
+   */
   private async dispatchVerb(
     page: DriverPage,
     action: Extract<BrowserAction, { kind: "act" }>,
+    permit: () => boolean = () => true,
   ): Promise<void> {
+    /** Refuse the NEXT page write when the browser changed hands. */
+    const stillOurs = () => {
+      if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
+    };
     const target = action.target;
     const point =
       target && "coordinates" in target
@@ -566,7 +601,10 @@ export class ChromiumDriver implements BrowserDriver {
         // ONE settle and ONE observation for what was two commands. The submit
         // is also the half a model most often cannot pin: it acts on the page
         // its own typing produced, which nothing has observed yet.
-        if (action.submit) await page.press("Enter");
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
         return;
       }
       case "fill_form": {
@@ -591,9 +629,13 @@ export class ChromiumDriver implements BrowserDriver {
           );
         }
         for (const [index, field] of fields.entries()) {
+          stillOurs();
           await this.fillOneField(page, field, index);
         }
-        if (action.submit) await page.press("Enter");
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
         return;
       }
       case "press":
@@ -1515,6 +1557,23 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     const page = entry.page;
+    // THE FRAME THE CAPTURES ARE TAKEN AGAINST, sampled before them and again
+    // after, exactly as `observeScreenshot` does — and for the same P1.
+    //
+    // A token minted AFTER an image describes a page the image may not show.
+    // That is the dangerous direction: an act chosen from the stale image and
+    // pinned to that token MATCHES the live tab and sails through
+    // `guardStaleness`, which is precisely the stale targeting L3 exists to
+    // refuse. (Minting it before, as this path used to, errs the other way —
+    // the token is older than the image, so the guard REFUSES. Safe, but only
+    // by accident.) Sampling both sides lets the result say which it is.
+    //
+    // Skipped when nothing is captured: with `observe:"none"` there is no
+    // image and no tree to bind, so the one snapshot below is the whole story.
+    const captures = wants.a11y || wants.screenshot;
+    const pre = captures
+      ? await this.snapshot(page).catch(() => undefined)
+      : undefined;
     let a11yFields: Record<string, unknown> = {};
     let refMap: Map<string, RefEntry> | undefined;
     if (wants.a11y) {
@@ -1580,6 +1639,36 @@ export class ChromiumDriver implements BrowserDriver {
       ...a11yFields,
       ...(screenshot ? { screenshot } : {}),
     };
+    // Both must hold, as in `observeScreenshot`: a same-skeleton client-side
+    // route change moves the URL while `domSignal` does not.
+    const held =
+      !captures ||
+      (pre !== undefined &&
+        pre.url === frame.url &&
+        pre.domSignal === frame.domSignal);
+    if (!held) {
+      // The page moved WHILE it was being captured, so no token here can
+      // honestly describe what came back. Sending none is what keeps the next
+      // act safe: the tool layer keeps the token it had, that act is pinned to
+      // it, and the guard refuses it with a fresh look rather than admitting
+      // one aimed at an image of a page that has already changed.
+      //
+      // No retry, unlike `observeScreenshot`: the act has already run, so
+      // there is nothing to take again — only the description, and a second
+      // tree walk buys a guess at what is by definition still moving.
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ??
+            "a person has taken control of this browser; nothing was observed",
+        );
+      }
+      if (refMap) this.refs.delete(tabId);
+      return {
+        ok: true,
+        output: this.withHandoffNote(output),
+        settled: false,
+      };
+    }
     const result =
       blockedDetail === undefined
         ? this.observation(tabId, entry, output, frame, permit)

@@ -3274,6 +3274,8 @@ var ActError = class extends Error {
     this.name = "ActError";
   }
 };
+var LeaseTakenMidAct = class extends Error {
+};
 function isNotAnInputRefusal(message) {
   return /not an <input>/i.test(message) && !/<select>/i.test(message);
 }
@@ -3476,8 +3478,13 @@ var ChromiumDriver = class {
       );
     }
     try {
-      await this.dispatchVerb(page, action);
+      await this.dispatchVerb(page, action, permit);
     } catch (error) {
+      if (error instanceof LeaseTakenMidAct) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser partway through this action; any earlier steps of it have already been applied to the page \u2014 re-observe after they hand it back rather than repeating it"
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
       const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
       const fresh = await this.afterAct(tabId, entry, permit, wants, before);
@@ -3507,8 +3514,20 @@ var ChromiumDriver = class {
     );
     return observed.ok ? { settled, ...observed } : observed;
   }
-  /** Map an act verb onto the page primitives. */
-  async dispatchVerb(page, action) {
+  /**
+   * Map an act verb onto the page primitives.
+   *
+   * `permit` is threaded in for the COMPOSITE verbs only. A single-step verb is
+   * one dispatch and the caller's check immediately precedes it; `fill_form` is
+   * a loop of awaited page writes, so a person taking the browser after the
+   * first field would otherwise have the rest of the form — and the Enter —
+   * typed into it. The check is between steps because there is no way to take
+   * back the ones already made.
+   */
+  async dispatchVerb(page, action, permit = () => true) {
+    const stillOurs = () => {
+      if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
+    };
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
     if (point && !isPointInViewport(point.x, point.y)) {
@@ -3535,7 +3554,10 @@ var ChromiumDriver = class {
         const text = action.value ?? "";
         if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
-        if (action.submit) await page.press("Enter");
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
         return;
       }
       case "fill_form": {
@@ -3549,9 +3571,13 @@ var ChromiumDriver = class {
           );
         }
         for (const [index, field] of fields.entries()) {
+          stillOurs();
           await this.fillOneField(page, field, index);
         }
-        if (action.submit) await page.press("Enter");
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
         return;
       }
       case "press":
@@ -4239,6 +4265,8 @@ var ChromiumDriver = class {
       );
     }
     const page = entry.page;
+    const captures = wants.a11y || wants.screenshot;
+    const pre = captures ? await this.snapshot(page).catch(() => void 0) : void 0;
     let a11yFields = {};
     let refMap;
     if (wants.a11y) {
@@ -4279,6 +4307,20 @@ var ChromiumDriver = class {
       ...a11yFields,
       ...screenshot ? { screenshot } : {}
     };
+    const held = !captures || pre !== void 0 && pre.url === frame.url && pre.domSignal === frame.domSignal;
+    if (!held) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      if (refMap) this.refs.delete(tabId);
+      return {
+        ok: true,
+        output: this.withHandoffNote(output),
+        settled: false
+      };
+    }
     const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
     if (refMap) this.commitRefs(tabId, result, refMap);
     return result;

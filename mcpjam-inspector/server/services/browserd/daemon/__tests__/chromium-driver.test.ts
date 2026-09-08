@@ -1195,6 +1195,136 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(page.calls.acts).toHaveLength(0);
   });
 
+  it("stops a fill_form the moment a person takes the browser mid-form", async () => {
+    // The pre-act check covers one dispatch; `fill_form` is a LOOP of page
+    // writes, so without a check between steps the rest of the form — and the
+    // Enter — is typed into a browser somebody is already using.
+    const lease = new HandoffLease();
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    page.onAct = () => {
+      // Taken while the FIRST field is being filled.
+      if (page.calls.acts.length === 1) lease.acquire("rail-1", 60_000);
+    };
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "fill_form",
+        fields: [
+          { selector: "#a", value: "1" },
+          { selector: "#b", value: "2" },
+          { selector: "#c", value: "3" },
+        ],
+        submit: true,
+      }),
+    );
+
+    expect(res.leaseBlocked).toBe(true);
+    // Field 1 landed before the handoff; nothing after it did, and no Enter.
+    expect(page.calls.acts).toEqual(["fill:#a:1"]);
+    // And the model is told so, because "nothing was run" would have it fill
+    // the same fields again on top of the ones that are already there.
+    expect(res.error).toContain("partway through");
+  });
+
+  it("does not press Enter into a browser taken between the text and the submit", async () => {
+    const lease = new HandoffLease();
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    page.onAct = () => lease.acquire("rail-1", 60_000);
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { selector: "#q" },
+        value: "hello",
+        submit: true,
+      }),
+    );
+
+    expect(res.leaseBlocked).toBe(true);
+    expect(page.calls.acts).toEqual(["fill:#q:hello"]);
+  });
+
+  it("sends NO token when the page moved while it was being captured", async () => {
+    // A token minted after an image describes a page the image may not show —
+    // and that is the dangerous direction: an act chosen from the stale image
+    // and pinned to that token MATCHES the live tab and sails through the
+    // staleness guard. Sending no token instead leaves the turn pinned to its
+    // previous one, which the guard refuses with a fresh look.
+    const page = fakePage({
+      url: "https://x.test/",
+      // The DOM shifts during the capture, exactly as a late banner does.
+      onScreenshot: ({ setDom }) => setDom("0BODY>1BANNER"),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "screenshot",
+      }),
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({ screenshot: "BASE64PNG" });
+    expect(res.stateToken).toBeUndefined();
+    expect(res.settled).toBe(false);
+  });
+
+  it("keeps the token when the page held still across the capture", async () => {
+    const { res } = await acted(
+      {
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "screenshot",
+      },
+      {},
+    );
+    expect(res.stateToken).toBeDefined();
+    expect(res.settled).toBe(true);
+  });
+
+  it("does not hand out refs from a capture the page moved under", async () => {
+    // Same rule as a discarded observation: refs bound to no token would be
+    // names for a page nobody can prove the model was shown.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: oneButton(),
+      onScreenshot: ({ setDom }) => setDom("0BODY>1BANNER"),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "both",
+      }),
+    );
+    expect(res.stateToken).toBeUndefined();
+
+    const zoom = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(zoom.ok).toBe(false);
+    expect(zoom.error).toMatch(/unknown_ref|stale_ref/);
+  });
+
   it("refuses malformed fill_form fields without touching the page", async () => {
     // The handler validates the ENVELOPE and passes the action through
     // untouched, so this is the only layer that can refuse it.
