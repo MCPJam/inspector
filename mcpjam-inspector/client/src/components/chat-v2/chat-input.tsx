@@ -1874,16 +1874,19 @@ export function ChatInput({
                               the switch itself, so a tooltip trigger wrapped
                               around it would open over the control the user is
                               reaching for, and a non-focusable trigger div
-                              would never open for a keyboard user at all. The
-                              second sentence is the half people are surprised
-                              by — the switch RAISES the floor and never lowers
-                              it — so it should not be behind a hover. */}
+                              would never open for a keyboard user at all.
+                              Both halves of the rule are surprising — the
+                              switch RAISES a floor and never lowers it, so
+                              some things pause without it and some never
+                              pause with it — and neither should be behind a
+                              hover. */}
                           <p
                             id="tool-approval-floor-note"
                             className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
                           >
-                            Pause before every tool call. Browser, page and
-                            local-machine actions always pause.
+                            Pause before tool calls. Browser, page and
+                            local-machine actions always pause; searches and
+                            read-only lookups never do.
                           </p>
                         </div>
                       )}

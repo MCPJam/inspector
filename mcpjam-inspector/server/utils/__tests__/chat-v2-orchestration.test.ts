@@ -1521,10 +1521,14 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       expect(prompt).toContain("A denial is final");
     }
 
-    // Strict mode: everything else pauses too.
-    expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
-    ).toContain("every other tool call pauses too");
+    // Strict mode: most other calls pause too, and the model is told which
+    // families the switch does NOT cover — promising it covers everything
+    // would have the model narrate a pause that never comes.
+    const strict = buildUiToolsSystemPrompt(annotated, {
+      requireToolApproval: true,
+    });
+    expect(strict).toContain("most other tool calls pause too");
+    expect(strict).toContain("still run without asking");
 
     // Default mode, annotation-aware: the destructive-`ui_*` promise holds.
     const annotatedDefault = buildUiToolsSystemPrompt(annotated);
