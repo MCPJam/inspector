@@ -95,6 +95,12 @@ export interface BrowserToolsOptions {
   projectId: string;
   executionScope?: ExecutionScope;
   /**
+   * Where L3 tokens live BETWEEN requests, so an act that paused for approval
+   * is still pinned when it resumes. Defaults to the process-wide one;
+   * injected by tests, which otherwise inherit each other's tokens through it.
+   */
+  tokenMemory?: BrowserTokenMemory;
+  /**
    * What THIS unattended run is, for keying its throwaway browser.
    *
    * Required for an unattended turn and ignored otherwise. Neither the project
@@ -273,6 +279,105 @@ function transportError(status: string): string {
   }
 }
 
+/**
+ * THE LAST TOKEN PER TAB, ACROSS REQUESTS.
+ *
+ * `BrowserTurnState` is per REQUEST, and an attended chat does not finish an
+ * act in one: every gated act pauses for approval and RESUMES in a new request
+ * with a freshly built toolset (`registry.ts` rebuilds the toolset per request;
+ * `chat-v2.ts` replays the approved call through a new `buildBrowserTools`).
+ * So the per-request map was empty on exactly the act a person had just stopped
+ * to think about — `tokenFor` returned undefined and the act ran UNPINNED.
+ * L3 stale-targeting protection was, in practice, working only for unattended
+ * evals.
+ *
+ * KEYED BY `bootId`, not by session: `LocalBrowserSessionHandle` has no session
+ * id at all, and the boot id is the thing that rotates exactly when every token
+ * must be dropped — a daemon that restarted is a browser whose pages are gone.
+ *
+ * PER PROCESS, deliberately not shared. A resume served by another replica
+ * finds nothing and runs unpinned, which is today's behaviour for every act:
+ * degradation back to the status quo, not a correctness loss. Making it shared
+ * state would mean a cross-request cache of page fingerprints, which is a much
+ * larger thing than the bug it fixes.
+ */
+export class BrowserTokenMemory {
+  private readonly entries = new Map<
+    string,
+    { token: ObservationStateToken; at: number }
+  >();
+
+  constructor(
+    private readonly now: () => number = () => Date.now(),
+    private readonly ttlMs = BROWSER_TOKEN_MEMORY_TTL_MS,
+    private readonly max = BROWSER_TOKEN_MEMORY_MAX,
+  ) {}
+
+  remember(
+    bootId: string | undefined,
+    tabId: string | undefined,
+    token: ObservationStateToken,
+  ): void {
+    if (!bootId) return;
+    const key = memoryKey(bootId, tabId);
+    // Re-inserted rather than updated in place, so the insertion order Map
+    // keeps is a true LRU-by-write and the eviction below drops the oldest.
+    this.entries.delete(key);
+    this.entries.set(key, { token, at: this.now() });
+    while (this.entries.size > this.max) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      this.entries.delete(oldest.value);
+    }
+  }
+
+  recall(
+    bootId: string | undefined,
+    tabId: string | undefined,
+  ): ObservationStateToken | undefined {
+    if (!bootId) return undefined;
+    const key = memoryKey(bootId, tabId);
+    const found = this.entries.get(key);
+    if (!found) return undefined;
+    // EXPIRED IS FORGOTTEN, not merely ignored. A token minted ten minutes ago
+    // describes a page a person has had ten minutes to change, and pinning to
+    // it would refuse every act rather than protect one.
+    if (this.now() - found.at > this.ttlMs) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return found.token;
+  }
+
+  /**
+   * Drop every token for one boot.
+   *
+   * A handoff seen in request N must not let request N+1 pin to a pre-handoff
+   * page: the tokens are internally consistent, they are simply about the
+   * wrong moment — which is the one staleness the daemon cannot detect for us.
+   */
+  forget(bootId: string | undefined): void {
+    if (!bootId) return;
+    const prefix = `${bootId}:`;
+    for (const key of [...this.entries.keys()]) {
+      if (key.startsWith(prefix)) this.entries.delete(key);
+    }
+  }
+}
+
+/** Ten minutes: long enough for a person to read an approval, short enough
+ *  that a page they walked away from is not still being pinned to. */
+const BROWSER_TOKEN_MEMORY_TTL_MS = 10 * 60 * 1000;
+/** A ceiling, not a target — one entry per (boot, tab) a process has seen. */
+const BROWSER_TOKEN_MEMORY_MAX = 512;
+
+function memoryKey(bootId: string, tabId: string | undefined): string {
+  return `${bootId}:${tabId ?? "@session"}`;
+}
+
+/** The process-wide default. Tests inject their own via `tokenMemory`. */
+const browserTokenMemory = new BrowserTokenMemory();
+
 /** Per-turn state: one session, and the last token seen per tab (L3). */
 class BrowserTurnState {
   private session: Promise<BrowserSessionHandle> | null = null;
@@ -285,6 +390,7 @@ class BrowserTurnState {
     private readonly ensure: NonNullable<BrowserToolsOptions["ensureSession"]>,
     private readonly contextMode: BrowserContextMode,
     private readonly ownerKey: string | undefined,
+    private readonly memory: BrowserTokenMemory,
   ) {}
 
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
@@ -302,9 +408,17 @@ class BrowserTurnState {
     return this.session;
   }
 
-  rememberToken(tabId: string | undefined, token?: ObservationStateToken): void {
+  rememberToken(
+    tabId: string | undefined,
+    token?: ObservationStateToken,
+    bootId?: string,
+  ): void {
     if (!token) return;
     this.tokens.set(tabId ?? "@session", token);
+    // AND ACROSS REQUESTS. An attended act pauses for approval and resumes in
+    // a NEW request whose per-turn map is empty; without this the act a person
+    // most carefully decided is the one that runs unpinned.
+    this.memory.remember(bootId, tabId, token);
     // A token minted AFTER the handoff describes the page as it is now, so the
     // turn is caught up. Leaving the flag set would disable L3 for the rest of
     // the turn — the opposite of what the loud resume is for.
@@ -317,9 +431,17 @@ class BrowserTurnState {
    * on, which is what makes L3 protect against stale targeting rather than
    * being a parameter a model can forget.
    */
-  tokenFor(tabId: string | undefined): ObservationStateToken | undefined {
+  tokenFor(
+    tabId: string | undefined,
+    bootId?: string,
+  ): ObservationStateToken | undefined {
     if (this.staleAfterHandoff) return undefined;
-    return this.tokens.get(tabId ?? "@session");
+    // THIS TURN FIRST. The memory is the fallback for a request that has not
+    // observed yet — the resume after an approval — and a token this turn
+    // minted is always the more recent of the two.
+    return (
+      this.tokens.get(tabId ?? "@session") ?? this.memory.recall(bootId, tabId)
+    );
   }
 
   /**
@@ -330,8 +452,11 @@ class BrowserTurnState {
    * the daemon cannot detect this one for us — the tokens we hold are still
    * internally consistent, just about the wrong moment.
    */
-  forgetTokens(): void {
+  forgetTokens(bootId?: string): void {
     this.tokens.clear();
+    // The memory too, or a handoff seen in THIS request would leave the next
+    // one free to pin to a page the person has since navigated away from.
+    this.memory.forget(bootId);
     this.staleAfterHandoff = true;
   }
 
@@ -505,6 +630,7 @@ export function buildBrowserTools(
     opts.ensureSession ?? defaultEnsureSession(engine),
     contextMode,
     ownerKey,
+    opts.tokenMemory ?? browserTokenMemory,
   );
 
   // An unattended `allowlist` policy may name the exact tools this run may
@@ -548,7 +674,9 @@ export function buildBrowserTools(
     const handle = await state.handle(args.signal);
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
-    const pinned = args.expectedState ? state.tokenFor(args.tabId) : undefined;
+    const pinned = args.expectedState
+      ? state.tokenFor(args.tabId, handle.bootId)
+      : undefined;
     const command: BrowserCommand = {
       commandId: randomUUID(),
       source: unattended ? "eval" : "chat",
@@ -586,7 +714,7 @@ export function buildBrowserTools(
         response.status === "lease_blocked" ||
         carriesHandoffNote(outcome.output)
       ) {
-        state.forgetTokens();
+        state.forgetTokens(handle.bootId);
       }
       // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
       //
@@ -604,7 +732,7 @@ export function buildBrowserTools(
             : (action) => send(action, { ...args, recovering: true }),
         });
       }
-      state.rememberToken(args.tabId, outcome.stateToken);
+      state.rememberToken(args.tabId, outcome.stateToken, handle.bootId);
       return { ...outcome, tabId };
     } finally {
       release?.();

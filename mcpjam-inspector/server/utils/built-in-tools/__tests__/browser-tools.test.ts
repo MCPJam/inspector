@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   buildBrowserTools,
+  BrowserTokenMemory,
   BROWSER_BUILT_IN_TOOL_ID,
 } from "../browser";
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
@@ -29,7 +30,10 @@ type SendResult = {
   bootId?: string;
 };
 
-function fakeSession(send: (command: any) => Promise<SendResult>) {
+function fakeSession(
+  send: (command: any) => Promise<SendResult>,
+  bootId = "boot-1",
+) {
   const sendCommand = vi.fn(async (command: any) => send(command));
   const ensureSession = vi.fn(
     async (): Promise<BrowserSessionHandle> =>
@@ -38,7 +42,7 @@ function fakeSession(send: (command: any) => Promise<SendResult>) {
         target: "computer" as const,
         sessionId: "session-1",
         computerId: "computer-1",
-        bootId: "boot-1",
+        bootId,
         client: { sendCommand } as never,
         streamUrl: "https://stream.example/vnc.html",
         streamPassword: "pw",
@@ -84,6 +88,10 @@ function build(
   send: (command: any) => Promise<SendResult> = async () => OK,
 ) {
   const fake = fakeSession(send);
+  // A FRESH TOKEN MEMORY PER BUILD, unless a case shares one deliberately.
+  // The real memory is process-wide and keyed by bootId, and every fixture
+  // here boots as "boot-1" — so without this, one test's last observation
+  // pins the next test's first act.
   const delivery = over.approvalDelivery ?? { kind: "attested" as const };
   const result = buildBrowserTools({
     authHeader: "Bearer user",
@@ -95,6 +103,7 @@ function build(
     // engine unless a case says otherwise. `...over` still wins.
     ...(delivery.kind === "unattended" ? { engine: "local" as const } : {}),
     ensureSession: fake.ensureSession,
+    tokenMemory: new BrowserTokenMemory(),
     // Ignored on an attested turn; required on an unattended one, which most
     // of the cases below are. Overridable per test.
     runKey: "run-1",
@@ -340,6 +349,142 @@ describe("buildBrowserTools — L3 token threading", () => {
     await run(result!.tools, "browser_observe", {});
     await run(result!.tools, "browser_navigate", { url: "https://x.test" });
     expect(commands.every((c) => c.action.expectedState === undefined)).toBe(true);
+  });
+});
+
+describe("a token pin survives an approval resume", () => {
+  /**
+   * An attended chat does not finish an act in one request. Every gated act
+   * pauses for approval and RESUMES in a new request with a freshly built
+   * toolset — so the per-request token map was empty on exactly the act a
+   * person had just stopped to think about, and it ran UNPINNED. L3 was, in
+   * practice, protecting unattended evals and nothing else.
+   */
+  function requestOn(
+    memory: BrowserTokenMemory,
+    commands: any[],
+    bootId = "boot-1",
+  ) {
+    const fake = fakeSession(async (command: any) => {
+      commands.push(command);
+      return OK;
+    }, bootId);
+    return buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession: fake.ensureSession,
+      tokenMemory: memory,
+    })!;
+  }
+
+  it("pins the first act of a NEW request to the last observation of the previous one", async () => {
+    const memory = new BrowserTokenMemory();
+    const commands: any[] = [];
+
+    // Request 1: the model looks at the page, then asks to click. The click
+    // is gated, so this request ends here.
+    await run(requestOn(memory, commands).tools, "browser_observe", {});
+    // Request 2: the approved act is replayed through a fresh toolset.
+    await run(requestOn(memory, commands).tools, "browser_act", {
+      verb: "click",
+      x: 1,
+      y: 2,
+    });
+
+    expect(commands.at(-1).action.expectedState).toMatchObject({
+      navCounter: 1,
+    });
+  });
+
+  it("does not pin across a daemon reboot", async () => {
+    // A new bootId is a browser whose pages are gone: a token from the old one
+    // describes nothing, and pinning to it would refuse every act.
+    const memory = new BrowserTokenMemory();
+    const commands: any[] = [];
+
+    await run(requestOn(memory, commands, "boot-1").tools, "browser_observe", {});
+    await run(requestOn(memory, commands, "boot-2").tools, "browser_act", {
+      verb: "click",
+      x: 1,
+      y: 2,
+    });
+
+    expect(commands.at(-1).action.expectedState).toBeUndefined();
+  });
+
+  it("lets a handoff in ONE request unpin the next", async () => {
+    // The tokens are internally consistent and about the wrong moment — the
+    // one staleness the daemon cannot detect for us. Carrying them into the
+    // next request is exactly the mistake L3 exists to prevent.
+    const memory = new BrowserTokenMemory();
+    const commands: any[] = [];
+
+    await run(requestOn(memory, commands).tools, "browser_observe", {});
+
+    const held = fakeSession(async () => ({ status: "lease_blocked" }));
+    const during = buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession: held.ensureSession,
+      tokenMemory: memory,
+    })!;
+    const refused: any = await run(during.tools, "browser_observe", {});
+    expect(refused.error).toContain("browser_in_use");
+
+    await run(requestOn(memory, commands).tools, "browser_act", {
+      verb: "click",
+      x: 1,
+      y: 2,
+    });
+
+    expect(commands.at(-1).action.expectedState).toBeUndefined();
+  });
+
+  it("forgets a token a person had ten minutes to invalidate", async () => {
+    let now = 1_000;
+    const memory = new BrowserTokenMemory(() => now);
+    const commands: any[] = [];
+
+    await run(requestOn(memory, commands).tools, "browser_observe", {});
+    now += 10 * 60 * 1000 + 1;
+    await run(requestOn(memory, commands).tools, "browser_act", {
+      verb: "click",
+      x: 1,
+      y: 2,
+    });
+
+    expect(commands.at(-1).action.expectedState).toBeUndefined();
+  });
+
+  it("evicts the oldest entry rather than growing without bound", () => {
+    const memory = new BrowserTokenMemory(() => 0, 60_000, 2);
+    const token = (n: number) => ({
+      tabId: `t${n}`,
+      navCounter: n,
+      urlHash: "u",
+      domHash: "d",
+    });
+    memory.remember("boot-1", "t1", token(1));
+    memory.remember("boot-1", "t2", token(2));
+    memory.remember("boot-1", "t3", token(3));
+
+    expect(memory.recall("boot-1", "t1")).toBeUndefined();
+    expect(memory.recall("boot-1", "t2")).toMatchObject({ navCounter: 2 });
+    expect(memory.recall("boot-1", "t3")).toMatchObject({ navCounter: 3 });
+  });
+
+  it("keeps one boot's tokens when another boot's are forgotten", () => {
+    const memory = new BrowserTokenMemory();
+    const token = { tabId: "@session", navCounter: 1, urlHash: "u", domHash: "d" };
+    memory.remember("boot-1", undefined, token);
+    memory.remember("boot-2", undefined, token);
+
+    memory.forget("boot-1");
+
+    expect(memory.recall("boot-1", undefined)).toBeUndefined();
+    expect(memory.recall("boot-2", undefined)).toMatchObject({ navCounter: 1 });
   });
 });
 
