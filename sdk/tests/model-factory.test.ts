@@ -303,15 +303,41 @@ describe("model-factory", () => {
         });
       }
 
-      it("still throws for an EMPTY segment on either side", () => {
+      it("still throws for an EMPTY segment ANYWHERE, doubled slashes too", () => {
         // `parseLLMString` is exported, so a caller can hand it these. Passing
         // them through to OpenRouter would turn an obvious local mistake into
-        // a remote API error.
-        expect(() => parseLLMString("/qwen3-max")).toThrow(
-          "Invalid LLM string format"
-        );
-        expect(() => parseLLMString("qwen/")).toThrow(
-          "Invalid LLM string format"
+        // a remote API error. The middle cases are why the guard reads the raw
+        // segments: a doubled slash leaves the provider and the re-joined
+        // model both non-empty.
+        for (const malformed of [
+          "/qwen3-max",
+          "qwen/",
+          "qwen//qwen3-max",
+          "qwen//",
+        ]) {
+          expect(() => parseLLMString(malformed), malformed).toThrow(
+            "Invalid LLM string format"
+          );
+        }
+      });
+
+      it("leaves a BUILT-IN prefix alone, empty tail and all", () => {
+        // The boundary, stated so it is a decision rather than an oversight:
+        // the guard sits on the hosted-vendor fallback only. A built-in
+        // provider returns before it and keeps the shape it has always had —
+        // tightening that would change a string that parses today, which this
+        // change deliberately never does.
+        expect(parseLLMString("openai/")).toEqual({
+          type: "builtin",
+          provider: "openai",
+          model: "",
+        });
+        expect(parseLLMString("openrouter//anthropic/claude-haiku-4.5")).toEqual(
+          {
+            type: "builtin",
+            provider: "openrouter",
+            model: "/anthropic/claude-haiku-4.5",
+          }
         );
       });
 

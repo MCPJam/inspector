@@ -1217,10 +1217,14 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Ephemeral by default** — pass `--save-targets` to attach it to the suite. |
 | `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
-| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model <id...>` | No | Model(s) to run on the composed stack. Replaces the client's pinned model unless `--with-client-default` is set |
+| `--with-client-default` | No | Also launch an inherit cell using each client's pinned model, alongside `--compose-model` |
+| `--compose-server <id-or-name...>` | No | Server(s) to pin on the composed stack, snapshotted into a server group so a rerun keeps testing them. Mutually exclusive with `--compose-server-group` |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-host-servers` | No | Run against whatever servers the client points at **right now** instead of pinning a set — editing that client later changes what a rerun tests |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
+| `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Without it the stack is ephemeral |
 
 #### Composing a target instead of naming one
 

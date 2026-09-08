@@ -173,12 +173,17 @@ export function parseLLMString(
   // OpenRouter and fails at the API call instead. A parser that could tell the
   // two apart would need the hosted catalog itself, which the SDK does not
   // ship and which grows without it.
-  // An EMPTY segment is not a vendor path. `"/gpt-4o"` and `"vendor/"` reach
-  // here with `parts.length >= 2` and would otherwise be handed to OpenRouter
-  // verbatim, turning a local, obvious mistake into a remote API error.
-  if (providerName === "" || model === "") {
+  // An EMPTY segment is not a vendor path. `"/gpt-4o"`, `"vendor/"` and
+  // `"qwen//qwen3-max"` all reach here with `parts.length >= 2` and would
+  // otherwise be handed to OpenRouter verbatim, turning a local, obvious
+  // mistake into a remote API error.
+  //
+  // Tested on the raw SEGMENTS, not on `providerName` and the re-joined
+  // `model`: a doubled slash in the middle leaves both of those non-empty, so
+  // checking them would let exactly the case this guard names slip through.
+  if (parts.some((part) => part === "")) {
     throw new Error(
-      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o") — neither segment may be empty.`
+      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o") — no segment may be empty.`
     );
   }
 
