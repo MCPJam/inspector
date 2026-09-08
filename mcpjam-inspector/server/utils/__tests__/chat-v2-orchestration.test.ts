@@ -1507,22 +1507,40 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       },
     ];
 
-    // Strict mode: every mutating tool pauses, regardless of annotations.
-    expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true })
-    ).toContain("Every mutating `ui_*` action pauses");
+    // The families that pause whatever the settings say are stated in every
+    // mode — they are the ones the model should know about before it commits
+    // to a plan, and none of them depends on the ui snapshot.
+    for (const prompt of [
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
+      buildUiToolsSystemPrompt(annotated),
+      buildUiToolsSystemPrompt(uiTools),
+    ]) {
+      expect(prompt).toContain("always pause");
+      expect(prompt).toContain("driving a browser");
+      expect(prompt).toContain("on the user's own machine");
+      expect(prompt).toContain("A denial is final");
+    }
 
-    // Default mode, annotation-aware: the destructive-gate promise holds.
+    // Strict mode: most other calls pause too, and the model is told which
+    // families the switch does NOT cover — promising it covers everything
+    // would have the model narrate a pause that never comes.
+    const strict = buildUiToolsSystemPrompt(annotated, {
+      requireToolApproval: true,
+    });
+    expect(strict).toContain("most other tool calls pause too");
+    expect(strict).toContain("still run without asking");
+
+    // Default mode, annotation-aware: the destructive-`ui_*` promise holds.
     const annotatedDefault = buildUiToolsSystemPrompt(annotated);
-    expect(annotatedDefault).toContain("Destructive `ui_*` actions pause");
-    expect(annotatedDefault).toContain("other actions apply immediately");
+    expect(annotatedDefault).toContain("destructive `ui_*` actions");
+    expect(annotatedDefault).toContain("Everything else applies immediately");
 
-    // Default mode, LEGACY snapshot (the fixture has no annotations): the
-    // predicate is `requireToolApproval && !readOnly`, so with the flag off
-    // NOTHING pauses. The prompt must not promise a destructive gate that
-    // isn't enforced.
+    // Default mode, LEGACY snapshot (the fixture has no annotations): a bare
+    // `readOnly` entry sits at the `setting` floor, so with the switch off
+    // NOTHING in that namespace pauses. The prompt must not promise a
+    // destructive gate that isn't enforced.
     const legacyDefault = buildUiToolsSystemPrompt(uiTools);
-    expect(legacyDefault).not.toContain("Destructive `ui_*` actions pause");
+    expect(legacyDefault).not.toContain("destructive `ui_*` actions");
     expect(legacyDefault).toContain("applies immediately");
   });
 });

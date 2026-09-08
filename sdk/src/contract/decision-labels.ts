@@ -300,12 +300,12 @@ export const STAGE_REASONS_WITHOUT_REMEDY = Object.freeze([
  */
 export const EVAL_VERDICT_DECISION_REASON_LABELS = Object.freeze({
   configuredTrialsNotAttempted:
-    "some configured trial never ran, so the run does not cover what it was asked to",
+    "some configured iteration never ran, so the run does not cover what it was asked to",
   noGradeableTrials: "nothing in the run produced a gradeable verdict",
   eligibleTrialsBelowMinimum:
-    "fewer gradeable trials than the suite's validity floor requires",
+    "fewer gradeable iterations than the suite's validity floor requires",
   completionRateBelowMinimum:
-    "too few attempted trials completed to meet the suite's completion floor",
+    "too few attempted iterations completed to meet the suite's completion floor",
   completionRateNotMeasured:
     "nothing was attempted, so the completion floor cannot be satisfied",
   evaluatorErrorRateAboveMaximum:

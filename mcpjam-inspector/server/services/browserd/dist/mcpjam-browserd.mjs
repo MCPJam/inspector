@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
-var BROWSERD_PROTOCOL_VERSION = 1;
+var BROWSERD_PROTOCOL_VERSION = 2;
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -19,6 +19,13 @@ var HOSTED_DISPLAY = {
 };
 function isPointInViewport(x, y) {
   return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
+}
+function wantsFor(observe) {
+  const mode = observe ?? "screenshot";
+  return {
+    a11y: mode === "a11y" || mode === "both",
+    screenshot: mode === "screenshot" || mode === "both"
+  };
 }
 var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   maxRetained: 512,
@@ -51,6 +58,8 @@ var BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
@@ -1536,11 +1545,17 @@ function guardStaleness(driver, lease) {
     const refusal = lease && leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
+      const fresh = await Promise.resolve(
+        driver.observeForRefusal?.(command, wantsFor(action.observe))
+      ).catch(() => void 0);
+      if (fresh?.leaseBlocked) return fresh;
+      const bound = fresh?.stateToken !== void 0;
       return {
         ok: false,
         staleObservation: true,
         error: "stale_observation",
-        stateToken: current
+        stateToken: bound ? fresh.stateToken : current,
+        ...bound && fresh.output !== void 0 ? { output: fresh.output } : {}
       };
     }
     return driver.execute(command);
@@ -3253,6 +3268,22 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var ActError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "ActError";
+  }
+};
+var LeaseTakenMidAct = class extends Error {
+};
+function withoutRefIndex(fields) {
+  const { refs: _unstored, ...rest } = fields;
+  return rest;
+}
+function isNotAnInputRefusal(message) {
+  return /not an <input>/i.test(message) && !/<select>/i.test(message);
+}
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3412,9 +3443,16 @@ var ChromiumDriver = class {
   }
   /**
    * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
-   * returns the post-act screenshot + URL with a fresh state token, so the
-   * model never has to spend a turn asking "what happened?" — and the token it
-   * gets back is the one its NEXT act should be pinned to.
+   * returns what the page BECAME — its URL, the tree of what can be acted on
+   * next (with refs), a screenshot, or whichever of those `observe` asked for
+   * — with a fresh state token, so the model never has to spend a turn asking
+   * "what happened?" and the token it gets back is the one its NEXT act should
+   * be pinned to.
+   *
+   * The a11y half is what closes the last round trip: an act used to hand back
+   * a picture, and a model that wanted to know what was now CLICKABLE had to
+   * observe again. `afterAct` is the funnel every one of these paths — success,
+   * failure, and the stale refusal above — leaves through.
    *
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
@@ -3434,16 +3472,28 @@ var ChromiumDriver = class {
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       this.activeTabId = tabId;
-      const frame2 = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
+      const frame = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+    }
+    const wants = wantsFor(action.observe);
+    const before = await this.snapshot(page).catch(() => void 0);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
     }
     try {
-      await this.dispatchVerb(page, action);
+      await this.dispatchVerb(page, action, permit);
     } catch (error) {
+      if (error instanceof LeaseTakenMidAct) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser partway through this action; any earlier steps of it have already been applied to the page \u2014 re-observe after they hand it back rather than repeating it"
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
-      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const before = permit() ? await this.snapshot(page).catch(() => null) : null;
-      const frame2 = permit() ? before : null;
+      const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -3452,34 +3502,37 @@ var ChromiumDriver = class {
         // carries the handoff note too — an act that failed right after a
         // person used the browser most likely failed BECAUSE the page is now
         // somewhere else, and "your click missed" would be the wrong lesson.
-        ...frame2 ? {
-          stateToken: this.tokenFor(tabId, entry, frame2),
-          output: this.withHandoffNote({ url: frame2.url })
+        ...fresh.ok ? {
+          ...fresh.stateToken ? { stateToken: fresh.stateToken } : {},
+          ...fresh.output !== void 0 ? { output: fresh.output } : {}
         } : {}
       };
     }
     const settled = await this.settle(page);
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
-      );
-    }
-    const frame = await this.snapshot(page);
-    const screenshot = await page.screenshotBase64().catch(() => void 0);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url, ...screenshot ? { screenshot } : {} },
-        frame,
-        permit,
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
-      ),
-      settled
-    };
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wants,
+      before,
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+    );
+    return observed.ok ? { settled, ...observed } : observed;
   }
-  /** Map an act verb onto the page primitives. */
-  async dispatchVerb(page, action) {
+  /**
+   * Map an act verb onto the page primitives.
+   *
+   * `permit` is threaded in for the COMPOSITE verbs only. A single-step verb is
+   * one dispatch and the caller's check immediately precedes it; `fill_form` is
+   * a loop of awaited page writes, so a person taking the browser after the
+   * first field would otherwise have the rest of the form — and the Enter —
+   * typed into it. The check is between steps because there is no way to take
+   * back the ones already made.
+   */
+  async dispatchVerb(page, action, permit = () => true) {
+    const stillOurs = () => {
+      if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
+    };
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
     if (point && !isPointInViewport(point.x, point.y)) {
@@ -3504,8 +3557,33 @@ var ChromiumDriver = class {
         throw new Error("no element: hover needs coordinates or a selector");
       case "type": {
         const text = action.value ?? "";
-        if (selector) return page.fillSelector(selector, text);
-        return page.typeText(text);
+        if (selector) await page.fillSelector(selector, text);
+        else await page.typeText(text);
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
+      }
+      case "fill_form": {
+        const fields = action.fields;
+        if (!Array.isArray(fields) || fields.length === 0 || fields.some(
+          (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"
+        )) {
+          throw new ActError(
+            "act_failed",
+            "fill_form needs fields: [{selector, value}]"
+          );
+        }
+        for (const [index, field] of fields.entries()) {
+          stillOurs();
+          await this.fillOneField(page, field, index, stillOurs);
+        }
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
@@ -3538,6 +3616,62 @@ var ChromiumDriver = class {
       case "close_tab":
       case "activate_tab":
         return;
+      default:
+        throw new ActError(
+          "act_failed",
+          `this browser daemon does not support the "${action.verb}" verb; it is running an older build`
+        );
+    }
+  }
+  /**
+   * One field of a `fill_form`, with the `<select>` fallback.
+   *
+   * A model should not have to know what KIND of control it is filling: it
+   * read "Size" off a tree or a screenshot and wants "L" in it, so the
+   * fallback is driven by Playwright's own refusal rather than by a per-field
+   * hint the model would have to get right.
+   *
+   * WHICH refusal, measured against a real Chromium rather than guessed —
+   * the two messages differ by one item in the same list:
+   *
+   *   <select>  "Element is not an <input>, <textarea> or [contenteditable]
+   *              element"
+   *   <button>  "Element is not an <input>, <textarea>, <select> or
+   *              [contenteditable] and does not have a role allowing
+   *              [aria-readonly]"
+   *
+   * So "names <input>" alone is NOT the discriminator: it matches both, and
+   * matching the second sent a `fill` at a button off to `selectOption`, which
+   * failed for its own unrelated reason and reported that instead of "this
+   * element cannot be filled". The `<select>` case is the one whose message
+   * does not offer `<select>` as an alternative.
+   *
+   * Any OTHER failure stops the form. Half a filled form is a state the page
+   * is in and the model cannot see, so the error names the field that failed
+   * AND the ones that went in before it.
+   */
+  async fillOneField(page, field, index, stillOurs) {
+    try {
+      await page.fillSelector(field.selector, field.value);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isNotAnInputRefusal(message)) {
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
+      stillOurs();
+      try {
+        await page.selectOption(field.selector, field.value);
+      } catch (selectError) {
+        const detail = selectError instanceof Error ? selectError.message : String(selectError);
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
     }
   }
   async webmcpInvoke(tabId, action, permit) {
@@ -3671,39 +3805,17 @@ var ChromiumDriver = class {
         return this.observeText(tabId, entry, permit);
       }
       case "a11y": {
-        const raw = await this.readA11y(tabId, entry, action);
-        if (!raw.ok) return raw.error;
-        const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
+        const rendered = await this.renderA11y(tabId, entry, action);
+        if (!rendered.ok) return rendered.error;
         const frame = await this.snapshot(entry.page);
-        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          filtered,
-          this.a11yBudget
-        );
-        const refs = assignRefs(tree);
-        const rendered = renderA11yTree(tree, {
-          interactiveOnly: raw.filter === "interactive"
-        });
         const result = this.observation(
           tabId,
           entry,
-          {
-            a11y: rendered,
-            refs: Object.fromEntries(
-              [...refs].map(([ref, entryValue]) => [
-                ref,
-                { role: entryValue.role, name: entryValue.name }
-              ])
-            ),
-            ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
-          },
+          rendered.fields,
           frame,
           permit
         );
-        if (!result.ok) {
-          this.refs.delete(tabId);
-          return result;
-        }
-        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
       case "console": {
@@ -4071,6 +4183,176 @@ var ChromiumDriver = class {
     } finally {
       this.pendingTabs.delete(tabId);
     }
+  }
+  /**
+   * Read, filter, cap, number and render one a11y tree — everything between
+   * "ask the page" and "here are the fields", for BOTH readers of a tree.
+   *
+   * filter → cap → number → render, in that order, and the order is
+   * load-bearing. Filtering first keeps the budget from being spent on prose
+   * the interactive view will not show; numbering after the cap keeps every
+   * ref in the map reachable in the text (a ref stamped on a node the budget
+   * then dropped would be a name for something the model cannot see);
+   * rendering last means the map and the text were built from one pass over
+   * one tree.
+   *
+   * IT DOES NOT TAKE THE FRAME SNAPSHOT. The caller does, after this returns,
+   * so the token an observation carries describes the page as it was once the
+   * tree had been walked — never before it.
+   */
+  async renderA11y(tabId, entry, action) {
+    const raw = await this.readA11y(tabId, entry, action);
+    if (!raw.ok) return raw;
+    const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
+    const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+      filtered,
+      this.a11yBudget
+    );
+    const refs = assignRefs(tree);
+    const rendered = renderA11yTree(tree, {
+      interactiveOnly: raw.filter === "interactive"
+    });
+    return {
+      ok: true,
+      fields: {
+        a11y: rendered,
+        refs: Object.fromEntries(
+          [...refs].map(([ref, entryValue]) => [
+            ref,
+            { role: entryValue.role, name: entryValue.name }
+          ])
+        ),
+        ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+      },
+      refMap: refs
+    };
+  }
+  /**
+   * Store (or discard) the refs an observation just minted.
+   *
+   * COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+   * mid-read discards the result — and refs stored anyway would be names for a
+   * page the model was never shown, guessable afterwards by a model that never
+   * received them. On that path the old map goes too: it described a page this
+   * tab may no longer be on.
+   *
+   * A commit REPLACES the per-tab map wholesale: refs are valid for exactly
+   * one observation, and leaving an older map merged underneath is how `e7`
+   * comes to mean two things at once. Bound to the token the observation
+   * carries, so a ref used after the page moved is refused rather than
+   * resolved by name against whatever is there now.
+   */
+  commitRefs(tabId, result, refMap) {
+    if (!result.ok || !refMap) {
+      this.refs.delete(tabId);
+      return;
+    }
+    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+  }
+  /**
+   * THE ONE FUNNEL for "what does the page look like now that something
+   * happened to it" — the post-act observation (L1), the observation a failed
+   * act still owes, and the fresh page a `stale_observation` refusal hands
+   * back.
+   *
+   * Every caller reaches `observation` through here, so `withHandoffNote` and
+   * the final permit re-check are inherited rather than repeated, and the refs
+   * an act's tree hands out are committed with the same semantics an `observe`
+   * gives them — which is what makes `rootRef` zoom work off an act result.
+   *
+   * `before` is the frame captured just before the verb ran; `previousUrl` is
+   * reported only when the act actually moved the page, because a URL repeated
+   * on every result is noise the model has to read past.
+   */
+  async afterAct(tabId, entry, permit, wants, before, blockedDetail) {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+      );
+    }
+    const page = entry.page;
+    const captures = wants.a11y || wants.screenshot;
+    const pre = captures ? await this.snapshot(page).catch(() => void 0) : void 0;
+    let a11yFields = {};
+    let refMap;
+    if (wants.a11y) {
+      const rendered = await this.renderA11y(tabId, entry, {
+        filter: "interactive"
+      }).catch(() => ({ ok: false, error: void 0 }));
+      if (rendered.ok) {
+        a11yFields = rendered.fields;
+        refMap = rendered.refMap;
+      } else {
+        a11yFields = { a11yUnavailable: true };
+      }
+    }
+    const screenshot = wants.screenshot ? await page.screenshotBase64().catch(() => void 0) : void 0;
+    const frame = await this.snapshot(page).catch(() => void 0);
+    if (!frame) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      this.refs.delete(tabId);
+      const url = safeUrl(page);
+      return {
+        ok: true,
+        output: this.withHandoffNote(
+          url ? {
+            url,
+            ...withoutRefIndex(a11yFields),
+            ...screenshot ? { screenshot } : {},
+            observationFailed: true
+          } : { observationFailed: true }
+        ),
+        settled: false
+      };
+    }
+    const output = {
+      // Only when it MOVED. `url` is on every observation already; a
+      // `previousUrl` equal to it teaches the model nothing and costs a line
+      // on every act.
+      ...before && before.url !== frame.url ? { previousUrl: before.url } : {},
+      ...a11yFields,
+      ...screenshot ? { screenshot } : {}
+    };
+    const held = !captures || pre !== void 0 && pre.url === frame.url && pre.domSignal === frame.domSignal;
+    if (!held) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      this.refs.delete(tabId);
+      return {
+        ok: true,
+        output: this.withHandoffNote({
+          url: frame.url,
+          ...withoutRefIndex(output)
+        }),
+        settled: false
+      };
+    }
+    const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    return result;
+  }
+  /**
+   * The observation that rides a refusal — `guardStaleness`'s recovery read.
+   *
+   * Public because the guard sits ABOVE the driver (it is pure, and testable
+   * with a fake), so the one thing it cannot do for itself is look at the
+   * page. Without this the refusal says "re-read the page" and the model
+   * spends the very round trip the state token exists to save.
+   */
+  async observeForRefusal(command, wants) {
+    const tabId = command.tabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    return this.afterAct(tabId, entry, this.permitFor(command), wants);
   }
   /**
    * Read the tree for an a11y observation, rooted where the caller asked.

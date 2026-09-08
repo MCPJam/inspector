@@ -53,6 +53,8 @@ export interface GenerationOptions {
   caseMix?: CaseMixInput;
   /** Condition cases on a generated persona slate for realistic phrasing. */
   varyUserStyles?: boolean;
+  /** User-authored direction for a follow-up generation pass. */
+  refinement?: string;
 }
 
 export interface GeneratedTestCase {
@@ -145,7 +147,7 @@ function adaptWave0Case(tc: BackendWave0TestCase): GeneratedTestCase {
   if (steps.length === 0) {
     throw new Error(
       `Generated case ${JSON.stringify(tc.title)} declares shapeVersion ` +
-        `"wave0" but has no usable steps.`
+        `"wave0" but has no usable steps.`,
     );
   }
   return {
@@ -203,7 +205,7 @@ export async function generateTestCases(
   convexAuthToken: string,
   serverAttachment?: ServerAttachmentInput,
   projectId?: string,
-  generationOptions?: GenerationOptions
+  generationOptions?: GenerationOptions,
 ): Promise<GeneratedTestCase[]> {
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
@@ -220,6 +222,9 @@ export async function generateTestCases(
         ? { caseMix: generationOptions.caseMix }
         : {}),
       ...(generationOptions?.varyUserStyles ? { varyUserStyles: true } : {}),
+      ...(generationOptions?.refinement
+        ? { refinement: generationOptions.refinement }
+        : {}),
     }),
   });
 
@@ -238,7 +243,7 @@ export async function generateTestCases(
     throw new Error(
       `Invalid response from backend eval generation: ${
         data.error ?? "unknown error"
-      }`
+      }`,
     );
   }
 

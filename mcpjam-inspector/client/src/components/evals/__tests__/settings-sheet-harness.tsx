@@ -7,7 +7,7 @@ import {
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 import {
-  SUITE_SETTINGS_GROUPS,
+  VISIBLE_SUITE_SETTINGS_GROUPS,
   NESTED_SETTING_KEYS,
   SUITE_SETTINGS_HEADER_KEYS,
   type SuiteSettingsGroupId,
@@ -142,7 +142,7 @@ export function showSettingsSubsection(
 export function findGroupForSettingKey(
   key: EvalSuiteSettingKey,
 ): SuiteSettingsGroupId | undefined {
-  for (const group of SUITE_SETTINGS_GROUPS) {
+  for (const group of VISIBLE_SUITE_SETTINGS_GROUPS) {
     if ((group.rows as readonly string[]).includes(key)) return group.id;
     if (
       group.rows.some((row) => NESTED_SETTING_KEYS[row]?.includes(key))
@@ -162,7 +162,7 @@ export function showSettingsKey(
   if (key === "name") return;
   const groupId = findGroupForSettingKey(key);
   if (!groupId) throw new Error(`no settings group for ${key}`);
-  const group = SUITE_SETTINGS_GROUPS.find((candidate) => candidate.id === groupId);
+  const group = VISIBLE_SUITE_SETTINGS_GROUPS.find((candidate) => candidate.id === groupId);
   if (!group) throw new Error(`unknown group ${groupId}`);
   const navOptions = settingsNavOptionsForSuite(suite, options);
   const subsection = subsectionForSettingKey(key, groupId, navOptions);
@@ -183,8 +183,7 @@ export function collectAllSettingKeys(
       keys.add(key);
     }
   }
-  for (const group of SUITE_SETTINGS_GROUPS) {
-    if (group.id === "danger" && !navOptions.showDelete) continue;
+  for (const group of VISIBLE_SUITE_SETTINGS_GROUPS) {
     const subsections = getSubsectionsForGroup(group.id, navOptions);
     if (subsections.length === 0) continue;
     showSettingsGroup(container, group.label);

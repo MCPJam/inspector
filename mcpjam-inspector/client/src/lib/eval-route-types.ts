@@ -13,6 +13,8 @@ export type SuiteOverviewView =
 export type EvalRoute =
   | { type: "list" }
   | { type: "create" }
+  /** Frontend-first preview of suites we'd generate from a connected server. */
+  | { type: "eval-server"; serverId: string }
   | {
       type: "suite-overview";
       suiteId: string;
@@ -39,6 +41,8 @@ export type EvalRoute =
       openCompare?: boolean;
       /** Deep-link: prefer the clicked iteration/session when hydrating compare results. */
       iteration?: string;
+      /** Return to the Eval my server first-run preview after editing. */
+      fromEvalServer?: string;
     }
   | { type: "suite-edit"; suiteId: string }
   | {

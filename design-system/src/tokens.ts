@@ -26,8 +26,9 @@ export const tokensCss: string = `@theme {
   --muted-foreground: oklch(0.6059 0.0075 97.4233);
   --accent: oklch(0.9245 0.0138 92.9892);
   --accent-foreground: oklch(0.2671 0.0196 98.939);
-  /* Solid fills (buttons, badges): use destructive-foreground. Tinted surfaces (bg-destructive/5–/20): prefer text-destructive for body copy. */
-  --destructive: oklch(0.627 0.208 25.331);
+  /* Solid fills (buttons, badges): use destructive-foreground. Tinted surfaces (bg-destructive/5–/20): prefer text-destructive for body copy.
+     Figma fill/danger: #EB4041. */
+  --destructive: oklch(0.6261 0.2077 25.2698);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.8847 0.0069 97.3627);
   /* Chrome controls. Sampled from the Production Redesign frame: the pieces
@@ -154,6 +155,11 @@ export const tokensCss: string = `@theme {
      blur, not the offset. Like every other shadow here it is one value for
      both themes. */
   --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
+  /* The active server tab's cast. Points UP, away from the panel: the tab
+     hangs on the panel's top edge, so the only side with anywhere to throw a
+     shadow is its head. A tenth of the panel's weight — it separates a sheet
+     from the chrome behind it, it does not lift a pane off the app. */
+  --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -199,6 +205,7 @@ export const tokensCss: string = `@theme {
   --muted-foreground: oklch(0.7713 0.0169 99.0657);
   --accent: oklch(0.213 0.0078 95.4245);
   --accent-foreground: oklch(0.9663 0.008 98.8792);
+  /* Figma fill/danger: #EF4444. */
   --destructive: oklch(0.6368 0.2078 25.3313);
   --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.3618 0.0101 106.8928);
@@ -280,5 +287,10 @@ export const tokensCss: string = `@theme {
      blur, not the offset. Like every other shadow here it is one value for
      both themes. */
   --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
+  /* The active server tab's cast. Points UP, away from the panel: the tab
+     hangs on the panel's top edge, so the only side with anywhere to throw a
+     shadow is its head. A tenth of the panel's weight — it separates a sheet
+     from the chrome behind it, it does not lift a pane off the app. */
+  --shadow-chrome-tab: 0 -2px 6px hsl(0 0% 0% / 0.07);
 }
 `;

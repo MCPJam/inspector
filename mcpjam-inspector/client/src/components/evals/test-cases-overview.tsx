@@ -787,7 +787,7 @@ export function TestCasesOverview({
                     </div>
                   ) : null;
                   const rowToneClass = cn(
-                    rowTone === "diverge" && "bg-amber-500/[0.05]",
+                    rowTone === "diverge" && "bg-warning/[0.05]",
                     rowTone === "allfail" && "bg-destructive/[0.05]",
                   );
                   const hasConfiguredSuiteServers = suiteServers.length > 0;

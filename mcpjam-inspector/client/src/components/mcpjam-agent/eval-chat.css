@@ -1,0 +1,15 @@
+/* Paper-inspired treatment, scoped to the embedded eval conversation. */
+[data-eval-chat="true"] .scenario-host-user-bubble {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+  border-radius: 0.625rem;
+  box-shadow: none;
+}
+
+[data-eval-chat="true"] article {
+  background-color: var(--muted);
+  color: var(--card-foreground);
+  border-radius: 0.625rem;
+  padding: 0.75rem;
+}
