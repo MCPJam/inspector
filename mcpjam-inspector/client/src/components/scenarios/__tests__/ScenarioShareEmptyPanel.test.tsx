@@ -38,6 +38,7 @@ vi.mock("@/lib/toast", () => ({
 const scenario = {
   scenarioId: "cb-1",
   name: "Payments beta",
+  mode: "invited_only",
   link: { token: "tok", path: "/t/tok", url: "u", rotatedAt: 0, updatedAt: 0 },
 } as unknown as ScenarioSettings;
 
@@ -108,6 +109,24 @@ describe("ScenarioShareEmptyPanel", () => {
     expect(
       screen.queryByRole("button", { name: "Invite by email" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy link" }),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the invite when anyone with the link can already open it", () => {
+    render(
+      <ScenarioShareEmptyPanel
+        scenario={
+          { ...scenario, mode: "anyone_with_link" } as ScenarioSettings
+        }
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Invite by email" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("mcpjam.link/t/tok")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy link" }),
     ).toBeInTheDocument();
