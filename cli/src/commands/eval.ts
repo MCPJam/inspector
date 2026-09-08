@@ -25,8 +25,8 @@ import {
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
-  listEvalCheckReposOperation,
-  connectEvalCheckRepoOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -96,7 +96,13 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
-import { isPlatformApiError } from "@mcpjam/sdk/platform";
+import { composeSuiteGateWithBaseReport } from "@mcpjam/sdk/contract";
+import type {
+  SuiteGateComposedOutcome,
+  SuiteGateReportV1,
+} from "@mcpjam/sdk/contract";
+import { isPlatformApiError, PlatformApiError } from "@mcpjam/sdk/platform";
+import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import type {
   PlatformApiClient,
   PlatformEnvironmentResolved,
@@ -207,7 +213,85 @@ type CreateOptions = PlatformOptions & {
   model?: string;
   provider?: string;
   server?: string[];
+  client?: string[];
+  host?: string[];
 };
+
+/**
+ * The client selector, from `--client` or the deprecated `--host`.
+ *
+ * Both-at-once is a usage ERROR, not a precedence rule — the same call
+ * `clients.ts` makes for its own pair and the one `--repetitions` /
+ * `--iterations` makes here. A precedence rule is invisible: a script that
+ * passes both because someone half-finished a migration keeps running,
+ * launching against whichever of two possibly-different clients this happened
+ * to prefer, and PAYING for the run.
+ */
+function clientSelectorOf<T>(options: { client?: T; host?: T }): T | undefined {
+  if (options.client !== undefined && options.host !== undefined) {
+    throw usageError(
+      "Use either --client or its deprecated --host alias, not both."
+    );
+  }
+  return options.client ?? options.host;
+}
+
+/**
+ * `--host` means TWO unrelated things in this CLI, and only one of them lives
+ * under `cloud eval`.
+ *
+ * `mcpjam tools|resources|prompts|probe --host claude` names a HOST-COMPAT
+ * CATALOG id — which AI host to emulate — and the compatibility docs enumerate
+ * them. `mcpjam cloud eval run --host` names a SAVED PROJECT ROW. A reader who
+ * arrives from those docs and types `--host claude` here gets a bare not-found
+ * on a project row and no hint that the two flags are unrelated.
+ *
+ * The catalog sense KEEPS `--host`; it genuinely means "which host am I
+ * emulating". This sense is `--client`, and the dead end now says so.
+ */
+function annotateCatalogHostConfusion(
+  error: unknown,
+  selectors: readonly string[] | undefined
+): unknown {
+  const isNotFound =
+    (isPlatformApiError(error) || error instanceof CliError) &&
+    error.code === "NOT_FOUND";
+  if (!isNotFound) return error;
+  const catalogIds = (selectors ?? []).filter(
+    (selector) =>
+      (HOST_TEMPLATE_IDS as readonly string[]).includes(selector.trim()) &&
+      // The CLIENT lookup is the only one this advice is about. A run resolves
+      // the project, the suite and the cases first, and any of those can miss
+      // with its own NOT_FOUND — telling someone their mistyped SUITE name is
+      // a host-compat catalog id would be a confident non-sequitur. The SDK's
+      // resolver names what it was looking for, so match on that plus the
+      // selector rather than on the code alone.
+      error.message.includes(`Suite host "${selector.trim()}"`)
+  );
+  if (catalogIds.length === 0) return error;
+  const named = catalogIds.map((id) => `"${id}"`).join(", ");
+  const message = `${error.message} ${named} names a host-compat catalog id — what \`mcpjam tools --host\` takes to emulate an AI host — not a client saved in this project. Under \`cloud eval\`, \`--client\` (and its deprecated \`--host\` alias) selects a saved client; list them with \`mcpjam cloud clients list\`.`;
+  if (error instanceof CliError) {
+    return new CliError(error.code, message, error.exitCode, error.details);
+  }
+  return new PlatformApiError(message, error.code, {
+    status: error.status,
+    ...(error.details !== undefined ? { details: error.details } : {}),
+    ...(error.endpoint !== undefined ? { endpoint: error.endpoint } : {}),
+  });
+}
+
+/** Run `body`, adding the catalog-id hint to a not-found on a client selector. */
+async function withCatalogHostHint<T>(
+  selectors: readonly string[] | undefined,
+  body: () => Promise<T>
+): Promise<T> {
+  try {
+    return await body();
+  } catch (error) {
+    throw annotateCatalogHostConfusion(error, selectors);
+  }
+}
 
 /**
  * A variadic selector maps to the SINGULAR op field for one value and the
@@ -235,6 +319,7 @@ function selectorField(
  * which owns that rule for every surface.
  */
 function composeField(options: {
+  composeClient?: string;
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
@@ -260,6 +345,21 @@ function composeField(options: {
     secrets?: { mode: "explicit"; secretIds: string[] };
   };
 } {
+  // The composed stack runs AS a client; `--compose-host` is the same flag
+  // under its pre-rename name. Both at once is a refusal, like every other
+  // pair here.
+  if (
+    options.composeClient !== undefined &&
+    options.composeHost !== undefined
+  ) {
+    throw usageError(
+      "Use either --compose-client or its deprecated --compose-host alias, not both."
+    );
+  }
+  const composeClient = options.composeClient ?? options.composeHost;
+  // Name the flag the caller actually typed in every refusal below.
+  const clientFlag =
+    options.composeHost !== undefined ? "--compose-host" : "--compose-client";
   const models = Array.isArray(options.composeModel)
     ? options.composeModel
     : options.composeModel
@@ -275,10 +375,10 @@ function composeField(options: {
     (options.composeSecret?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
-  if (!options.composeHost) {
+  if (!composeClient) {
     if (refinements) {
       throw usageError(
-        "--compose-* flags need --compose-host: the host is what the composed stack runs as, and the others only refine it."
+        "--compose-* flags need --compose-client: the client is what the composed stack runs as, and the others only refine it."
       );
     }
     return {};
@@ -298,20 +398,20 @@ function composeField(options: {
     (options.composeServer?.length ?? 0) > 0;
   if (options.composeHostServers === true && pinsServers) {
     throw usageError(
-      "--compose-host-servers runs against the host's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
+      "--compose-host-servers runs against the client's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
     );
   }
   // The server is what the suite is testing, so a composed run has to name it.
-  // Left implicit, the run reads the host's list at execution time and a later
-  // edit to that shared host silently repoints the eval.
+  // Left implicit, the run reads the client's list at execution time and a
+  // later edit to that shared client silently repoints the eval.
   if (!pinsServers && options.composeHostServers !== true) {
     throw usageError(
-      "--compose-host needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the host points at right now — which changes when the host is edited — pass --compose-host-servers."
+      `${clientFlag} needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the client points at right now — which changes when the client is edited — pass --compose-host-servers.`
     );
   }
   return {
     compose: {
-      host: options.composeHost,
+      host: composeClient,
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
@@ -768,6 +868,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     );
   }
 
+  const clientAttachments = clientSelectorOf<string[]>(options);
   const merged = {
     ...(base as Record<string, unknown>),
     ...(options.project !== undefined ? { project: options.project } : {}),
@@ -775,6 +876,9 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     ...(options.model !== undefined ? { model: options.model } : {}),
     ...(options.provider !== undefined ? { provider: options.provider } : {}),
     ...(options.server !== undefined ? { servers: options.server } : {}),
+    // `create_eval_suite` still names the field `hosts`; the FLAG is the
+    // product noun either way.
+    ...(clientAttachments !== undefined ? { hosts: clientAttachments } : {}),
   };
 
   const parsed = createEvalSuiteOperation.inputSchema.safeParse(merged);
@@ -914,8 +1018,16 @@ function buildSuiteUpdateInput(
         options.computerImage === "off" ? null : options.computerImage,
     };
   }
-  if (options.host !== undefined)
-    input.hosts = options.host.map((host: string) => ({ host }));
+  const clientAttachments = clientSelectorOf<string[]>(options);
+  if (clientAttachments !== undefined) {
+    // The flag REPLACES the body's list, as it always did when both spelled it
+    // `hosts`. Now that the flag writes `clients`, a body carrying `hosts` has
+    // to be dropped: leaving both would send two replace-all attachment lists
+    // and the operation refuses that — so a --file body that used to be
+    // overridden would start failing instead.
+    delete input.hosts;
+    input.clients = clientAttachments.map((client: string) => ({ client }));
+  }
 
   const exec = { ...(input.executionConfig ?? {}) };
   if (options.model !== undefined) exec.model = options.model;
@@ -1109,6 +1221,37 @@ const RUN_POLL_INTERVAL_MS = 3000;
 const GRADING_WAIT_EXTENSION_MS = 31 * 60_000;
 
 /**
+ * A positively identified missing gate route — never a 404 envelope, which
+ * would mean the run is not visible and is not proof the suite has no policy.
+ */
+function isSuiteGateRouteUnsupported(error: unknown): boolean {
+  if (!isPlatformApiError(error)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+/**
+ * An enveloped `NOT_FOUND` from the gate route, on a run this command ALREADY
+ * fetched.
+ *
+ * The route answers `not_configured` with a 200, so a 404 here is never "the
+ * suite has no policy". It is either a router that does not know the path (an
+ * older deployment whose catch-all still speaks the v1 envelope) or a run that
+ * vanished between two calls — and the base report was already measured from
+ * the run we did fetch. Neither is a verdict, so both skip the section rather
+ * than turning a measured pass into an infrastructure answer.
+ */
+function isSuiteGateReportAbsent(error: unknown): boolean {
+  if (!isPlatformApiError(error)) return false;
+  return error.status === 404;
+}
+
+/**
  * Poll a run to a terminal status.
  *
  * The extension is granted ONCE, on first observing `grading`. A run held for
@@ -1267,6 +1410,12 @@ async function runEvalGate(
        * other way silently enables the gate on every invocation.
        */
       gatingScoreErrors?: boolean;
+      /**
+       * Commander models `--no-suite-policy` as the NEGATION of an implicit
+       * `--suite-policy`, so the field is `suitePolicy` and it is `false`
+       * exactly when the user passed the flag.
+       */
+      suitePolicy?: boolean;
     },
   command: Command
 ): Promise<void> {
@@ -1305,6 +1454,7 @@ async function runEvalGate(
   const resolved = resolveCloudProjectArgs(options);
 
   let decisionSummary: EvalRunDecisionSummary | undefined;
+  let resolvedProjectId: string | undefined;
   let outcome: {
     report: GateReport;
     run?: PlatformEvalRun;
@@ -1332,6 +1482,7 @@ async function runEvalGate(
           );
         }
         const project = resolution.project;
+        resolvedProjectId = project.id;
         let deadline = Date.now() + waitTimeoutMs;
         let gradingExtended = false;
         let run = await client.getEvalRun(
@@ -1661,7 +1812,100 @@ async function runEvalGate(
     outcome.report,
     activeWaiverForRun(outcome.run)
   );
-  const exitCode = evalGateExitCode(report);
+  // THE SUITE POLICY, folded in AFTER the base waiver and never waived by
+  // it. `--no-suite-policy` skips only this call. A missing route is a
+  // documented compatibility skip; any other failure is incomplete — never
+  // proof the suite has no policy, and never a green.
+  let suiteGate: SuiteGateReportV1 | undefined;
+  let suiteGateSkip: string | undefined;
+  // Widened on purpose: the composed vocabulary carries `unavailable`, which
+  // the flag/base report never produces but the type union does.
+  let composedOutcome: SuiteGateComposedOutcome = report.outcome;
+  if (options.suitePolicy !== false && resolvedProjectId) {
+    const fetched = await runPlatformCommand(
+      platformOptionsOf(command),
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        try {
+          return {
+            kind: "report" as const,
+            report: await client.getEvalRunGate(
+              { projectId: resolvedProjectId!, runId },
+              { signal }
+            ),
+          };
+        } catch (error) {
+          if (isSuiteGateRouteUnsupported(error)) {
+            return {
+              kind: "skip" as const,
+              message:
+                "This MCPJam deployment does not serve stored suite quality-gate evaluation.",
+            };
+          }
+          if (isSuiteGateReportAbsent(error)) {
+            return {
+              kind: "skip" as const,
+              message:
+                "No stored suite quality-gate report for this run. The gate section was not evaluated.",
+            };
+          }
+          return {
+            kind: "error" as const,
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+    );
+    if (fetched.kind === "report") {
+      suiteGate = fetched.report;
+      composedOutcome = composeSuiteGateWithBaseReport({
+        base: { outcome: report.outcome },
+        suite: fetched.report,
+      }).outcome;
+    } else if (fetched.kind === "skip") {
+      suiteGateSkip = fetched.message;
+    } else {
+      suiteGateSkip = fetched.message;
+      // A failure to READ the suite gate is an infrastructure condition, and
+      // it must not overwrite what the base report already measured: a
+      // regression stays exit 1 and a usage error stays exit 2. Only an
+      // otherwise-green run becomes incomplete, because a configured gate
+      // that could not be evaluated is never a pass.
+      if (report.outcome === "passed" || report.outcome === "waived") {
+        composedOutcome = "incomplete";
+      }
+    }
+  }
+  const composedReport: GateReport = {
+    ...report,
+    outcome: composedOutcome === "unavailable" ? "incomplete" : composedOutcome,
+    // The suite gate's own conditions ride into the report's verdict list, so
+    // every renderer — human, JUnit, HTML — names the condition that turned
+    // CI red. Without them a suite-gate failure prints "Gate: FAILED" over
+    // nothing but PASS rows, and the JUnit failure message is empty.
+    verdicts: suiteGate
+      ? [
+          ...report.verdicts,
+          ...suiteGate.conditions
+            .filter((condition) => condition.status !== "passed")
+            .map((condition) => ({
+              gate: `suiteGate:${condition.condition}`,
+              status:
+                condition.status === "failed"
+                  ? ("failed" as const)
+                  : ("non_gateable" as const),
+              message: condition.message,
+              ...(typeof condition.observed === "number"
+                ? { observed: condition.observed }
+                : {}),
+              ...(typeof condition.threshold === "number"
+                ? { threshold: condition.threshold }
+                : {}),
+            })),
+        ]
+      : report.verdicts,
+  };
+  const exitCode = evalGateExitCode(composedReport);
   const structured = needsReport
     ? buildEvalRunReport(
         outcome.run
@@ -1677,8 +1921,8 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(report, outcome.baselineProvenance)],
-          verdict: gateOutcomeVerdict(report.outcome),
+          cases: [gateReportCase(composedReport, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(composedReport.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
@@ -1699,16 +1943,21 @@ async function runEvalGate(
     writeResult(
       globalOptions.format === "json"
         ? {
-            gate: report,
+            gate: composedReport,
             exitCode,
+            ...(suiteGate ? { suiteGate } : {}),
+            ...(suiteGateSkip ? { suiteGateSkip } : {}),
             ...(decisionSummary ? { decisionSummary } : {}),
           }
-        : { gate: report, exitCode },
+        : { gate: composedReport, exitCode },
       globalOptions.format
     );
   }
   if (globalOptions.format === "human" && !reporter) {
-    process.stderr.write(`${formatGateReport(report)}\n`);
+    process.stderr.write(`${formatGateReport(composedReport)}\n`);
+    if (suiteGateSkip) {
+      process.stderr.write(`${suiteGateSkip}\n`);
+    }
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
@@ -2912,6 +3161,11 @@ export function registerEvalCommands(program: Command): void {
       "--server <id-or-name...>",
       "Project HTTP server names or IDs (overrides the file)"
     )
+    .option(
+      "--client <id-or-name...>",
+      "Clients to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --client` has nothing to select"
+    )
+    .option("--host <id-or-name...>", "Deprecated alias for --client")
     .action(async (options: CreateOptions, command) => {
       const globalOptions = getGlobalOptions(command);
       const input = loadSuiteDefinition(options);
@@ -3051,8 +3305,12 @@ export function registerEvalCommands(program: Command): void {
       "Attached project environment(s) to run. Several values start one PAID RUN each."
     )
     .option(
+      "--client <id-or-name...>",
+      "Attached client(s) to run, so the run is stamped with that client's config. Several values start one PAID RUN each."
+    )
+    .option(
       "--host <id-or-name...>",
-      "Attached host(s) to run, so the run is stamped with that host's config. Several values start one PAID RUN each."
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
       "--all-targets",
@@ -3104,8 +3362,12 @@ export function registerEvalCommands(program: Command): void {
       "Atomically write the completed report selected by --reporter (default: json-summary)"
     )
     .option(
+      "--compose-client <id-or-name>",
+      "Compose a stack to run instead of naming a saved environment: the client it runs as. Default is EPHEMERAL (does not attach to the suite)."
+    )
+    .option(
       "--compose-host <id-or-name>",
-      "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
+      "Deprecated alias for --compose-client"
     )
     .option(
       "--compose-computer <id-or-name>",
@@ -3156,6 +3418,7 @@ export function registerEvalCommands(program: Command): void {
         options: PlatformOptions & {
           allowApproximated?: string[];
           approvalReason?: string;
+          composeClient?: string;
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string[];
@@ -3171,6 +3434,7 @@ export function registerEvalCommands(program: Command): void {
           file?: string;
           server?: string[];
           environment?: string[];
+          client?: string[];
           host?: string[];
           allTargets?: boolean;
           repetitions?: number;
@@ -3203,6 +3467,10 @@ export function registerEvalCommands(program: Command): void {
             "Use either --repetitions or its deprecated --iterations alias, not both."
           );
         }
+        // One selector from here down: `--client` is canonical under
+        // `cloud eval`, `--host` is its deprecated alias, and both at once is
+        // a refusal rather than a precedence rule.
+        const clientSelectors = clientSelectorOf<string[]>(options);
         if (
           (options.reporter !== undefined || options.out !== undefined) &&
           !options.wait
@@ -3302,7 +3570,7 @@ export function registerEvalCommands(program: Command): void {
                       ...(options.environment
                         ? { environment: options.environment }
                         : {}),
-                      ...(options.host ? { host: options.host } : {}),
+                      ...(clientSelectors ? { host: clientSelectors } : {}),
                       ...(options.allTargets ? { allTargets: true } : {}),
                       ...(options.repetitions !== undefined ||
                       options.iterations !== undefined
@@ -3338,53 +3606,57 @@ export function registerEvalCommands(program: Command): void {
                   }
                 );
               }
-              return runEvalSuiteOperation.execute(
-                {
-                  project: resolved.project ?? options.project,
-                  suite: options.suite!,
-                  ...(options.server ? { servers: options.server } : {}),
-                  // ONE value maps to the singular field, several to the plural:
-                  // the op rejects sending both, and the singular carries the
-                  // long-standing description a caller may already rely on.
-                  ...selectorField(
-                    "environment",
-                    "environments",
-                    options.environment
-                  ),
-                  ...selectorField("host", "hosts", options.host),
-                  ...(options.allTargets ? { allAttached: true } : {}),
-                  ...(options.repetitions !== undefined
-                    ? { repetitions: options.repetitions }
-                    : options.iterations !== undefined
-                    ? { iterations: options.iterations }
-                    : {}),
-                  ...(options.case?.length ? { cases: options.case } : {}),
-                  ...(options.excludeSkills ? { excludeSkills: true } : {}),
-                  ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
-                  ...(options.notes !== undefined
-                    ? { notes: options.notes }
-                    : {}),
-                  ...(options.minPassRate !== undefined
-                    ? { minPassRate: options.minPassRate }
-                    : {}),
-                  ...(options.matchOptions
-                    ? {
-                        matchOptions: parseMatchOptionsOption(
-                          options.matchOptions
-                        ),
-                      }
-                    : {}),
-                  ...(options.idempotencyKey
-                    ? { idempotencyKey: options.idempotencyKey }
-                    : {}),
-                  ...composeField(options),
-                },
-                {
-                  client: context.client,
-                  signal: context.signal,
-                  onDisclosure,
-                  onDisclosureUnavailable,
-                }
+              return withCatalogHostHint(clientSelectors, () =>
+                runEvalSuiteOperation.execute(
+                  {
+                    project: resolved.project ?? options.project,
+                    suite: options.suite!,
+                    ...(options.server ? { servers: options.server } : {}),
+                    // ONE value maps to the singular field, several to the plural:
+                    // the op rejects sending both, and the singular carries the
+                    // long-standing description a caller may already rely on.
+                    ...selectorField(
+                      "environment",
+                      "environments",
+                      options.environment
+                    ),
+                    ...selectorField("client", "clients", clientSelectors),
+                    ...(options.allTargets ? { allAttached: true } : {}),
+                    ...(options.repetitions !== undefined
+                      ? { repetitions: options.repetitions }
+                      : options.iterations !== undefined
+                      ? { iterations: options.iterations }
+                      : {}),
+                    ...(options.case?.length ? { cases: options.case } : {}),
+                    ...(options.excludeSkills ? { excludeSkills: true } : {}),
+                    ...(options.refreshSnapshot
+                      ? { refreshSnapshot: true }
+                      : {}),
+                    ...(options.notes !== undefined
+                      ? { notes: options.notes }
+                      : {}),
+                    ...(options.minPassRate !== undefined
+                      ? { minPassRate: options.minPassRate }
+                      : {}),
+                    ...(options.matchOptions
+                      ? {
+                          matchOptions: parseMatchOptionsOption(
+                            options.matchOptions
+                          ),
+                        }
+                      : {}),
+                    ...(options.idempotencyKey
+                      ? { idempotencyKey: options.idempotencyKey }
+                      : {}),
+                    ...composeField(options),
+                  },
+                  {
+                    client: context.client,
+                    signal: context.signal,
+                    onDisclosure,
+                    onDisclosureUnavailable,
+                  }
+                )
               );
             },
             { projectScope: resolved.projectScope }
@@ -4074,7 +4346,13 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--experiment <id>", "Description-experiment ID")
       .option("--case-scope <scope>", "Which cases to replay: all or affected")
-      .option("--iterations <n>", "Repetitions per case per arm (1–10)")
+      // `--repetitions` everywhere it means repetitions. This flag's own help
+      // text already said "Repetitions", and `--iterations` means "please stop
+      // using this" on `eval run` one command over. `--max-trials` beside it is
+      // left alone: it caps the PRODUCT of cases and repetitions, which really
+      // is trials.
+      .option("--repetitions <n>", "Repetitions per case per arm (1–10)")
+      .option("--iterations <n>", "Deprecated alias for --repetitions (1–10)")
       .option(
         "--max-trials <n>",
         "Refuse if plannedTrials exceeds this (max 400)"
@@ -4085,11 +4363,21 @@ export function registerEvalCommands(program: Command): void {
         project?: string;
         experiment: string;
         caseScope?: string;
+        repetitions?: string;
         iterations?: string;
         maxTrials?: string;
       },
       command
     ) => {
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
+      const repetitions = options.repetitions ?? options.iterations;
       // The operation's own schema holds the documented limits (iterations
       // 1..10, max trials ≤ 400, case scope all|affected); validating here
       // turns an out-of-range flag into a usage error instead of a request.
@@ -4098,11 +4386,13 @@ export function registerEvalCommands(program: Command): void {
         ...(options.caseScope !== undefined
           ? { caseScope: options.caseScope }
           : {}),
-        ...(options.iterations !== undefined
+        ...(repetitions !== undefined
           ? {
               iterationOverride: parsePositiveInteger(
-                options.iterations,
-                "--iterations"
+                repetitions,
+                options.repetitions !== undefined
+                  ? "--repetitions"
+                  : "--iterations"
               ),
             }
           : {}),
@@ -4236,72 +4526,109 @@ export function registerEvalCommands(program: Command): void {
 
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
 
-  // ── GitHub Checks: run this suite on every pull request ────────────
-  // A subgroup, not two flat commands: `checks` is a different resource from
-  // the suite it points at, and flattening it would put `eval connect` next to
-  // `eval run` as if they were the same kind of verb.
-  const checks = evals
-    .command("checks")
-    .description("Run an eval suite on a repository's pull requests");
+  // ── GitHub checks: run this suite on every pull request ────────────
+  //
+  // A subgroup, not two flat commands: the repository is a different resource
+  // from the suite it points at, and flattening it would put `eval connect`
+  // next to `eval run` as if they were the same kind of verb.
+  //
+  // The subgroup is `github`, not `checks`. `checks` under `cloud eval` already
+  // meant a case's GRADING RULES — the suite's `--checks`, the app's Checks
+  // section, `create_eval_case`'s `checks` — so `cloud eval checks list`
+  // returning REPOSITORIES was one noun covering two resources. The app already
+  // calls its section "GitHub checks", which is the disambiguated form.
+  // `checks` stays registered as a deprecated alias: it is a command customers
+  // have in their scripts.
+  function registerGithubSubcommands(
+    group: Command,
+    deprecated: boolean
+  ): void {
+    const suffix = deprecated
+      ? " [deprecated: use `mcpjam cloud eval github`]"
+      : "";
 
-  checks
-    .command("list")
-    .description(
-      "List the repositories running an eval suite on their pull requests"
-    )
-    .option("--project <id-or-name>", PROJECT_OPT)
-    .action(
-      async (options: PlatformOptions & { project?: string }, command) => {
-        await executeOp(
-          listEvalCheckReposOperation,
-          { project: options.project },
-          options,
-          command
-        );
-      }
-    );
-
-  checks
-    .command("connect")
-    .description(
-      "Run this suite on every pull request to a repository (affects everyone who opens one)"
-    )
-    .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-    .requiredOption("--repo <owner/repo>", "Repository to connect")
-    .requiredOption(
-      "--outage-policy <fail-open|fail-closed>",
-      "What the check reports when MCPJam cannot conclude"
-    )
-    .option("--project <id-or-name>", PROJECT_OPT)
-    .action(
-      async (
-        options: PlatformOptions & {
-          project?: string;
-          suite: string;
-          repo: string;
-          outagePolicy: string;
-        },
-        command
-      ) => {
-        // A Map, not an object literal: `{...}[key]` consults the prototype
-        // chain, so `--outage-policy constructor` would be truthy, skip the
-        // message written for the caller, and fail later against a schema they
-        // never typed.
-        const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
-        if (!policy) {
-          throw usageError(
-            '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+    group
+      .command("list")
+      .description(
+        `List the repositories running an eval suite on their pull requests${suffix}`
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .action(
+        async (options: PlatformOptions & { project?: string }, command) => {
+          await executeOp(
+            listEvalGithubReposOperation,
+            { project: options.project },
+            options,
+            command
           );
         }
-        const input = validateOpInput(connectEvalCheckRepoOperation, {
-          project: options.project,
-          suite: options.suite,
-          repo: options.repo,
-          outagePolicy: policy,
-        });
-        await executeOp(connectEvalCheckRepoOperation, input, options, command);
-      }
-    );
+      );
+
+    group
+      .command("connect")
+      .description(
+        `Run this suite on every pull request to a repository (affects everyone who opens one)${suffix}`
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--repo <owner/repo>", "Repository to connect")
+      .requiredOption(
+        "--outage-policy <fail-open|fail-closed>",
+        "What the check reports when MCPJam cannot conclude"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .action(
+        async (
+          options: PlatformOptions & {
+            project?: string;
+            suite: string;
+            repo: string;
+            outagePolicy: string;
+          },
+          command
+        ) => {
+          // A Map, not an object literal: `{...}[key]` consults the prototype
+          // chain, so `--outage-policy constructor` would be truthy, skip the
+          // message written for the caller, and fail later against a schema
+          // they never typed.
+          const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
+          if (!policy) {
+            throw usageError(
+              '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+            );
+          }
+          const input = validateOpInput(connectEvalGithubRepoOperation, {
+            project: options.project,
+            suite: options.suite,
+            repo: options.repo,
+            outagePolicy: policy,
+          });
+          await executeOp(
+            connectEvalGithubRepoOperation,
+            input,
+            options,
+            command
+          );
+        }
+      );
+  }
+
+  registerGithubSubcommands(
+    evals
+      .command("github")
+      .description(
+        "Run an eval suite on a GitHub repository's pull requests (GitHub checks)"
+      ),
+    false
+  );
+
+  registerGithubSubcommands(
+    evals
+      .command("checks")
+      .description(
+        "Deprecated alias for `cloud eval github` — a repository's GitHub checks, not a case's grading checks"
+      ),
+    true
+  );
 
   // ── Eval run iterations + traces ───────────────────────────────────
   addProjectOption(
@@ -4408,6 +4735,14 @@ export function registerEvalCommands(program: Command): void {
       "--max-p95-latency-increase-ms <ms>",
       "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha"
     )
+    .option(
+      "--max-cost-usd <usd>",
+      "Fail if the run's MCPJam-billed cost exceeded this many dollars; non-gateable when the run's cost is unknown or only partly measured"
+    )
+    .option(
+      "--max-cost-increase-percent <percent>",
+      "Fail if cost rose by more than this percentage of the baseline's; requires --baseline or --baseline-sha"
+    )
     .option("--wait", "Poll until the run reaches a terminal status")
     .option(
       "--wait-timeout <ms>",
@@ -4420,6 +4755,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--out <path>",
       "Atomically write the structured report selected by --reporter (default: json-summary)"
+    )
+    .option(
+      "--no-suite-policy",
+      "Skip the stored suite quality-gate; evaluate only the flag/base report"
     )
     .action(
       async (
@@ -4514,6 +4853,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--max-p95-latency-increase-ms <ms>",
       "Fail if p95 end-to-end latency rose by more than this many milliseconds"
+    )
+    .option(
+      "--max-cost-increase-percent <percent>",
+      "Fail if cost rose by more than this percentage of the baseline's; non-gateable when either run's cost is unknown or only partly measured"
     )
     .option(
       "--reporter <json-summary|junit-xml|html>",
@@ -4966,9 +5309,10 @@ export function registerEvalCommands(program: Command): void {
       "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
     )
     .option(
-      "--host <id-or-name...>",
-      "Replace host attachments (by name or ID)"
+      "--client <id-or-name...>",
+      "Replace client attachments (by name or ID)"
     )
+    .option("--host <id-or-name...>", "Deprecated alias for --client")
     .option("--model <id>", "Execution model id")
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
@@ -5190,8 +5534,12 @@ export function registerEvalCommands(program: Command): void {
       "Project environment to run against (must be attached to the suite)"
     )
     .option(
+      "--client <id-or-name>",
+      "Attached client to run against, so the run is stamped with that client's config"
+    )
+    .option(
       "--host <id-or-name>",
-      "Attached host to run against, so the run is stamped with that host's config"
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
       "--repetitions <n>",
@@ -5206,8 +5554,12 @@ export function registerEvalCommands(program: Command): void {
       "Retry-safety key: repeating the call returns the run it already started"
     )
     .option(
+      "--compose-client <id-or-name>",
+      "Compose a stack to run this case instead of naming a saved environment: the client it runs as. Default is EPHEMERAL."
+    )
+    .option(
       "--compose-host <id-or-name>",
-      "Compose a stack to run this case instead of naming a saved environment. Default is EPHEMERAL."
+      "Deprecated alias for --compose-client"
     )
     .option(
       "--compose-computer <id-or-name>",
@@ -5240,6 +5592,7 @@ export function registerEvalCommands(program: Command): void {
     .action(
       async (
         options: PlatformOptions & {
+          composeClient?: string;
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string;
@@ -5253,6 +5606,7 @@ export function registerEvalCommands(program: Command): void {
           case: string;
           server?: string[];
           environment?: string;
+          client?: string;
           host?: string;
           repetitions?: number;
           iterations?: number;
@@ -5268,29 +5622,34 @@ export function registerEvalCommands(program: Command): void {
             "Use either --repetitions or its deprecated --iterations alias, not both."
           );
         }
-        await executeOp(
-          runEvalCaseOperation,
-          {
-            project: options.project,
-            suite: options.suite,
-            case: options.case,
-            ...(options.server?.length ? { servers: options.server } : {}),
-            ...(options.environment
-              ? { environment: options.environment }
-              : {}),
-            ...(options.host ? { host: options.host } : {}),
-            ...(options.repetitions !== undefined
-              ? { repetitions: options.repetitions }
-              : options.iterations !== undefined
-              ? { iterations: options.iterations }
-              : {}),
-            ...(options.idempotencyKey
-              ? { idempotencyKey: options.idempotencyKey }
-              : {}),
-            ...composeField(options),
-          },
-          options,
-          command
+        const clientSelector = clientSelectorOf<string>(options);
+        await withCatalogHostHint(
+          clientSelector === undefined ? undefined : [clientSelector],
+          () =>
+            executeOp(
+              runEvalCaseOperation,
+              {
+                project: options.project,
+                suite: options.suite,
+                case: options.case,
+                ...(options.server?.length ? { servers: options.server } : {}),
+                ...(options.environment
+                  ? { environment: options.environment }
+                  : {}),
+                ...(clientSelector ? { client: clientSelector } : {}),
+                ...(options.repetitions !== undefined
+                  ? { repetitions: options.repetitions }
+                  : options.iterations !== undefined
+                  ? { iterations: options.iterations }
+                  : {}),
+                ...(options.idempotencyKey
+                  ? { idempotencyKey: options.idempotencyKey }
+                  : {}),
+                ...composeField(options),
+              },
+              options,
+              command
+            )
         );
       }
     );

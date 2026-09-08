@@ -12,17 +12,13 @@ import {
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import {
+  RUN_ORIGIN_META,
+  resolveRunOrigin,
+} from "@/lib/evals/run-origin";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
-
-const SOURCE_LABEL: Record<NonNullable<EvalSuiteRun["source"]>, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  api: "API",
-  schedule: "Scheduled",
-  github_check: "GitHub",
-};
 
 export type SuiteIdentityCounts = {
   caseCount: number;
@@ -188,10 +184,14 @@ export function resolveRunHistoryVerdict(
 }
 
 export function runPlatformLabel(run: EvalSuiteRun): string {
-  const source = run.source ?? "ui";
-  const sourceLabel = SOURCE_LABEL[source] ?? SOURCE_LABEL.ui;
+  // The same resolution and the same table the badge and the filter chips use.
+  // This was a fourth hand-copied label list, and it could only ever say `API`
+  // for a CLI run, a GitHub Actions job or an MCP agent — the three things
+  // `source` cannot tell apart.
+  const origin = resolveRunOrigin(run);
+  const meta = RUN_ORIGIN_META[origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
   const ciId = run.ciMetadata?.pipelineId ?? run.ciMetadata?.jobId;
-  return ciId ? `${sourceLabel} #${ciId}` : sourceLabel;
+  return ciId ? `${meta.label} #${ciId}` : meta.label;
 }
 
 function runClientLabel(

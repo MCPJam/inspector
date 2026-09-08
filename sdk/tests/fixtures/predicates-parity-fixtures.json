@@ -6,7 +6,9 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} }
+        "args": {
+          "args": {}
+        }
       }
     },
     {
@@ -15,7 +17,10 @@
         "type": "toolCalledWith",
         "toolName": "book_flight",
         "args": {
-          "args": { "airline": "DL", "seat": "1A" },
+          "args": {
+            "airline": "DL",
+            "seat": "1A"
+          },
           "argumentMatching": "partial"
         },
         "minCount": 2
@@ -26,7 +31,12 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "echo",
-        "args": { "args": { "msg": "hi" }, "argumentMatching": "exact" }
+        "args": {
+          "args": {
+            "msg": "hi"
+          },
+          "argumentMatching": "exact"
+        }
       }
     },
     {
@@ -34,7 +44,10 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "ping",
-        "args": { "args": {}, "argumentMatching": "ignore" }
+        "args": {
+          "args": {},
+          "argumentMatching": "ignore"
+        }
       }
     },
     {
@@ -43,14 +56,20 @@
         "type": "toolCalledWith",
         "toolName": "fs.read",
         "args": {
-          "args": { "path": "string", "count": "number" },
+          "args": {
+            "path": "string",
+            "count": "number"
+          },
           "argumentMatching": "partial"
         }
       }
     },
     {
       "label": "toolCalledAtLeastOnce — minimal",
-      "value": { "type": "toolCalledAtLeastOnce", "toolName": "search" }
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "search"
+      }
     },
     {
       "label": "toolCalledAtLeastOnce — long tool name",
@@ -61,7 +80,10 @@
     },
     {
       "label": "toolNeverCalled — minimal",
-      "value": { "type": "toolNeverCalled", "toolName": "delete_account" }
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_account"
+      }
     },
     {
       "label": "toolNeverCalled — long tool name",
@@ -72,15 +94,24 @@
     },
     {
       "label": "firstToolWas — minimal",
-      "value": { "type": "firstToolWas", "toolName": "search" }
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "search"
+      }
     },
     {
       "label": "firstToolWas — alternate tool name",
-      "value": { "type": "firstToolWas", "toolName": "list_dir" }
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "list_dir"
+      }
     },
     {
       "label": "responseContains — minimal (no caseSensitive)",
-      "value": { "type": "responseContains", "needle": "refund issued" }
+      "value": {
+        "type": "responseContains",
+        "needle": "refund issued"
+      }
     },
     {
       "label": "responseContains — caseSensitive true",
@@ -92,55 +123,89 @@
     },
     {
       "label": "responseMatches — minimal regex",
-      "value": { "type": "responseMatches", "pattern": "\\d+" }
+      "value": {
+        "type": "responseMatches",
+        "pattern": "\\d+"
+      }
     },
     {
       "label": "responseMatches — anchored regex",
-      "value": { "type": "responseMatches", "pattern": "^Order #\\d{4} confirmed$" }
+      "value": {
+        "type": "responseMatches",
+        "pattern": "^Order #\\d{4} confirmed$"
+      }
     },
     {
       "label": "noToolErrors — no fields beyond type",
-      "value": { "type": "noToolErrors" }
+      "value": {
+        "type": "noToolErrors"
+      }
     },
     {
       "label": "noToolErrors — second example (still no fields)",
-      "value": { "type": "noToolErrors" }
+      "value": {
+        "type": "noToolErrors"
+      }
     },
     {
       "label": "finalAssistantMessageNonEmpty — no fields beyond type",
-      "value": { "type": "finalAssistantMessageNonEmpty" }
+      "value": {
+        "type": "finalAssistantMessageNonEmpty"
+      }
     },
     {
       "label": "finalAssistantMessageNonEmpty — second example",
-      "value": { "type": "finalAssistantMessageNonEmpty" }
+      "value": {
+        "type": "finalAssistantMessageNonEmpty"
+      }
     },
     {
       "label": "tokenBudgetUnder — minimal",
-      "value": { "type": "tokenBudgetUnder", "tokens": 1000 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000
+      }
     },
     {
       "label": "tokenBudgetUnder — large budget",
-      "value": { "type": "tokenBudgetUnder", "tokens": 100000 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 100000
+      }
     },
     {
       "label": "turnCountUnder — tight budget (strictly fewer than 3 user turns)",
-      "value": { "type": "turnCountUnder", "turns": 3 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 3
+      }
     },
     {
       "label": "turnCountUnder — loose budget",
-      "value": { "type": "turnCountUnder", "turns": 8 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 8
+      }
     },
     {
       "label": "widgetRendered — minimal (no toolName filter)",
-      "value": { "type": "widgetRendered" }
+      "value": {
+        "type": "widgetRendered"
+      }
     },
     {
       "label": "widgetRendered — with toolName filter",
-      "value": { "type": "widgetRendered", "toolName": "show_map" }
+      "value": {
+        "type": "widgetRendered",
+        "toolName": "show_map"
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — minimal",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": 3000 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 3000
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — with toolName filter",
@@ -152,40 +217,202 @@
     },
     {
       "label": "widgetNoConsoleErrors — minimal (no toolName filter)",
-      "value": { "type": "widgetNoConsoleErrors" }
+      "value": {
+        "type": "widgetNoConsoleErrors"
+      }
     },
     {
       "label": "widgetNoConsoleErrors — with toolName filter",
-      "value": { "type": "widgetNoConsoleErrors", "toolName": "show_map" }
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "toolName": "show_map"
+      }
+    },
+    {
+      "label": "toolCalledWith — advisory warn",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": {
+          "args": {}
+        },
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — advisory warn",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "search",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolNeverCalled — advisory warn",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_account",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "firstToolWas — advisory warn",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "search",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseContains — advisory warn",
+      "value": {
+        "type": "responseContains",
+        "needle": "refund issued",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseMatches — advisory warn",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "\\d+",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noToolErrors — advisory warn",
+      "value": {
+        "type": "noToolErrors",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "finalAssistantMessageNonEmpty — advisory warn",
+      "value": {
+        "type": "finalAssistantMessageNonEmpty",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "tokenBudgetUnder — advisory warn",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "turnCountUnder — advisory warn",
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 3,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetRendered — advisory warn",
+      "value": {
+        "type": "widgetRendered",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — advisory warn",
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 3000,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetNoConsoleErrors — advisory warn",
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "onlyToolsCalled — an allow-list of tools",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          "search",
+          "get_order"
+        ]
+      }
+    },
+    {
+      "label": "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": []
+      }
+    },
+    {
+      "label": "onlyToolsCalled — advisory, so a miss is highlighted and does not fail the trial",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          "search"
+        ],
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
     {
       "label": "missing type discriminator",
-      "value": { "toolName": "search" }
+      "value": {
+        "toolName": "search"
+      }
     },
     {
       "label": "unknown predicate kind",
-      "value": { "type": "toolMaybeCalled", "toolName": "search" }
+      "value": {
+        "type": "toolMaybeCalled",
+        "toolName": "search"
+      }
     },
     {
       "label": "toolCalledWith — toolName is a number (wrong field type)",
       "value": {
         "type": "toolCalledWith",
         "toolName": 42,
-        "args": { "args": {} }
+        "args": {
+          "args": {}
+        }
       }
     },
     {
       "label": "toolCalledWith — args is missing",
-      "value": { "type": "toolCalledWith", "toolName": "search" }
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search"
+      }
     },
     {
       "label": "toolCalledWith — illegal argumentMatching enum value",
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {}, "argumentMatching": "fuzzy" }
+        "args": {
+          "args": {},
+          "argumentMatching": "fuzzy"
+        }
       }
     },
     {
@@ -193,7 +420,9 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} },
+        "args": {
+          "args": {}
+        },
         "minCount": -1
       }
     },
@@ -202,7 +431,9 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} },
+        "args": {
+          "args": {}
+        },
         "minCount": 0
       }
     },
@@ -211,29 +442,45 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} },
+        "args": {
+          "args": {}
+        },
         "minCount": 1.5
       }
     },
     {
       "label": "toolCalledAtLeastOnce — empty toolName",
-      "value": { "type": "toolCalledAtLeastOnce", "toolName": "" }
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": ""
+      }
     },
     {
       "label": "toolNeverCalled — toolName is null",
-      "value": { "type": "toolNeverCalled", "toolName": null }
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": null
+      }
     },
     {
       "label": "firstToolWas — missing toolName",
-      "value": { "type": "firstToolWas" }
+      "value": {
+        "type": "firstToolWas"
+      }
     },
     {
       "label": "firstToolWas — empty toolName",
-      "value": { "type": "firstToolWas", "toolName": "" }
+      "value": {
+        "type": "firstToolWas",
+        "toolName": ""
+      }
     },
     {
       "label": "responseContains — empty needle",
-      "value": { "type": "responseContains", "needle": "" }
+      "value": {
+        "type": "responseContains",
+        "needle": ""
+      }
     },
     {
       "label": "responseContains — caseSensitive is a string",
@@ -245,67 +492,112 @@
     },
     {
       "label": "responseMatches — empty pattern",
-      "value": { "type": "responseMatches", "pattern": "" }
+      "value": {
+        "type": "responseMatches",
+        "pattern": ""
+      }
     },
     {
       "label": "responseMatches — non-string pattern (number)",
-      "value": { "type": "responseMatches", "pattern": 42 }
+      "value": {
+        "type": "responseMatches",
+        "pattern": 42
+      }
     },
     {
       "label": "tokenBudgetUnder — negative tokens",
-      "value": { "type": "tokenBudgetUnder", "tokens": -1 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": -1
+      }
     },
     {
       "label": "tokenBudgetUnder — zero tokens (must be positive)",
-      "value": { "type": "tokenBudgetUnder", "tokens": 0 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 0
+      }
     },
     {
       "label": "tokenBudgetUnder — fractional tokens",
-      "value": { "type": "tokenBudgetUnder", "tokens": 100.5 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 100.5
+      }
     },
     {
       "label": "tokenBudgetUnder — tokens missing",
-      "value": { "type": "tokenBudgetUnder" }
+      "value": {
+        "type": "tokenBudgetUnder"
+      }
     },
     {
       "label": "turnCountUnder — turns missing",
-      "value": { "type": "turnCountUnder" }
+      "value": {
+        "type": "turnCountUnder"
+      }
     },
     {
       "label": "turnCountUnder — zero turns (must be positive; `< 0` can never pass)",
-      "value": { "type": "turnCountUnder", "turns": 0 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 0
+      }
     },
     {
       "label": "turnCountUnder — negative turns",
-      "value": { "type": "turnCountUnder", "turns": -1 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": -1
+      }
     },
     {
       "label": "turnCountUnder — fractional turns",
-      "value": { "type": "turnCountUnder", "turns": 2.5 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 2.5
+      }
     },
     {
       "label": "turnCountUnder — numeric string turns",
-      "value": { "type": "turnCountUnder", "turns": "8" }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": "8"
+      }
     },
     {
       "label": "widgetRendered — empty toolName",
-      "value": { "type": "widgetRendered", "toolName": "" }
+      "value": {
+        "type": "widgetRendered",
+        "toolName": ""
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — ms missing",
-      "value": { "type": "widgetRenderLatencyUnder" }
+      "value": {
+        "type": "widgetRenderLatencyUnder"
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — zero ms (must be positive)",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": 0 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 0
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — negative ms",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": -100 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": -100
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — fractional ms",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": 250.5 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 250.5
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — empty toolName",
@@ -317,7 +609,57 @@
     },
     {
       "label": "widgetNoConsoleErrors — empty toolName",
-      "value": { "type": "widgetNoConsoleErrors", "toolName": "" }
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "toolName": ""
+      }
+    },
+    {
+      "label": "severity error is not a valid severity",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "role": "advisory",
+        "severity": "error"
+      }
+    },
+    {
+      "label": "severity warn requires role advisory (gating + warn)",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "role": "gating",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "severity warn without role is rejected",
+      "value": {
+        "type": "noToolErrors",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "onlyToolsCalled without toolNames",
+      "value": {
+        "type": "onlyToolsCalled"
+      }
+    },
+    {
+      "label": "onlyToolsCalled with a blank tool name",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          ""
+        ]
+      }
+    },
+    {
+      "label": "onlyToolsCalled with a non-array toolNames",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": "search"
+      }
     }
   ]
 }

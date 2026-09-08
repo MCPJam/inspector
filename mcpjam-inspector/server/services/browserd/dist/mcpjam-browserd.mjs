@@ -7,9 +7,15 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
+var BROWSERD_PROTOCOL_VERSION = 1;
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
+};
+var HOSTED_DISPLAY = {
+  dpr: 1,
+  width: BROWSERD_OBSERVATION_VIEWPORT.width,
+  height: BROWSERD_OBSERVATION_VIEWPORT.height
 };
 function isPointInViewport(x, y) {
   return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
@@ -318,10 +324,39 @@ var HandoffLease = class {
   now;
   defaultTtlMs;
   maxTtlMs;
+  onChange;
+  /**
+   * What the listener was last told.
+   *
+   * Compared by VALUE, not identity: `state()` rebuilds the object on an
+   * expiry, and a heartbeat rewrites it with a new `expiresAt` several times a
+   * minute. A surface told about each of those would hide and show a native
+   * view repeatedly while nothing about who holds the browser had changed.
+   */
+  announced = "free";
   constructor(options = {}) {
     this.now = options.now ?? Date.now;
     this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS;
     this.maxTtlMs = options.maxTtlMs ?? MAX_TTL_MS;
+    this.onChange = options.onChange;
+  }
+  /**
+   * Tell the listener, if this is genuinely a different situation.
+   *
+   * Keyed on state + holder + kind, which is exactly what a listener can act
+   * on. `expiresAt` is deliberately absent from the key: a heartbeat moves it
+   * every thirty seconds and changes nothing about who holds the browser.
+   */
+  announce() {
+    if (!this.onChange) return;
+    const state = this.state();
+    const key = state.state === "free" ? "free" : `${state.state}:${state.holder}:${state.holderKind}`;
+    if (key === this.announced) return;
+    this.announced = key;
+    try {
+      this.onChange(state);
+    } catch {
+    }
   }
   /**
    * The lease as of NOW. Expiry is evaluated lazily on every read — there is
@@ -335,6 +370,17 @@ var HandoffLease = class {
         holder: this.current.holder,
         holderKind: this.current.holderKind
       };
+      if (this.onChange) {
+        const key = `parked:${this.current.holder}:${this.current.holderKind}`;
+        if (key !== this.announced) {
+          this.announced = key;
+          const parked = this.current;
+          try {
+            this.onChange(parked);
+          } catch {
+          }
+        }
+      }
     }
     return this.current;
   }
@@ -361,6 +407,7 @@ var HandoffLease = class {
       holderKind: this.holderKind,
       expiresAt: this.now() + ttl
     };
+    this.announce();
     return this.current;
   }
   /** Extend the holder's own lease; a no-op for anyone else. */
@@ -385,6 +432,7 @@ var HandoffLease = class {
       this.resumedHolderKind = this.holderKind;
     }
     this.heldSince = void 0;
+    this.announce();
     return this.current;
   }
   /** `resume` under its user-facing name; identical semantics. */
@@ -445,18 +493,62 @@ function handoffNoteFor(kind) {
 
 // server/services/browserd/daemon/request-handler.ts
 var MAX_INPUT_EVENTS = 64;
+var INPUT_BOOST_INTERVAL_MS = 33;
+var INPUT_BOOST_WINDOW_MS = 1500;
 var BrowserdRequestHandler = class {
   queue;
   driver;
   bootId;
   token;
   lease;
+  features;
+  bundleHash;
+  contextMode;
+  startedBy;
+  setVideoTier;
+  /**
+   * How many frame streams are open, asked of the stream host.
+   *
+   * A FUNCTION set after construction, because the stream host is built from
+   * this handler (it borrows `authorize` and `subscribeFrames`) and so cannot
+   * exist yet when the constructor runs. Absent until then, which reads as
+   * "unknown" rather than as zero: an upgrade decision must not conclude
+   * "nobody is watching" from a wire that was never connected.
+   */
+  watchers;
+  /**
+   * When a command or a person's input last touched the page.
+   *
+   * `null` until something does. The number itself is never interpreted here —
+   * it goes out on `/v1/status` and the INSPECTOR decides what counts as
+   * quiet, so changing that threshold does not need a daemon deploy (which is
+   * the very thing this whole compatibility mechanism exists to avoid).
+   */
+  lastActivityAt = null;
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.features = deps.features ?? [];
+    this.bundleHash = deps.bundleHash;
+    this.contextMode = deps.contextMode;
+    this.startedBy = deps.startedBy ?? "inspector";
+    this.setVideoTier = deps.setVideoTier;
+  }
+  /**
+   * What is open and which tab is on screen, for a stream's heartbeat.
+   *
+   * `undefined` from a driver that has no concept of tabs, which the pane
+   * reads as "this engine cannot tell you" rather than as "no tabs".
+   */
+  tabsSnapshot() {
+    return this.driver.tabsSnapshot?.();
+  }
+  /** Let the stream host report itself on `/v1/status`. See `watchers`. */
+  attachFrameCounters(watchers) {
+    this.watchers = watchers;
   }
   /**
    * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
@@ -499,9 +591,23 @@ var BrowserdRequestHandler = class {
         return { status: 405, headers: { allow: "GET" } };
       }
       const health = await this.driver.health();
-      return health.ok ? { status: 200, body: { ok: true, bootId: this.bootId } } : {
+      const identity = {
+        bootId: this.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        features: this.features,
+        startedBy: this.startedBy,
+        ...this.bundleHash ? { bundleHash: this.bundleHash } : {},
+        ...this.contextMode ? { contextMode: this.contextMode } : {},
+        // What "nobody is using this browser" is made of. Reported as FACTS,
+        // never as a verdict: the caller applies its own quiet threshold, so
+        // changing that threshold does not need a daemon deploy.
+        lease: this.lease.state().state,
+        ...this.watchers ? { watchers: this.watchers() } : {},
+        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }
+      };
+      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
-        body: { ok: false, detail: health.detail, bootId: this.bootId }
+        body: { ok: false, detail: health.detail, ...identity }
       };
     }
     if (req.path === "/v1/lease") {
@@ -509,6 +615,12 @@ var BrowserdRequestHandler = class {
         return { status: 405, headers: { allow: "GET, POST" } };
       }
       return this.handleLease(req);
+    }
+    if (req.path === "/v1/policy") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePolicy(req);
     }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
@@ -518,15 +630,41 @@ var BrowserdRequestHandler = class {
     }
     return { status: 404 };
   }
+  handlePolicy(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const tier = typeof parsed === "object" && parsed !== null ? parsed.tier : void 0;
+    if (tier !== "auto" && tier !== "sharp" && tier !== "saver") {
+      return {
+        status: 400,
+        body: { error: "invalid_tier", bootId: this.bootId }
+      };
+    }
+    this.setVideoTier?.(tier);
+    return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
+  }
   async handleInput(req) {
     let parsed;
     try {
       parsed = JSON.parse(req.body || "{}");
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
     if (typeof parsed !== "object" || parsed === null) {
-      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId }
+      };
     }
     const { holder, tabId, events } = parsed;
     if (typeof holder !== "string" || holder.length === 0) {
@@ -547,12 +685,14 @@ var BrowserdRequestHandler = class {
         body: { error: "too_many_events", bootId: this.bootId }
       };
     }
+    this.lastActivityAt = Date.now();
     const outcome = await this.dispatchInput({
       ...typeof tabId === "string" ? { tabId } : {},
       holder,
       events
     });
-    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    if (outcome.ok)
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
       status: outcome.error === "unknown_tab" ? 404 : 423,
       body: { error: outcome.error, bootId: this.bootId }
@@ -563,7 +703,10 @@ var BrowserdRequestHandler = class {
     try {
       parsed = JSON.parse(req.body);
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
     if (!isValidCommand(parsed?.command)) {
       return {
@@ -571,6 +714,7 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_command", bootId: this.bootId }
       };
     }
+    this.lastActivityAt = Date.now();
     const leaseState = this.lease.state();
     const refusal = leaseRefusalFor(
       leaseState,
@@ -669,6 +813,50 @@ var BrowserdRequestHandler = class {
         } catch {
           return false;
         }
+      },
+      /**
+       * What this viewport has seen and thrown away, plus whose it is.
+       *
+       * Rides the heartbeat rather than a route of its own: the numbers are
+       * only interesting to somebody already reading this stream, and a
+       * separate endpoint would need its own auth, its own cadence and its own
+       * way of naming which viewport it meant.
+       */
+      counters: () => viewport.counters(),
+      /** A frame this viewport published that the transport could not take. */
+      noteTransportDrop: () => viewport.noteTransportDrop(),
+      subscriberCount: () => viewport.subscriberCount()
+    };
+  }
+  /**
+   * The lease gate, without subscribing to a tab's frames.
+   *
+   * The VIDEO stream needs exactly this and nothing else: its pixels come from
+   * the X display rather than from a tab's screencast, so `subscribeFrames`
+   * would start a `Page.startScreencast` and a JPEG encoder that nobody reads —
+   * on a box the agent is also using — purely to borrow the lease check.
+   *
+   * PER SUBSCRIBER, deliberately. One encoder serves every watcher, but who may
+   * SEE it is asked of each of them separately: a person taking the browser
+   * ends the other watchers' streams with their own `lease_held` while the
+   * encoder keeps running for the holder's own pane. End reasons are about who
+   * may look, not about who is encoding.
+   */
+  watchLease(args) {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    let live = true;
+    return {
+      ok: true,
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (!lost) return;
+        live = false;
+        args.onRevoked?.(lost);
+      },
+      release: () => {
+        live = false;
       }
     };
   }
@@ -696,6 +884,9 @@ var BrowserdRequestHandler = class {
       () => stillTheirs() === void 0,
       args.holder
     );
+    if (args.events.length > 0) {
+      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+    }
     return { ok: true };
   }
   /** May this watcher see frames right now? */
@@ -716,11 +907,17 @@ var BrowserdRequestHandler = class {
     try {
       parsed = JSON.parse(req.body);
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
     const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
     if (!holder) {
-      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
     }
     const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
     const kind = parsed?.kind === "script" ? "script" : "human";
@@ -783,7 +980,11 @@ var BrowserdRequestHandler = class {
         }
         return {
           status: 200,
-          body: { status: "ok", result: outcome.result, bootId: outcome.bootId }
+          body: {
+            status: "ok",
+            result: outcome.result,
+            bootId: outcome.bootId
+          }
         };
       case "busy":
         return {
@@ -809,8 +1010,9 @@ function isValidCommand(value) {
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
-// server/services/browserd/frame-stream.ts
+// shared/browserd-frame-stream.ts
 var FRAME_STREAM_VERSION = 1;
+var FRAME_STREAM_VERSION_VIDEO = 2;
 var FRAME_STREAM_HEADER_BYTES = 24;
 var FRAME_STREAM_KIND = {
   /** A painted JPEG. */
@@ -824,16 +1026,40 @@ var FRAME_STREAM_KIND = {
    */
   heartbeat: 2,
   /** The last record. Payload is a UTF-8 reason. */
-  end: 3
+  end: 3,
+  /**
+   * An H.264 access unit that can be decoded on its own — it carries an IDR,
+   * and the parameter sets in front of it.
+   *
+   * Told apart from a delta because a decoder joining mid-stream has to start
+   * at one, and because the daemon replays the last one to a late subscriber
+   * rather than making them wait out a GOP.
+   */
+  video_key: 4,
+  /** An H.264 access unit that depends on the ones before it. */
+  video_delta: 5
 };
 var FRAME_STREAM_MAX_PAYLOAD_BYTES = 256 * 1024;
+var FRAME_STREAM_MAX_PAYLOAD_BY_KIND = {
+  [1]: FRAME_STREAM_MAX_PAYLOAD_BYTES,
+  // frame (jpeg)
+  [2]: 8 * 1024,
+  // heartbeat (its stats JSON)
+  [3]: 1024,
+  // end (a reason)
+  [4]: 2 * 1024 * 1024,
+  // video_key
+  [5]: 512 * 1024
+  // video_delta
+};
 function encodeFrameStreamRecord(record) {
-  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : new Uint8Array(0);
+  const video = isVideoRecord(record);
+  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : video ? record.au : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : record.stats ? new TextEncoder().encode(JSON.stringify(record.stats)) : new Uint8Array(0);
   const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
   const view = new DataView(bytes.buffer);
-  view.setUint8(0, FRAME_STREAM_VERSION);
+  view.setUint8(0, video ? FRAME_STREAM_VERSION_VIDEO : FRAME_STREAM_VERSION);
   view.setUint8(1, record.kind);
-  if (record.kind === FRAME_STREAM_KIND.frame) {
+  if (record.kind === FRAME_STREAM_KIND.frame || video) {
     view.setUint16(2, clampU16(record.deviceWidth), true);
     view.setUint16(4, clampU16(record.deviceHeight), true);
     view.setUint16(6, clampU16(Math.round(record.scale * 1e3)), true);
@@ -843,6 +1069,9 @@ function encodeFrameStreamRecord(record) {
   view.setUint32(20, payload.byteLength, true);
   bytes.set(payload, FRAME_STREAM_HEADER_BYTES);
   return bytes;
+}
+function isVideoRecord(record) {
+  return record.kind === FRAME_STREAM_KIND.video_key || record.kind === FRAME_STREAM_KIND.video_delta;
 }
 function clampU16(value) {
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -861,15 +1090,21 @@ function createFramePacer(sink, onDrop) {
       if (closed) return;
       const next = pending;
       pending = void 0;
-      if (next) ship(next);
+      if (next) ship(next.bytes);
     });
   };
   return {
-    push(bytes) {
+    push(bytes, record = {}) {
       if (closed) return;
       if (inFlight) {
-        if (pending !== void 0) onDrop?.();
-        pending = bytes;
+        if (pending !== void 0) {
+          if (pending.record.essential && !record.essential) {
+            if (record.counts !== false) onDrop?.();
+            return;
+          }
+          if (pending.record.counts !== false) onDrop?.();
+        }
+        pending = { bytes, record };
         return;
       }
       ship(bytes);
@@ -922,14 +1157,164 @@ function createFrameStreamHost(handler, options = {}) {
       runProbe(res);
       return true;
     }
+    if (query?.get("codec") === "h264") {
+      void startVideoSubscription({ res, holder }).catch(() => {
+        writeEndAndClose(res, "video_unavailable");
+      });
+      return true;
+    }
     void startSubscription({ res, tabId, holder }).catch(() => {
       writeEndAndClose(res, "tab_gone");
     });
     return true;
   }
+  async function startVideoSubscription(args) {
+    const { res, holder } = args;
+    const encoder = options.video;
+    if (!encoder) {
+      writeEndAndClose(res, "video_unavailable");
+      return;
+    }
+    let ended = false;
+    let stallTimer;
+    let beatTimer;
+    let unsubscribe;
+    let release;
+    let seq = 0;
+    const size = options.displaySize ?? {
+      width: BROWSERD_OBSERVATION_VIEWPORT.width,
+      height: BROWSERD_OBSERVATION_VIEWPORT.height
+    };
+    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
+    const entry = { end: (reason) => end(reason) };
+    const end = (reason) => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      release?.();
+      open.delete(entry);
+      pacer.close();
+      try {
+        res.write(
+          encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+        );
+        res.end();
+      } catch {
+      }
+    };
+    const pacer = createFramePacer({
+      send: (data, cb) => {
+        stallTimer = timers.setTimer(() => {
+          if (ended) return;
+          ended = true;
+          timers.clearTimer(beatTimer);
+          unsubscribe?.();
+          release?.();
+          open.delete(entry);
+          pacer.close();
+          res.destroy();
+        }, stallMs);
+        res.write(data, (error) => {
+          timers.clearTimer(stallTimer);
+          cb(error ?? void 0);
+        });
+      }
+    });
+    open.add(entry);
+    res.on("close", () => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      release?.();
+      open.delete(entry);
+      pacer.close();
+    });
+    const gate = handler.watchLease({
+      ...holder ? { holder } : {},
+      onRevoked: (reason) => end(reason === "lease_parked" ? "lease_parked" : "lease_held")
+    });
+    if (!gate.ok) {
+      end(gate.error === "lease_parked" ? "lease_parked" : "lease_held");
+      return;
+    }
+    if (ended) {
+      gate.release();
+      return;
+    }
+    release = gate.release;
+    unsubscribe = encoder.subscribe((unit) => {
+      if (ended) return;
+      gate.revalidate();
+      if (ended) return;
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: unit.key ? FRAME_STREAM_KIND.video_key : FRAME_STREAM_KIND.video_delta,
+          deviceWidth: size.width,
+          deviceHeight: size.height,
+          scale,
+          ts: Date.now(),
+          seq: seq += 1,
+          au: unit.bytes
+        }),
+        // A KEYFRAME is the one record a decoder cannot proceed without: give
+        // its slot to the delta behind it and the pane sits frozen until the
+        // next GOP, four seconds later, being sent units it cannot decode.
+        unit.key ? { essential: true } : {}
+      );
+    });
+    const failure = encoder.failure();
+    if (failure) {
+      end("video_unavailable");
+      return;
+    }
+    let lastEmitted = encoder.emitted();
+    const beat = () => {
+      if (ended) return;
+      const tabs = handler.tabsSnapshot?.();
+      const emitted = encoder.emitted();
+      const idle = emitted === lastEmitted;
+      lastEmitted = emitted;
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: {
+            subscribers: encoder.subscriberCount(),
+            // What a person is actually looking at. The video stream grabs the
+            // X display, so a model `activate_tab` changes the picture out from
+            // under them — and kiosk hides Chromium's own tab strip, so nothing
+            // else here would say so.
+            ...tabs ? { tabs } : {},
+            // `mpdecimate` means an idle page produces NO frames at all, so
+            // silence here is a quiet page rather than a stall. Saying which
+            // is what stops an adaptive client stepping the quality down on a
+            // page that is simply not moving.
+            encoderIdle: idle
+          }
+        }),
+        // Liveness and counters, not a picture: another arrives in ten
+        // seconds, and counting its overwrite made `dropped.pacer` describe a
+        // link that had dropped nothing at all.
+        { counts: false }
+      );
+      gate.revalidate();
+      if (ended) return;
+      if (encoder.failure()) {
+        end("video_unavailable");
+        return;
+      }
+      beatTimer = timers.setTimer(beat, heartbeatMs);
+    };
+    beatTimer = timers.setTimer(beat, heartbeatMs);
+  }
   function writeEndAndClose(res, reason) {
     try {
-      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+      );
       res.end();
     } catch {
     }
@@ -983,6 +1368,7 @@ function createFrameStreamHost(handler, options = {}) {
     let stallTimer;
     let beatTimer;
     let unsubscribe;
+    let subscription;
     const entry = {
       end: (reason) => end(reason)
     };
@@ -1002,23 +1388,29 @@ function createFrameStreamHost(handler, options = {}) {
       } catch {
       }
     };
-    const pacer = createFramePacer({
-      send: (data, cb) => {
-        stallTimer = timers.setTimer(() => {
-          if (ended) return;
-          ended = true;
-          timers.clearTimer(beatTimer);
-          unsubscribe?.();
-          open.delete(entry);
-          pacer.close();
-          res.destroy();
-        }, stallMs);
-        res.write(data, (error) => {
-          timers.clearTimer(stallTimer);
-          cb(error ?? void 0);
-        });
-      }
-    });
+    const pacer = createFramePacer(
+      {
+        send: (data, cb) => {
+          stallTimer = timers.setTimer(() => {
+            if (ended) return;
+            ended = true;
+            timers.clearTimer(beatTimer);
+            unsubscribe?.();
+            open.delete(entry);
+            pacer.close();
+            res.destroy();
+          }, stallMs);
+          res.write(data, (error) => {
+            timers.clearTimer(stallTimer);
+            cb(error ?? void 0);
+          });
+        }
+      },
+      // The pacer's overwrite is the third silent drop path (the viewport owns
+      // the other two). Counting it HERE, on the viewport that produced the
+      // frame, is what makes one number describe the whole way out of the box.
+      () => subscription?.ok && subscription.noteTransportDrop()
+    );
     open.add(entry);
     res.on("close", () => {
       if (ended) return;
@@ -1029,7 +1421,7 @@ function createFrameStreamHost(handler, options = {}) {
       open.delete(entry);
       pacer.close();
     });
-    const subscription = await handler.subscribeFrames({
+    subscription = await handler.subscribeFrames({
       ...tabId ? { tabId } : {},
       ...holder ? { holder } : {},
       listener: (frame) => {
@@ -1059,12 +1451,27 @@ function createFrameStreamHost(handler, options = {}) {
       return;
     }
     unsubscribe = subscription.unsubscribe;
+    const live = subscription;
+    let lastFramesIn;
     const beat = () => {
       if (ended) return;
-      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
-      subscription.revalidate();
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          // Additive by construction: a v1 reader slices this payload by its
+          // length and discards it, so an old inspector against a new daemon
+          // sees exactly the heartbeat it always did.
+          stats: (() => {
+            const stats = statsFor(live, lastFramesIn);
+            lastFramesIn = stats.framesIn;
+            const tabs = handler.tabsSnapshot?.();
+            return tabs ? { ...stats, tabs } : stats;
+          })()
+        })
+      );
+      live.revalidate();
       if (ended) return;
-      void subscription.stillCurrent().then(
+      void live.stillCurrent().then(
         (current) => {
           if (!current && !ended) end("tab_gone");
           else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
@@ -1101,6 +1508,17 @@ function createFrameStreamHost(handler, options = {}) {
       for (const entry of [...open]) entry.end(reason);
     },
     count: () => open.size
+  };
+}
+function statsFor(subscription, previousFramesIn) {
+  const counters = subscription.counters();
+  return {
+    framesIn: counters.framesIn,
+    framesOut: counters.framesOut,
+    bytesOut: counters.bytesOut,
+    dropped: counters.dropped,
+    subscribers: subscription.subscriberCount(),
+    ...previousFramesIn === void 0 ? {} : { encoderIdle: counters.framesIn === previousFramesIn }
   };
 }
 
@@ -1259,12 +1677,22 @@ function buildBrowserdStack(driver, config) {
     driver,
     bootId,
     token: config.token,
-    lease
+    lease,
+    ...config.features ? { features: config.features } : {},
+    ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
+    ...config.contextMode ? { contextMode: config.contextMode } : {},
+    ...config.startedBy ? { startedBy: config.startedBy } : {},
+    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
-    ...config.frames ? { frames: config.frames } : {}
+    frames: {
+      ...config.frames ?? {},
+      ...config.video ? { video: config.video } : {},
+      ...config.displaySize ? { displaySize: config.displaySize } : {}
+    }
   });
+  handler.attachFrameCounters(() => frames.count());
   return {
     server,
     handler,
@@ -1272,6 +1700,251 @@ function buildBrowserdStack(driver, config) {
     bootId,
     lease,
     closeStreams: (reason = "shutting_down") => frames.closeAll(reason)
+  };
+}
+
+// server/services/browserd/daemon/video-encoder.ts
+import { spawn } from "node:child_process";
+var NAL_AUD = 9;
+var NAL_IDR = 5;
+var MAX_RING_BYTES = 3 * 1024 * 1024;
+function tierArgs(tier) {
+  switch (tier) {
+    case "sharp":
+      return ["-crf", "18", "-maxrate", "6M", "-bufsize", "12M"];
+    case "saver":
+      return [
+        "-vf",
+        "mpdecimate,scale=768:-2",
+        "-crf",
+        "28",
+        "-maxrate",
+        "600k",
+        "-bufsize",
+        "1200k"
+      ];
+    default:
+      return ["-crf", "23", "-maxrate", "2500k", "-bufsize", "5M"];
+  }
+}
+function ffmpegArgs(options) {
+  const tier = tierArgs(options.tier);
+  const filters = tier.includes("-vf") ? [] : ["-vf", "mpdecimate"];
+  return [
+    "-loglevel",
+    "error",
+    "-f",
+    "x11grab",
+    "-framerate",
+    "30",
+    "-video_size",
+    `${options.width}x${options.height}`,
+    "-draw_mouse",
+    "1",
+    "-i",
+    options.display,
+    ...filters,
+    "-fps_mode",
+    "vfr",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-tune",
+    "zerolatency",
+    "-profile:v",
+    "baseline",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "120",
+    "-sc_threshold",
+    "0",
+    "-x264-params",
+    "aud=1:repeat-headers=1",
+    ...tier,
+    "-f",
+    "h264",
+    "pipe:1"
+  ];
+}
+function createAccessUnitSplitter() {
+  let buffer = new Uint8Array(0);
+  const emit = (bytes) => ({
+    key: containsIdr(bytes),
+    bytes
+  });
+  return {
+    push(chunk) {
+      if (chunk.byteLength > 0) {
+        const merged = new Uint8Array(buffer.byteLength + chunk.byteLength);
+        merged.set(buffer);
+        merged.set(chunk, buffer.byteLength);
+        buffer = merged;
+      }
+      const units = [];
+      let start = findDelimiter(buffer, 0);
+      if (start < 0) return units;
+      for (; ; ) {
+        const next = findDelimiter(buffer, start + 4);
+        if (next < 0) break;
+        units.push(emit(buffer.slice(start, next)));
+        start = next;
+      }
+      buffer = buffer.slice(start);
+      return units;
+    },
+    flush() {
+      if (buffer.byteLength === 0) return [];
+      const start = findDelimiter(buffer, 0);
+      const units = start >= 0 ? [emit(buffer.slice(start))] : [];
+      buffer = new Uint8Array(0);
+      return units;
+    }
+  };
+}
+function findDelimiter(bytes, from) {
+  for (let i = Math.max(0, from); i + 4 < bytes.byteLength; i += 1) {
+    if (bytes[i] !== 0 || bytes[i + 1] !== 0) continue;
+    if (bytes[i + 2] === 1) {
+      if ((bytes[i + 3] & 31) === NAL_AUD) return i;
+      continue;
+    }
+    if (bytes[i + 2] === 0 && bytes[i + 3] === 1 && i + 4 < bytes.byteLength) {
+      if ((bytes[i + 4] & 31) === NAL_AUD) return i;
+    }
+  }
+  return -1;
+}
+function containsIdr(bytes) {
+  for (let i = 0; i + 3 < bytes.byteLength; i += 1) {
+    if (bytes[i] !== 0 || bytes[i + 1] !== 0) continue;
+    if (bytes[i + 2] === 1) {
+      if ((bytes[i + 3] & 31) === NAL_IDR) return true;
+      continue;
+    }
+    if (bytes[i + 2] === 0 && bytes[i + 3] === 1 && i + 4 < bytes.byteLength && (bytes[i + 4] & 31) === NAL_IDR) {
+      return true;
+    }
+  }
+  return false;
+}
+function createVideoEncoder(options) {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+    stdio: [...spawnOptions.stdio]
+  }));
+  const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
+  const listeners = /* @__PURE__ */ new Set();
+  let tier = options.tier ?? "auto";
+  let child;
+  let splitter = createAccessUnitSplitter();
+  let failure;
+  let disposed = false;
+  let ring = [];
+  let ringBytes = 0;
+  let emittedCount = 0;
+  const publish = (unit) => {
+    emittedCount += 1;
+    if (unit.key) {
+      ring = [unit];
+      ringBytes = unit.bytes.byteLength;
+    } else if (ring.length > 0) {
+      ring.push(unit);
+      ringBytes += unit.bytes.byteLength;
+      while (ring.length > 1 && ringBytes > MAX_RING_BYTES) {
+        const dropped = ring.splice(1, 1)[0];
+        ringBytes -= dropped?.bytes.byteLength ?? 0;
+      }
+    }
+    for (const listener of listeners) {
+      try {
+        listener(unit);
+      } catch {
+      }
+    }
+  };
+  const stop = () => {
+    const running = child;
+    child = void 0;
+    ring = [];
+    ringBytes = 0;
+    splitter = createAccessUnitSplitter();
+    if (!running) return;
+    try {
+      running.kill("SIGTERM");
+    } catch {
+    }
+  };
+  const start = () => {
+    if (child || disposed) return;
+    failure = void 0;
+    let started;
+    try {
+      started = spawnProcess(
+        ffmpegPath,
+        ffmpegArgs({
+          display: options.display,
+          width: options.width,
+          height: options.height,
+          tier
+        }),
+        { stdio: ["ignore", "pipe", "pipe"] }
+      );
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+      return;
+    }
+    child = started;
+    started.on("error", (error) => {
+      if (started !== child) return;
+      failure = error.message;
+      stop();
+    });
+    started.on("exit", (code) => {
+      if (started !== child) return;
+      failure = `ffmpeg exited (${code ?? "signal"})`;
+      stop();
+    });
+    started.stdout.on("data", (chunk) => {
+      if (started !== child) return;
+      for (const unit of splitter.push(new Uint8Array(chunk))) publish(unit);
+    });
+    started.stderr.on("data", () => {
+    });
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) start();
+      for (const unit of ring) {
+        try {
+          listener(unit);
+        } catch {
+        }
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) stop();
+      };
+    },
+    subscriberCount: () => listeners.size,
+    failure: () => failure,
+    tier: () => tier,
+    setTier(next) {
+      if (next === tier) return;
+      tier = next;
+      if (!child) return;
+      stop();
+      start();
+    },
+    emitted() {
+      return emittedCount;
+    },
+    dispose() {
+      disposed = true;
+      listeners.clear();
+      stop();
+    }
   };
 }
 
@@ -2319,6 +2992,10 @@ function readJpegDimensions(bytes) {
 }
 
 // server/services/browserd/daemon/viewport.ts
+function base64Bytes(data) {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
+}
 var DEFAULT_QUALITY = 75;
 var DEFAULT_MIN_INTERVAL_MS = 100;
 var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
@@ -2335,7 +3012,15 @@ function createTabViewport(cdp, options) {
   let inputHolder;
   let lastData;
   let seq = 0;
+  const counters = {
+    framesIn: 0,
+    framesOut: 0,
+    bytesOut: 0,
+    dropped: { dedupe: 0, oversize: 0, pacer: 0 }
+  };
   const publish = (frame) => {
+    counters.framesOut += 1;
+    counters.bytesOut += base64Bytes(frame.data);
     for (const listener of listeners) {
       try {
         listener(frame);
@@ -2357,10 +3042,17 @@ function createTabViewport(cdp, options) {
       });
     }
     if (!streaming || disposed || !frame.data) return;
-    if (frame.data === lastData) return;
+    counters.framesIn += 1;
+    if (frame.data === lastData) {
+      counters.dropped.dedupe += 1;
+      return;
+    }
     lastData = frame.data;
     const bytes = Math.floor(frame.data.length * 3 / 4);
-    if (bytes > maxBytes) return;
+    if (bytes > maxBytes) {
+      counters.dropped.oversize += 1;
+      return;
+    }
     const measured = measure(frame.data, options.surface);
     throttle.push({
       data: frame.data,
@@ -2406,6 +3098,11 @@ function createTabViewport(cdp, options) {
       };
     },
     subscriberCount: () => listeners.size,
+    boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
+    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    noteTransportDrop() {
+      counters.dropped.pacer += 1;
+    },
     async dispatchInput(events, stillPermitted, holder) {
       const run = inputChain.then(
         () => dispatchBatch(events, stillPermitted, holder)
@@ -2576,6 +3273,14 @@ function parseScrollDelta(value) {
   if (Number.isFinite(pixels)) return [0, pixels];
   return [0, DEFAULT_SCROLL_STEP];
 }
+var TABS_SNAPSHOT_MAX = 16;
+var TAB_URL_MAX = 256;
+var TABS_SNAPSHOT_BYTES = 4096;
+var TAB_ENTRY_OVERHEAD = 24;
+function dropIndex(list, activeTabId) {
+  const last = list.length - 1;
+  return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
+}
 var ChromiumDriver = class {
   context;
   settleOptions;
@@ -2585,6 +3290,15 @@ var ChromiumDriver = class {
   pageTextMaxBytes;
   lease;
   tabs = /* @__PURE__ */ new Map();
+  /**
+   * Which tab is on screen.
+   *
+   * Load-bearing only for the HUMAN pane's video, which grabs the X display and
+   * therefore always shows whatever tab Chromium is displaying. A model
+   * `activate_tab` changes what a watching person sees, and without this the
+   * pane could not say so — the picture would simply become a different page.
+   */
+  activeTabId;
   /**
    * One viewport per tab, created on first watch.
    *
@@ -2719,6 +3433,7 @@ var ChromiumDriver = class {
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
+      this.activeTabId = tabId;
       const frame2 = await this.snapshot(page);
       return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
     }
@@ -2932,7 +3647,13 @@ var ChromiumDriver = class {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+        return this.observation(
+          tabId,
+          entry,
+          { url: frame.url },
+          frame,
+          permit
+        );
       }
       case "dom": {
         const frame = await this.snapshot(entry.page);
@@ -3125,6 +3846,42 @@ var ChromiumDriver = class {
    * is the right one: it is the person's own hands, and the lease is what says
    * the hands are theirs.
    */
+  /**
+   * What is open, and which one is on screen.
+   *
+   * For the human pane, not for the model: the video stream grabs the X
+   * display, so a model `activate_tab` silently changes what a watching person
+   * is looking at. The pane draws its own tab strip from this (kiosk hides
+   * Chromium's) and says so when the active one moves.
+   *
+   * Deliberately cheap and synchronous — it reads the driver's own map rather
+   * than asking Chromium — because it runs on every heartbeat of every open
+   * stream.
+   */
+  tabsSnapshot() {
+    const live = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed());
+    const activeAt = this.activeTabId ? live.findIndex(([id]) => id === this.activeTabId) : -1;
+    const ordered = activeAt >= TABS_SNAPSHOT_MAX ? [...live.slice(0, TABS_SNAPSHOT_MAX - 1), live[activeAt]] : live.slice(0, TABS_SNAPSHOT_MAX);
+    const list = ordered.map(([id, entry]) => ({
+      id,
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
+    }));
+    const costOf = (tab) => tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
+    let estimate = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && estimate > TABS_SNAPSHOT_BYTES) {
+      estimate -= costOf(list[dropIndex(list, this.activeTabId)]);
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    const payload = () => {
+      const active = this.activeTabId && list.some((tab) => tab.id === this.activeTabId) ? this.activeTabId : void 0;
+      return { ...active ? { active } : {}, list };
+    };
+    if (list.length === 1 && estimate > TABS_SNAPSHOT_BYTES) list.length = 0;
+    while (list.length > 0 && Buffer.byteLength(JSON.stringify(payload()), "utf8") > TABS_SNAPSHOT_BYTES) {
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    return payload();
+  }
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
@@ -3305,6 +4062,7 @@ var ChromiumDriver = class {
       }
       const entry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
+      this.activeTabId = tabId;
       return entry;
     })();
     this.pendingTabs.set(tabId, creating);
@@ -3411,6 +4169,10 @@ var ChromiumDriver = class {
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {
     this.tabs.delete(tabId);
+    if (this.activeTabId === tabId) {
+      const remaining = [...this.tabs.keys()];
+      this.activeTabId = remaining[remaining.length - 1];
+    }
     this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
@@ -3430,6 +4192,13 @@ var ChromiumDriver = class {
     });
   }
 };
+function safeUrl(page) {
+  try {
+    return page.url();
+  } catch {
+    return "";
+  }
+}
 
 // server/services/webmcp-inspector/launch-args.ts
 var WEBMCP_LAUNCH_ARGS = [
@@ -3684,7 +4453,17 @@ function wrapPage(page) {
     async screenshotBase64() {
       const buffer = await page.screenshot({
         type: "jpeg",
-        quality: SCREENSHOT_JPEG_QUALITY
+        quality: SCREENSHOT_JPEG_QUALITY,
+        // CSS PIXELS, always — the model's coordinate space (L5). Without
+        // this, Playwright captures at the device scale factor, so raising the
+        // display's sharpness would silently hand the model a 1536×1152 or
+        // 2048×1536 picture while `isPointInViewport` went on refusing
+        // anything past 1023×767. Every click the model computed from that
+        // screenshot would land at a fraction of where it aimed.
+        //
+        // At DPR 1 this produces byte-identical output to the call it
+        // replaces, which is what makes it safe to land before any DPR change.
+        scale: "css"
       });
       return buffer.toString("base64");
     },
@@ -3764,6 +4543,13 @@ var cdpAttachers = /* @__PURE__ */ new WeakMap();
 function registerCdpAttacher(page, attach) {
   cdpAttachers.set(page, attach);
 }
+function contextOptionsFor(options) {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (options.contextMode !== "persistent" || dpr === 1) {
+    return BROWSERD_CONTEXT_OPTIONS;
+  }
+  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+}
 async function launchBrowserdContext(options) {
   const { chromium } = await import("playwright");
   const launchArgs = {
@@ -3782,7 +4568,9 @@ async function launchBrowserdContext(options) {
       context2 = await browser.newContext({
         acceptDownloads: false,
         permissions: [],
-        ...BROWSERD_CONTEXT_OPTIONS
+        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+        // whatever the box says, so eval captures match across hosts.
+        ...contextOptionsFor({ contextMode: "ephemeral" })
       });
     } catch (error) {
       await browser.close().catch(() => {
@@ -3805,7 +4593,10 @@ async function launchBrowserdContext(options) {
     ...launchArgs,
     acceptDownloads: false,
     permissions: [],
-    ...BROWSERD_CONTEXT_OPTIONS
+    ...contextOptionsFor({
+      contextMode: "persistent",
+      ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+    })
   });
   return adaptContext(context);
 }
@@ -3834,11 +4625,15 @@ function adaptContext(context, options = {}) {
 }
 
 // server/services/browserd/daemon/config.ts
+import { createHash as createHash2, randomBytes as randomBytes2 } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
-function readBrowserdConfig(env = process.env) {
-  const token = env.MCPJAM_BROWSERD_TOKEN ?? "";
+function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
+  const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
+  const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
+  const token = supplied.length > 0 ? supplied : tokenFile ? mintToken(tokenFile) : "";
   if (token.length === 0) {
     throw new Error(
       "MCPJAM_BROWSERD_TOKEN is required \u2014 refusing to start an unauthenticated browser daemon on a public host"
@@ -3851,24 +4646,76 @@ function readBrowserdConfig(env = process.env) {
       `MCPJAM_BROWSERD_PORT must be a valid port (1-65535), got ${rawPort}`
     );
   }
+  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
   return {
     token,
     port,
     host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
     userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
-    headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
+    headless,
     windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
     // Only the exact string opts in. An unset or misspelled value keeps the
     // persistent profile — the mode a human's logins depend on — rather than
     // silently wiping state because a typo read as "ephemeral".
-    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent"
+    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
+    // for the video encoder, and a headless Chromium draws on no display at
+    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
+    // screen, and hand every watcher a picture of nothing. The two are
+    // contradictory rather than merely unusual, so the one that decides
+    // whether there is a picture wins.
+    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    deviceScaleFactor: readDeviceScaleFactor(env),
+    ...tokenFile ? { tokenFile } : {},
+    // Only a daemon that had to mint its own token was started by the box.
+    startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
   };
 }
-function extraArgsFor(config) {
-  return config.windowSize ? [`--window-size=${config.windowSize}`] : [];
+function readDeviceScaleFactor(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_DPR);
+  if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
+  return raw;
 }
-function formatReadyLine(host, port, bootId) {
-  return JSON.stringify({ event: "listening", host, port, bootId });
+function defaultMintToken(path) {
+  const token = randomBytes2(32).toString("hex");
+  writeFileSync(path, token, { encoding: "utf8", mode: 384 });
+  chmodSync(path, 384);
+  return token;
+}
+function extraArgsFor(config) {
+  const args = [];
+  if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
+  if (config.kiosk) {
+    args.push("--kiosk", "--start-fullscreen", "--window-position=0,0");
+    if (!config.windowSize) {
+      args.push("--window-size=1024,768");
+    }
+  }
+  if (config.deviceScaleFactor !== 1 && config.contextMode === "persistent") {
+    args.push(`--force-device-scale-factor=${config.deviceScaleFactor}`);
+  }
+  return args;
+}
+function formatReadyLine(host, port, bootId, protocolVersion) {
+  return JSON.stringify({
+    event: "listening",
+    host,
+    port,
+    bootId,
+    ...protocolVersion === void 0 ? {} : { protocolVersion }
+  });
+}
+function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
+  const entry = argv[1];
+  if (!entry) return void 0;
+  try {
+    return hashFile(entry);
+  } catch {
+    return void 0;
+  }
+}
+function defaultHashFile(path) {
+  return createHash2("sha256").update(readFileSync(path)).digest("hex");
 }
 
 // server/services/browserd/daemon/main.ts
@@ -3876,22 +4723,59 @@ function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
 `);
 }
+function displayWidth(config) {
+  return Math.round(BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor);
+}
+function displayHeight(config) {
+  return Math.round(
+    BROWSERD_OBSERVATION_VIEWPORT.height * config.deviceScaleFactor
+  );
+}
+function videoFeatures(config) {
+  if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
+  return config.kiosk ? ["h264"] : [];
+}
 async function main() {
   const config = readBrowserdConfig();
+  const bundleHash = readBundleHash();
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
     extraArgs: extraArgsFor(config),
-    contextMode: config.contextMode
+    contextMode: config.contextMode,
+    deviceScaleFactor: config.deviceScaleFactor
   });
   const lease = new HandoffLease();
   const driver = new ChromiumDriver(context, { lease });
-  const stack = buildBrowserdStack(driver, { token: config.token, lease });
+  const features = videoFeatures(config);
+  const video = features.includes("h264") ? createVideoEncoder({
+    display: process.env.DISPLAY || ":0",
+    width: displayWidth(config),
+    height: displayHeight(config)
+  }) : void 0;
+  const stack = buildBrowserdStack(driver, {
+    token: config.token,
+    lease,
+    // Read ONCE, at boot: the file cannot change under a running process in
+    // any way that would make a later read more truthful, and hashing a
+    // multi-megabyte bundle on every status probe would tax a box the agent is
+    // also using.
+    ...bundleHash ? { bundleHash } : {},
+    contextMode: config.contextMode,
+    startedBy: config.startedBy,
+    features,
+    ...video ? { video } : {},
+    displaySize: {
+      width: displayWidth(config),
+      height: displayHeight(config)
+    }
+  });
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     stack.closeStreams();
+    video?.dispose();
     stack.server.close();
     await driver.close().catch(() => {
     });
@@ -3902,7 +4786,12 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   stack.server.listen(config.port, config.host, () => {
     process.stdout.write(
-      `${formatReadyLine(config.host, config.port, stack.bootId)}
+      `${formatReadyLine(
+        config.host,
+        config.port,
+        stack.bootId,
+        BROWSERD_PROTOCOL_VERSION
+      )}
 `
     );
   });

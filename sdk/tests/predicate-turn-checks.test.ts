@@ -115,7 +115,22 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
     expect(isTurnScopablePredicateKind("noToolErrors")).toBe(true);
     expect(isTurnScopablePredicateKind("tokenBudgetUnder")).toBe(false);
     expect(TURN_SCOPABLE_PREDICATE_KINDS).not.toContain("tokenBudgetUnder");
-    // 12 predicate kinds total, exactly one (tokenBudgetUnder) is case-only.
-    expect(TURN_SCOPABLE_PREDICATE_KINDS).toHaveLength(11);
+    expect(isTurnScopablePredicateKind("onlyToolsCalled")).toBe(true);
+    // 13 predicate kinds total, exactly one (tokenBudgetUnder) is case-only.
+    expect(TURN_SCOPABLE_PREDICATE_KINDS).toHaveLength(12);
   });
+});
+
+it("evaluates onlyToolsCalled separately for each prompt turn", () => {
+  const results = evaluateTurnChecks(
+    ["search", "delete"].map((toolName, promptIndex) => ({
+      promptIndex,
+      checks: [{ type: "onlyToolsCalled" as const, toolNames: ["search"] }],
+      transcript: buildTurnTranscript({
+        toolCalls: [{ toolName, arguments: {} }],
+      }),
+    }))
+  );
+  expect(results.map((r) => r.passed)).toEqual([true, false]);
+  expect(results[1].scope).toMatchObject({ promptIndex: 1 });
 });

@@ -49,7 +49,6 @@ import type {
   EnsureServersReadyResult,
   ServerWithName,
 } from "@/hooks/use-app-state";
-import { useSidebar } from "@/components/ui/sidebar";
 import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
@@ -245,12 +244,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   } = useUIPlaygroundStore();
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
 
-  const { setOpen: setMcpSidebarOpen } = useSidebar();
-
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
-    setMcpSidebarOpen(true);
-  }, [onOnboardingChange, setMcpSidebarOpen]);
+  }, [onOnboardingChange]);
 
   useLayoutEffect(() => {
     // NUX: collapse the tools sidebar for the whole first-run connect + guided
@@ -267,13 +263,17 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     }
   }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
 
+  // Whether the APP sidebar is open is not this surface's call: entering and
+  // leaving Playground is one of the transitions `SidebarAutoCollapse` owns,
+  // and forcing it open here re-expanded the rail a commit after the policy
+  // had collapsed it (this route mounts lazily, after the policy's effect).
+  // Only the playground-local tools sidebar is restored.
   useLayoutEffect(() => {
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
-      setMcpSidebarOpen(true);
     };
-  }, [onOnboardingChange, setMcpSidebarOpen, setSidebarVisible]);
+  }, [onOnboardingChange, setSidebarVisible]);
 
   // Event name `app_builder_tab_viewed` is kept for analytics continuity
   // (the only surface that still mounts this hook is the Playground tab).

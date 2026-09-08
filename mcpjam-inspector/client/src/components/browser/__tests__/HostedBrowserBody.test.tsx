@@ -9,7 +9,13 @@
  * picture nobody is looking at.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
@@ -21,6 +27,7 @@ const api = vi.hoisted(() => ({
   leaseCalls: [] as string[],
   mints: 0,
   invalidations: 0,
+  streamArgs: [] as unknown[],
   sockets: [] as Array<{
     readyState: number;
     sent: string[];
@@ -64,7 +71,8 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       api.inputs.push(args);
       return { ok: true as const };
     },
-    openHostedBrowserFrameStream: () => {
+    openHostedBrowserFrameStream: (streamArgs: unknown) => {
+      api.streamArgs.push(streamArgs);
       const socket = {
         readyState: 1,
         sent: [] as string[],
@@ -79,7 +87,17 @@ vi.mock("@/lib/hosted-browser/client", async () => {
   };
 });
 
+// The desktop view is a Convex-backed component of its own, tested where it
+// lives. What matters here is that picking VNC hands the pane over to it.
+vi.mock("@/components/computer/BrowserPanel", () => ({
+  BrowserPanel: () => <div data-testid="vnc-panel" />,
+}));
+
 import { HostedBrowserBody } from "../HostedBrowserBody";
+import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+} from "@/shared/browserd-frame-stream";
 
 const RUNNING = {
   bootId: "boot-1",
@@ -97,6 +115,7 @@ beforeEach(() => {
   api.mints = 0;
   api.invalidations = 0;
   api.sockets = [];
+  api.streamArgs = [];
 });
 
 // Restored HERE rather than at the end of each test body: an assertion that
@@ -556,5 +575,309 @@ describe("the hosted pane — driving it", () => {
     (image.parentElement as HTMLElement).focus();
     await userEvent.keyboard("k");
     expect(api.inputs).toHaveLength(0);
+  });
+
+  it("puts a keystroke on the socket once the relay says it can", async () => {
+    // The socket is ordered and already open; a POST spends a whole round trip
+    // buying an ordering it already has.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    renderBody();
+    const image = await deliverFrame();
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: ["input"] }),
+      });
+    });
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("k");
+    await waitFor(() =>
+      expect(
+        socket()
+          .sent.map((raw) => JSON.parse(raw))
+          .some((m) => m.type === "input"),
+      ).toBe(true),
+    );
+    const message = socket()
+      .sent.map((raw) => JSON.parse(raw))
+      .find((m) => m.type === "input");
+    expect(message).toMatchObject({
+      type: "input",
+      seq: 1,
+      events: [{ type: "text", text: "k" }],
+    });
+    // And NOT over HTTP: one release of fallback, not two paths at once.
+    expect(api.inputs).toHaveLength(0);
+  });
+
+  it("falls back to POST against a relay that never advertised input", async () => {
+    // A new client against an old server for one release. The relay's `hello`
+    // is the only thing that says the socket can take input; absent it, the
+    // POST route is still there.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    renderBody();
+    const image = await deliverFrame();
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: [], codecs: ["jpeg"] }),
+      });
+    });
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("k");
+    await waitFor(() => expect(api.inputs).toHaveLength(1));
+    expect(
+      socket()
+        .sent.map((raw) => JSON.parse(raw))
+        .some((m) => m.type === "input"),
+    ).toBe(false);
+  });
+
+  it("goes back to POST when the socket drops mid-hold", async () => {
+    // A reconnect must not inherit the previous connection's answer: the new
+    // socket has said nothing yet, and input sent into it would vanish.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    renderBody();
+    const image = await deliverFrame();
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: ["input"] }),
+      });
+    });
+    act(() => {
+      socket().readyState = 3;
+    });
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("k");
+    await waitFor(() => expect(api.inputs).toHaveLength(1));
+  });
+});
+
+/**
+ * V-4b. One socket carries bytes for pixels and text for control. The pane has
+ * to read both without being told which is coming.
+ */
+describe("the hosted pane — the binary wire", () => {
+  it("paints a frame that arrived as bytes", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    act(() => {
+      socket().onmessage?.({
+        data: encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.frame,
+          deviceWidth: 1024,
+          deviceHeight: 768,
+          scale: 1,
+          ts: Date.now(),
+          seq: 11,
+          jpeg: new Uint8Array([1, 2, 3, 4]),
+        }).buffer as ArrayBuffer,
+      } as never);
+    });
+    expect(await screen.findByTestId("rail-browser-frame")).toBeTruthy();
+  });
+
+  it("still reads control messages as text on the same socket", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: ["input"] }),
+      });
+    });
+    // Proved by the input path taking the socket, which only `hello` unlocks.
+    api.lease = { took: true, lease: { state: "held" }, yours: true };
+    act(() => {
+      socket().onmessage?.({
+        data: encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.frame,
+          deviceWidth: 1024,
+          deviceHeight: 768,
+          scale: 1,
+          ts: Date.now(),
+          seq: 1,
+          jpeg: new Uint8Array([1, 2, 3, 4]),
+        }).buffer as ArrayBuffer,
+      } as never);
+    });
+    const image = await screen.findByTestId("rail-browser-frame");
+    expect(image).toBeTruthy();
+  });
+
+  it("asks for the binary wire", async () => {
+    renderBody();
+    // The socket opens after a token mint, so this is not synchronous.
+    await waitFor(() => expect(api.streamArgs.length).toBeGreaterThan(0));
+    expect(api.streamArgs.at(-1)).toMatchObject({ wire: "binary" });
+  });
+});
+
+/**
+ * V-5. The video stream grabs the X display, so a model `activate_tab` changes
+ * the picture out from under a watching person — and kiosk mode, which is what
+ * makes "the display IS the page" true for the encoder, takes Chromium's own
+ * tab strip away. These pin the two things that put it back.
+ */
+describe("the hosted pane — which tab is on screen", () => {
+  /** Push a heartbeat carrying the daemon's tab snapshot. */
+  function beat(tabs: {
+    active?: string;
+    list?: Array<{ id: string; url: string }>;
+  }) {
+    act(() => {
+      socket().onmessage?.({
+        data: encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: { tabs },
+        }).buffer as ArrayBuffer,
+      } as never);
+    });
+  }
+
+  it("draws the strip Chromium's kiosk mode removed", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    beat({
+      active: "b",
+      list: [
+        { id: "a", url: "https://example.com/one" },
+        { id: "b", url: "https://other.test/two" },
+      ],
+    });
+    const strip = await screen.findByTestId("pane-tab-strip");
+    // The HOST, not the path: a strip is a few characters wide, and a path
+    // carries reset tokens and account ids that have no business on screen.
+    expect(strip.textContent).toContain("example.com");
+    expect(strip.textContent).toContain("other.test");
+    expect(strip.textContent).not.toContain("/two");
+  });
+
+  it("stays out of the way when there is only one tab", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    beat({ active: "a", list: [{ id: "a", url: "https://example.com/" }] });
+    expect(screen.queryByTestId("pane-tab-strip")).toBeNull();
+  });
+
+  it("says so when the agent switches the tab under a watcher", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    const tabs = [
+      { id: "a", url: "https://example.com/" },
+      { id: "b", url: "https://other.test/" },
+    ];
+    // The first reading is not a switch: naming the tab somebody just opened
+    // the pane on would be a notification about nothing.
+    beat({ active: "a", list: tabs });
+    expect(screen.queryByTestId("pane-notice")).toBeNull();
+    beat({ active: "b", list: tabs });
+    const notice = (await screen.findByTestId("pane-notice")).textContent ?? "";
+    // The HOST, not the URL. A path carries reset tokens, share links and
+    // account ids, and this notice is the one thing on screen large enough to
+    // read from the next desk.
+    expect(notice).toContain("other.test");
+    expect(notice).not.toContain("https://other.test/");
+  });
+});
+
+/**
+ * V-7. The tier menu. What it changes depends on which tier: a bitrate change
+ * is a message on the open socket, and a change of TRANSPORT is a reconnect —
+ * reconnecting for a bitrate change would drop the picture to buy nothing.
+ */
+describe("the hosted pane — quality tiers", () => {
+  async function openMenu() {
+    const trigger = await screen.findByTestId("pane-settings");
+    fireEvent.pointerDown(
+      trigger,
+      new MouseEvent("pointerdown", { bubbles: true }) as never,
+    );
+    fireEvent.click(trigger);
+  }
+
+  it("sends a bitrate change on the socket it already has", async () => {
+    renderBody();
+    await deliverFrame();
+    const before = api.sockets.length;
+    await openMenu();
+    fireEvent.click(await screen.findByTestId("pane-tier-saver"));
+    await waitFor(() =>
+      expect(
+        socket()
+          .sent.map((raw) => JSON.parse(raw))
+          .some((m) => m.type === "quality" && m.tier === "saver"),
+      ).toBe(true),
+    );
+    // No reconnect: the picture stays up.
+    expect(api.sockets).toHaveLength(before);
+  });
+
+  it("reconnects when the TRANSPORT changes", async () => {
+    // `mjpeg` is the JPEG path forced, which is a different stream — the pane
+    // has to ask for it, not merely stop decoding.
+    renderBody();
+    await deliverFrame();
+    const before = api.sockets.length;
+    await openMenu();
+    fireEvent.click(await screen.findByTestId("pane-tier-mjpeg"));
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
+  });
+
+  it("tells the DAEMON when auto steps the quality down", async () => {
+    // Auto used to move only the pane's own state, so a viewer on a link that
+    // could not carry the stream was labelled "Data saver" while the encoder
+    // went on producing exactly the bitrate that was being dropped.
+    renderBody();
+    await deliverFrame();
+    // Three consecutive readings, because the controller refuses to act on
+    // one: half the frames offered are dropped each second.
+    for (let n = 1; n <= 4; n += 1) {
+      act(() => {
+        socket().onmessage?.({
+          data: JSON.stringify({
+            type: "stats",
+            framesIn: n * 20,
+            dropped: n * 10,
+            bytes: 0,
+            subscribers: 1,
+          }),
+        });
+      });
+    }
+    await waitFor(() =>
+      expect(
+        socket()
+          .sent.map((raw) => JSON.parse(raw))
+          .some((m) => m.type === "quality" && m.tier === "saver"),
+      ).toBe(true),
+    );
+  });
+
+  it("falls back to JPEG when the box says it cannot encode video", async () => {
+    // A generic drop is worth retrying as-is; this one is not — retrying asks
+    // a daemon that has already said it has no encoder for H.264 again,
+    // forever, while the JPEG wire underneath works perfectly.
+    vi.useFakeTimers();
+    renderBody();
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4415 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(api.sockets.length).toBe(2);
+    const last = api.streamArgs[api.streamArgs.length - 1] as {
+      codec?: string;
+    };
+    expect(last.codec).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it("offers the desktop view as the last resort it is", async () => {
+    // The existing noVNC panel: the honest answer to "the new viewer is not
+    // working for me", and only a hosted box has one.
+    renderBody();
+    await deliverFrame();
+    await openMenu();
+    fireEvent.click(await screen.findByTestId("pane-tier-vnc"));
+    expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
   });
 });

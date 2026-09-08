@@ -4,6 +4,7 @@ import {
   iterationLatencyP50,
   iterationLatencyP95,
   percentile,
+  sumIterationCost,
 } from "./helpers";
 import type { CaseRunBatch } from "./runs/group-case-iterations";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -18,6 +19,26 @@ export interface MetricStripPoint {
   latencyP95: number | null;
   /** Average tokens per iteration (test execution) within this run/batch. */
   tokens: number;
+  /**
+   * Total MCPJam-billed cost across this run/batch, or `null` when nothing in
+   * it was priced. Never 0 for an unpriced run — see `formatCostOrDash`.
+   */
+  costUsd: number | null;
+  /**
+   * How many of `total` iterations contributed to `costUsd`. A partial sum
+   * plotted as a whole one is how a half-priced run reads as a cheap one, so
+   * the strip needs the coverage to know when to withhold the point.
+   */
+  costedIterations: number;
+  /**
+   * True when a customer's own runner supplied part of `costUsd`.
+   *
+   * Carried alongside the amount because the headline cannot say it: the
+   * number is real either way, but "MCPJam measured this" and "your runner
+   * told us this" are different claims, and the per-iteration rows already
+   * mark the difference.
+   */
+  hasRunnerReportedCost: boolean;
   /** Total tool calls across all iterations in this run/batch. */
   toolCalls: number;
 }
@@ -53,7 +74,9 @@ function passRateFromCellResult(
   return 0;
 }
 
-function metricPointFromCellTrend(point: CellMetricTrendInput): MetricStripPoint {
+function metricPointFromCellTrend(
+  point: CellMetricTrendInput,
+): MetricStripPoint {
   const hasCounts = point.total != null && point.total > 0;
   const passed = hasCounts
     ? (point.passed ?? 0)
@@ -77,12 +100,19 @@ function metricPointFromCellTrend(point: CellMetricTrendInput): MetricStripPoint
     latencyP95: point.latencyP95Ms ?? point.latencyMs,
     tokens: point.tokens ?? 0,
     toolCalls: point.toolCalls ?? 0,
+    // This projection is built from a pre-aggregated CELL, which carries no
+    // per-iteration usage — so cost is genuinely unknown here rather than
+    // zero, and the strip withholds the point.
+    costUsd: null,
+    costedIterations: 0,
+    hasRunnerReportedCost: false,
   };
 }
 
-function latencyPercentilesAcrossRuns(
-  trendSeries: CellMetricTrendInput[],
-): { latencyP50: number | null; latencyP95: number | null } {
+function latencyPercentilesAcrossRuns(trendSeries: CellMetricTrendInput[]): {
+  latencyP50: number | null;
+  latencyP95: number | null;
+} {
   const p50Samples = trendSeries
     .map((point) => point.latencyMs)
     .filter((value): value is number => value != null);
@@ -206,10 +236,21 @@ function pointFromIterations(
     latencyP95: iterationLatencyP95(iterations),
     tokens: averageTokensPerIteration(iterations),
     toolCalls: runToolCallTotal(iterations),
+    ...(() => {
+      const { totalUsd, costedIterations, hasRunnerReported } =
+        sumIterationCost(iterations);
+      return {
+        costUsd: totalUsd,
+        costedIterations,
+        hasRunnerReportedCost: hasRunnerReported,
+      };
+    })(),
   };
 }
 
-function finalizeMetricStripData(series: MetricStripPoint[]): MetricStripData | null {
+function finalizeMetricStripData(
+  series: MetricStripPoint[],
+): MetricStripData | null {
   if (series.length === 0) return null;
 
   const latest = series[series.length - 1];

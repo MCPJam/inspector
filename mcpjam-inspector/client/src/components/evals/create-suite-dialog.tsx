@@ -23,7 +23,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { toast } from "@/lib/toast";
 import {
@@ -36,7 +36,7 @@ export type CreateSuitePayload = {
   name: string;
   /**
    * Hosts the suite runs against. Each attachment fans out into its own
-   * run on "Run all hosts" — the host's snapshotted config is the source
+   * run on "Run all clients" — the client's snapshotted config is the source
    * of truth for model, system prompt, temperature, and servers. There is
    * no longer a suite-level flat server list or model override.
    */
@@ -88,13 +88,19 @@ export function CreateSuiteDialog({
     emptyComposerState,
   );
 
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
   /**
    * Born in environment mode. A suite created legacy can be converted from the
-   * header later, but starting there means the axes the dialog offers are the
-   * ones its runs will actually read.
+   * header later, but starting there means the axes the dialog offers are the ones
+   * its runs will actually read.
+   *
+   * Keyed on the CAPABILITY, not the named-environments flag: composing cells
+   * is ungated launch-path substrate (see `useEvalComposeCapable`). While the
+   * probe is in flight the composer renders disabled rather than the legacy
+   * form, so the form does not change shape after mount.
    */
-  const composeMode = Boolean(projectId) && environmentsEnabled;
+  const { capable: composeCapable, pending: composePending } =
+    useEvalComposeCapable(projectId);
+  const composeMode = composeCapable || composePending;
   // Only used when `composeMode`; `projectId` is non-null in that case.
   const resolveTargets = useComposerResolver(projectId ?? "");
   const composerEnvironments = useProjectEnvironments(
@@ -357,7 +363,7 @@ export function CreateSuiteDialog({
                     Servers
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Server group all hosts run against.
+                    Server group all clients run against.
                   </p>
                 </div>
                 <div className="shrink-0">

@@ -217,6 +217,97 @@ describe("useEvalHandlers", () => {
       );
     });
 
+    it("narrows a run to one case, and says so in the body", async () => {
+      // "Run test" on the case page. It must be a SUITE run — the judge is
+      // keyed by `suiteRunId` at every surface, so a quick run can never
+      // answer "did it accomplish the goal?" — narrowed to the one case so the
+      // suite's total cap does not reject it.
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      const mockSuite = {
+        _id: "suite-run-one",
+        name: "Suite",
+        environment: { servers: ["server-1"] },
+      };
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any, {
+          caseIds: ["test-case-1"],
+        });
+      });
+      const body = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(body.caseIds).toEqual(["test-case-1"]);
+      expect(body.suiteRerun).toBe(true);
+      // The payload must agree with what the server will execute; sending the
+      // whole suite alongside a narrowing `caseIds` makes the run's own record
+      // disagree with its results.
+      expect(body.tests).toHaveLength(1);
+    });
+
+    it("stays on the page for a case-scoped launch", async () => {
+      // The page that launched the run is what asks the judge to grade it when
+      // it finishes. Navigating to run detail unmounts that, so Run test would
+      // never deliver the judged result it promises.
+      mockAuthFetch.mockResolvedValue(createFetchResponse({ runId: "run-1" }));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        const ids = await result.current.handleRerun(
+          {
+            _id: "suite-stay",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          { caseIds: ["test-case-1"] },
+        );
+        expect(ids).toEqual(["run-1"]);
+      });
+      expect(mockNavigateApp).not.toHaveBeenCalled();
+    });
+
+    it("still navigates for an ordinary full rerun", async () => {
+      // The control for the test above: navigation is conditional on the API
+      // returning a run id, so without one the assertion would pass for the
+      // wrong reason.
+      mockAuthFetch.mockResolvedValue(createFetchResponse({ runId: "run-1" }));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-nav",
+          name: "Suite",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+      expect(mockNavigateApp).toHaveBeenCalled();
+    });
+
+    it("refuses a case id that is not in the suite, before launching", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-x",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          { caseIds: ["not-in-this-suite"] },
+        );
+      });
+      // Launching with an empty narrowed list would run the WHOLE suite on the
+      // server, which is the opposite of what the caller asked for.
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+    });
+
+    it("sends no caseIds for an ordinary full rerun", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-all",
+          name: "Suite",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+      const body = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(body.caseIds).toBeUndefined();
+    });
+
     it("passes correct request body to authFetch", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
@@ -640,6 +731,45 @@ describe("useEvalHandlers", () => {
       expect(mockNavigateApp).toHaveBeenCalledWith(
         "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
       );
+    });
+
+    it.each([{ servers: [] }, { servers: ["server-1"] }])("refuses whole-suite replay for a scoped launch with unavailable servers $servers", async ({ servers }) => {
+      const { result } = renderHook(() => useEvalHandlers({
+        ...defaultProps,
+        connectedServerNames: new Set(),
+        ensureServersReady: vi.fn().mockResolvedValue({
+          readyServerNames: [], missingServerNames: [], failedServerNames: ["server-1"], reauthServerNames: [],
+        }),
+        latestRunBySuiteId: new Map([["suite-123", { _id: "old-run", hasServerReplayConfig: true } as any]]),
+      }));
+      await act(async () => {
+        const ids = await result.current.handleRerun({
+          _id: "suite-123", name: "Suite", environment: { servers },
+        } as any, { caseIds: ["test-case-1"], iterationOverride: 1 });
+        expect(ids).toBeUndefined();
+      });
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("returns only accepted run ids after a partial case fanout", async () => {
+      mockAuthFetch.mockImplementation(async (_path, init) => {
+        const body = JSON.parse(init.body);
+        return body.namedHostId === "host-a"
+          ? createFetchResponse({ runId: "new-a" })
+          : createFetchResponse({ message: "Unavailable" }, 500);
+      });
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        const ids = await result.current.handleRerun({
+          _id: "suite-partial", name: "Suite", environment: { servers: ["server-1"] },
+          hostAttachments: ["host-a", "host-b"].map(namedHostId => ({
+            namedHostId, hostName: namedHostId, enabledOptionalServerIds: [], resolvedServerNames: ["server-1"],
+          })),
+        } as any, { caseIds: ["test-case-1"] });
+        expect(ids).toEqual(["new-a"]);
+      });
+      expect(mockNavigateApp).not.toHaveBeenCalled();
     });
 
     it("uses the normal rerun path when live servers are connected", async () => {
