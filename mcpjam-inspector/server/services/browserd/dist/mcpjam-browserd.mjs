@@ -3479,6 +3479,7 @@ var ChromiumDriver = class {
       const message = error instanceof Error ? error.message : String(error);
       const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
       const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,

@@ -459,6 +459,17 @@ export class ChromiumDriver implements BrowserDriver {
       // nothing" plus the list of what the page DOES offer is one turn; the
       // bare refusal is two.
       const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      // A HANDOFF DURING THAT READ WINS, exactly as it does on the success
+      // path above. Keeping the act's own error instead would drop the
+      // `leaseBlocked` flag, and that flag is not decoration: the handler maps
+      // it to 423 and the tool layer forgets its cached tokens off it, so a
+      // person taking the browser here would be reported to the model as "your
+      // selector matched nothing" and the turn would go on pinning acts to a
+      // page they have since navigated. The flag cannot simply be merged onto
+      // the act error either — the handler reads the refusal CODE out of that
+      // string, and `target_not_found` under a 423 reads to the client codec
+      // as an unknown refusal.
+      if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,

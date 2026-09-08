@@ -1784,6 +1784,48 @@ describe("ChromiumDriver — a handoff that happens MID-command (W4/L6)", () => 
     expect(result.stateToken).toBeUndefined();
   });
 
+  it("reports a handoff during a FAILED act's read as the handoff, not as the failure", async () => {
+    // Both are true — the selector missed AND a person took the browser — but
+    // only one of them is what the caller must act on. The `leaseBlocked` flag
+    // is what maps to 423 and what makes the turn drop its cached tokens; lose
+    // it and the model is told to re-aim at a page somebody else is now using.
+    const lease = new HandoffLease();
+    let armed = false;
+    const page = fakePage({
+      url: "https://example.com/",
+      actError: new Error("Timeout 15000ms exceeded waiting for locator"),
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "Private", id: 88 }],
+        }),
+      },
+      // The person takes the browser during the post-failure read, not before
+      // it — the pre-act snapshot must still let the act through.
+      onA11y: () => {
+        if (armed) lease.acquire("rail-1", 60_000);
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+    armed = true;
+
+    const result = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { selector: "#gone" },
+        observe: "a11y",
+      }),
+    );
+
+    expect(result.leaseBlocked).toBe(true);
+    expect(result.error).toMatch(/^lease_held:/);
+    expect(result.output).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("Private");
+  });
+
   it("does not dispatch the verb when the handoff lands during the PRE-ACT read", async () => {
     // The post-act observation is the easy half: `afterAct` can decline to
     // LOOK at the page. The act itself cannot be taken back — a password typed
