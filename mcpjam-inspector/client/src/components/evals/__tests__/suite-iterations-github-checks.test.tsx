@@ -1,20 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  showSettingsGroup,
   withDataRouter,
 } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 
-/**
- * The GitHub Checks availability read is allowed to THROW.
- *
- * It is a backend-decided gate, and the backend refuses (rather than answers)
- * for a caller who is not a signed-in member of the org — `useQuery` re-throws
- * that during render. These tests pin the consequence: the suite settings sheet
- * loses the GitHub Checks section and nothing else.
- */
+/** Simplified suite settings omit organization-wide GitHub Checks controls. */
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
@@ -167,74 +159,19 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the settings sheet up when the availability read throws", () => {
-    mocks.availability.mockImplementation(() => {
-      throw new Error(
-        "[CONVEX Q(github/checkRepoConfigs:getGithubChecksSettingsAvailability)] Server Error"
-      );
-    });
-
-    const { container } = renderSettingsSheet();
-    // GitHub Checks lives on the Triggers tab, and only the active tab mounts.
-    showSettingsGroup(container, "Triggers");
-
-    // The sheet survived: this tab's body rendered rather than blanking. (Its
-    // sibling Schedule row is permission-gated, so it is not a reliable
-    // survivor signal.)
-    expect(container.querySelector('[data-step-id="triggers"]')).toBeTruthy();
-    // The section whose gate refused is now a DISABLED ROW that says so,
-    // rather than nothing at all. A row that vanishes makes a refused gate,
-    // a missing permission and a backend that could not answer look identical
-    // — and none of them is a thing the reader can act on from an empty space.
-    expect(screen.queryByTestId("github-checks-section")).toBeNull();
-    const row = container.querySelector('[data-setting-key="githubChecks"]');
-    expect(row).toBeTruthy();
-    expect(row?.getAttribute("data-disabled-reason")).toBe(
-      "GitHub Checks could not be loaded for this organization"
-    );
-  });
-
-  it("still reports the swallowed error to the error sinks", () => {
-    mocks.availability.mockImplementation(() => {
-      throw new Error("Not a member of this organization");
-    });
-
-    const { container } = renderSettingsSheet();
-    // The boundary can only trip once the section MOUNTS, which is on Triggers.
-    showSettingsGroup(container, "Triggers");
-
-    // The fallback ROW is a UI choice, never a telemetry one: a boundary that
-    // renders something helpful still has to report what it caught.
-    expect(mocks.reportBoundaryError).toHaveBeenCalled();
-    expect(mocks.reportBoundaryError.mock.calls[0]?.[2]).toBe(
-      "suite_github_checks"
-    );
-  });
-
-  it("hides the section when the backend answers `disabled`", () => {
-    mocks.availability.mockReturnValue({ state: "disabled" });
-
-    const { container } = renderSettingsSheet();
-    // On the tab the row WOULD live on — otherwise this passes for the wrong
-    // reason, since no tab but Triggers renders it whatever the gate answers.
-    showSettingsGroup(container, "Triggers");
-
-    // `disabled` is the backend ANSWERING, not failing — the boundary never
-    // trips, so the row stays hidden exactly as before.
-    expect(container.querySelector('[data-step-id="triggers"]')).toBeTruthy();
-    expect(screen.queryByTestId("github-checks-section")).toBeNull();
-    expect(
-      container.querySelector('[data-setting-key="githubChecks"]')
-    ).toBeNull();
-    expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
-  });
-
-  it("renders the section when the backend answers `enabled`", () => {
-    mocks.availability.mockReturnValue({ state: "enabled" });
-
-    const { container } = renderSettingsSheet();
-    showSettingsGroup(container, "Triggers");
-
-    expect(screen.getByTestId("github-checks-section")).toBeTruthy();
-  });
+  it.each(["enabled", "disabled", "throws"])(
+    "keeps organization GitHub controls off the simplified page (%s)",
+    (availability) => {
+      mocks.availability.mockImplementation(() => {
+        if (availability === "throws") throw new Error("Not a member");
+        return { state: availability };
+      });
+      const { container } = renderSettingsSheet();
+      expect(screen.queryByRole("button", { name: "Triggers" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("github-checks-section")).not.toBeInTheDocument();
+      expect(container.querySelector('[data-setting-key="githubChecks"]')).toBeNull();
+      expect(mocks.availability).not.toHaveBeenCalled();
+      expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
+    },
+  );
 });

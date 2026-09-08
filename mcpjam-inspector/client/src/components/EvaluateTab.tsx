@@ -1,3 +1,8 @@
+import { evalChatSuiteContext } from "@/lib/mcpjam-agent/eval-chat-context";
+import { syncEvalChatContext } from "@/lib/mcpjam-agent/eval-scope";
+import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
+import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
+import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 /**
  * Evaluate (New) — the redesigned Evaluate tab, behind `evaluate-enabled`.
  *
@@ -33,6 +38,9 @@ import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
+import { PreparedEvalServerPage } from "./evaluate/prepared-eval-server-page";
+import { savePreparedEvalSuites } from "./evaluate/launch-prepared-evals";
+import { previewCaseTitleFromDraft } from "./evaluate/eval-server-case-edit-page";
 import {
   runExcalidrawQuickstart,
   EXCALIDRAW_QUICKSTART_SUITE_NAME,
@@ -51,6 +59,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -59,10 +68,7 @@ import {
   getEffectiveSuiteServers,
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
-import {
-  EvalsHeader,
-  type EvalLandingView,
-} from "./evaluate/evals-header";
+import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -72,8 +78,10 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SuitesOverview } from "./evaluate/suites-overview";
+import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
 import { isDraftTestCaseId } from "./evals/draft-test-case";
@@ -112,7 +120,7 @@ interface EvaluateTabProps {
   projectId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   handleConnect?: (config: ServerFormData) => void;
 }
@@ -183,6 +191,7 @@ function EvaluateTabContent({
   // is off by default, so a flag-off render issues zero summary requests even
   // though those components are shared with `/evals`.
   const decisionSummaryEnabled = useEvaluateEnabled();
+  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -204,7 +213,7 @@ function EvaluateTabContent({
   });
   const evalRunsDisabledReason = useMemo(
     () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
-    [evalIterationQuota]
+    [evalIterationQuota],
   );
   const { servers: projectServers = [], isLoading: isProjectServersLoading } =
     useProjectServers({
@@ -214,31 +223,36 @@ function EvaluateTabContent({
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
   const createServerAttachmentMutation = useMutation(
-    "serverAttachments:createServerAttachment" as any
+    "serverAttachments:createServerAttachment" as any,
   ) as unknown as (args: {
     projectId: string;
     name: string;
     serverIds: string[];
   }) => Promise<{ _id: string }>;
   const setSuiteEnvironments = useMutation(
-    "testSuites:setSuiteEnvironments" as any
+    "testSuites:setSuiteEnvironments" as any,
   ) as unknown as (args: {
     suiteId: string;
     environmentIds: string[] | null;
   }) => Promise<unknown>;
 
-  const selectedSuiteId =
-    route.type === "suite-overview" ||
-    route.type === "run-detail" ||
-    route.type === "test-detail" ||
-    route.type === "test-edit" ||
-    route.type === "suite-edit"
-      ? route.suiteId
-      : null;
-  const selectedTestId =
-    route.type === "test-detail" || route.type === "test-edit"
-      ? route.testId
-      : null;
+  // Prepared cases belong to the server review draft, not persisted test suites.
+  const isPreparedCaseEdit =
+    route.type === "test-edit" && Boolean(route.fromEvalServer);
+  const selectedSuiteId = isPreparedCaseEdit
+    ? null
+    : route.type === "suite-overview" ||
+      route.type === "run-detail" ||
+      route.type === "test-detail" ||
+      route.type === "test-edit" ||
+      route.type === "suite-edit"
+    ? route.suiteId
+    : null;
+  const selectedTestId = isPreparedCaseEdit
+    ? null
+    : route.type === "test-detail" || route.type === "test-edit"
+    ? route.testId
+    : null;
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
@@ -265,9 +279,12 @@ function EvaluateTabContent({
   const latestRunBySuiteId = useMemo(
     () =>
       new Map(
-        visibleSuites.map((entry) => [entry.suite._id, entry.latestRun ?? null])
+        visibleSuites.map((entry) => [
+          entry.suite._id,
+          entry.latestRun ?? null,
+        ]),
       ),
-    [visibleSuites]
+    [visibleSuites],
   );
 
   const handlers = useEvalHandlers({
@@ -318,14 +335,25 @@ function EvaluateTabContent({
     return false;
   }, [evalIterationQuota, evalRunsDisabledReason, organizationId]);
 
+  const [judgeRunIds, setJudgeRunIds] = useState<string[]>([]);
   const handleRerunWithQuota = useCallback(
-    (...args: Parameters<typeof handlers.handleRerun>) => {
+    async (...args: Parameters<typeof handlers.handleRerun>) => {
       if (!guardEvalIterationQuota()) {
         return;
       }
-      return handlers.handleRerun(...args);
+      const launch = await handlers.handleRerun(...args);
+      if (
+        args[1]?.caseIds?.length &&
+        !args[1]?.skipJudge &&
+        launch?.runIds.length
+      ) {
+        setJudgeRunIds((current) => [
+          ...new Set([...current, ...launch.runIds]),
+        ]);
+      }
+      return launch;
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const handleRunTestCaseWithQuota = useCallback(
@@ -335,7 +363,7 @@ function EvaluateTabContent({
       }
       return handlers.handleRunTestCase(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const queries = useEvalQueries({
@@ -358,16 +386,21 @@ function EvaluateTabContent({
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      activeIterations
+      activeIterations,
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
-    []
+    [],
   );
 
   useEffect(() => {
-    if (route.type === "list" || route.type === "create") {
+    if (
+      route.type === "list" ||
+      route.type === "create" ||
+      route.type === "eval-server" ||
+      (route.type === "test-edit" && route.fromEvalServer)
+    ) {
       return;
     }
     if (!selectedSuiteId) {
@@ -381,7 +414,7 @@ function EvaluateTabContent({
     }
   }, [
     overviewQueries.isOverviewLoading,
-    route.type,
+    route,
     selectedSuiteEntry,
     selectedSuiteId,
   ]);
@@ -427,7 +460,7 @@ function EvaluateTabContent({
       projectServers
         .filter((server) => server.name.trim().length > 0)
         .map((server) => ({ id: server._id, name: server.name })),
-    [projectServers]
+    [projectServers],
   );
 
   const handleOpenCreateSuite = useCallback(() => {
@@ -436,23 +469,24 @@ function EvaluateTabContent({
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
 
-  const handleOpenCreateSuiteFromServer = useCallback(
+  const handleEvalServer = useCallback(
     (server: { id: string; name: string }) => {
-      setCreateSuitePrefillName(server.name);
-      setCreateSuitePrefillServerId(server.id);
-      navigatePlaygroundEvalsRoute({ type: "create" });
+      navigatePlaygroundEvalsRoute({
+        type: "eval-server",
+        serverId: server.id,
+      });
     },
-    []
+    [],
   );
 
   const [isQuickstartRunning, setIsQuickstartRunning] = useState(false);
-  const [landingView, setLandingView] = useState<EvalLandingView>("suites");
+  const [landingView, setLandingView] = useState<EvalLandingView>("runs");
 
   const existingQuickstartSuiteId = useMemo(() => {
     const match = visibleSuites.find(
       (entry) =>
         isQuickstartSuite(entry.suite) ||
-        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME
+        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
     );
     return match?.suite._id ?? null;
   }, [visibleSuites]);
@@ -542,8 +576,8 @@ function EvaluateTabContent({
             toast.error(
               getBillingErrorMessage(
                 error,
-                "Suite created, but attaching its environments failed"
-              )
+                "Suite created, but attaching its environments failed",
+              ),
             );
           }
         }
@@ -558,9 +592,13 @@ function EvaluateTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments]
+    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
   );
 
+  const [runReviewSuiteId, setRunReviewSuiteId] = useState<string | null>(null);
+  useEffect(() => {
+    if (route.type === "run-detail") setRunReviewSuiteId(null);
+  }, [route.type]);
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
   }, []);
@@ -569,7 +607,7 @@ function EvaluateTabContent({
     ({ suiteId, runId }: { suiteId: string; runId: string }) => {
       navigatePlaygroundEvalsRoute({ type: "run-detail", suiteId, runId });
     },
-    []
+    [],
   );
 
   const handleNavigateToEvalList = useCallback(() => {
@@ -580,9 +618,17 @@ function EvaluateTabContent({
   // agent's generateEvalTests command (any resolved suite): one
   // argument-building path into the SAME handleGenerateTests callback.
   const generateTestsForSuite = useCallback(
-    async (suite: EvalSuite) => {
+    async (
+      suite: EvalSuite,
+      refinement?: string,
+      stageCase?: (input: CreateEvalTestCaseInput) => Promise<unknown>,
+    ) => {
       const suiteServers = getEffectiveSuiteServers(suite);
-      if (suiteServers.length === 0) return;
+      if (suiteServers.length === 0) {
+        if (stageCase)
+          throw new Error("Attach servers before generating cases.");
+        return;
+      }
       // Scope generation by the suite's saved server attachment when present.
       // Backend uses this to (a) require per-server cases AND at least one
       // cross-server case when the attachment spans ≥2 servers, and (b) put
@@ -604,20 +650,93 @@ function EvaluateTabContent({
       const generateConfig = loadGenerateConfig(suite._id);
       const generationOptions =
         totalCases(generateConfig) >= 1
-          ? toGenerationOptions(generateConfig)
+          ? {
+              ...toGenerationOptions(generateConfig),
+              ...(refinement?.trim() ? { refinement: refinement.trim() } : {}),
+            }
+          : refinement?.trim()
+          ? { refinement: refinement.trim() }
           : undefined;
       await handlers.handleGenerateTests(suite._id, suiteServers, {
+        ...(stageCase ? { stageCase } : {}),
         ...(serverAttachment ? { serverAttachment } : {}),
         ...(generationOptions ? { generationOptions } : {}),
       });
     },
-    [handlers]
+    [handlers],
   );
 
-  const handleGenerateMore = useCallback(async () => {
-    if (!selectedSuite) return;
-    await generateTestsForSuite(selectedSuite);
-  }, [generateTestsForSuite, selectedSuite]);
+  useEffect(() => {
+    if (
+      !projectId ||
+      !selectedSuite ||
+      isLoading ||
+      (!isAuthenticated && !isDirectGuest)
+    )
+      return;
+    return registerEvalSuite(
+      { projectId, suiteId: selectedSuite._id, suiteName: selectedSuite.name },
+      {
+        read: () =>
+          evalChatSuiteContext(
+            selectedSuite,
+            suiteDetails?.testCases ?? [],
+            runsForSelectedSuite,
+            suiteDetails?.iterations ?? [],
+          ),
+        run: async () => {
+          if (evalRunsDisabledReason) throw new Error(evalRunsDisabledReason);
+          if (
+            runsForSelectedSuite.some(
+              (run) => run.status === "running" || run.status === "pending",
+            )
+          )
+            throw new Error("A run is already in progress for this suite.");
+          const result = await handleRerunWithQuota(selectedSuite, {
+            stayOnPage: true,
+          });
+          if (!result)
+            throw new Error(
+              "Run was not started. Check the suite configuration and usage allowance.",
+            );
+          return result;
+        },
+        generate: (instructions, stage) =>
+          generateTestsForSuite(selectedSuite, instructions, stage),
+        save: (input) => mutations.createTestCaseMutation(input as any),
+      },
+    );
+  }, [
+    projectId,
+    selectedSuite,
+    suiteDetails,
+    generateTestsForSuite,
+    mutations.createTestCaseMutation,
+    isLoading,
+    isAuthenticated,
+    isDirectGuest,
+    runsForSelectedSuite,
+    evalRunsDisabledReason,
+    handleRerunWithQuota,
+  ]);
+
+  useEffect(() => {
+    if (projectId && selectedSuite && route.type !== "test-edit") {
+      syncEvalChatContext({
+        projectId,
+        suiteId: selectedSuite._id,
+        suiteName: selectedSuite.name,
+      });
+    }
+  }, [projectId, selectedSuite?._id, route.type]);
+
+  const handleGenerateMore = useCallback(
+    async (refinement?: string) => {
+      if (!selectedSuite) return;
+      await generateTestsForSuite(selectedSuite, refinement);
+    },
+    [generateTestsForSuite, selectedSuite],
+  );
 
   const generateState = useMemo(() => {
     const suiteServers = selectedSuite
@@ -632,7 +751,7 @@ function EvaluateTabContent({
     }
 
     const missingServers = suiteServers.filter(
-      (serverName) => !connectedServerNames.has(serverName)
+      (serverName) => !connectedServerNames.has(serverName),
     );
     if (missingServers.length > 0) {
       if (ensureServersReady) {
@@ -645,7 +764,7 @@ function EvaluateTabContent({
       return {
         canGenerate: false,
         disabledReason: `Connect ${missingServers.join(
-          ", "
+          ", ",
         )} to generate cases for this suite.`,
       };
     }
@@ -687,7 +806,7 @@ function EvaluateTabContent({
     if (!agentOperable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "Testing is locked here — sign in and select a project before using the eval tools.",
+        "Testing is locked here. Sign in and select a project before using the eval tools.",
       );
     }
   };
@@ -732,7 +851,9 @@ function EvaluateTabContent({
       if (intent === "write" && isCiOwnedSuite(entry.suite)) {
         throw createInspectorCommandClientError(
           "invalid_request",
-          `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+          `Suite "${suiteDisplayName(
+            entry.suite,
+          )}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
         );
       }
       return entry;
@@ -745,7 +866,7 @@ function EvaluateTabContent({
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} suites match "${wanted}" — pass the suite id instead (ids are in ui_snapshot_app).`,
+      `${matches.length} suites match "${wanted}". Pass the suite id instead (ids are in ui_snapshot_app).`,
     );
   };
 
@@ -777,7 +898,7 @@ function EvaluateTabContent({
     // The runs list displays formatRunId's shortened form; accept it when
     // it identifies exactly one visible run.
     const short = [...runsById.values()].filter(
-      (run) => formatRunId(run._id) === wanted
+      (run) => formatRunId(run._id) === wanted,
     );
     if (short.length === 1) {
       return short[0];
@@ -786,7 +907,7 @@ function EvaluateTabContent({
       "invalid_request",
       short.length === 0
         ? `No eval run matches "${wanted}" on this screen. Use a run id from the suite's runs (see ui_snapshot_app).`
-        : `${short.length} runs share the shortened id "${wanted}" — pass the full run id.`,
+        : `${short.length} runs share the shortened id "${wanted}". Pass the full run id.`,
     );
   };
 
@@ -813,7 +934,7 @@ function EvaluateTabContent({
         return {
           status: "form_opened",
           ...(name.length > 0 ? { prefilledName: name } : {}),
-          note: "The user reviews, picks attachments, and submits — no suite is created yet.",
+          note: "The user reviews, picks attachments, and submits. No suite is created yet.",
         };
       },
       runEvalSuite: async (command) => {
@@ -830,13 +951,13 @@ function EvaluateTabContent({
               : "";
           throw createInspectorCommandClientError(
             "execution_failed",
-            `Cannot start a run: ${evalRunsDisabledReason}${usage} The eval iteration quota is spent — do not retry until it resets.`,
+            `Cannot start a run: ${evalRunsDisabledReason}${usage} The eval iteration quota is spent. Do not retry until it resets.`,
           );
         }
         if (latestHandlersRef.current.rerunningSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            "Another suite run is already starting — wait for it to launch.",
+            "Another suite run is already starting. Wait for it to launch.",
           );
         }
         // The SAME quota-gated wrapper the Run button uses. Launch failures
@@ -876,7 +997,9 @@ function EvaluateTabContent({
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Suite "${suiteDisplayName(entry.suite)}" has no servers attached — attach a client in the suite header before generating cases.`,
+            `Suite "${suiteDisplayName(
+              entry.suite,
+            )}" has no servers attached. Attach a client in the suite header before generating cases.`,
           );
         }
         const generateSuiteId = entry.suite._id;
@@ -886,7 +1009,7 @@ function EvaluateTabContent({
         ) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            "Test generation is already running — wait for it to finish.",
+            "Test generation is already running. Wait for it to finish.",
           );
         }
         // Fire-and-forget through the button's exact path: generation can
@@ -929,7 +1052,9 @@ function EvaluateTabContent({
         if (!deleted) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            `Deleting suite "${suiteDisplayName(entry.suite)}" failed — it is still present. Check for a backend or authorization error.`,
+            `Deleting suite "${suiteDisplayName(
+              entry.suite,
+            )}" failed. It is still present. Check for a backend or authorization error.`,
           );
         }
         return {
@@ -1008,16 +1133,16 @@ function EvaluateTabContent({
         testCaseIds.map(async (id) => {
           await directDeleteTestCase(id);
           return id;
-        })
+        }),
       );
       const deletedIds = new Set(
         settledDeletes.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : []
-        )
+          result.status === "fulfilled" ? [result.value] : [],
+        ),
       );
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected"
+          result.status === "rejected",
       );
 
       if (failedDeletes.length > 0) {
@@ -1025,7 +1150,7 @@ function EvaluateTabContent({
         toast.error(
           `Failed to delete ${failedDeletes.length} test case${
             failedDeletes.length === 1 ? "" : "s"
-          }.`
+          }.`,
         );
       }
 
@@ -1036,11 +1161,11 @@ function EvaluateTabContent({
             suiteId: selectedSuiteId,
             view: "test-cases",
           },
-          { replace: true }
+          { replace: true },
         );
       }
     },
-    [directDeleteTestCase, selectedSuiteId, selectedTestId]
+    [directDeleteTestCase, selectedSuiteId, selectedTestId],
   );
 
   const hasDetailRoute =
@@ -1063,20 +1188,100 @@ function EvaluateTabContent({
     route.type === "test-edit" || route.type === "test-detail"
       ? isDraftTestCaseId(selectedTestId)
         ? "New case"
-        : suiteDetails?.testCases.find((testCase) => testCase._id === selectedTestId)
-            ?.title || "Test case"
+        : suiteDetails?.testCases.find(
+            (testCase) => testCase._id === selectedTestId,
+          )?.title || "Test case"
       : route.type === "suite-edit"
-        ? "Settings"
-        : route.type === "run-detail"
-          ? "Run"
-          : null;
+      ? "Settings"
+      : route.type === "run-detail"
+      ? "Run"
+      : null;
 
   const renderPlaygroundBreadcrumb = () => {
     if (!hasDetailRoute) return null;
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
 
+  const evalServer =
+    route.type === "eval-server"
+      ? emptyHeroServers.find((server) => server.id === route.serverId) ?? {
+          id: route.serverId,
+          name: "Connected server",
+        }
+      : null;
+  const fromEvalServerId =
+    route.type === "test-edit" ? route.fromEvalServer : undefined;
+  const evalServerReturn = fromEvalServerId
+    ? emptyHeroServers.find((server) => server.id === fromEvalServerId) ?? {
+        id: fromEvalServerId,
+        name: "Connected server",
+      }
+    : null;
+
+  const handleBackToEvalServer = useCallback((serverId: string) => {
+    navigatePlaygroundEvalsRoute({ type: "eval-server", serverId });
+  }, []);
+
   const renderSuitesBrowsePanel = () => {
+    const preparedServer = evalServer ?? evalServerReturn;
+    if (preparedServer && projectId) {
+      return (
+        <PreparedEvalServerPage
+          key={`${projectId}:${preparedServer.id}:${route.type}`}
+          projectId={projectId}
+          server={preparedServer}
+          onExit={() => navigatePlaygroundEvalsRoute({ type: "list" })}
+          onReconnect={
+            ensureServersReady
+              ? async () => {
+                  await ensureServersReady([preparedServer.name]);
+                }
+              : undefined
+          }
+          editTarget={
+            route.type === "test-edit"
+              ? { suiteId: route.suiteId, caseId: route.testId }
+              : undefined
+          }
+          onBack={() => handleBackToEvalServer(preparedServer.id)}
+          onOpenCase={(target) =>
+            playgroundNavigation.toTestEdit(target.suiteId, target.caseId, {
+              fromEvalServer: preparedServer.id,
+            })
+          }
+          onRun={async (input) => {
+            if (!guardEvalIterationQuota())
+              throw new Error(
+                "Eval usage is unavailable. Check your usage limit before retrying.",
+              );
+            const suites = await savePreparedEvalSuites({
+              ...input,
+              projectId,
+              server: preparedServer,
+              mutate: (name, args) => convex.mutation(name as any, args),
+            });
+            for (const suite of suites) {
+              const launch = await handlers.handleRerun(suite, {
+                stayOnPage: true,
+                iterationOverride: input.iterationsPerCase,
+                idempotencyKey: `prepared:${input.reviewKey}:${suite._id}`,
+              });
+              if (!launch || launch.failedCount > 0) {
+                throw new Error(
+                  "Some evaluations could not start. Retry to launch the remaining clients.",
+                );
+              }
+            }
+            if (suites[0])
+              navigatePlaygroundEvalsRoute({
+                type: "suite-overview",
+                suiteId: suites[0]._id,
+              });
+          }}
+        />
+      );
+    }
+
     const isLandingList = route.type === "list";
 
     if (isLandingList && landingView === "runs") {
@@ -1086,6 +1291,7 @@ function EvaluateTabContent({
           data-testid="evals-runs-landing"
         >
           <ProjectRunsTable
+            historyMetricsEnabled
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
             decisionSummaryEnabled={decisionSummaryEnabled}
@@ -1117,7 +1323,7 @@ function EvaluateTabContent({
       return (
         <EvalsEmptyHero
           onCreateSuite={handleOpenCreateSuite}
-          onCreateSuiteFromServer={handleOpenCreateSuiteFromServer}
+          onEvalServer={handleEvalServer}
           onQuickstart={() => void handleExcalidrawQuickstart()}
           isQuickstartRunning={isQuickstartRunning}
           showQuickstart={showQuickstart}
@@ -1146,19 +1352,18 @@ function EvaluateTabContent({
       );
     }
 
-    // List landing: suites overview. Runs live behind the header tab so the
-    // two lists are not stacked. Clicking a suite still drills into its
-    // dashboard; the Evaluate / suite-name crumb stays on those detail routes.
     return (
       <div
-        className="flex min-h-0 flex-1 flex-col overflow-auto"
+        className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-6"
         data-testid="evals-suites-landing"
       >
-        <div className="px-6 pt-6">
+        <div>
           <SuitesOverview
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
-            onRerun={handleRerunWithQuota}
+            onRerun={(suite) => {
+              setRunReviewSuiteId(suite._id);
+            }}
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
             /*
@@ -1219,10 +1424,13 @@ function EvaluateTabContent({
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
           }
+          onDescribeTestCase={() =>
+            handlers.handleDescribeTestCase(selectedSuite._id)
+          }
           onRecordTestCase={() =>
             handlers.handleRecordTestCase(selectedSuite._id)
           }
-          onGenerateTestCases={() => void handleGenerateMore()}
+          onGenerateTestCases={handleGenerateMore}
           canGenerateTestCases={generateState.canGenerate}
           generateTestCasesDisabledReason={generateState.disabledReason}
           isGeneratingTestCases={handlers.isGeneratingTests}
@@ -1249,6 +1457,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateObserveFirst={observeFirstEnabled}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1259,7 +1468,7 @@ function EvaluateTabContent({
                 {
                   location: "test_cases_overview",
                   iterationOverride: opts?.iterationOverride,
-                }
+                },
               );
               const firstIterationId =
                 data?.iteration?._id ??
@@ -1272,7 +1481,7 @@ function EvaluateTabContent({
                   {
                     openCompare: true,
                     iteration: firstIterationId,
-                  }
+                  },
                 );
               }
             })();
@@ -1300,10 +1509,18 @@ function EvaluateTabContent({
             onCreateSuite={
               route.type === "list" ? handleOpenCreateSuite : undefined
             }
+            landingView={landingView}
+            onLandingViewChange={setLandingView}
             onEvaluateClick={handleNavigateToEvalList}
-            isDetail={Boolean(hasDetailRoute)}
+            isDetail={Boolean(hasDetailRoute) || route.type === "eval-server"}
             parentCrumb={
-              isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+              route.type === "test-edit" && route.fromEvalServer
+                ? {
+                    label: evalServerReturn?.name ?? "Connected server",
+                    onClick: () =>
+                      handleBackToEvalServer(route.fromEvalServer!),
+                  }
+                : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
                 ? {
                     label: suiteBreadcrumbLabel,
                     onClick: () =>
@@ -1311,17 +1528,27 @@ function EvaluateTabContent({
                   }
                 : undefined
             }
-            landingView={route.type === "list" ? landingView : undefined}
-            onLandingViewChange={
-              route.type === "list" ? setLandingView : undefined
-            }
           >
-            {renderPlaygroundBreadcrumb()}
+            {route.type === "eval-server"
+              ? evalServer?.name
+              : route.type === "test-edit" && route.fromEvalServer
+              ? previewCaseTitleFromDraft(
+                  route.fromEvalServer,
+                  route.suiteId,
+                  route.testId,
+                ) ?? nestedPageLabel
+              : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }
     >
-      <>
+      <EvalAgentWorkspace
+        projectId={projectId ?? null}
+        organizationId={organizationId ?? null}
+      >
+        {judgeRunIds.map((runId) => (
+          <LaunchedCaseJudge key={runId} runId={runId} />
+        ))}
         {route.type === "create" ? (
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <CreateSuitePage
@@ -1339,6 +1566,28 @@ function EvaluateTabContent({
           </div>
         )}
 
+        {route.type === "list" &&
+          runReviewSuiteId &&
+          (() => {
+            const suite = visibleSuites.find(
+              (entry) => entry.suite._id === runReviewSuiteId,
+            )?.suite;
+            return suite ? (
+              <SuiteListRunReview
+                key={suite._id}
+                projectId={projectId}
+                suite={suite}
+                onClose={() => setRunReviewSuiteId(null)}
+                onStart={handleRerunWithQuota}
+                onEditSettings={() => {
+                  setRunReviewSuiteId(null);
+                  playgroundNavigation.toSuiteEdit(suite._id);
+                }}
+                disabledReason={evalRunsDisabledReason}
+              />
+            ) : null;
+          })()}
+
         <ConfirmationDialogs
           suiteToDelete={handlers.suiteToDelete}
           setSuiteToDelete={handlers.setSuiteToDelete}
@@ -1353,7 +1602,7 @@ function EvaluateTabContent({
           deletingTestCaseId={handlers.deletingTestCaseId}
           onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
         />
-      </>
+      </EvalAgentWorkspace>
     </EvalTabGate>
   );
 }

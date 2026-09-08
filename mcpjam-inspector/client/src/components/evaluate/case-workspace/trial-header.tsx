@@ -102,7 +102,7 @@ export function TrialHeader({
         ) : null}
         {completedCount > 0 ? (
           <span className="text-[11px] text-muted-foreground">
-            {completedCount} trial{completedCount === 1 ? "" : "s"} complete
+            {completedCount} iteration{completedCount === 1 ? "" : "s"} complete
           </span>
         ) : null}
       </div>

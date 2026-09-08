@@ -539,7 +539,7 @@ export function mismatchLines(
     }
     for (const swap of facts.mismatch.substitutions) {
       lines.push(
-        `\`${swap.observed}\` called instead of \`${swap.expected}\` in ${swap.trials} ${swap.trials === 1 ? "trial" : "trials"}`,
+        `\`${swap.observed}\` called instead of \`${swap.expected}\` in ${swap.trials} ${swap.trials === 1 ? "iteration" : "iterations"}`,
       );
     }
     if (facts.mismatch.truncated) {
@@ -550,7 +550,7 @@ export function mismatchLines(
       lines.push(`mismatch lists capped at ${MAX_MISMATCH_TOOLS} entries each`);
     }
     if (catalogState === "notLoaded") {
-      lines.push("catalog not loaded — substitutions were not classified");
+      lines.push("catalog not loaded. Substitutions were not classified");
     }
   }
   if (facts.routes.endedWithQuestion.state === "notMeasured") {

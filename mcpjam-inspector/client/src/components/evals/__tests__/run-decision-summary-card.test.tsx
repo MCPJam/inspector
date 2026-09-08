@@ -111,7 +111,7 @@ describe("RunDecisionSummaryCard over the golden corpus", () => {
           `${summary.counts.passed} passed · ${summary.counts.failed} failed · ${summary.counts.inconclusive} inconclusive of ${summary.counts.total} case variant`,
         );
       } else {
-        expect(counts.textContent).toMatch(/trial/);
+        expect(counts.textContent).toMatch(/iteration/);
       }
     },
   );
@@ -215,7 +215,7 @@ describe("stage and category copy", () => {
 
     const card = screen.getByTestId("run-decision-summary");
     expect(card).toHaveTextContent(
-      "First failed stage: none was established — the run never reached the server's stages",
+      "First failed stage: none was established. The run never reached the server's stages",
     );
     // Both stage-less categories still name the bucket the run is grouped
     // under; only the STAGE is withheld.
@@ -229,7 +229,7 @@ describe("stage and category copy", () => {
 
     const card = screen.getByTestId("run-decision-summary");
     expect(card).toHaveTextContent(
-      "First failed stage: not established — the recorded stage chain did not validate",
+      "First failed stage: not established. The recorded stage chain did not validate",
     );
     expect(card).toHaveTextContent("Failure category: not reported");
     expect(card).toHaveTextContent(
@@ -372,15 +372,15 @@ describe("stage and category copy", () => {
 });
 
 describe("counts and their unit", () => {
-  it("calls a legacy run's numbers trials, and says the run is legacy", () => {
+  it("calls a legacy run's numbers iterations, and says the run is legacy", () => {
     const summary = readDecisionSummaryFixture("legacy-run-trial-counts");
     renderSummary(summary);
 
     const card = screen.getByTestId("run-decision-summary");
     expect(screen.getByTestId("run-decision-counts")).toHaveTextContent(
-      "trial",
+      "iteration",
     );
-    expect(card).toHaveTextContent("these are trials, not cases");
+    expect(card).toHaveTextContent("these are iterations, not cases");
     expect(screen.getByTestId("run-decision-verdict-source")).toHaveTextContent(
       "legacy percent-threshold run",
     );
@@ -410,7 +410,7 @@ describe("counts and their unit", () => {
     );
     expect(summary.diagnostics.items.length).toBeGreaterThan(0);
     expect(screen.getByTestId("run-decision-diagnostics-scope")).toHaveTextContent(
-      `${summary.diagnostics.items.length} non-passing of ${summary.diagnostics.scannedIterations} trials examined`,
+      `${summary.diagnostics.items.length} non-passing of ${summary.diagnostics.scannedIterations} iterations examined`,
     );
   });
 
@@ -436,7 +436,7 @@ describe("completeness", () => {
 
     expect(
       screen.getByTestId("run-decision-diagnostics-scope"),
-    ).toHaveTextContent("this is the run's whole non-passing set");
+    ).toHaveTextContent("This is the run's whole non-passing set");
     expect(screen.queryByTestId("run-decision-load-more")).toBeNull();
   });
 
@@ -446,7 +446,7 @@ describe("completeness", () => {
 
     expect(
       screen.getByTestId("run-decision-diagnostics-scope"),
-    ).toHaveTextContent("partial: more trials have not been examined");
+    ).toHaveTextContent("Partial: more iterations have not been examined");
     expect(screen.getByTestId("run-decision-load-more")).toBeInTheDocument();
   });
 
@@ -456,7 +456,7 @@ describe("completeness", () => {
 
     const scope = screen.getByTestId("run-decision-diagnostics-scope");
     expect(scope).toHaveTextContent(
-      "every page offered has been loaded, but the run did not report the set as complete",
+      "Every page offered has been loaded, but the run did not report the set as complete",
     );
     expect(scope.textContent).not.toMatch(/whole non-passing set/);
   });

@@ -774,7 +774,7 @@ describe("the human renderer", () => {
     ).toContain("1/1 case variant passed");
     expect(
       rendered.find((row) => row.name === "legacy-run-trial-counts")!.text
-    ).toContain("4/6 trials passed");
+    ).toContain("4/6 iterations passed");
   });
 
   it("says a partial page is partial", () => {
@@ -813,7 +813,7 @@ describe("the human renderer", () => {
     expect(lines[first]).toContain(STAGE_REASON_LABELS.connectFailed);
     // And the count is what keeps that honest: one of six, and five other
     // stages also broke.
-    expect(lines[first]).toContain("(1 of 6 measured trials");
+    expect(lines[first]).toContain("(1 of 6 measured iterations");
     expect(lines[first]).toContain("earliest of 6 stages that broke");
   });
 
@@ -847,7 +847,7 @@ describe("the human renderer", () => {
       (row) => row.name === "category-without-first-failed-stage"
     )!.text;
     expect(text).toContain(
-      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 2 measured trials)`
+      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 2 measured iterations)`
     );
   });
 
@@ -875,7 +875,7 @@ describe("the human renderer", () => {
       },
     });
     expect(text).toContain(
-      `grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 3 measured trials; 1 established no category)`
+      `grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 3 measured iterations; 1 established no category)`
     );
   });
 
@@ -887,7 +887,7 @@ describe("the human renderer", () => {
       (row) => row.name === "unverified-and-version-ahead"
     )!.text;
     expect(text).toContain(
-      "(1 of 1 measured trial; 1 more had no readable chain)"
+      "(1 of 1 measured iteration; 1 more had no readable chain)"
     );
   });
 

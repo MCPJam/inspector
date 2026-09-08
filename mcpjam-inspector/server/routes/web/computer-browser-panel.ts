@@ -8,6 +8,9 @@
  *   POST /lease              → take control / keep it / hand it back
  *   POST /input              → the held browser gets this person's pointer/keys
  *   POST /keepalive          → "this panel is still open"
+ *   GET  /page-tools         → the WebMCP tools the current page offers, read
+ *                              with the same observation the model's
+ *                              `browser_webmcp_tools` sends (Tools pane)
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -52,6 +55,10 @@ import {
   liveBrowserSessionDeps,
 } from "../../services/browserd/live-session-deps.js";
 import { attachBrowserSession } from "../../services/browserd/browser-session.js";
+import {
+  pageToolsFromCommandResponse,
+  webmcpToolsObserveCommand,
+} from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 import {
   BROWSER_INPUT_BATCH_LIMIT,
@@ -111,7 +118,10 @@ export interface BrowserPanelDeps {
   createClient?: (session: {
     publicOrigin: string;
     browserdToken: string;
-  }) => Pick<BrowserdClient, "lease" | "leaseAction" | "sendInput">;
+  }) => Pick<
+    BrowserdClient,
+    "lease" | "leaseAction" | "sendInput" | "sendCommand"
+  >;
   configured?: () => boolean;
 }
 
@@ -523,6 +533,63 @@ export function createComputerBrowserPanelRoutes(
         { ok: false, error: "Failed to record panel activity." },
         502,
       );
+    }
+  });
+
+  /**
+   * The WebMCP tools of the page the browser is on — what the Tools pane lists
+   * beside the MCP servers' tools.
+   *
+   * READ-ONLY, and sent as the same `observe {mode:"webmcp_tools"}` the model's
+   * `browser_webmcp_tools` tool sends, so the pane shows exactly the list the
+   * model would be told. Goes through the daemon's ordinary command queue (an
+   * observation is admitted between the agent's own commands) and is refused
+   * under a held lease like any other observation — UNLESS the lease is this
+   * caller's, in which case the read is re-sent as their own `manual` command,
+   * because a person signing in should still be able to see what the page
+   * offers. Never touches activity: a pane polling a tool list is not use, and
+   * must not hold a metered box awake.
+   */
+  app.get("/page-tools", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId, userId } = auth.claims;
+    const tabId = c.req.query("tabId");
+
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const client = createClient(session);
+      const observe = (source: "inspector" | "manual", holder?: string) =>
+        client.sendCommand(
+          webmcpToolsObserveCommand({
+            source,
+            ...(holder ? { holder } : {}),
+            ...(tabId ? { tabId } : {}),
+          }),
+          session.bootId,
+        );
+      let response = await observe("inspector");
+      if (response.status === "lease_blocked") {
+        const lease = await readLease(session);
+        if (heldByCaller(lease, userId)) {
+          response = await observe("manual", userId);
+        }
+      }
+      const mapped = pageToolsFromCommandResponse(response);
+      return c.json(mapped.body, mapped.status);
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "unreachable" }, 502);
+      }
+      reportRouteFailure("browser panel page-tools read failed", error, {
+        source: "computer-browser-panel.page-tools",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json({ ok: false, error: "unreachable" }, 502);
     }
   });
 
