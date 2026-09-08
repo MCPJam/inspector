@@ -16,7 +16,9 @@ const {
   resolveAgentActor,
   runAgentCommand,
 } = await import("../agent-door");
-const { openAgentSession, readLedger } = await import("../agent-session-store");
+const { appendNote, openAgentSession, readLedger } = await import(
+  "../agent-session-store"
+);
 const { CommandLedger } = await import("../../daemon/command-ledger");
 import type { BrowserCommand } from "../../protocol";
 import type { BrowserdCommandResponse } from "../../browserd-codec";
@@ -47,14 +49,20 @@ function fakeClient(response: BrowserdCommandResponse) {
       async sendCommand(command: BrowserCommand) {
         sent.push(command);
         // The real handler writes the row; this stands in for that so the
-        // door's `ledger` link has something to find.
+        // door's `ledger` link has something to find. It must pass `output`
+        // and `capturePage` exactly as the handler does, or the ledger mints
+        // no artifact ids and the fake quietly tests a different system.
+        const executed = response.status === "ok";
         ledger.record({
           command,
           actor: command.actor ?? { kind: "inspector", id: "unattributed" },
           ts: Date.now(),
           durationMs: 1,
-          outcome: response.status === "ok" ? "executed" : "refused",
-          ...(response.status === "ok" ? { ok: response.result.ok } : {}),
+          outcome: executed ? "executed" : "refused",
+          ...(executed ? { ok: response.result.ok } : {}),
+          ...(executed
+            ? { output: response.result.output, capturePage: true }
+            : {}),
         });
         return response;
       },
@@ -259,32 +267,6 @@ describe("runAgentCommand", () => {
     expect(fake.refusals[0]?.errorCode).toBe("tool_not_allowed");
   });
 
-  it("refuses a redirect that landed outside the origin allowlist", async () => {
-    // A navigate to an allowed origin can redirect to one that is not; without
-    // the result-URL check the observation of the excluded page comes back.
-    const fake = fakeClient({
-      status: "ok",
-      result: { ok: true, output: { url: "https://evil.test/landed" } },
-      bootId: "boot-1",
-    });
-    const ran = await runAgentCommand({
-      session: await session({
-        mode: "allowlist",
-        originAllowlist: ["https://ok.test"],
-      }),
-      client: fake.client,
-      ledger: fake.ledger,
-      bootId: "boot-1",
-      actor: ACTOR,
-      command: { op: "navigate", url: "https://ok.test/start" },
-    });
-    expect(ran.status).toBe(403);
-    if (ran.result.status !== "refused") throw new Error("wrong arm");
-    expect(ran.result.refusal.code).toBe("origin_not_allowed");
-    // The page is NOT handed back with the refusal.
-    expect(ran.result.refusal.page).toBeUndefined();
-  });
-
   it("maps a lease block to a refusal with no page", async () => {
     const fake = fakeClient({
       status: "lease_blocked",
@@ -432,6 +414,139 @@ describe("runAgentCommand", () => {
     });
     expect(ran.status).toBe(400);
     expect(fake.sent).toHaveLength(0);
+  });
+
+  it("hands back the screenshot's artifact id, or the picture is unreachable", async () => {
+    // The ids are minted when the ledger lifts the payload out of the row, so
+    // they exist nowhere in the daemon's own result. Without them a caller is
+    // told a screenshot was taken and given no way to fetch it — which for
+    // `observe {mode:"screenshot"}` means the command returns no picture.
+    const fake = fakeClient({
+      status: "ok",
+      result: { ok: true, output: { screenshot: "AAAA", url: "https://x.test" } },
+      bootId: "boot-1",
+    });
+    const ran = await runAgentCommand({
+      session: await session(),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "observe", mode: "screenshot" },
+    });
+    if (ran.result.status !== "executed") throw new Error("wrong arm");
+    expect(ran.result.page?.artifacts?.screenshot?.id).toBeTruthy();
+    expect(ran.result.page?.artifacts?.screenshot?.mediaType).toBe("image/jpeg");
+    // Still not inline: the row points at the payload, it does not carry it.
+    expect(JSON.stringify(ran.result)).not.toContain("AAAA");
+  });
+
+  it("links to the DURABLE seq, not the daemon ring's", async () => {
+    // The two number rows differently — the store's seq spans boots and counts
+    // notes — so handing back the ring's would give a caller a cursor in a
+    // coordinate space `mcpjam browser trace --after-seq` does not use.
+    const opened = await session();
+    const withNote = await appendNote({
+      session: opened,
+      text: "before",
+      actor: ACTOR,
+      bootId: "boot-1",
+    });
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    const ran = await runAgentCommand({
+      session: withNote,
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "reload" },
+      commandId: "cmd-after-note",
+    });
+    // The note took durable seq 1, so this command is 2 — while the daemon's
+    // own ring, which never saw the note, calls it 1.
+    expect(ran.result.ledger?.seq).toBe(2);
+    const found = await readLedger({
+      projectId: PROJECT,
+      sessionId: opened.sessionId,
+      commandId: "cmd-after-note",
+    });
+    expect(found.entries[0]?.seq).toBe(2);
+  });
+
+  it("reports an off-allowlist RESULT url as executed-and-failed, never refused", async () => {
+    // The command already ran — the page it landed on is the problem. `refused`
+    // promises nothing ran and that a retry is safe, which is how the same form
+    // gets submitted twice.
+    const fake = fakeClient({
+      status: "ok",
+      result: { ok: true, output: { url: "https://evil.test/landed" } },
+      bootId: "boot-1",
+    });
+    const ran = await runAgentCommand({
+      session: await session({
+        mode: "allowlist",
+        originAllowlist: ["https://ok.test"],
+      }),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "navigate", url: "https://ok.test/start" },
+    });
+    // A 403 still, because the caller's policy is what stopped this — but the
+    // OUTCOME in the body says the command ran.
+    expect(ran.status).toBe(403);
+    expect(ran.result.status).toBe("executed");
+    if (ran.result.status !== "executed") throw new Error("wrong arm");
+    expect(ran.result.ok).toBe(false);
+    expect(ran.result.error?.code).toBe("origin_not_allowed");
+    // The page is still withheld — that is what the check is for.
+    expect(ran.result.page).toBeUndefined();
+    expect(JSON.stringify(ran.result)).not.toContain("evil.test/landed");
+  });
+
+  it("does not duplicate history when two mirrors race", async () => {
+    // `mirrorLedger` is a read-modify-write over one file. Two commands on
+    // different tabs, or a command racing the rail's trace poll, would both
+    // read the same cursor, both append the same slice, and advance it once.
+    // A duplicated click is worse than a gap: a gap says so.
+    const opened = await session();
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    await Promise.all([
+      runAgentCommand({
+        session: opened,
+        client: fake.client,
+        ledger: fake.ledger,
+        bootId: "boot-1",
+        actor: ACTOR,
+        command: { op: "act", verb: "click", target: { ref: "e1" } },
+        commandId: "cmd-a",
+        tabId: "tab-1",
+      }),
+      runAgentCommand({
+        session: opened,
+        client: fake.client,
+        ledger: fake.ledger,
+        bootId: "boot-1",
+        actor: ACTOR,
+        command: { op: "act", verb: "click", target: { ref: "e2" } },
+        commandId: "cmd-b",
+        tabId: "tab-2",
+      }),
+    ]);
+    const trace = await readLedger({
+      projectId: PROJECT,
+      sessionId: opened.sessionId,
+      limit: 100,
+    });
+    const ids = trace.entries
+      .filter((e) => e.kind === "command")
+      .map((e) => (e.kind === "command" ? e.commandId : ""));
+    expect(ids.sort()).toEqual(["cmd-a", "cmd-b"]);
+    // And each row still has its own position.
+    expect(new Set(trace.entries.map((e) => e.seq)).size).toBe(
+      trace.entries.length,
+    );
   });
 
   it("mirrors the ring so the trace already has the command it just answered", async () => {

@@ -584,10 +584,32 @@ async function emit(
   }
   writeResult(
     {
-      success: result.status === "executed",
-      ...result,
+      ...envelopeFor(result),
       ...(screenshotPath ? { screenshotPath } : {}),
     },
     context.format,
   );
+}
+
+/**
+ * The envelope a command result is written as.
+ *
+ * `success` is the field a shell script branches on, so it has to mean what a
+ * script would assume: `executed` says the command RAN, and `ok` separately
+ * says whether it SUCCEEDED. A click that found no button ran fine and failed,
+ * and reporting that as a success is how a script carries on as though the
+ * form were submitted.
+ */
+function envelopeFor(result: Record<string, unknown>): Record<string, unknown> {
+  return {
+    success: result.status === "executed" && result.ok !== false,
+    ...result,
+  };
+}
+
+/** Test seam for `envelopeFor`; see `tests/browser-command.test.ts`. */
+export function emitForTests(result: Record<string, unknown>): {
+  success: boolean;
+} {
+  return envelopeFor(result) as { success: boolean };
 }

@@ -213,8 +213,46 @@ describe("toAgentPage — the untrusted fence on the structured half", () => {
     expect(decodeStateToken(page.stateToken!)).toEqual(TOKEN);
   });
 
+  it("carries the ledger's artifact descriptors, so a picture is fetchable", () => {
+    // The ids are minted when the ledger lifts the payload out of the row, so
+    // they are not in the daemon result at all. A page without them tells a
+    // caller a screenshot exists and gives it no way to ask for one.
+    const page = toAgentPage(
+      { output: { url: "https://x.test" } },
+      { screenshot: { id: "art-1", bytes: 4096, mediaType: "image/jpeg" } },
+    )!;
+    expect(page.artifacts?.screenshot).toMatchObject({
+      id: "art-1",
+      mediaType: "image/jpeg",
+    });
+  });
+
+  it("is a page even when the ONLY thing captured was an artifact", () => {
+    expect(
+      toAgentPage({}, { screenshot: { id: "a", bytes: 1, mediaType: "image/jpeg" } }),
+    ).toBeDefined();
+  });
+
   it("is undefined when there was nothing to observe", () => {
     expect(toAgentPage({})).toBeUndefined();
+  });
+
+  it("reports an executed-and-failed command without handing back the page", () => {
+    // The `overrideError` arm: the command RAN, and only the caller's own
+    // policy objects to where it landed. Saying `refused` would promise that
+    // nothing ran and that a retry is safe.
+    const result = executedResult({
+      commandId: "c1",
+      result: { ok: true, output: { url: "https://evil.test" } },
+      overrideError: { code: "origin_not_allowed", message: "outside" },
+    });
+    expect(result.status).toBe("executed");
+    expect(result.status === "executed" && result.ok).toBe(false);
+    expect(result.status === "executed" && result.error?.code).toBe(
+      "origin_not_allowed",
+    );
+    expect(result.status === "executed" && result.page).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("evil.test");
   });
 });
 

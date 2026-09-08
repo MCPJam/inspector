@@ -43,10 +43,12 @@ import type { BrowserLedgerActor } from "../daemon/command-ledger.js";
 import {
   LedgerSinkError,
   mirrorLedger,
+  readLedger,
   type AgentSessionRecord,
 } from "./agent-session-store.js";
 import type {
   BrowserAgentCommand,
+  BrowserAgentPage,
   BrowserAgentResult,
   BrowserAgentSessionPolicy,
 } from "../../../../shared/browser-agent-contract.js";
@@ -298,14 +300,21 @@ export async function runAgentCommand(
   //    run.
   const mirrored = await mirror(args);
   const warning = mirrored.historyWarning;
-  const ledgerRef = await findLedgerRef(args, commandId, session.sessionId);
+  // The DURABLE row, not the daemon ring's. The two number rows differently —
+  // the store remints a seq that spans boots and counts notes — so handing back
+  // the ring's would give a caller a cursor in a coordinate space the public
+  // trace does not use, and `get_browser_session_trace --after-seq` would look
+  // up the wrong row. The row also carries the artifact ids, which are minted
+  // when the payloads are lifted out of it and exist nowhere else.
+  const row = await findDurableRow(mirrored.session, commandId);
 
   return {
     ...toContractResult({
       response,
       commandId,
       policy: session.policy,
-      ...(ledgerRef ? { ledger: ledgerRef } : {}),
+      ...(row ? { ledger: { sessionId: session.sessionId, seq: row.seq } } : {}),
+      ...(row?.artifacts ? { artifacts: row.artifacts } : {}),
       ...(warning ? { historyWarning: warning } : {}),
     }),
     session: mirrored.session,
@@ -318,6 +327,7 @@ function toContractResult(args: {
   commandId: string;
   policy: BrowserAgentSessionPolicy;
   ledger?: { sessionId: string; seq: number };
+  artifacts?: BrowserAgentPage["artifacts"];
   historyWarning?: string;
 }): { result: BrowserAgentResult; status: number } {
   const { response, commandId } = args;
@@ -336,18 +346,29 @@ function toContractResult(args: {
         readUrl(response.result.output),
       );
       if (outOfBounds) {
+        // EXECUTED AND FAILED, not refused. The command already ran — the page
+        // it landed on is the problem — and `refused` promises that nothing
+        // ran and a retry is safe, which is how the same form gets submitted
+        // twice. The page is withheld; the outcome is told truthfully.
         return {
           status: 403,
-          result: refusedResult({
+          result: executedResult({
             ...common,
-            code: "origin_not_allowed",
-            message: outOfBounds.message,
+            result: response.result,
+            overrideError: {
+              code: "origin_not_allowed",
+              message: outOfBounds.message,
+            },
           }),
         };
       }
       return {
         status: 200,
-        result: executedResult({ ...common, result: response.result }),
+        result: executedResult({
+          ...common,
+          result: response.result,
+          ...(args.artifacts ? { artifacts: args.artifacts } : {}),
+        }),
       };
     }
     case "stale_observation":
@@ -361,7 +382,9 @@ function toContractResult(args: {
             "from; re-decide from the observation below",
           // The FRESH page rides along so the caller can re-decide in one round
           // trip rather than being told to go and look again.
-          ...(response.result ? { page: toAgentPage(response.result) } : {}),
+          ...(response.result
+            ? { page: toAgentPage(response.result, args.artifacts) }
+            : {}),
         }),
       };
     case "lease_blocked":
@@ -442,7 +465,7 @@ async function recordOnlyRefusal(
       });
     });
   const mirrored = await mirror(args);
-  const ledgerRef = await findLedgerRef(args, commandId, args.session.sessionId);
+  const row = await findDurableRow(mirrored.session, commandId);
   return {
     // 400 for a command the contract could not carry at all; 403 for one the
     // session's policy excludes. Different problems, different fixes.
@@ -452,7 +475,9 @@ async function recordOnlyRefusal(
       commandId,
       code: refusal.code === "invalid_command" ? "tool_not_allowed" : refusal.code,
       message: refusal.message,
-      ...(ledgerRef ? { ledger: ledgerRef } : {}),
+      ...(row
+        ? { ledger: { sessionId: args.session.sessionId, seq: row.seq } }
+        : {}),
       ...(mirrored.historyWarning
         ? { historyWarning: mirrored.historyWarning }
         : {}),
@@ -497,17 +522,30 @@ async function mirror(
   }
 }
 
-/** Where this command landed, for the result's `ledger` link. */
-async function findLedgerRef(
-  args: Pick<RunAgentCommandArgs, "client">,
+/**
+ * The durable row this command produced: its seq, and its artifact ids.
+ *
+ * Read from the SINK rather than from the daemon ring, because those number
+ * rows differently and only the sink's numbering is the one a caller sees.
+ */
+async function findDurableRow(
+  session: AgentSessionRecord,
   commandId: string,
-  sessionId: string,
-): Promise<{ sessionId: string; seq: number } | undefined> {
-  const found = await args.client
-    .readTrace({ commandId, limit: 1 })
-    .catch(() => undefined);
+): Promise<
+  { seq: number; artifacts?: BrowserAgentPage["artifacts"] } | undefined
+> {
+  const found = await readLedger({
+    projectId: session.projectId,
+    sessionId: session.sessionId,
+    commandId,
+    limit: 1,
+  }).catch(() => undefined);
   const entry = found?.entries[0];
-  return entry ? { sessionId, seq: entry.seq } : undefined;
+  if (!entry || entry.kind !== "command") return undefined;
+  return {
+    seq: entry.seq,
+    ...(entry.artifacts ? { artifacts: entry.artifacts } : {}),
+  };
 }
 
 function readUrl(output: unknown): string | undefined {

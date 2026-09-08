@@ -128,6 +128,42 @@ describe("BrowserActivityList", () => {
     expect(screen.queryByText(/Nothing has driven/)).toBeNull();
   });
 
+  it("drops the session AND the rows when the project changes", async () => {
+    // `sessionId` is rediscovered only when null, so without a reset the pane
+    // keeps polling the previous project's session and keeps showing its
+    // history — one project's browsing under another project's name, which is
+    // the one mistake a per-project profile exists to prevent.
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_a" }] });
+    readTrace.mockResolvedValueOnce({
+      entries: [row({ seq: 1, command: { kind: "navigate", url: "https://a.test" } })],
+      headSeq: 1,
+    });
+    readTrace.mockResolvedValue({ entries: [], headSeq: 1 });
+    const { rerender } = mount({ projectId: "proj-a" });
+    expect(await screen.findByText(/navigate https:\/\/a.test/)).toBeTruthy();
+
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_b" }] });
+    readTrace.mockResolvedValue({ entries: [], headSeq: 0 });
+    rerender(
+      <BrowserActivityList projectId="proj-b" consentToken="cap" active />,
+    );
+    // The old project's rows are gone…
+    await waitFor(() =>
+      expect(screen.queryByText(/navigate https:\/\/a.test/)).toBeNull(),
+    );
+    // …and the poll asks the NEW project's session, from the start.
+    await waitFor(() =>
+      expect(readTrace).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          projectId: "proj-b",
+          sessionId: "bs_b",
+          afterSeq: 0,
+        }),
+        "cap",
+      ),
+    );
+  });
+
   it("keeps `refused` and `unknown` as different things", async () => {
     // A reader who cannot tell them apart cannot tell whether to retry:
     // `refused` means nothing ran; `unknown` means we cannot say.

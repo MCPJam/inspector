@@ -300,9 +300,19 @@ export function publishedOpFor(
  */
 export function toAgentPage(
   result: Pick<BrowserCommandResult, "output" | "stateToken" | "settled">,
+  /**
+   * The artifact descriptors the ledger minted for this command.
+   *
+   * They come from the LEDGER rather than from the daemon result, because the
+   * result carries the payloads (a base64 JPEG) and the ids are minted when
+   * those payloads are lifted out of the row. Without them a caller is told a
+   * screenshot was taken and given no way to fetch it — which, for
+   * `observe {mode:"screenshot"}`, means the command returns no picture at all.
+   */
+  artifacts?: BrowserAgentPage["artifacts"],
 ): BrowserAgentPage | undefined {
   const output = asRecord(result.output);
-  if (!output && !result.stateToken) return undefined;
+  if (!output && !result.stateToken && !artifacts) return undefined;
   const pageContent: BrowserAgentPageContent = { untrusted: true };
   if (typeof output?.url === "string") pageContent.url = output.url;
   if (typeof output?.title === "string") pageContent.title = output.title;
@@ -335,6 +345,7 @@ export function toAgentPage(
       : {}),
     ...(isRefMap(output?.refs) ? { refs: output.refs } : {}),
     ...(Object.keys(omitted).length ? { omitted } : {}),
+    ...(artifacts && Object.keys(artifacts).length ? { artifacts } : {}),
     pageContent,
   };
 }
@@ -386,9 +397,29 @@ export function executedResult(args: {
   commandId: string;
   result: BrowserCommandResult;
   ledger?: BrowserAgentLedgerRef;
+  artifacts?: BrowserAgentPage["artifacts"];
   historyWarning?: string;
+  /**
+   * Report the command as having run and FAILED, with this error.
+   *
+   * For a failure only the caller's own policy can see — chiefly a result URL
+   * outside the session's origin allowlist. The command ran, so `refused`
+   * (which promises nothing ran, and that a retry is safe) would be a lie that
+   * gets a form submitted twice; the page is withheld instead.
+   */
+  overrideError?: { code: string; message: string };
 }): BrowserAgentResult {
-  const page = toAgentPage(args.result);
+  if (args.overrideError) {
+    return {
+      status: "executed",
+      commandId: args.commandId,
+      ...(args.ledger ? { ledger: args.ledger } : {}),
+      ok: false,
+      error: args.overrideError,
+      ...(args.historyWarning ? { historyWarning: args.historyWarning } : {}),
+    };
+  }
+  const page = toAgentPage(args.result, args.artifacts);
   return {
     status: "executed",
     commandId: args.commandId,

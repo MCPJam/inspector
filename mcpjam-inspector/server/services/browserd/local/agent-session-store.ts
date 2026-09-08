@@ -35,6 +35,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { validateLocalProjectKey } from "../../../utils/computers/local-machine.js";
+import { withKeyedLock } from "../probe-lock.js";
 import { logger } from "../../../utils/logger.js";
 import { getLocalBrowserRoot } from "./local-browser-session.js";
 import type {
@@ -316,7 +317,34 @@ export async function mirrorLedger(args: {
   /** Persist screenshot/tree payloads beside the rows. Off honours the session. */
   captureScreenshots?: boolean;
 }): Promise<{ session: AgentSessionRecord; written: number }> {
-  const { session, ledger, bootId } = args;
+  // SERIALIZED PER SESSION. This is a read-modify-write over one file: it reads
+  // `lastBootSeq`, appends the ring slice past it, and writes the cursor back.
+  // Two commands on different tabs — or one command racing the rail's trace
+  // poll — would otherwise both read the same cursor, both append the same
+  // slice, and advance it once, so the durable trace would show a click twice.
+  // Duplicated history is worse than missing history: a gap says so and a
+  // duplicate does not.
+  //
+  // Keyed by session, so two projects still mirror concurrently.
+  return withKeyedLock(`browser-ledger:${args.session.sessionId}`, () =>
+    mirrorLedgerLocked(args),
+  );
+}
+
+async function mirrorLedgerLocked(args: {
+  session: AgentSessionRecord;
+  ledger: Pick<CommandLedger, "read" | "artifact" | "releaseArtifact">;
+  bootId: string;
+  captureScreenshots?: boolean;
+}): Promise<{ session: AgentSessionRecord; written: number }> {
+  const { ledger, bootId } = args;
+  // RE-READ under the lock. The caller's copy was taken before it queued, so a
+  // mirror that ran while it waited has already advanced the cursor — using the
+  // stale copy would re-append everything that one just wrote.
+  const session = (await readSession(
+    args.session.projectId,
+    args.session.sessionId,
+  )) ?? args.session;
   const dir = sessionDir(session.projectId, session.sessionId);
   await ensureDir(dir);
 
@@ -525,16 +553,34 @@ export async function appendNote(args: {
   bootId: string;
   now?: () => number;
 }): Promise<AgentSessionRecord> {
+  // The same read-modify-write over the same file as `mirrorLedger`, so it
+  // takes the same lock: a note racing a mirror would otherwise mint a seq the
+  // mirror is about to mint too, and two rows would claim one position.
+  return withKeyedLock(`browser-ledger:${args.session.sessionId}`, () =>
+    appendNoteLocked(args),
+  );
+}
+
+async function appendNoteLocked(args: {
+  session: AgentSessionRecord;
+  text: string;
+  actor: BrowserLedgerRow["actor"];
+  bootId: string;
+  now?: () => number;
+}): Promise<AgentSessionRecord> {
   const now = args.now ?? Date.now;
   const dir = sessionDir(args.session.projectId, args.session.sessionId);
   await ensureDir(dir);
-  const seq = args.session.lastSeq + 1;
+  const session =
+    (await readSession(args.session.projectId, args.session.sessionId)) ??
+    args.session;
+  const seq = session.lastSeq + 1;
   const row: StoredLedgerEntry = {
     kind: "command",
     seq,
-    bootSeq: args.session.lastBootSeq ?? 0,
+    bootSeq: session.lastBootSeq ?? 0,
     commandId: `note_${randomUUID()}`,
-    sessionId: args.session.sessionId,
+    sessionId: session.sessionId,
     bootId: args.bootId,
     source: "agent",
     actor: args.actor,
@@ -555,7 +601,7 @@ export async function appendNote(args: {
       error instanceof Error ? error.message : String(error),
     );
   }
-  const next = { ...args.session, lastSeq: seq };
+  const next = { ...session, lastSeq: seq };
   await writeSession(next);
   return next;
 }

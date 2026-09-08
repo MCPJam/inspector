@@ -75,6 +75,25 @@ export function BrowserActivityList({
     setWarning(null);
   }, [sessionId]);
 
+  /**
+   * A PROJECT switch drops the session along with the rows.
+   *
+   * `sessionId` is rediscovered only when it is null, so without this the pane
+   * keeps polling the previous project's session and keeps showing its history
+   * — one project's browsing displayed under another project's name, which is
+   * the one mistake a per-project profile exists to prevent.
+   */
+  const readingProject = useRef<string | null>(projectId);
+  useEffect(() => {
+    if (readingProject.current === projectId) return;
+    readingProject.current = projectId;
+    readingSession.current = null;
+    cursor.current = 0;
+    setSessionId(null);
+    setEntries([]);
+    setWarning(null);
+  }, [projectId]);
+
   const poll = useCallback(async () => {
     if (!projectId) return;
     let currentSession = sessionId;

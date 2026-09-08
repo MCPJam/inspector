@@ -135,6 +135,20 @@ test("coordinates must both be numbers", async () => {
   assert.match(result.stderr + result.stdout, /--x and --y must both be numbers/);
 });
 
+test("an executed-but-failed command is not reported as a success", async () => {
+  // `executed` says the command RAN; `ok` says whether it succeeded. A click
+  // that found no button ran fine and failed, and reporting that as success is
+  // how a script carries on as though the form were submitted.
+  const { emitForTests } = await import("../src/commands/browser.js");
+  const failed = emitForTests({ status: "executed", ok: false });
+  assert.equal(failed.success, false);
+  const ran = emitForTests({ status: "executed", ok: true });
+  assert.equal(ran.success, true);
+  // A refusal and an unknown outcome are not successes either.
+  assert.equal(emitForTests({ status: "refused" }).success, false);
+  assert.equal(emitForTests({ status: "unknown" }).success, false);
+});
+
 test("act and navigate default to folding in an a11y observation", async () => {
   // One round trip, one ledger row, and refs for the next act — a screenshot
   // carries none.
