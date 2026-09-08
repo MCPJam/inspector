@@ -298,6 +298,34 @@ describe("a take's lifecycle", () => {
     expect(recorder.start({ id: "run-2", fps: 15 })).toEqual({ ok: true });
   });
 
+  it("frees the slot when ffmpeg exits, however long the file read takes", async () => {
+    // The lock is about a second ENCODER on one display, and that risk ends
+    // when the old process exits. Holding it across `stat` would reintroduce
+    // the wedge that clearing `take` before the first await exists to prevent:
+    // a hung read would refuse every later start with `record_active` while
+    // nothing at all was recording.
+    let releaseStat: (() => void) | undefined;
+    const { recorder, ffmpeg } = build({
+      statFile: () =>
+        new Promise<{ size: number }>((resolve) => {
+          releaseStat = () => resolve({ size: 10 });
+        }),
+    });
+    recorder.start({ id: "run-1", fps: 15 });
+
+    const stopping = recorder.stop();
+    await Promise.resolve();
+    ffmpeg.latest().exit(0);
+    // Let the `exited` continuation that frees the lock run. The stat is still
+    // outstanding at this point — that is the whole shape of the test.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(recorder.start({ id: "run-2", fps: 15 })).toEqual({ ok: true });
+    releaseStat?.();
+    await stopping;
+  });
+
   it("reports a take the size cap ended, and clears state anyway", async () => {
     // `-fs` makes ffmpeg stop itself. The file is still on disk and still owed
     // to whoever asked for the take, so this reports it — flagged, never

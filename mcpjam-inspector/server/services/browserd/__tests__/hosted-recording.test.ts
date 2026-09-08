@@ -252,6 +252,40 @@ describe("hosted recording — starting", () => {
     });
   });
 
+  it("does not register a start that lands after the deadline gave up", async () => {
+    // `Promise.race` does not cancel what it lost to. Without the abandoned
+    // flag, a start that finally answers after the deadline writes a registry
+    // entry the caller has already given up on — quite possibly after the
+    // collector ran and the box was released — leaving an entry for a machine
+    // that no longer exists, one that survives `forgetHostedRecording` because
+    // it is written after the delete.
+    vi.useFakeTimers();
+    try {
+      const { handle } = fakeHandle();
+      let letStatusAnswer: (() => void) | undefined;
+      const original = handle.client.status;
+      handle.client.status = (() =>
+        new Promise((resolve) => {
+          letStatusAnswer = () => resolve((original as never as () => unknown)());
+        })) as never;
+
+      const starting = startHostedRecording(handle, {
+        connect: async () => fakeSandbox().sandbox,
+        timeoutMs: 5_000,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await starting;
+
+      // ...and only NOW does the box answer.
+      letStatusAnswer?.();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives up on a start that outlasts its deadline", async () => {
     // `ensureLiveBrowserSession` is on the critical path of the turn's FIRST
     // browser action, and the browserd client's own timeout is 75s. Inheriting

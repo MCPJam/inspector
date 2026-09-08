@@ -178,8 +178,27 @@ export async function startHostedRecording(
   if (!record) return;
   const now = deps.now ?? Date.now;
   const id = recordingIdFor(sessionId);
+  // ABANDONED WHEN THE DEADLINE WINS. `Promise.race` does not cancel the work
+  // it lost to — the status probe and the start call keep going — so without
+  // this flag a start that finally lands after the deadline would `active.set`
+  // a take the caller has already given up on, quite possibly after the
+  // collector ran and the box was released. That leaves a registry entry for a
+  // machine that no longer exists, and it survives `forgetHostedRecording`
+  // because it is written after the delete.
+  //
+  // Set by the TIMER rather than in the catch below, so there is no window in
+  // which the deadline has fired and the flag has not.
+  let abandoned = false;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutMs = deps.timeoutMs ?? HOSTED_RECORDING_START_TIMEOUT_MS;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    deadlineTimer = setTimeout(() => {
+      abandoned = true;
+      reject(new Error(`hosted recording start timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
   try {
-    await withDeadline(
+    await Promise.race([
       (async () => {
         const status = await client.status();
         if (status.kind !== "ok" || !status.features?.includes("record")) return;
@@ -223,6 +242,9 @@ export async function startHostedRecording(
           // register: the file exists and the collector is the only thing that
           // will ever stop it.
         }
+        // Checked immediately before the write, and after every await above:
+        // by now the caller may have moved on to release the box.
+        if (abandoned) return;
         active.set(sandboxRowId, {
           sandboxId,
           bootId,
@@ -232,8 +254,8 @@ export async function startHostedRecording(
           startedAtMs: now(),
         });
       })(),
-      deps.timeoutMs ?? HOSTED_RECORDING_START_TIMEOUT_MS,
-    );
+      deadline,
+    ]);
   } catch (err) {
     // An unreachable daemon, a status probe past the deadline: the run has no
     // video. It must not have no browser, and it must not WAIT for one.
@@ -241,6 +263,8 @@ export async function startHostedRecording(
       sandboxRowId,
       error: err instanceof Error ? err.message : String(err),
     });
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
   }
 }
 
@@ -361,7 +385,7 @@ function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`hosted recording call timed out after ${ms}ms`)),
+      () => reject(new Error(`hosted recording collect timed out after ${ms}ms`)),
       ms,
     );
   });

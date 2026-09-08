@@ -446,13 +446,11 @@ function createVideoRecorder(options) {
     const entry = take;
     take = void 0;
     if (!entry) return null;
-    const settled = runStop(entry);
-    stopping = settled;
-    try {
-      return await settled;
-    } finally {
-      if (stopping === settled) stopping = void 0;
-    }
+    const processGone = entry.exited.then(() => {
+      if (stopping === processGone) stopping = void 0;
+    });
+    stopping = processGone;
+    return runStop(entry);
   };
   const runStop = async (entry) => {
     if (!entry.endedEarly) {

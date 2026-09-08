@@ -1421,8 +1421,6 @@ describe("swarm runner — the attempt's recording comes off before the box does
     // THE MONEY ONE. `ConvexHttpClient.mutation` carries no timeout, and this
     // flush sits inside the `finally` that must reach `releaseAttemptSandbox`.
     // Unbounded, a hung attach holds a paid box open for as long as it hangs.
-    // Remove the deadline and this test hangs rather than failing — which is
-    // exactly what the production path would do.
     collectHostedRecordingMock.mockResolvedValue(RECORDING);
     outboxFlushMock.mockImplementation(() => new Promise(() => {}));
 
@@ -1430,7 +1428,25 @@ describe("swarm runner — the attempt's recording comes off before the box does
     try {
       const run = startJourneyRun(baseOpts());
       await vi.runAllTimersAsync();
-      await run;
+      // RACED, not simply awaited. Without the deadline in the runner, `run`
+      // never settles — and a test that hangs stalls CI with no failure
+      // signal, which is a worse regression report than none. The guard is on
+      // the REAL clock (fake timers are already drained above), so it can only
+      // fire when the run genuinely never finished.
+      await Promise.race([
+        run,
+        new Promise((_resolve, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "the attempt never finished: the artifact flush is unbounded again, so `releaseAttemptSandbox` is unreachable",
+                ),
+              ),
+            2_000,
+          ).unref?.(),
+        ),
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -1438,7 +1454,7 @@ describe("swarm runner — the attempt's recording comes off before the box does
     expect(releaseSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row_1" }),
     );
-  });
+  }, 15_000);
 
   it("still releases the box when staging the video throws", async () => {
     collectHostedRecordingMock.mockResolvedValue(RECORDING);

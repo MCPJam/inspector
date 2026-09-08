@@ -315,14 +315,20 @@ export function createVideoRecorder(
 
   let take: ActiveTake | undefined;
   /**
-   * A take whose `stop` is still in flight.
+   * Held while a stopped take's ffmpeg is still alive.
    *
    * `stop` clears `take` before its first await — deliberately, so a hang on
    * the filesystem cannot wedge the recorder in "active" forever. That alone
    * would let a `start` arriving during the stop spawn a SECOND ffmpeg while
    * the first is still writing: two encoders on one display, and the loser
-   * overwrites the winner's file. This sentinel keeps the slot occupied for
-   * exactly as long as the old process is still around.
+   * overwrites the winner's file.
+   *
+   * SCOPED TO THE PROCESS, NOT TO THE WHOLE STOP. What this protects against
+   * is a second encoder, and that risk ends the moment the old one exits —
+   * everything after that (the `stat`) only reads a file. Holding it across
+   * the read would reintroduce the very wedge clearing `take` early exists to
+   * prevent: a hung `stat` would refuse every later start with
+   * `record_active` while nothing at all was recording.
    */
   let stopping: Promise<unknown> | undefined;
   let disposed = false;
@@ -409,15 +415,14 @@ export function createVideoRecorder(
     // otherwise have made. This is the reference recorder's own lesson.
     take = undefined;
     if (!entry) return null;
-    const settled = runStop(entry);
-    // Held until the old process is gone, so a `start` in this window is
-    // refused rather than spawning a second encoder onto the same display.
-    stopping = settled;
-    try {
-      return await settled;
-    } finally {
-      if (stopping === settled) stopping = undefined;
-    }
+    // Released when the PROCESS is gone, not when this call returns: a start
+    // arriving after ffmpeg has exited can spawn safely, however long the
+    // file read that follows takes.
+    const processGone: Promise<void> = entry.exited.then(() => {
+      if (stopping === processGone) stopping = undefined;
+    });
+    stopping = processGone;
+    return runStop(entry);
   };
 
   const runStop = async (entry: ActiveTake): Promise<RecordingResult> => {
