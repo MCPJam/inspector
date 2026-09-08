@@ -201,6 +201,66 @@ describe("useScenarioHostIntroGate", () => {
     expect(result.current.showConsent).toBe(true);
   });
 
+  it("never shows B behind A's acceptance, not even for the first render", () => {
+    // Why the answer carries its storage key. `ScenarioChatPage` is not
+    // remounted per scenario — it takes the token as a prop — and an effect
+    // corrects a render that has already committed. The sibling test above
+    // reads `result.current` after effects flush, so it cannot see the render
+    // this one is about: with OAuth outstanding, that render mounted the
+    // authorization panel in front of a notice B had never been asked.
+    const seen: boolean[] = [];
+    const { result, rerender } = renderHook(
+      ({ scenarioId }: { scenarioId: string }) => {
+        const gate = useScenarioHostIntroGate({
+          scenarioId,
+          oauthPending: true,
+          pendingOAuthServers: [needsAuthRow],
+        });
+        seen.push(gate.showConsent);
+        return gate;
+      },
+      { initialProps: { scenarioId: "sbx_from" } },
+    );
+
+    act(() => {
+      result.current.acceptConsent();
+    });
+    expect(result.current.showConsent).toBe(false);
+
+    seen.length = 0;
+    rerender({ scenarioId: "sbx_to" });
+
+    // EVERY render since the switch asked — the discarded render-phase pass
+    // included, which is the half a bare `setConsent` during render leaves open.
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen).not.toContain(false);
+    expect(result.current.showConsent).toBe(true);
+    // And the notice still outranks the authorization it was mounting behind.
+    expect(result.current.showAuthPanel).toBe(false);
+  });
+
+  it("still honours B's OWN stored acceptance across the switch", () => {
+    // The other direction: re-reading per key must not turn into re-asking a
+    // tester who already answered for the scenario they just opened.
+    sessionStorage.setItem("scenario-intro-dismissed-sbx_already", "1");
+    const { result, rerender } = renderHook(
+      ({ scenarioId }: { scenarioId: string }) =>
+        useScenarioHostIntroGate({
+          scenarioId,
+          oauthPending: false,
+          pendingOAuthServers: [],
+        }),
+      { initialProps: { scenarioId: "sbx_other" } },
+    );
+
+    expect(result.current.showConsent).toBe(true);
+
+    rerender({ scenarioId: "sbx_already" });
+
+    expect(result.current.showConsent).toBe(false);
+    expect(result.current.composerBlocked).toBe(false);
+  });
+
   it("survives a sessionStorage that throws", () => {
     // A private window, or site data blocked. The safe direction to fail in is
     // "ask again", never "assume they consented".

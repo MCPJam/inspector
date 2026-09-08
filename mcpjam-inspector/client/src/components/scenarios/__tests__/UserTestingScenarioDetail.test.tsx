@@ -83,13 +83,18 @@ vi.mock("@/lib/scenario-client-style", () => ({
   getScenarioHostLogo: () => "logo.png",
 }));
 
-vi.mock("@/lib/scenario-session", () => ({
+// Only the link BUILDER is stubbed. It reads the shareable app origin, which
+// jsdom answers as localhost, and these specs assert against a share host.
+//
+// `withScenarioPreviewSurface` is deliberately the REAL export. The previous
+// version of this mock reimplemented it, which made the preview assertion
+// below unfalsifiable: a hand-rolled copy appends `surface=preview` whether or
+// not the production helper still does — its `try/catch` returning the link
+// untouched, or the param renamed, would leave the spec green. The real helper
+// runs fine here; it only needs `window.location` for `new URL`'s base.
+vi.mock("@/lib/scenario-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/scenario-session")>()),
   buildScenarioLink: (token: string) => `https://mcpjam.link/t/${token}`,
-  // The real helper, not a pass-through stub: the preview marker is the whole
-  // point of the assertion below, and a stub that dropped it would make the
-  // test agree with the bug.
-  withScenarioPreviewSurface: (link: string) =>
-    `${link}${link.includes("?") ? "&" : "?"}surface=preview`,
 }));
 
 vi.mock("@/lib/clipboard", () => ({

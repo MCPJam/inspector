@@ -4,6 +4,26 @@ export function scenarioIntroDismissedStorageKey(scenarioId: string): string {
   return `scenario-intro-dismissed-${scenarioId}`;
 }
 
+interface ScopedConsent {
+  /** The storage key this answer belongs to. An answer is never read apart
+   * from its scenario — see the render-phase adjustment in the hook. */
+  key: string;
+  accepted: boolean;
+  declined: boolean;
+}
+
+function readScopedConsent(key: string): ScopedConsent {
+  try {
+    return {
+      key,
+      accepted: sessionStorage.getItem(key) === "1",
+      declined: false,
+    };
+  } catch {
+    return { key, accepted: false, declined: false };
+  }
+}
+
 export interface PendingOAuthEntry {
   server: { serverId: string };
   state: { status: string };
@@ -47,31 +67,37 @@ export function useScenarioHostIntroGate({
 }: UseScenarioHostIntroGateArgs) {
   const storageKey = scenarioIntroDismissedStorageKey(scenarioId);
 
-  const [consentAccepted, setConsentAccepted] = useState(() => {
-    try {
-      return sessionStorage.getItem(storageKey) === "1";
-    } catch {
-      return false;
-    }
-  });
+  /**
+   * Both answers, carrying the key they were given for.
+   *
+   * `declined` rides along because it is the same fact about the same
+   * scenario: leaving is a decision about this page view, not persisted, and
+   * cleared when the scenario changes — someone who reloads is asking again
+   * rather than being permanently locked out of a link they hold.
+   */
+  const [consent, setConsent] = useState<ScopedConsent>(() =>
+    readScopedConsent(storageKey),
+  );
 
   /**
-   * The tester chose Leave.
+   * Re-read DURING render when the scenario changes, not in an effect.
    *
-   * NOT persisted, and reset when the scenario changes: leaving is a decision
-   * about this page view, and someone who reloads is asking again rather than
-   * being permanently locked out of a link they hold.
+   * An effect corrects a render that has already committed. This page is not
+   * remounted per scenario — `ScenarioChatPage` takes the token as a prop —
+   * so a tester who accepted A and then opened B in the same tab got one
+   * committed render of B still holding A's acceptance: the notice skipped,
+   * and chat (or, with OAuth outstanding, the authorization panel) mounted
+   * behind the one question this gate exists to ask first. React re-renders
+   * immediately on a render-phase set, so nothing carrying A's latch paints.
    */
-  const [consentDeclined, setConsentDeclined] = useState(false);
+  if (consent.key !== storageKey) {
+    setConsent(readScopedConsent(storageKey));
+  }
 
-  useEffect(() => {
-    try {
-      setConsentAccepted(sessionStorage.getItem(storageKey) === "1");
-    } catch {
-      setConsentAccepted(false);
-    }
-    setConsentDeclined(false);
-  }, [storageKey]);
+  // A mismatch reads as UNACCEPTED rather than as the stale answer, so the
+  // discarded pass above also fails in the ask-again direction.
+  const consentAccepted = consent.key === storageKey && consent.accepted;
+  const consentDeclined = consent.key === storageKey && consent.declined;
 
   /**
    * NOT held back by a busy OAuth flow.
@@ -130,12 +156,11 @@ export function useScenarioHostIntroGate({
       // A tester who cannot persist re-consents on the next reload, which is
       // the safe direction to fail in.
     }
-    setConsentAccepted(true);
-    setConsentDeclined(false);
+    setConsent({ key: storageKey, accepted: true, declined: false });
   };
 
   const declineConsent = () => {
-    setConsentDeclined(true);
+    setConsent({ key: storageKey, accepted: consentAccepted, declined: true });
   };
 
   /**
@@ -144,7 +169,7 @@ export function useScenarioHostIntroGate({
    * an answer.
    */
   const rejoinAfterDecline = () => {
-    setConsentDeclined(false);
+    setConsent({ key: storageKey, accepted: consentAccepted, declined: false });
   };
 
   const dismissAuthPanel = () => {
