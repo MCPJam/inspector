@@ -301,6 +301,14 @@ Changes to the suite execution config apply to future runs only. Existing run sn
   This applies to every eval run — harness and emulated alike. A single-case run (the **Run** button on an individual case outside a suite) is always refused for computer-backed built-ins because that surface never provisions a computer; run the case as part of a suite with a pinned environment instead.
 </Note>
 
+<Note>
+  **Browser tools in eval suites get their own per-iteration desktop box.** When the suite's host config includes the `browser` built-in tool and a `browserToolPolicy` is declared, each iteration automatically provisions a dedicated desktop sandbox — not the member's personal computer. This means N parallel iterations never share a browser profile, cookie jar, or daemon.
+
+  Two requirements must both be met for the desktop box to be provisioned: the `browser` tool must be in the host config's built-in tool list, and a `browserToolPolicy` must be declared. A `browser` tool with no policy advertises no browser tools to the model (fail-closed), so no desktop is booked.
+
+  Combining a pinned computer environment with browser tools is not supported — the run fails with a `desktop_pin_conflict` error. Use the stock desktop image (no pinned environment) for browser eval runs.
+</Note>
+
 ### How suite defaults apply to test cases
 
 The suite-level **system prompt** and **temperature** are runtime defaults: when a test case does not set its own system prompt or temperature, the suite values are used for that iteration. A per-case override always wins — the suite default only fills the gap.
