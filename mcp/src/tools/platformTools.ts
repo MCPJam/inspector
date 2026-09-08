@@ -40,6 +40,8 @@ import {
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getScenarioOperation,
@@ -294,6 +296,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
   getEvalDescriptionExperimentOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
+  // The pre-rename spellings of the two above, still advertised so an agent
+  // already calling one keeps its tool. `check` in these names is a GITHUB
+  // check, never a case's grading check; the new names say so out loud.
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   listEnvironmentsOperation,

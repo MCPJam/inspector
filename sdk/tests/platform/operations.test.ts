@@ -2222,12 +2222,20 @@ describe("operation catalog consistency", () => {
     get_eval_gate_waiver: { project: "p", runId: "r" },
     revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
     request_eval_run_judge: { project: "p", runId: "r" },
-    list_eval_check_repos: {},
-    connect_eval_check_repo: {
+    list_eval_github_repos: {},
+    connect_eval_github_repo: {
       suite: "s",
       repo: "acme/widgets",
       // No default: the policy decides what other people's pull requests
       // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
+    },
+    // The pre-rename spellings of the two above. Still advertised, so an agent
+    // already calling one keeps its tool; same inputs, same implementation.
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
       outagePolicy: "fail_open",
     },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
@@ -2489,6 +2497,7 @@ describe("operation catalog consistency", () => {
       // read — it only polls the receipt.
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",

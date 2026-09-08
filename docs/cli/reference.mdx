@@ -2010,10 +2010,18 @@ runs were launched against it. Rows carry no configuration snapshots.
 mcpjam cloud eval revisions --suite "Asana MCP Evals" --format json
 ```
 
-### `cloud eval checks list`
+### `cloud eval github list`
 
 List the repositories whose pull requests run an eval suite, plus the
 repositories the MCPJam GitHub App can reach.
+
+<Note>
+  This subgroup was `cloud eval checks`, and `mcpjam cloud eval checks
+  list|connect` still works. It was renamed because `checks` under `cloud eval`
+  already meant a case's **grading rules** — the suite's checks, the app's
+  Checks section, `create_eval_case`'s `checks` — while these two commands
+  manage **GitHub** checks. Two resources under one noun.
+</Note>
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -2024,7 +2032,7 @@ all, so connecting a repository will not help. `connectable: null` means the
 App could not be asked (GitHub unavailable, or no installation) — different
 from an empty list, which would mean it reaches nothing.
 
-### `cloud eval checks connect`
+### `cloud eval github connect`
 
 Run this suite on every pull request to a repository. **Affects everyone who
 opens a pull request on that repository**, and with `fail-closed` it can block
@@ -2033,7 +2041,7 @@ their merges.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
-| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval checks list` reports as connectable |
+| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval github list` reports as connectable |
 | `--outage-policy <fail-open\|fail-closed>` | Yes | What the check reports when MCPJam cannot conclude |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 

@@ -5704,6 +5704,113 @@ test("eval update --computer-image sends the selector, off sends null", async ()
   }
 });
 
+/**
+ * `cloud eval github` is the canonical subgroup; `cloud eval checks` is the
+ * name it shipped under and still works.
+ *
+ * The rename is the whole point: `checks` under `cloud eval` already meant a
+ * case's GRADING RULES — the suite's checks, the app's Checks section,
+ * `create_eval_case`'s `checks` — while these two commands manage GITHUB
+ * checks. One noun was covering two resources.
+ */
+test("eval github list is the same command as the deprecated eval checks list", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "github",
+            "list",
+            "--project",
+            "proj-alpha"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.checks.available, true);
+    assert.equal(payload.checks.items[0].repo, "acme/widgets");
+    assert.deepEqual(payload.checks.connectable, [{ repo: "acme/widgets" }]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval github connect writes the same body as eval checks connect", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "github",
+            "connect",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--repo",
+            "acme/widgets",
+            "--outage-policy",
+            "fail-closed"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.createBodies.at(-1), {
+      projectId: "proj-alpha",
+      suiteId: "suite-1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval github connect refuses an unknown outage policy, same as its alias", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "github",
+          "connect",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--repo",
+          "acme/widgets",
+          "--outage-policy",
+          "fail-sideways"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /--outage-policy must be/);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval checks list reports connected and connectable repositories", async () => {
   const fixture = await startEvalFixture();
   try {

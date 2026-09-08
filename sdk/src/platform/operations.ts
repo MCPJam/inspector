@@ -7781,7 +7781,7 @@ export const listEvalCheckReposOperation: PlatformOperation<
   name: "list_eval_check_repos",
   title: "List MCPJam GitHub Checks repositories",
   description:
-    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
+    "Deprecated spelling of list_eval_github_repos, which does exactly this — `check` here means a GITHUB check, never a case's grading check. List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -7838,7 +7838,7 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
   name: "connect_eval_check_repo",
   title: "Run an MCPJam eval suite on a repository's pull requests",
   description:
-    "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+    "Deprecated spelling of connect_eval_github_repo, which does exactly this — `check` here means a GITHUB check, never a case's grading check. Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
   readOnly: false,
   // Not `spend`: it costs an eval run per pull request, but the hazard a
   // surface needs to warn about here is REACH — it changes what happens in a
@@ -7871,6 +7871,37 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
     );
     return { project: toSelectedProjectInfo(project), check };
   },
+};
+
+// ── GitHub, under the name of the thing it manages ──────────────────────────
+//
+// `list_eval_check_repos` / `connect_eval_check_repo` manage GITHUB CHECKS, and
+// sat as siblings to `checks` meaning a case's GRADING RULES under the same
+// `eval` noun — a `cloud eval checks list` that returns repositories, beside a
+// suite's `checks` that holds predicates. The app already calls its section
+// "GitHub checks", which is the disambiguated form.
+//
+// ADDITIVE, deliberately. The old names STAY in `ALL_OPERATIONS`, so an agent
+// already calling one keeps the tool it has; their descriptions simply say
+// which name is canonical now. Each new operation spreads its old sibling, so
+// the two names share one implementation and cannot diverge.
+
+export const listEvalGithubReposOperation: PlatformOperation<
+  ListEvalCheckReposInput,
+  ListEvalCheckReposResult
+> = {
+  ...listEvalCheckReposOperation,
+  name: "list_eval_github_repos",
+  title: "List MCPJam GitHub check repositories",
+};
+
+export const connectEvalGithubRepoOperation: PlatformOperation<
+  ConnectEvalCheckRepoInput,
+  ConnectEvalCheckRepoResult
+> = {
+  ...connectEvalCheckRepoOperation,
+  name: "connect_eval_github_repo",
+  title: "Run an MCPJam eval suite on a GitHub repository's pull requests",
 };
 
 const evalRunStepsInput = evalRunScopedInput.extend({
@@ -15687,6 +15718,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,

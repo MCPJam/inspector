@@ -25,8 +25,8 @@ import {
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
-  listEvalCheckReposOperation,
-  connectEvalCheckRepoOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -4511,72 +4511,109 @@ export function registerEvalCommands(program: Command): void {
 
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
 
-  // ── GitHub Checks: run this suite on every pull request ────────────
-  // A subgroup, not two flat commands: `checks` is a different resource from
-  // the suite it points at, and flattening it would put `eval connect` next to
-  // `eval run` as if they were the same kind of verb.
-  const checks = evals
-    .command("checks")
-    .description("Run an eval suite on a repository's pull requests");
+  // ── GitHub checks: run this suite on every pull request ────────────
+  //
+  // A subgroup, not two flat commands: the repository is a different resource
+  // from the suite it points at, and flattening it would put `eval connect`
+  // next to `eval run` as if they were the same kind of verb.
+  //
+  // The subgroup is `github`, not `checks`. `checks` under `cloud eval` already
+  // meant a case's GRADING RULES — the suite's `--checks`, the app's Checks
+  // section, `create_eval_case`'s `checks` — so `cloud eval checks list`
+  // returning REPOSITORIES was one noun covering two resources. The app already
+  // calls its section "GitHub checks", which is the disambiguated form.
+  // `checks` stays registered as a deprecated alias: it is a command customers
+  // have in their scripts.
+  function registerGithubSubcommands(
+    group: Command,
+    deprecated: boolean
+  ): void {
+    const suffix = deprecated
+      ? " [deprecated: use `mcpjam cloud eval github`]"
+      : "";
 
-  checks
-    .command("list")
-    .description(
-      "List the repositories running an eval suite on their pull requests"
-    )
-    .option("--project <id-or-name>", PROJECT_OPT)
-    .action(
-      async (options: PlatformOptions & { project?: string }, command) => {
-        await executeOp(
-          listEvalCheckReposOperation,
-          { project: options.project },
-          options,
-          command
-        );
-      }
-    );
-
-  checks
-    .command("connect")
-    .description(
-      "Run this suite on every pull request to a repository (affects everyone who opens one)"
-    )
-    .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-    .requiredOption("--repo <owner/repo>", "Repository to connect")
-    .requiredOption(
-      "--outage-policy <fail-open|fail-closed>",
-      "What the check reports when MCPJam cannot conclude"
-    )
-    .option("--project <id-or-name>", PROJECT_OPT)
-    .action(
-      async (
-        options: PlatformOptions & {
-          project?: string;
-          suite: string;
-          repo: string;
-          outagePolicy: string;
-        },
-        command
-      ) => {
-        // A Map, not an object literal: `{...}[key]` consults the prototype
-        // chain, so `--outage-policy constructor` would be truthy, skip the
-        // message written for the caller, and fail later against a schema they
-        // never typed.
-        const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
-        if (!policy) {
-          throw usageError(
-            '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+    group
+      .command("list")
+      .description(
+        `List the repositories running an eval suite on their pull requests${suffix}`
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .action(
+        async (options: PlatformOptions & { project?: string }, command) => {
+          await executeOp(
+            listEvalGithubReposOperation,
+            { project: options.project },
+            options,
+            command
           );
         }
-        const input = validateOpInput(connectEvalCheckRepoOperation, {
-          project: options.project,
-          suite: options.suite,
-          repo: options.repo,
-          outagePolicy: policy,
-        });
-        await executeOp(connectEvalCheckRepoOperation, input, options, command);
-      }
-    );
+      );
+
+    group
+      .command("connect")
+      .description(
+        `Run this suite on every pull request to a repository (affects everyone who opens one)${suffix}`
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--repo <owner/repo>", "Repository to connect")
+      .requiredOption(
+        "--outage-policy <fail-open|fail-closed>",
+        "What the check reports when MCPJam cannot conclude"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .action(
+        async (
+          options: PlatformOptions & {
+            project?: string;
+            suite: string;
+            repo: string;
+            outagePolicy: string;
+          },
+          command
+        ) => {
+          // A Map, not an object literal: `{...}[key]` consults the prototype
+          // chain, so `--outage-policy constructor` would be truthy, skip the
+          // message written for the caller, and fail later against a schema
+          // they never typed.
+          const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
+          if (!policy) {
+            throw usageError(
+              '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+            );
+          }
+          const input = validateOpInput(connectEvalGithubRepoOperation, {
+            project: options.project,
+            suite: options.suite,
+            repo: options.repo,
+            outagePolicy: policy,
+          });
+          await executeOp(
+            connectEvalGithubRepoOperation,
+            input,
+            options,
+            command
+          );
+        }
+      );
+  }
+
+  registerGithubSubcommands(
+    evals
+      .command("github")
+      .description(
+        "Run an eval suite on a GitHub repository's pull requests (GitHub checks)"
+      ),
+    false
+  );
+
+  registerGithubSubcommands(
+    evals
+      .command("checks")
+      .description(
+        "Deprecated alias for `cloud eval github` — a repository's GitHub checks, not a case's grading checks"
+      ),
+    true
+  );
 
   // ── Eval run iterations + traces ───────────────────────────────────
   addProjectOption(

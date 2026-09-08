@@ -342,6 +342,8 @@ export {
   createTunnelOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   deleteImageOperation,

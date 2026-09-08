@@ -207,7 +207,10 @@ const PLAIN_TOOLS = [
   "propose_eval_description_rewrite",
   "start_eval_description_experiment",
   "get_eval_description_experiment",
-  // GitHub Checks: agent-oriented payloads, no widget view.
+  // GitHub checks: agent-oriented payloads, no widget view. Both spellings —
+  // the `*_check_repo*` pair is the pre-rename one, still advertised.
+  "list_eval_github_repos",
+  "connect_eval_github_repo",
   "list_eval_check_repos",
   "connect_eval_check_repo",
   "list_chat_sessions",
@@ -462,6 +465,8 @@ describe("platform tool registration", () => {
       "propose_eval_description_rewrite",
       "start_eval_description_experiment",
       "get_eval_description_experiment",
+      "list_eval_github_repos",
+      "connect_eval_github_repo",
       "list_eval_check_repos",
       "connect_eval_check_repo",
       "list_project_environments",
@@ -622,6 +627,7 @@ describe("platform tool registration", () => {
       // Additive: it creates a repository connection. Its hazard is REACH (a
       // shared repository, everyone's pull requests), not destruction — the
       // annotation says write, and the gated tier is what warns.
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       // Content-addressed mint: repeating the same stack reuses one row.
       // Nothing is destroyed and nothing is named.

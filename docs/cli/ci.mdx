@@ -556,7 +556,7 @@ The line is **not** a diagnosis. A first failed stage is a location and a failur
 
 `eval status --stages` expands each failing trial to all six chain rows with their states and reasons. It is off by default: six rows per trial is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval github list/connect` (GitHub checks integration), and more.
 
 ### Upload SDK eval results
 
