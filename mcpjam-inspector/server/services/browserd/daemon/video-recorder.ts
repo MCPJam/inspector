@@ -40,7 +40,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readdir, stat, unlink } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 
@@ -110,7 +110,7 @@ export interface VideoRecorderOptions {
   ) => RecorderProcess;
   ffmpegPath?: string;
   /** Injected for the same reason: the size of a file no test wrote. */
-  statFile?: (path: string) => Promise<{ size: number; mtimeMs?: number }>;
+  statFile?: (path: string) => Promise<{ size: number }>;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -119,9 +119,6 @@ export interface VideoRecorderOptions {
    * daemon boot; injected only so a test can assert an exact path.
    */
   nonce?: string;
-  /** Injected so the retention sweep needs no filesystem. */
-  listDir?: (dir: string) => Promise<string[]>;
-  removeFile?: (path: string) => Promise<void>;
 }
 
 export interface VideoRecorder {
@@ -156,17 +153,6 @@ export const MAX_RECORD_FPS = 30;
 export const DEFAULT_RECORD_FPS = 15;
 
 /** How long shutdown waits for ffmpeg to write its last fragment. */
-/**
- * How long a take is left alone before the sweep will touch it.
- *
- * Comfortably longer than `HOSTED_RECORDING_COLLECT_TIMEOUT_MS` (45 s), which
- * is the whole window in which a collector can be reading a file — it stops
- * the take, connects to the box and reads, all under that one deadline. A file
- * older than this therefore has no reader left that could still be waiting on
- * it, whatever the call order upstream turns out to be.
- */
-export const SWEEP_MIN_AGE_MS = 10 * 60_000;
-
 export const DEFAULT_FINALIZE_GRACE_MS = 2_000;
 
 /**
@@ -331,8 +317,6 @@ export function createVideoRecorder(
     options.statFile ?? (async (path: string) => stat(path));
   const now = options.now ?? Date.now;
   const nonce = options.nonce ?? randomBytes(4).toString("hex");
-  const listDir = options.listDir ?? ((dir: string) => readdir(dir));
-  const removeFile = options.removeFile ?? (async (p: string) => unlink(p));
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as never));
 
@@ -376,66 +360,29 @@ export function createVideoRecorder(
    * — the collector then uploads bytes that are not the take whose size and
    * duration were reported to it. The recording directory outlives the
    * process, so the name has to say WHICH process wrote it.
+   *
+   * NOTHING HERE DELETES A TAKE, AND THAT IS DELIBERATE. Unique names mean the
+   * directory grows by a take per boot, which is a real cost — so this did
+   * once sweep old files, twice, and both versions could delete a recording a
+   * collector was still reading. The reason is structural rather than a bug to
+   * fix: the read happens over the sandbox files API, entirely outside this
+   * process, and no signal from it ever reaches the daemon. Age does not
+   * stand in for one either, because a take that hits `-fs` stops being
+   * written the moment it caps and can sit, finished and still owed, for the
+   * rest of a long attempt.
+   *
+   * Any horizon short enough to reclaim disk is therefore short enough to
+   * delete evidence; any horizon long enough to be safe outlives the box
+   * itself, so it would never fire. And the files that actually pile up are
+   * the ones never collected — which is precisely what the daemon cannot
+   * distinguish from not collected YET.
+   *
+   * So the bound is the box's own lifetime. These are per-run sandboxes that
+   * are released minutes later, each take is capped at `maxBytes`, and a
+   * normal run writes exactly one. Growth needs a crash-looping browserd on a
+   * box that is already failing. That is the cheaper thing to be wrong about.
    */
   let disposed = false;
-
-  /**
-   * Drop takes that are OLD AND NOT OURS.
-   *
-   * Nothing deletes a recording otherwise: the collector reads the file and
-   * leaves it, and `recordDir` sits beside the Chromium profile, so it
-   * outlives the process. Giving each take its own name — which it needs, so
-   * a retry cannot overwrite evidence still owed to a reader — turned a
-   * directory that held one file per id into one that grows by a take per
-   * boot. A crash-looping daemon would fill the disk at the size cap each
-   * time round.
-   *
-   * TWO GATES, AND AGE IS THE LOAD-BEARING ONE. The first version of this
-   * swept on the nonce alone, reasoning that a dead boot's take is
-   * unreachable because only the live daemon answers a stop. That was wrong
-   * in the way that costs evidence: a collector takes the `path` from a stop
-   * and reads it afterwards, so it can still be mid-read on a file whose boot
-   * has since been replaced — the daemon cannot see that read and must not
-   * bet on it having finished.
-   *
-   * So a file goes only when it is older than any read could still be
-   * outstanding on (`SWEEP_MIN_AGE_MS`, far past the collector's own 45 s
-   * deadline). A `stat` that cannot say how old it is keeps the file: the
-   * disk is worth less than the recording.
-   *
-   * The nonce gate stays as the second: this boot's own takes are never
-   * touched however old they look, because a reader CAN be on one — that is
-   * the race the per-take name exists to win, and undoing it here would trade
-   * a wrong file for a missing one.
-   *
-   * Best-effort throughout. A directory that cannot be listed, a file that
-   * cannot be stat'ed, or one that will not unlink must never cost a run its
-   * recording.
-   */
-  const sweepDeadBoots = async (): Promise<void> => {
-    let names: string[];
-    try {
-      names = await listDir(options.dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      if (!name.endsWith(".mp4")) continue;
-      if (name.includes(`-${nonce}-`)) continue;
-      const path = join(options.dir, name);
-      try {
-        const { mtimeMs } = await statFile(path);
-        // Unknown age is treated as NEW. A sweep that guesses wrong here
-        // deletes a run's only evidence; one that guesses wrong the other way
-        // leaves a file on a box that is about to be thrown away.
-        if (mtimeMs === undefined) continue;
-        if (now() - mtimeMs < SWEEP_MIN_AGE_MS) continue;
-        await removeFile(path);
-      } catch {
-        // Cannot stat, read-only, already gone — all fine.
-      }
-    }
-  };
 
   const start = (
     args: RecorderStartArgs,
@@ -490,10 +437,6 @@ export function createVideoRecorder(
       endedEarly: false,
     };
     take = entry;
-    // AFTER the spawn, and never awaited: the take is already recording, and a
-    // slow or wedged filesystem must not hold up a run's evidence to tidy up
-    // after a boot that is already gone.
-    void sweepDeadBoots();
     child.on("error", () => {
       if (take !== entry) return;
       // A spawn that failed asynchronously (ENOENT on some platforms arrives

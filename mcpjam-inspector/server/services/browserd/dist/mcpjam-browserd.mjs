@@ -289,12 +289,11 @@ function constantTimeEquals(a, b) {
 // server/services/browserd/daemon/video-recorder.ts
 import { spawn } from "node:child_process";
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { readdir, stat, unlink } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 var MIN_RECORD_FPS = 1;
 var MAX_RECORD_FPS = 30;
 var DEFAULT_RECORD_FPS = 15;
-var SWEEP_MIN_AGE_MS = 10 * 6e4;
 var DEFAULT_FINALIZE_GRACE_MS = 2e3;
 function recorderArgs(options) {
   return [
@@ -383,34 +382,12 @@ function createVideoRecorder(options) {
   const statFile = options.statFile ?? (async (path) => stat(path));
   const now = options.now ?? Date.now;
   const nonce = options.nonce ?? randomBytes2(4).toString("hex");
-  const listDir = options.listDir ?? ((dir) => readdir(dir));
-  const removeFile = options.removeFile ?? (async (p) => unlink(p));
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   let take;
   let stopping;
   let takeSeq = 0;
   let disposed = false;
-  const sweepDeadBoots = async () => {
-    let names;
-    try {
-      names = await listDir(options.dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      if (!name.endsWith(".mp4")) continue;
-      if (name.includes(`-${nonce}-`)) continue;
-      const path = join(options.dir, name);
-      try {
-        const { mtimeMs } = await statFile(path);
-        if (mtimeMs === void 0) continue;
-        if (now() - mtimeMs < SWEEP_MIN_AGE_MS) continue;
-        await removeFile(path);
-      } catch {
-      }
-    }
-  };
   const start = (args) => {
     if (disposed) return { ok: false, error: "record_unavailable" };
     if (take || stopping) return { ok: false, error: "record_active" };
@@ -452,7 +429,6 @@ function createVideoRecorder(options) {
       endedEarly: false
     };
     take = entry;
-    void sweepDeadBoots();
     child.on("error", () => {
       if (take !== entry) return;
       entry.endedEarly = true;
@@ -4712,7 +4688,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 
 // server/services/browserd/daemon/profile-lock.ts
 import { execFileSync } from "node:child_process";
-import { readlink, unlink as unlink2 } from "node:fs/promises";
+import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join as join2 } from "node:path";
 var SINGLETON_FILES = [
@@ -4735,7 +4711,7 @@ async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner)
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
-      await unlink2(join2(userDataDir, name));
+      await unlink(join2(userDataDir, name));
       result.removed.push(name);
     } catch (err) {
       if (isNotFound(err)) continue;
