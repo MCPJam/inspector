@@ -61,7 +61,10 @@ import {
   type UserTestingDetailTab,
   useAppNavigate,
 } from "@/lib/app-navigation";
-import { buildScenarioLink } from "@/lib/scenario-session";
+import {
+  buildScenarioLink,
+  withScenarioPreviewSurface,
+} from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
@@ -485,7 +488,12 @@ export function UserTestingScenarioDetail({
           asChild
         >
           <a
-            href={publishLink}
+            // TAGGED as preview traffic. A creator opening their own study
+            // starts a real guest session, so an untagged link puts their
+            // look-around in the study's own Sessions list as if a tester had
+            // run it. The docked pane used to set this on its iframe; with the
+            // pane gone this is the only preview path, so it carries it here.
+            href={withScenarioPreviewSurface(publishLink)}
             target="_blank"
             rel="noreferrer"
             data-testid="user-testing-open-preview"

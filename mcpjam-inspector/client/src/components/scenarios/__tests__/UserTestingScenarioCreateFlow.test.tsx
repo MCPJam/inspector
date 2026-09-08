@@ -526,8 +526,10 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
   });
 
-  it("says nothing while the host list has not settled", () => {
-    // An unknown answer must not render as a problem.
+  it("says nothing while the host list has not settled, and lets nothing through", () => {
+    // An unknown answer must not render as a problem — but it must not open
+    // the gate either. The server question answers `null` during the load
+    // window, and a fast creator could otherwise publish straight through it.
     hostListState.hosts = [];
     hostListState.isLoading = true;
     renderFlow();
@@ -535,6 +537,7 @@ describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
     expect(
       screen.queryByTestId("user-testing-create-servers-required"),
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
   });
 
   it("never lands the default on the broken client when a runnable one exists", () => {
@@ -1017,7 +1020,12 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
     // The chevron the Swarms create flow uses, not an arrow. Asserted because
     // the whole point of the glyph is that the two flows match.
     expect(back.querySelector("svg.lucide-chevron-left")).not.toBeNull();
-    expect(screen.getByLabelText(/^study name/i)).toBeInTheDocument();
+    // Labelled, but NOT announced as required: the field accepts empty and
+    // falls back to the suggestion, so a required marker would contradict the
+    // behaviour for anyone who hears it rather than sees the asterisk.
+    const nameField = screen.getByLabelText(/^study name$/i);
+    expect(nameField).toBeInTheDocument();
+    expect(nameField).not.toHaveAttribute("aria-required");
     expect(
       screen.getByTestId("user-testing-create-continue"),
     ).toHaveTextContent("Continue");

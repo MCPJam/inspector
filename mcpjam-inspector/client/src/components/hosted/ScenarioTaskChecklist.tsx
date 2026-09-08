@@ -93,6 +93,10 @@ export function ScenarioTaskChecklist({
               "text-xs",
               allDone ? "text-muted-foreground" : "font-semibold text-primary",
             )}
+            // Ticking an item changes this number, and the tester is looking
+            // at the popover row they just clicked rather than at the header.
+            // Polite, not assertive: it is progress, not an alert.
+            aria-live="polite"
             data-testid="scenario-tasks-remaining"
           >
             {remainingLabel}

@@ -372,6 +372,45 @@ describe("ScenarioChatPage", () => {
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
   });
 
+  it("does not lend the previous scenario's checklist to a redeeming link", async () => {
+    // Same rule as the brand above, and the same reason: the stored session
+    // outlives the page, so a tester opening a second link still holds the
+    // first study's tasks. Ticking them off would be checking items off a
+    // list that belongs to a study they are no longer in.
+    writeScenarioSession({
+      scenarioId: "sbx_previous",
+      accessVersion: 1,
+      shareToken: "tok_previous",
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_previous",
+        name: "Previous Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+        chatUi: {
+          surfaces: { tasks: { items: [{ id: "t1", title: "Old task" }] } },
+        },
+      },
+    });
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    render(<ScenarioChatPage pathToken="tok_new" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      screen.queryByTestId("scenario-tasks-trigger"),
+    ).not.toBeInTheDocument();
+  });
+
   // Removed: "uses the Claude loading indicator variant for Claude-style
   // hosted scenarios". The indicator no longer flows through a
   // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
@@ -885,6 +924,11 @@ describe("ScenarioChatPage", () => {
   });
 
   it("auto-resumes scenario OAuth after callback completion", async () => {
+    // A resuming tester consented before the redirect, in this tab. Seeded
+    // because the notice is no longer suppressed while OAuth is busy — the
+    // suppression let a NEW tab (shared `localStorage` resume marker, empty
+    // per-tab consent latch) authorize before being told it was recorded.
+    consentAlreadyGiven();
     vi.useFakeTimers();
     let hasToken = false;
     mockGetStoredTokens.mockImplementation(() =>

@@ -18,7 +18,6 @@ describe("useScenarioHostIntroGate", () => {
       useScenarioHostIntroGate({
         scenarioId: "sbx_plain",
         oauthPending: false,
-        hasBusyOAuth: false,
         pendingOAuthServers: [],
       }),
     );
@@ -34,7 +33,6 @@ describe("useScenarioHostIntroGate", () => {
       useScenarioHostIntroGate({
         scenarioId: "sbx_oauth",
         oauthPending: true,
-        hasBusyOAuth: false,
         pendingOAuthServers: [needsAuthRow],
       }),
     );
@@ -44,15 +42,40 @@ describe("useScenarioHostIntroGate", () => {
     expect(result.current.composerBlocked).toBe(true);
   });
 
-  it("holds the notice back while OAuth is mid-flight", () => {
-    // A tester returning from an authorization redirect consented before they
-    // left; stacking a dialog over a resuming authorization asks a question
-    // they cannot answer yet.
+  it("asks even while an authorization is resuming", () => {
+    // An earlier version suppressed the notice whenever OAuth was busy, on the
+    // theory that a resuming tester had already consented in this tab. But the
+    // OAuth resume marker lives in `localStorage` — shared across tabs — while
+    // the consent latch is per-tab `sessionStorage`, so opening the link in a
+    // NEW tab hit "busy, no latch" and skipped the notice entirely. Nothing is
+    // lost by asking: the same-tab return already has the latch.
     const { result } = renderHook(() =>
       useScenarioHostIntroGate({
         scenarioId: "sbx_busy",
         oauthPending: true,
-        hasBusyOAuth: true,
+        pendingOAuthServers: [
+          {
+            server: { serverId: "srv_1" },
+            state: { status: "verifying", errorMessage: null, serverUrl: null },
+          },
+        ],
+      }),
+    );
+
+    expect(result.current.showConsent).toBe(true);
+    // Consent still outranks the auth panel — one dialog at a time.
+    expect(result.current.showAuthPanel).toBe(false);
+    expect(result.current.composerBlocked).toBe(true);
+  });
+
+  it("does not re-ask a tester returning from an authorization redirect", () => {
+    // The case the dropped guard was defending: same tab, so the latch is
+    // there, so no dialog either way.
+    sessionStorage.setItem("scenario-intro-dismissed-sbx_return", "1");
+    const { result } = renderHook(() =>
+      useScenarioHostIntroGate({
+        scenarioId: "sbx_return",
+        oauthPending: true,
         pendingOAuthServers: [
           {
             server: { serverId: "srv_1" },
@@ -71,7 +94,6 @@ describe("useScenarioHostIntroGate", () => {
       useScenarioHostIntroGate({
         scenarioId: "sbx_accept",
         oauthPending: true,
-        hasBusyOAuth: false,
         pendingOAuthServers: [needsAuthRow],
       }),
     );
@@ -95,7 +117,6 @@ describe("useScenarioHostIntroGate", () => {
       useScenarioHostIntroGate({
         scenarioId: "sbx_seen",
         oauthPending: false,
-        hasBusyOAuth: false,
         pendingOAuthServers: [],
       }),
     );
@@ -115,7 +136,6 @@ describe("useScenarioHostIntroGate", () => {
         useScenarioHostIntroGate({
           scenarioId: "sbx_autolatch",
           oauthPending,
-          hasBusyOAuth: false,
           pendingOAuthServers: oauthPending ? [needsAuthRow] : [],
         }),
       { initialProps: { oauthPending: true } },
@@ -134,7 +154,6 @@ describe("useScenarioHostIntroGate", () => {
       useScenarioHostIntroGate({
         scenarioId: "sbx_leave",
         oauthPending: false,
-        hasBusyOAuth: false,
         pendingOAuthServers: [],
       }),
     );
@@ -167,7 +186,6 @@ describe("useScenarioHostIntroGate", () => {
         useScenarioHostIntroGate({
           scenarioId,
           oauthPending: false,
-          hasBusyOAuth: false,
           pendingOAuthServers: [],
         }),
       { initialProps: { scenarioId: "sbx_a" } },
@@ -197,7 +215,6 @@ describe("useScenarioHostIntroGate", () => {
       useScenarioHostIntroGate({
         scenarioId: "sbx_nostorage",
         oauthPending: false,
-        hasBusyOAuth: false,
         pendingOAuthServers: [],
       }),
     );
@@ -224,7 +241,6 @@ describe("useScenarioHostIntroGate", () => {
         useScenarioHostIntroGate({
           scenarioId: "sbx_deadend",
           oauthPending: true,
-          hasBusyOAuth: false,
           pendingOAuthServers: pending,
         }),
       { initialProps: { pending: [errorRow] } },

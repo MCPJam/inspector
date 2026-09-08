@@ -85,6 +85,11 @@ vi.mock("@/lib/scenario-client-style", () => ({
 
 vi.mock("@/lib/scenario-session", () => ({
   buildScenarioLink: (token: string) => `https://mcpjam.link/t/${token}`,
+  // The real helper, not a pass-through stub: the preview marker is the whole
+  // point of the assertion below, and a stub that dropped it would make the
+  // test agree with the bug.
+  withScenarioPreviewSurface: (link: string) =>
+    `${link}${link.includes("?") ? "&" : "?"}surface=preview`,
 }));
 
 vi.mock("@/lib/clipboard", () => ({
@@ -188,9 +193,7 @@ vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
     return (
-      <div data-testid="stub-usage-insights">
-        {props.emptyState as never}
-      </div>
+      <div data-testid="stub-usage-insights">{props.emptyState as never}</div>
     );
   },
 }));
@@ -212,11 +215,9 @@ vi.mock("@/components/scenarios/ScenarioPreviewPane", () => ({
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
-  ResizablePanelGroup: ({
-    children,
-  }: {
-    children?: unknown;
-  }) => <div data-testid="stub-resizable-group">{children as never}</div>,
+  ResizablePanelGroup: ({ children }: { children?: unknown }) => (
+    <div data-testid="stub-resizable-group">{children as never}</div>
+  ),
   ResizablePanel: ({ children }: { children?: unknown }) => (
     <div>{children as never}</div>
   ),
@@ -254,7 +255,6 @@ const detail = (
 ) => (
   <UserTestingScenarioDetail
     scenario={{ ...scenario, ...over } as ScenarioSettings}
-    isAuthenticated
     editMode={opts.editMode}
     onBack={vi.fn()}
     onDeleted={vi.fn()}
@@ -297,7 +297,9 @@ describe("UserTestingScenarioDetail", () => {
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("user-testing-edit-tab"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
@@ -336,7 +338,9 @@ describe("UserTestingScenarioDetail", () => {
     expect(
       screen.getByRole("heading", { name: "Sharing permissions" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Ratings" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Ratings" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("stub-share")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
   });
@@ -359,7 +363,9 @@ describe("UserTestingScenarioDetail", () => {
     // Insights `absolute inset-0` with no children — no empty state, no
     // retry. The workbench must stay reachable; if it itself blows up, the
     // share empty panel is the recovery UI.
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     workbenchMock.mockImplementation(() => {
       throw new Error(
         "Could not find public function: scenarioWindowInsights:getWindowSignals",
@@ -428,9 +434,12 @@ describe("UserTestingScenarioDetail", () => {
     // History is exactly what someone opens an archived scenario to read.
     renderDetail(archived);
     fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=sessions", {
-      replace: true,
-    });
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/user-testing/cb-1?tab=sessions",
+      {
+        replace: true,
+      },
+    );
   });
 
   it("hides the Environment section on a host-backed scenario (composer can't run)", () => {
@@ -946,11 +955,27 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
     // The 560px measure the frame specifies, not a percentage of a split pane
     // that keeps shrinking as the window narrows.
+    expect(container.querySelector('[class*="w-[560px]"]')).not.toBeNull();
+    // A resizable split is what the fixed measure replaced. Asserted against
+    // the MOCK's own test id, not `[data-panel-group]`: the group is stubbed
+    // in this file, so the real attribute never appears in jsdom and that
+    // assertion could not fail even if the split came back.
     expect(
-      container.querySelector('[class*="w-[560px]"]'),
-    ).not.toBeNull();
-    // A resizable split is what the fixed measure replaced.
-    expect(container.querySelector("[data-panel-group]")).toBeNull();
+      screen.queryByTestId("stub-resizable-group"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tags Open preview as preview traffic, not as a tester session", () => {
+    // A creator opening their own study starts a real guest session. Untagged,
+    // their look-around lands in the study's own Sessions list as if a tester
+    // had run it — and the docked pane that used to set this marker is gone,
+    // so this link is the only thing that can.
+    renderEdit();
+
+    expect(screen.getByTestId("user-testing-open-preview")).toHaveAttribute(
+      "href",
+      expect.stringContaining("surface=preview"),
+    );
   });
 
   it("says what Open preview opens, without lengthening the label", () => {

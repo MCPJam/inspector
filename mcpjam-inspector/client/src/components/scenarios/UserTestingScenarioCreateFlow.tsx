@@ -402,8 +402,20 @@ export function UserTestingScenarioCreateFlow({
   // difference between a study that opens and one that cannot. `null` (still
   // unknown) does not block: the check exists to stop a knowably-broken
   // publish, not to gate the screen on a query.
+  //
+  // `hostsLoading` is part of the gate, not just of `setupHasServers`: while
+  // the client list is in flight the server question answers `null`, and
+  // `!== false` would let a fast creator publish straight through the window
+  // this check exists to close. Blocking on `=== true` instead would be
+  // wrong in the other direction — a saved environment backed by a private
+  // scenario host is filtered out of the list and answers `null` forever, so
+  // requiring a positive answer would permanently refuse a legitimate study.
   const canAdvance =
-    environmentsSettled && hasTarget && setupHasServers !== false && !isSaving;
+    environmentsSettled &&
+    !hostsLoading &&
+    hasTarget &&
+    setupHasServers !== false &&
+    !isSaving;
 
   const handleTargetChange = (next: EnvironmentComposerState) => {
     // A pick of their own settles the question the default was answering.
@@ -577,14 +589,15 @@ export function UserTestingScenarioCreateFlow({
 
             <div className="mt-6 space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="user-testing-create-name">
-                  Study name
-                  <RequiredMark />
-                </Label>
+                {/* NOT marked required, and no `aria-required`. The frame
+                    draws an asterisk here, but this field accepts empty and
+                    falls back to the suggestion — announcing a requirement
+                    that is not enforced is a contradiction a screen reader
+                    hears and a sighted user does not. */}
+                <Label htmlFor="user-testing-create-name">Study name</Label>
                 <Input
                   id="user-testing-create-name"
                   data-testid="user-testing-create-name"
-                  aria-required
                   value={name}
                   disabled={isSaving}
                   placeholder={suggestedName || "Checkout flow"}
@@ -709,7 +722,7 @@ export function UserTestingScenarioCreateFlow({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align="start"
-                    className="w-[--radix-dropdown-menu-trigger-width]"
+                    className="w-[var(--radix-dropdown-menu-trigger-width)]"
                   >
                     <DropdownMenuRadioGroup
                       value={accessPreset}

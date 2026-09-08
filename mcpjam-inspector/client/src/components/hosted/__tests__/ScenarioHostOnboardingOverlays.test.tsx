@@ -96,6 +96,13 @@ describe("ScenarioHostOnboardingOverlays", () => {
     it("has no close affordance, and neither Escape nor the backdrop answers for the tester", () => {
       // The overlay this replaces dismissed itself on a backdrop click, so "I
       // read the notice" and "I clicked past something" were one gesture.
+      //
+      // What this can and cannot prove: `open` is fully controlled with no
+      // `onOpenChange`, so the dialog stays mounted whatever Radix does with
+      // Escape — a "still on screen" assertion would pass even with
+      // `onEscapeKeyDown` deleted, which is false confidence. The claim worth
+      // pinning is that neither ANSWER is invoked, because that is what would
+      // actually latch consent or end the session behind the tester's back.
       const onAcceptConsent = vi.fn();
       const onDeclineConsent = vi.fn();
       renderOverlays({ showConsent: true, onAcceptConsent, onDeclineConsent });
@@ -111,9 +118,18 @@ describe("ScenarioHostOnboardingOverlays", () => {
 
       expect(onAcceptConsent).not.toHaveBeenCalled();
       expect(onDeclineConsent).not.toHaveBeenCalled();
-      expect(
-        screen.getByText("This session will be recorded"),
-      ).toBeInTheDocument();
+    });
+
+    it("opens with focus on Leave, not on Continue", () => {
+      // Radix focuses an AlertDialog's cancel action on open, and that is the
+      // right default HERE even though Continue is the primary: a stray Enter
+      // on a consent dialog must not consent. Pinned because it looks like a
+      // bug (primary action unfocused) and a well-meaning change to
+      // `onOpenAutoFocus` would make an accidental keypress agree to being
+      // recorded.
+      renderOverlays({ showConsent: true });
+
+      expect(screen.getByRole("button", { name: "Leave" })).toHaveFocus();
     });
   });
 

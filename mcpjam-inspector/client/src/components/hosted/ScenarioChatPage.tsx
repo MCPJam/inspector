@@ -562,19 +562,15 @@ export function ScenarioChatPage({
         useOAuth: s.useOAuth,
       }));
   }, [sessionServersOptional, enabledOptionalServerIds]);
-  const {
-    pendingOAuthServers,
-    authorizeServer,
-    markOAuthRequired,
-    hasBusyOAuth,
-  } = useHostedOAuthGate({
-    surface: "scenario",
-    pendingKey: SCENARIO_OAUTH_PENDING_KEY,
-    servers: oauthServers,
-    projectId: session?.payload.projectId ?? null,
-    scenarioId: session?.scenarioId,
-    isAuthenticated,
-  });
+  const { pendingOAuthServers, authorizeServer, markOAuthRequired } =
+    useHostedOAuthGate({
+      surface: "scenario",
+      pendingKey: SCENARIO_OAUTH_PENDING_KEY,
+      servers: oauthServers,
+      projectId: session?.payload.projectId ?? null,
+      scenarioId: session?.scenarioId,
+      isAuthenticated,
+    });
 
   const scenarioServerConfigs = useMemo(() => {
     if (!session) return {};
@@ -1007,7 +1003,6 @@ export function ScenarioChatPage({
   const introGate = useScenarioHostIntroGate({
     scenarioId: session?.payload.scenarioId ?? "",
     oauthPending,
-    hasBusyOAuth,
     pendingOAuthServers,
   });
   const isFinishingOAuth =
@@ -1250,13 +1245,20 @@ export function ScenarioChatPage({
                               only when the study actually has tasks: the
                               control's entire content would otherwise be a
                               count of nothing. */}
-                          {session && hasScenarioTasks ? (
+                          {/* `sessionForCurrentLink`, not `session`: a stored
+                              session from link A must not lend its checklist
+                              to link B while B is still redeeming — the same
+                              rule the client name and logo above follow, and
+                              for the same reason. */}
+                          {sessionForCurrentLink && hasScenarioTasks ? (
                             <ScenarioTaskChecklist
                               // The SAME id the consent latch keys on
                               // (`useScenarioHostIntroGate`), so one study's
                               // two pieces of per-tab tester state cannot end
                               // up scoped differently.
-                              scenarioId={session.payload.scenarioId}
+                              scenarioId={
+                                sessionForCurrentLink.payload.scenarioId
+                              }
                               tasks={scenarioTasks}
                             />
                           ) : null}

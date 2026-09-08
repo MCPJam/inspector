@@ -12,8 +12,6 @@ export interface PendingOAuthEntry {
 export interface UseScenarioHostIntroGateArgs {
   scenarioId: string;
   oauthPending: boolean;
-  /** True while OAuth is launching, resuming, or verifying — consent waits behind this. */
-  hasBusyOAuth: boolean;
   /** Pending rows from useHostedOAuthGate, to reset the auth panel's dismissal. */
   pendingOAuthServers: PendingOAuthEntry[];
 }
@@ -45,7 +43,6 @@ export interface UseScenarioHostIntroGateArgs {
 export function useScenarioHostIntroGate({
   scenarioId,
   oauthPending,
-  hasBusyOAuth,
   pendingOAuthServers,
 }: UseScenarioHostIntroGateArgs) {
   const storageKey = scenarioIntroDismissedStorageKey(scenarioId);
@@ -77,12 +74,22 @@ export function useScenarioHostIntroGate({
   }, [storageKey]);
 
   /**
-   * Held back only while OAuth is mid-flight. A tester returning from an
-   * authorization redirect consented before they left (same tab, so the latch
-   * is still there); stacking a dialog over a resuming authorization would ask
-   * a question they cannot answer yet.
+   * NOT held back by a busy OAuth flow.
+   *
+   * An earlier version suppressed the notice while OAuth was mid-flight,
+   * reasoning that a tester returning from an authorization redirect had
+   * already consented in the same tab. That reasoning had a hole: the resume
+   * marker lives in `localStorage` (`hosted-oauth-resume`), which is shared
+   * across tabs, while the consent latch is per-tab `sessionStorage`. So a
+   * tester opening the link in a NEW tab while a marker was still around got
+   * `hasBusyOAuth` with no latch — the notice was skipped and authorization
+   * proceeded first, which is the one thing this gate exists to prevent.
+   *
+   * The case that motivated the guard is already covered without it: a
+   * same-tab redirect return has `consentAccepted === true`, so no dialog is
+   * shown anyway. Nothing is lost by dropping it.
    */
-  const showConsent = !consentAccepted && !consentDeclined && !hasBusyOAuth;
+  const showConsent = !consentAccepted && !consentDeclined;
 
   /**
    * The recipient's way out of an authorization that cannot succeed.
