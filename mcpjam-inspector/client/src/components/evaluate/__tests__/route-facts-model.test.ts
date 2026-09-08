@@ -320,7 +320,7 @@ describe("copy helpers", () => {
     expect(mismatchLines(facts, doc!.catalogState)).toEqual([
       "expected `tool_a` not called in 1 of 1",
       "`tool_b` called in 1 of 1 (1 failed)",
-      "`tool_b` called instead of `tool_a` in 1 trial",
+      "`tool_b` called instead of `tool_a` in 1 iteration",
       "ended with a question: not measured",
     ]);
   });
@@ -357,7 +357,7 @@ describe("copy helpers", () => {
       },
     } as EvalRunRouteFactsCase;
     const lines = mismatchLines(capped, doc!.catalogState);
-    expect(lines).toContain("`tool_b` called instead of `tool_a` in 2 trials");
+    expect(lines).toContain("`tool_b` called instead of `tool_a` in 2 iterations");
     expect(lines).toContain(
       `mismatch lists capped at ${MAX_MISMATCH_TOOLS} entries each`,
     );
@@ -397,7 +397,7 @@ describe("copy helpers", () => {
       substitutions: [],
     });
     expect(mismatchLines(doc!.cases[0]!, doc!.catalogState)).toContain(
-      "catalog not loaded — substitutions were not classified",
+      "catalog not loaded. Substitutions were not classified",
     );
   });
 });

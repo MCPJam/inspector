@@ -71,7 +71,7 @@ export function intervalBoundPhrase(
 ): string {
   const { verdict, interval } = pooled;
   if (verdict === "insufficient_data" || interval === null) {
-    return "not enough trials to say";
+    return "not enough iterations to say";
   }
   switch (verdict) {
     case "improved":
@@ -180,7 +180,7 @@ export function regressionLine(
   if (!regression.checked) {
     return (
       regression.reason ??
-      "Regression was not checked — this launch replayed only the affected cases."
+      "Regression was not checked. This launch replayed only the affected cases."
     );
   }
   if (regression.status === "failed") {
@@ -259,7 +259,7 @@ export function evidenceCaveat(
     return `The two arms ran in the same window, but ${differed.replace(
       "arms differ: ",
       "they differed on ",
-    )} — the report calls this reproducible, not controlled. ${unverified}`;
+    )}. The report calls this reproducible, not controlled. ${unverified}`;
   }
   const fields = frozen
     ? frozenFieldsLabel(frozen)

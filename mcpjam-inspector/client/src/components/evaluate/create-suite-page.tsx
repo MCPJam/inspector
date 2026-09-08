@@ -33,15 +33,19 @@ import {
 } from "@/components/environment-composer/environment-composer";
 import {
   composerHasTarget,
+  emptyModelSelection,
   emptyComposerState,
   type EnvironmentComposerState,
+  type ModelSelection,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { toast } from "@/lib/toast";
+import { EvalTargetMatrix } from "./eval-target-matrix";
 import type { HostAttachmentDraft } from "../evals/client-attachments-editor";
 import {
   DEFAULT_CREATE_SUITE_NAME,
@@ -73,12 +77,6 @@ export type CreateSuitePayload = {
 /** Servers as its own required field — one pill, matching the evals mock. */
 export const EVALS_CREATE_SERVER_SLOTS: readonly ComposerSlot[] = ["servers"];
 
-/** Where it runs: client + model side by side on the shared lego strip. */
-export const EVALS_CREATE_RUNS_SLOTS: readonly ComposerSlot[] = [
-  "clients",
-  "models",
-];
-
 type CreateSuitePageProps = {
   onCancel: () => void;
   onSubmit: (payload: CreateSuitePayload) => Promise<void>;
@@ -109,9 +107,8 @@ export function CreateSuitePage({
 }: CreateSuitePageProps) {
   const [name, setName] = useState(() => seedCreateSuiteName(initialName));
   const [isSaving, setIsSaving] = useState(false);
-  const [target, setTarget] = useState<EnvironmentComposerState>(
-    emptyComposerState,
-  );
+  const [target, setTarget] =
+    useState<EnvironmentComposerState>(emptyComposerState);
 
   /**
    * Born in environment mode. A suite created legacy can be converted from the
@@ -141,6 +138,7 @@ export function CreateSuitePage({
     isAuthenticated: isAuthenticated && shouldFetchDefaults,
     projectId: shouldFetchDefaults ? projectId : null,
   });
+  const { availableModels } = useAvailableModels({ projectId });
   const [previewedHostId] = usePreviewedHostId(
     shouldFetchDefaults ? projectId : null,
   );
@@ -247,7 +245,7 @@ export function CreateSuitePage({
   const blockReason: string | null = (() => {
     if (canSubmit || isSaving) return null;
     if (name.trim().length === 0) return "Add a suite name first.";
-    if (!composerReady) return "Loading this project's environments…";
+    if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && !hasServer) {
       return target.stack.hostIds.length === 0
         ? "Pick a server group and a client first."
@@ -258,6 +256,53 @@ export function CreateSuitePage({
     }
     return null;
   })();
+
+  const handleHostsChange = (hostIds: string[]) => {
+    setTarget((current) => {
+      const modelSelectionsByHost = Object.fromEntries(
+        hostIds.map((hostId) => {
+          const inherited =
+            current.stack.modelSelectionsByHost?.[hostId] ??
+            current.stack.modelSelection ??
+            emptyModelSelection();
+          return [
+            hostId,
+            {
+              includeClientDefaults: inherited.includeClientDefaults,
+              explicitModelIds: [...inherited.explicitModelIds],
+            },
+          ];
+        }),
+      );
+      return {
+        ...current,
+        customized: true,
+        stack: {
+          ...current.stack,
+          hostIds,
+          modelSelectionsByHost:
+            hostIds.length > 0 ? modelSelectionsByHost : undefined,
+        },
+      };
+    });
+  };
+
+  const handleModelSelectionChange = (
+    hostId: string,
+    modelSelection: ModelSelection,
+  ) => {
+    setTarget((current) => ({
+      ...current,
+      customized: true,
+      stack: {
+        ...current.stack,
+        modelSelectionsByHost: {
+          ...current.stack.modelSelectionsByHost,
+          [hostId]: modelSelection,
+        },
+      },
+    }));
+  };
 
   const handleSubmit = async () => {
     if (!canSubmit) {
@@ -281,7 +326,7 @@ export function CreateSuitePage({
         );
         const fallbackServerAttachmentId =
           resolvedGroups.size === 1
-            ? ([...resolvedGroups][0] ?? undefined)
+            ? [...resolvedGroups][0] ?? undefined
             : undefined;
         payload = {
           name: name.trim(),
@@ -375,7 +420,7 @@ export function CreateSuitePage({
               Create a new eval suite
             </h1>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Set up the environment you will be evaluating.
+              Set up the client you will be evaluating.
             </p>
           </div>
 
@@ -412,22 +457,28 @@ export function CreateSuitePage({
                     slots={EVALS_CREATE_SERVER_SLOTS}
                     emptyServerLabel="No server group · pick one"
                     serverInfoText="A named set of MCP servers this suite runs against."
+                    environmentsVocabulary="client"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label>
-                    Where it runs <RequiredMark />
-                  </Label>
-                  <EnvironmentComposer
-                    projectId={projectId}
-                    environments={composerEnvironments ?? []}
-                    value={target}
-                    onChange={setTarget}
+                  <EvalTargetMatrix
+                    hostIds={target.stack.hostIds}
+                    hosts={hosts}
+                    modelSelection={target.stack.modelSelection}
+                    modelSelectionsByHost={target.stack.modelSelectionsByHost}
+                    availableModels={availableModels}
                     maxTargets={MAX_SUITE_ENVIRONMENTS}
+                    projectId={projectId}
                     disabled={isSaving}
-                    testIdPrefix="create-suite"
-                    slots={EVALS_CREATE_RUNS_SLOTS}
+                    modelsEditable={composeCapable}
+                    onHostsChange={handleHostsChange}
+                    onModelSelectionChange={handleModelSelectionChange}
+                    onRemoveClient={(hostId) =>
+                      handleHostsChange(
+                        target.stack.hostIds.filter((id) => id !== hostId),
+                      )
+                    }
                   />
                 </div>
               </>

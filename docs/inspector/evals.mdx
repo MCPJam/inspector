@@ -262,6 +262,10 @@ A run needs three things, all picked from the suite header:
   If **Run all** is disabled, a connected server is missing, no models are selected, or a run for that suite is already in progress. The header pickers will tell you which condition applies.
 </Tip>
 
+### Run review
+
+When you click **Run** on a suite from the **Suites** landing list, a review sheet opens before the run launches. It shows the suite's current configuration — clients, iteration count, and settings — so you can confirm or adjust before committing. The run only starts when you confirm in the sheet; closing it leaves the suite unchanged.
+
 ### Pre-run credit estimate
 
 When enabled on your account, an **ⓘ** icon appears beside run controls before you launch. Hovering it shows an estimated credit cost for the run about to start — priced against the exact models, cases, and iteration count the button will execute.
@@ -393,7 +397,7 @@ The delete button in the suite switcher is hidden for any suite that is CI-activ
 
 ### Suite navigation
 
-Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
+Opening the Evaluate tab lands on the **Runs** view by default, showing run history across all suites with grouped runs, pass-rate changes, and filters. Switch to **Suites** using the header tabs to see the suites overview. To drill into a suite, click its name; the **suite switcher** in the breadcrumb lets you jump between suites, create a new one, or delete the current one. If no suites exist yet, the empty-state screen appears instead.
 
 ### Suite view
 
@@ -547,6 +551,13 @@ The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
 ## What to author first
 
 If you're new to the surface, the shortest useful loop is:
+
+1. Connect a server in the Inspector.
+2. On the **Suites** landing, click **Eval my server: &lt;server name&gt;** to open the first-run workspace. MCPJam reads your server's tool catalog and generates a draft suite of cases for you to review.
+3. Review the generated cases, confirm the clients and iteration count, then click **Run** to launch.
+4. Open the failures, and decide whether the bug is in your server, your prompt, or the model.
+
+Alternatively, click **Create suite** to start from a blank suite and author cases manually:
 
 1. Attach the server you're shipping.
 2. **Generate** a starting set of cases.
