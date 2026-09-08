@@ -284,6 +284,31 @@ describe("electron page — the keyboard", () => {
     expect(released).toEqual(expect.arrayContaining(["span-1", "host-1"]));
   });
 
+  it("will not take a host that does not contain the target", async () => {
+    // The attribute check proves the page named an editing host. It does not
+    // prove it named the one our target sits in — and a page with two
+    // editable regions can hand back the other, which is the same redirect
+    // wearing a valid badge. Containment is asked by re-running the selector
+    // scoped to the claimed host, which is Blink matching a subtree.
+    const contents = new FakeBrowserWebContents();
+    const dbg = inheritedEditable(contents);
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      // Scoped to the claimed host, the selector finds someone else.
+      if (method === "DOM.querySelector" && params?.nodeId === 7 && params?.selector === "#editor") {
+        return { nodeId: 99 };
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#editor", "hello")).rejects.toThrow(
+      /<select>/,
+    );
+    expect(dbg.calls.some((c) => c.method === "DOM.focus")).toBe(false);
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
   it("will not take the page's word for which element is the host", async () => {
     // The old probe returned a boolean, and the worst a lie could buy was a
     // click on the element already named. A HOST is an element of the page's

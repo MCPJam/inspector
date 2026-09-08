@@ -529,6 +529,7 @@ export function createElectronPage(
    */
   async function classifyFillTarget(
     nodeId: number,
+    selector: string,
   ): Promise<{
     kind: "FILLABLE" | "SELECT" | "OTHER" | `TYPE:${string}`;
     /**
@@ -661,6 +662,25 @@ export function createElectronPage(
       ) {
         return here("OTHER");
       }
+      // AND THAT IT IS *THIS* NODE'S HOST, not merely some host.
+      //
+      // The attribute check above proves the page named an editing host. It
+      // does not prove it named the one our target sits in — and a page with
+      // two editable regions can hand back the other, which is the same
+      // redirect wearing a valid badge.
+      //
+      // Asked by re-running the caller's own selector SCOPED to the claimed
+      // host, which is Blink matching in a subtree rather than anything the
+      // page answers. It is exact here because `pointFor` took the
+      // document-first match: any match inside a genuine ancestor is also a
+      // match in the document, so an earlier one inside the host would have
+      // been earlier in the document too, and ours would not have been first.
+      // A host that does not contain the node answers with a different node
+      // or with id 0.
+      const contained = (await cdp
+        .send("DOM.querySelector", { nodeId: hostNodeId, selector })
+        .catch(() => undefined)) as { nodeId?: number } | undefined;
+      if (contained?.nodeId !== nodeId) return here("OTHER");
       return { kind: "FILLABLE", focusNodeId: hostNodeId };
     } finally {
       // A resolved node PINS the JS object until it is released, so a tab
@@ -850,7 +870,10 @@ export function createElectronPage(
           // thing: on a checkbox a click IS the toggle, on a submit it IS the
           // submission.
           const { nodeId, rootNodeId } = await pointFor(selector);
-          const { kind, focusNodeId } = await classifyFillTarget(nodeId);
+          const { kind, focusNodeId } = await classifyFillTarget(
+            nodeId,
+            selector,
+          );
           if (kind === "SELECT") {
             throw new Error(
               `${selector}: Element is not an <input>, <textarea> or ` +
