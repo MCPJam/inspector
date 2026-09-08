@@ -4222,7 +4222,13 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--experiment <id>", "Description-experiment ID")
       .option("--case-scope <scope>", "Which cases to replay: all or affected")
-      .option("--iterations <n>", "Repetitions per case per arm (1–10)")
+      // `--repetitions` everywhere it means repetitions. This flag's own help
+      // text already said "Repetitions", and `--iterations` means "please stop
+      // using this" on `eval run` one command over. `--max-trials` beside it is
+      // left alone: it caps the PRODUCT of cases and repetitions, which really
+      // is trials.
+      .option("--repetitions <n>", "Repetitions per case per arm (1–10)")
+      .option("--iterations <n>", "Deprecated alias for --repetitions (1–10)")
       .option(
         "--max-trials <n>",
         "Refuse if plannedTrials exceeds this (max 400)"
@@ -4233,11 +4239,21 @@ export function registerEvalCommands(program: Command): void {
         project?: string;
         experiment: string;
         caseScope?: string;
+        repetitions?: string;
         iterations?: string;
         maxTrials?: string;
       },
       command
     ) => {
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
+      const repetitions = options.repetitions ?? options.iterations;
       // The operation's own schema holds the documented limits (iterations
       // 1..10, max trials ≤ 400, case scope all|affected); validating here
       // turns an out-of-range flag into a usage error instead of a request.
@@ -4246,11 +4262,13 @@ export function registerEvalCommands(program: Command): void {
         ...(options.caseScope !== undefined
           ? { caseScope: options.caseScope }
           : {}),
-        ...(options.iterations !== undefined
+        ...(repetitions !== undefined
           ? {
               iterationOverride: parsePositiveInteger(
-                options.iterations,
-                "--iterations"
+                repetitions,
+                options.repetitions !== undefined
+                  ? "--repetitions"
+                  : "--iterations"
               ),
             }
           : {}),

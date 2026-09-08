@@ -1199,7 +1199,8 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
 | `--host <id-or-name...>` | No | Attached host(s) to run, so the run is stamped with that host's config. Several values start one **paid run each**. |
 | `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
-| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
+| `--repetitions <n>` | No | Run each case this many times (1-10), for this run only |
+| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
 | `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
 | `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
 | `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
@@ -1341,7 +1342,7 @@ synchronization is unaffected and always runs.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
-(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
+(`--repetitions`, `--case`, `--min-pass-rate`, `--exclude-skills`,
 `--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
 `--refresh-snapshot`, compose flags, and the normalized
 `--allow-approximated` set with its `--approval-reason`). Repeating the same
@@ -2130,7 +2131,8 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
-| `--iterations <n>` | No | Run the case this many times (1-10) |
+| `--repetitions <n>` | No | Run the case this many times (1-10) |
+| `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
 Every `--compose-*` flag behaves exactly as it does for `eval run` — see
