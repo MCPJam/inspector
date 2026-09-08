@@ -548,6 +548,13 @@ The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
 
 If you're new to the surface, the shortest useful loop is:
 
+1. Connect a server in the Inspector.
+2. On the **Suites** landing, click **Eval my server: &lt;server name&gt;** to open the first-run workspace. MCPJam reads your server's tool catalog and generates a draft suite of cases for you to review.
+3. Review the generated cases, confirm the clients and iteration count, then click **Run** to launch.
+4. Open the failures, and decide whether the bug is in your server, your prompt, or the model.
+
+Alternatively, click **Create suite** to start from a blank suite and author cases manually:
+
 1. Attach the server you're shipping.
 2. **Generate** a starting set of cases.
 3. Delete the ones that don't match real usage; tighten checks on the rest.
