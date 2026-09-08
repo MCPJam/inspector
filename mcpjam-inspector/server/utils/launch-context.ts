@@ -90,11 +90,33 @@ function parseJsonHeader(
   }
 }
 
+/**
+ * A DISPLAY string, clipped to fit. Only ever used for the launcher's
+ * `client`/`version`, which are rendered in a table cell and never parsed, so
+ * a clipped label is still a label.
+ */
 function cleanString(value: unknown, maxChars: number): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   return trimmed.slice(0, maxChars);
+}
+
+/**
+ * A CI field, or `undefined` — never a PREFIX of one.
+ *
+ * These are identifiers and URLs rather than prose, and half of one is not a
+ * shorter version of it: a commit sha cut at the cap matches nothing, so
+ * `eval gate --baseline-sha` reports "no baseline" for a run that has one, and
+ * a cut `runUrl` is a dead link pointing somewhere real. Over the cap the
+ * field is DROPPED, so the row says "we have no commit for this" — true, and
+ * visibly absent — instead of carrying a value that looks usable and is not.
+ */
+function exactString(value: unknown, maxChars: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > maxChars) return undefined;
+  return trimmed;
 }
 
 /**
@@ -142,34 +164,22 @@ export function parseCiHeader(
 ): RunCiMetadata | undefined {
   const parsed = parseJsonHeader(raw, MAX_CI_HEADER_BYTES);
   if (!parsed) return undefined;
+  const field = (value: unknown) => exactString(value, MAX_CI_FIELD_CHARS);
+  const provider = field(parsed.provider);
+  // `pipelineId` ← `pipelineId` when the client already speaks the run shape,
+  // else `runId` from the GitHub-flavoured detector.
+  const pipelineId = field(parsed.pipelineId ?? parsed.runId);
+  const jobId = field(parsed.jobId ?? parsed.job);
+  const runUrl = field(parsed.runUrl);
+  const branch = field(parsed.branch);
+  const commitSha = field(parsed.commitSha);
   const ci: RunCiMetadata = {
-    ...(cleanString(parsed.provider, MAX_CI_FIELD_CHARS)
-      ? { provider: cleanString(parsed.provider, MAX_CI_FIELD_CHARS)! }
-      : {}),
-    // `pipelineId` ← `pipelineId` when the client already speaks the run
-    // shape, else `runId` from the GitHub-flavoured detector.
-    ...(cleanString(parsed.pipelineId ?? parsed.runId, MAX_CI_FIELD_CHARS)
-      ? {
-          pipelineId: cleanString(
-            parsed.pipelineId ?? parsed.runId,
-            MAX_CI_FIELD_CHARS,
-          )!,
-        }
-      : {}),
-    ...(cleanString(parsed.jobId ?? parsed.job, MAX_CI_FIELD_CHARS)
-      ? {
-          jobId: cleanString(parsed.jobId ?? parsed.job, MAX_CI_FIELD_CHARS)!,
-        }
-      : {}),
-    ...(cleanString(parsed.runUrl, MAX_CI_FIELD_CHARS)
-      ? { runUrl: cleanString(parsed.runUrl, MAX_CI_FIELD_CHARS)! }
-      : {}),
-    ...(cleanString(parsed.branch, MAX_CI_FIELD_CHARS)
-      ? { branch: cleanString(parsed.branch, MAX_CI_FIELD_CHARS)! }
-      : {}),
-    ...(cleanString(parsed.commitSha, MAX_CI_FIELD_CHARS)
-      ? { commitSha: cleanString(parsed.commitSha, MAX_CI_FIELD_CHARS)! }
-      : {}),
+    ...(provider ? { provider } : {}),
+    ...(pipelineId ? { pipelineId } : {}),
+    ...(jobId ? { jobId } : {}),
+    ...(runUrl ? { runUrl } : {}),
+    ...(branch ? { branch } : {}),
+    ...(commitSha ? { commitSha } : {}),
   };
   // An envelope that survived with no usable field stores nothing, rather than
   // an object of `undefined`s that reads as "we recorded CI metadata".

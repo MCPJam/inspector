@@ -825,6 +825,39 @@ export interface PlatformEvalRun {
     /** The API key id the request authenticated with — the key, never the secret. */
     apiKeyId?: string;
   };
+  /**
+   * The CI job this run was launched from, sent as the `x-mcpjam-ci` header at
+   * launch. Provider-neutral names, so a GitLab or Buildkite client is not
+   * asked to describe itself as GitHub.
+   *
+   * SELF-REPORTED like `launcher`. Absent for a run launched outside CI and on
+   * deployments that predate the field. A field the platform could not read,
+   * or that arrived longer than the cap, is DROPPED rather than truncated —
+   * so a `commitSha` present here is the whole sha, and a missing one means
+   * the launch carried none.
+   */
+  ciMetadata?: {
+    /**
+     * `github_actions` for an Action; whatever the client calls itself
+     * otherwise.
+     */
+    provider?: string;
+    /**
+     * The CI run this belongs to — GitHub's `GITHUB_RUN_ID`, the same id
+     * `runUrl` points at. Re-running the workflow does not change it.
+     */
+    pipelineId?: string;
+    /** The job within that pipeline — GitHub's `GITHUB_JOB`. */
+    jobId?: string;
+    runUrl?: string;
+    branch?: string;
+    /**
+     * The commit under test — what makes a CI-launched run findable by
+     * `mcpjam cloud eval gate --baseline-sha`, which before this could only
+     * find runs REPORTED by the SDK.
+     */
+    commitSha?: string;
+  };
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's

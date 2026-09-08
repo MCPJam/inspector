@@ -13,6 +13,7 @@ import {
   registerPlatformCatalogTools,
   runPlatformOperation,
   workerLauncher,
+  CATALOG_OMITTED_INPUT_FIELDS,
 } from "../src/tools/platformTools.js";
 import {
   registerShowServersTool,
@@ -959,6 +960,95 @@ describe("the calling agent is declared, not asked for", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.headers["x-mcpjam-launcher"]).toBeUndefined();
     expect(requests[0]?.headers["user-agent"]).toBe("mcpjam-mcp-worker/0.2.0");
+  });
+
+  it("drops the file-sync marker from a model's input, whatever it sends", async () => {
+    // `declaredSuiteId` exempts a write from the CI-owned suite lock. It
+    // belongs on the SDK operation — the CLI's as-code sync calls those
+    // directly — and not in a model's hands, because a model holding the
+    // suite's public `declaredId` could copy it back and unlock an edit the
+    // next `eval run --file` would then delete.
+    //
+    // Stripped from the INPUT, not the schema: several of these operations wrap
+    // their object in a `superRefine` chain, and zod refuses `.omit()` on
+    // those — so a schema-level strip would no-op on exactly the write that
+    // matters most.
+    const registrar = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar.registrar,
+      fakeToolContext({ bearerToken: "user-jwt" })
+    );
+
+    const seen: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        const body = (init as { body?: string })?.body;
+        seen.push(body ? JSON.parse(body) : {});
+        return Response.json({ id: "suite_1" });
+      })
+    );
+
+    const registration = registrar.registrations.find(
+      (entry) => entry.name === "update_eval_suite"
+    );
+    expect(registration, "update_eval_suite is not registered").toBeTruthy();
+
+    await registration!.callback({
+      project: "proj_1",
+      suite: "suite_1",
+      name: "renamed by a model",
+      declaredSuiteId: "s_checkout",
+    });
+
+    for (const body of seen) {
+      expect(
+        JSON.stringify(body),
+        "the marker reached the platform"
+      ).not.toContain("s_checkout");
+    }
+  });
+
+  it("guards only operations the catalog actually registers", () => {
+    // A rename would otherwise leave the map silently guarding nothing.
+    const registered = new Set(
+      PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+    );
+    for (const name of Object.keys(CATALOG_OMITTED_INPUT_FIELDS)) {
+      expect(registered.has(name), `${name} is not a catalog operation`).toBe(
+        true
+      );
+    }
+  });
+
+  it("guards EVERY operation that can carry the marker", () => {
+    // The direction that actually protects the lock. The map is the policy —
+    // "no model may send `declaredSuiteId`" — so an operation that gains the
+    // field and is not listed is a hole, and listing one that never had it is
+    // only a harmless no-op. Adding the field to `delete_eval_suite` or
+    // `delete_eval_case` (an owning FILE deletes through the SDK client
+    // directly, not through this surface) fails here until it is guarded.
+    const carriers: string[] = [];
+    for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+      const schema = operation.inputSchema as {
+        shape?: Record<string, unknown>;
+        // `superRefine` wraps the object, so the shape hides one level down.
+        _def?: { schema?: { shape?: Record<string, unknown> } };
+      };
+      const shape = schema.shape ?? schema._def?.schema?.shape;
+      if (!shape || !("declaredSuiteId" in shape)) continue;
+      carriers.push(operation.name);
+      expect(
+        CATALOG_OMITTED_INPUT_FIELDS[operation.name] ?? [],
+        `${operation.name} exposes the file-sync marker to the model`
+      ).toContain("declaredSuiteId");
+    }
+    // The loop above passes trivially if the shapes stop being readable, and a
+    // guard that silently stops guarding is the failure mode here.
+    expect(carriers.sort()).toEqual([
+      "set_eval_suite_environments",
+      "update_eval_suite",
+    ]);
   });
 
   it("keeps the launcher off every operation's input schema", () => {

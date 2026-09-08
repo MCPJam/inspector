@@ -144,6 +144,29 @@ describe("the CI envelope", () => {
     expect(parseCiHeader("{}")).toBeUndefined();
   });
 
+  it("drops an over-long CI field rather than storing a prefix of it", () => {
+    // The fields are identifiers and URLs, and half of one is not a shorter
+    // version of it: a truncated sha matches no baseline, and a truncated
+    // runUrl is a dead link that still looks like a live one. Absent is the
+    // honest answer, and it is the one a reader can see.
+    const parsed = parseCiHeader(
+      JSON.stringify({
+        provider: "github_actions",
+        commitSha: "a".repeat(600),
+        runUrl: `https://github.com/o/r/actions/runs/${"9".repeat(600)}`,
+        branch: "main",
+      }),
+    );
+    expect(parsed).toEqual({ provider: "github_actions", branch: "main" });
+
+    // Exactly at the cap is still a value, not an over-long one.
+    const atCap = parseCiHeader(JSON.stringify({ branch: "b".repeat(512) }));
+    expect(atCap).toEqual({ branch: "b".repeat(512) });
+    expect(
+      parseCiHeader(JSON.stringify({ branch: "b".repeat(513) })),
+    ).toBeUndefined();
+  });
+
   it("drops an oversized or malformed envelope", () => {
     expect(
       parseCiHeader(

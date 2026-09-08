@@ -1448,6 +1448,13 @@ function toRunDto(run: RunDoc) {
     ...(run.attribution
       ? { attribution: toRunAttributionDto(run.attribution) }
       : {}),
+    // The CI job, when there was one. Read back for the same reason it is
+    // written: a launch that arrived with `x-mcpjam-ci` recorded a commit, and
+    // an API that accepts a commit and will not return it makes the record
+    // useless to everyone but the app.
+    ...(run.ciMetadata
+      ? { ciMetadata: toRunCiMetadataDto(run.ciMetadata) }
+      : {}),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(typeof run.runGroupId === "string"
@@ -1531,6 +1538,40 @@ function toRunLauncherDto(launcher: {
     ...(typeof launcher.version === "string"
       ? { version: launcher.version }
       : {}),
+  };
+}
+
+/**
+ * The CI job, field by field.
+ *
+ * Projected rather than spread, for the reason {@link toRunLauncherDto} is:
+ * this is a published shape, and a field added to the platform's envelope
+ * should reach it by decision rather than by leak. Provider-neutral names, so
+ * a GitLab or Buildkite client is not asked to describe itself as GitHub.
+ */
+function toRunCiMetadataDto(ci: {
+  provider?: unknown;
+  pipelineId?: unknown;
+  jobId?: unknown;
+  runUrl?: unknown;
+  branch?: unknown;
+  commitSha?: unknown;
+}) {
+  const str = (value: unknown) =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  const provider = str(ci.provider);
+  const pipelineId = str(ci.pipelineId);
+  const jobId = str(ci.jobId);
+  const runUrl = str(ci.runUrl);
+  const branch = str(ci.branch);
+  const commitSha = str(ci.commitSha);
+  return {
+    ...(provider ? { provider } : {}),
+    ...(pipelineId ? { pipelineId } : {}),
+    ...(jobId ? { jobId } : {}),
+    ...(runUrl ? { runUrl } : {}),
+    ...(branch ? { branch } : {}),
+    ...(commitSha ? { commitSha } : {}),
   };
 }
 
@@ -7249,6 +7290,12 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("hostConfigsV2:setSuiteConfig" as any, {
         suiteId,
         input,
+        // `suite.configure` is in the lock too, so the owning file needs its
+        // marker on THIS mutation as much as on `updateTestSuite`. Accepting
+        // `declaredSuiteId` on the route and then dropping it for one of the
+        // mutations the route dispatches is worse than not accepting it: the
+        // caller does everything right and the write is still refused.
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);

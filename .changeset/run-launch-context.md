@@ -24,6 +24,14 @@ The suite/case write operations accept `declaredSuiteId`. A suite authored by a
 suite file or by SDK ingest is configured in a repository and the platform now
 refuses edits to it from anywhere else with a 409 — passing the suite's own
 declared id identifies the write as the owning file's; any other id does not.
-`PlatformEvalRun` gains `launcher` and `attribution`, `PlatformEvalSuiteDetail`
-gains `managedBy`, and `PlatformEvalRun.source` is the real union instead of
-`string`.
+`PlatformEvalRun` gains `launcher`, `attribution` and `ciMetadata`,
+`PlatformEvalSuiteDetail` gains `managedBy`, and `PlatformEvalRun.source` is
+the real union instead of `string`. `ciMetadata` closes the loop the header
+opens: a launch that arrives with `x-mcpjam-ci` records a commit, and reading
+it back is what makes `mcpjam cloud eval gate --baseline-sha` able to find a
+CI-launched run rather than only an SDK-reported one.
+
+`detectCiMetadata().pipelineId` is the RAW `GITHUB_RUN_ID`. The conformance
+detector's `runId` keeps its `.<attempt>` suffix, because that identity is
+per-attempt; a run row's pipeline id has to be the number `runUrl` points at
+and the Actions API answers to.

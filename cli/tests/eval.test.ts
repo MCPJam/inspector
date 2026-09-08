@@ -2282,11 +2282,18 @@ test("a launch declares the CLI, and says so only on the launch", async () => {
 
 test("under GitHub Actions the launch declares the Action and its commit", async () => {
   const fixture = await startEvalFixture();
+  // EVERY variable the detector reads is pinned, including the ones this test
+  // does not assert on. This suite itself runs under GitHub Actions, so an
+  // unpinned variable is not absent — it is the real runner's, and the test
+  // then asserts one thing on a laptop and another in CI. That is exactly how
+  // `GITHUB_RUN_ATTEMPT` first broke it.
   const previous = {
     GITHUB_ACTIONS: process.env.GITHUB_ACTIONS,
     GITHUB_SHA: process.env.GITHUB_SHA,
     GITHUB_REF_NAME: process.env.GITHUB_REF_NAME,
     GITHUB_RUN_ID: process.env.GITHUB_RUN_ID,
+    GITHUB_RUN_ATTEMPT: process.env.GITHUB_RUN_ATTEMPT,
+    GITHUB_SERVER_URL: process.env.GITHUB_SERVER_URL,
     GITHUB_JOB: process.env.GITHUB_JOB,
     GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY,
   };
@@ -2294,6 +2301,8 @@ test("under GitHub Actions the launch declares the Action and its commit", async
   process.env.GITHUB_SHA = "a".repeat(40);
   process.env.GITHUB_REF_NAME = "main";
   process.env.GITHUB_RUN_ID = "12345";
+  process.env.GITHUB_RUN_ATTEMPT = "3";
+  process.env.GITHUB_SERVER_URL = "https://github.com";
   process.env.GITHUB_JOB = "evals";
   process.env.GITHUB_REPOSITORY = "acme/widgets";
   try {
@@ -2332,8 +2341,16 @@ test("under GitHub Actions the launch declares the Action and its commit", async
     assert.equal(ci.commitSha, "a".repeat(40));
     assert.equal(ci.branch, "main");
     assert.equal(ci.provider, "github_actions");
+    // The ATTEMPT is set, and deliberately does NOT leak into `pipelineId`:
+    // the run row's pipeline id has to be the number `runUrl` points at and
+    // the Actions API answers to. (The conformance reporter's `runId` keeps
+    // the `12345.3` suffix, because THAT identity is per-attempt.)
     assert.equal(ci.pipelineId, "12345");
     assert.equal(ci.jobId, "evals");
+    assert.equal(
+      ci.runUrl,
+      "https://github.com/acme/widgets/actions/runs/12345"
+    );
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];

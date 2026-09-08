@@ -92,9 +92,20 @@ export function detectCiMetadata(
 ): CiMetadata | undefined {
   const detected = detectConformanceCiMetadata(env);
   if (!detected) return undefined;
+  // `detected.runId` deliberately carries the ATTEMPT suffix (`12345.2`),
+  // because a conformance upload needs each re-run to be a distinct external
+  // run. A run row wants the other thing: the pipeline this run belongs to —
+  // the id `runUrl` points at, and the one the Actions API answers to. Keeping
+  // the suffix here would leave `pipelineId` and `runUrl` naming different
+  // numbers for the same job, so the RAW run id is read instead.
+  //
+  // It is also read independently of `runUrl`, which needs `GITHUB_REPOSITORY`
+  // as well: a pipeline id we know is still worth recording when the URL we
+  // would build from it is not.
+  const pipelineId = env.GITHUB_RUN_ID?.trim();
   const ci: CiMetadata = {
     ...(detected.provider ? { provider: detected.provider } : {}),
-    ...(detected.runId ? { pipelineId: detected.runId } : {}),
+    ...(pipelineId ? { pipelineId } : {}),
     ...(detected.job ? { jobId: detected.job } : {}),
     ...(detected.runUrl ? { runUrl: detected.runUrl } : {}),
     ...(detected.branch ? { branch: detected.branch } : {}),

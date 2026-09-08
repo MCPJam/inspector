@@ -3789,6 +3789,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -4378,6 +4381,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -11637,6 +11643,15 @@
       }
     },
     "parameters": {
+      "declaredSuiteIdQuery": {
+        "name": "declaredSuiteId",
+        "in": "query",
+        "required": false,
+        "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). A DELETE has no body, so the marker rides the query string. Matching the suite's own `managedBy.declaredId`, it exempts this delete from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller.",
+        "schema": {
+          "type": "string"
+        }
+      },
       "launcherHeader": {
         "name": "x-mcpjam-launcher",
         "in": "header",
@@ -12164,6 +12179,10 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -12279,6 +12298,10 @@
         "required": ["cases"],
         "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "cases": {
             "type": "array",
             "minItems": 1,
@@ -12535,6 +12558,10 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -14089,6 +14116,10 @@
         "required": ["environmentId"],
         "additionalProperties": false,
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "environmentId": {
             "type": "string"
           }
@@ -14559,6 +14590,34 @@
               "apiKeyId": {
                 "type": "string",
                 "description": "The API key id the request authenticated with — the key, never the secret."
+              }
+            }
+          },
+          "ciMetadata": {
+            "type": "object",
+            "description": "The CI job this run was launched from, sent as the `x-mcpjam-ci` request header at launch. Provider-neutral names, so a GitLab or Buildkite client is not asked to describe itself as GitHub. SELF-REPORTED like `launcher`, and absent for a run launched outside CI or predating the field. An unreadable, oversized or over-long field is dropped rather than truncated, so a `commitSha` present here is the whole sha.",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "description": "`github_actions` for a GitHub Action; whatever the client calls itself otherwise."
+              },
+              "pipelineId": {
+                "type": "string",
+                "description": "The CI run this belongs to — GitHub's `GITHUB_RUN_ID`, matching the id in `runUrl`. Re-running the workflow does not change it."
+              },
+              "jobId": {
+                "type": "string",
+                "description": "The job within that pipeline — GitHub's `GITHUB_JOB`."
+              },
+              "runUrl": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commitSha": {
+                "type": "string",
+                "description": "The commit under test. This is what makes a CI-launched run findable by `mcpjam cloud eval gate --baseline-sha`, which before this could only find runs REPORTED by the SDK."
               }
             }
           },
@@ -17198,6 +17257,10 @@
         "required": ["enabled"],
         "description": "Enable, repoint, or disable a suite's recurring runs. Disabling PRESERVES the existing environment pin — send `enabled: true` with a new `environmentId` to repoint it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -17219,6 +17282,10 @@
         "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
         "additionalProperties": false,
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "name": {
             "type": "string",
             "minLength": 1
