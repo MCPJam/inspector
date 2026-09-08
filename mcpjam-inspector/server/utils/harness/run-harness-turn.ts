@@ -2117,9 +2117,19 @@ export async function runHarnessTurn(
         ...((builtInTools ?? {}) as Record<string, unknown>),
       } as Record<string, unknown>;
       // The tools that actually ask, read off the same `needsApproval` the
-      // other two engines read. A FUNCTION-form declaration counts as asking:
-      // it cannot be evaluated before the model has produced an input, and the
-      // map has to be built now.
+      // other two engines read.
+      //
+      // A FUNCTION-form declaration counts as asking. `HarnessAgent`'s map is
+      // name-keyed and built HERE, before the model has produced any input, so
+      // there is no input to evaluate a function against and no per-call hook
+      // to defer to — fail-closed is the only sound reading. Nothing reaches
+      // this map in that shape today and the branch is defence, not policy:
+      // `hostExecutedMcp.tools` are built through `mcpToolOptionsFor`, whose
+      // declaration is a boolean, and `builtInTools` is `resolveHostTools`'
+      // output, every member of which declares a boolean too. The two
+      // function-form families (`server-skill-tools`, `effective-skill-tools`)
+      // reach the emulated engine through `allTools`, which this path does not
+      // consume.
       //
       // The adapter capability still gates the whole map — advertise =
       // enforce, and an adapter that cannot pause on a host tool must not be

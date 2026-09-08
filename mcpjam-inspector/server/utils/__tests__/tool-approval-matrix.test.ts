@@ -690,32 +690,55 @@ describe("tool approval matrix — family × engine × switch", () => {
  * This replaces the divergence list the table carried while there were two
  * channels. It named six rows where one engine could not see a family's
  * declaration; the fix was to delete the second channel, so what used to be a
- * list of known exceptions is now an invariant with no exceptions. A row that
- * needs an exception again means a family has grown a second declaration
- * somewhere, which is the thing this whole change exists to prevent.
+ * list of known exceptions is now an invariant with no exceptions.
+ *
+ * Both checks below run the REAL builders and the REAL engines. Comparing the
+ * two `expected` columns against each other instead would have been a check on
+ * this file's own fixture — it would catch a typo in the table and nothing
+ * else, while reading like the guarantee the change exists to make.
  */
 describe("one mechanism", () => {
-  it("gives the same answer on both engines, for every family and both switch positions", () => {
-    const disagreeing = MATRIX.filter(
-      (row) =>
-        row.expected.mcpjam.on !== row.expected.byok.on ||
-        row.expected.mcpjam.off !== row.expected.byok.off,
-    ).map((row) => row.family);
-    expect(disagreeing).toEqual([]);
-  });
+  for (const row of MATRIX) {
+    for (const flag of [true, false]) {
+      const label = flag ? "on" : "off";
 
-  it("never lets the switch FREE a family that asks without it", () => {
-    // The floor semantics, read off the table rather than off the helper: the
-    // switch raises. A row that gates with the switch off and not with it on
-    // would be a setting that turns safety down.
+      it(`${row.family} · switch ${label} → both engines answer the same`, async () => {
+        const tools = row.tools(flag);
+        const [mcpjam, byok] = [
+          await mcpjamVerdict({
+            name: row.name,
+            input: row.input ?? {},
+            tools,
+            requireToolApproval: flag,
+            progressivePlan: row.progressivePlan,
+          }),
+          await byokVerdict({
+            name: row.name,
+            input: row.input ?? {},
+            tools,
+          }),
+        ];
+        expect(mcpjam, `${row.family}: mcpjam vs byok`).toBe(byok);
+      });
+    }
+  }
+
+  it("never lets the switch FREE a family that asks without it", async () => {
+    // The floor semantics, off the built tools rather than off the table: the
+    // switch raises. A family that gates with the switch off and not with it
+    // on would be a setting that turns safety down.
     for (const row of MATRIX) {
-      for (const engine of ["mcpjam", "byok"] as const) {
-        const { on, off } = row.expected[engine];
-        expect(
-          on === "gate" || off === "free",
-          `${row.family} (${engine}) stops asking when the switch is turned on`,
-        ).toBe(true);
-      }
+      const ask = (flag: boolean) =>
+        byokVerdict({
+          name: row.name,
+          input: row.input ?? {},
+          tools: row.tools(flag),
+        });
+      const [on, off] = [await ask(true), await ask(false)];
+      expect(
+        on === "gate" || off === "free",
+        `${row.family} stops asking when the switch is turned on`,
+      ).toBe(true);
     }
   });
 });

@@ -102,6 +102,27 @@ function defaultStreamTextReturn(
 
 const ORIGINAL_CONVEX = process.env.CONVEX_HTTP_URL;
 
+/** Drain a UI-message stream response into the chunks it carried. */
+async function readSseBody(response: Response): Promise<any[]> {
+  const reader = response.body?.getReader();
+  if (!reader) return [];
+  const parts: string[] = [];
+  const decoder = new TextDecoder();
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    parts.push(decoder.decode(chunk.value));
+  }
+  return parts
+    .join("")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice("data: ".length))
+    .filter((payload) => payload !== "[DONE]")
+    .map((payload) => JSON.parse(payload));
+}
+
 describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
   beforeEach(() => {
     streamTextMock.mockReset();
@@ -131,7 +152,6 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // tool. That declaration, not the switch, is what the guard reads: what
     // it cannot serve is the RESUME after an approval, and only a tool that
     // would actually ask can get there.
-    const writtenChunks: any[] = [];
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
       projectId: "proj",
@@ -140,30 +160,23 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       systemPrompt: "s",
       tools: { foo: { description: "f", needsApproval: true } } as any,
       requireToolApproval: true,
-      onStreamWriterReady: ({ write }) => {
-        // Capture chunks the handler writes to the SSE stream.
-        const original = write;
-        // Re-bind so capture works in the same execution tick.
-        (response as any)._writer = original;
-      },
     });
-
-    // Run the stream so `execute` runs.
-    // The mocked `createUIMessageStreamResponse` in the production
-    // chain returns a real Response wrapping the stream; we don't need
-    // to drain SSE bytes here — we drive the wrapper through the
-    // handler's `onStreamWriterReady` capture.
     expect(response).toBeInstanceOf(Response);
 
-    // Drain the response body to force `execute` to run.
-    const reader = response.body?.getReader();
-    if (reader) {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        writtenChunks.push(chunk.value);
-      }
-    }
+    // Read the refusal off the WIRE. This used to hand the handler an
+    // `onStreamWriterReady` that assigned to `response` before its own `const`
+    // was initialized — a TDZ throw inside `execute`, which the stream turned
+    // into an error chunk reading "Cannot access 'response' before
+    // initialization". The real refusal never reached the stream at all, and
+    // the test passed anyway because it asserted only that nothing downstream
+    // ran. `createUIMessageStreamResponse` is not mocked in this file, so the
+    // body is the honest observation.
+    const body = await readSseBody(response);
+    const errorChunk = body.find((chunk) => chunk?.type === "error");
+    expect(errorChunk, "no error chunk reached the stream").toBeDefined();
+    expect(JSON.parse(errorChunk.errorText).code).toBe(
+      "tool_approval_unsupported",
+    );
 
     // The model factory must NOT have been called.
     expect(buildOrgModelFromResolvedConfig).not.toHaveBeenCalled();

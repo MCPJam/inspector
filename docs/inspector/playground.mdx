@@ -341,8 +341,9 @@ The switch **raises** the bar and never lowers it. Some actions pause whether it
 
 - anything driving a browser or a third-party web page (`browser_*` tools, WebMCP page tools);
 - anything running on your own machine (local `bash`, a local browser);
-- loading a skill an MCP server provided — that admits a third party's instructions into the conversation;
 - destructive UI actions.
+
+Loading a skill that an MCP server provided is a near miss and worth knowing: it is always TAGGED as third-party content and always bound to the manifest digest you were shown, but whether it pauses follows the switch.
 
 Read-only actions never pause in either mode: observing a page, listing your project's servers, searching the web, and the progressive-discovery meta-tools. Everything in between follows the switch.
 

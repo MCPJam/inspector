@@ -860,7 +860,12 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // model's input string and `manifestApprovalHash` never participated in the
     // decision at all.
     //
-    // floor: always
+    // floor: whatever the BASE skill tool declares — `hostWantsApproval`
+    // delegates to it, because SEP-2640 asks for origin TAGGING on a plain
+    // load (the banner), not a prompt. So this is `setting` on the common
+    // path and `always` only where the base is an effective capability set
+    // whose ref came from a server. What is unconditional is the digest
+    // BINDING, which is recorded whether or not a prompt follows.
     needsApproval: rememberApprovedManifest,
   };
 
@@ -941,7 +946,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
     // Same rule as loadSkill: a supporting file is skill content, and its
     // exact manifest entry is resolved before the approval is displayed.
     //
-    // floor: always
+    // floor: the base tool's, exactly as `loadSkill` above.
     needsApproval: rememberApprovedFileManifest,
   };
 

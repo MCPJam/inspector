@@ -1125,10 +1125,15 @@ function approvalGuidance(
   requireToolApproval: boolean,
 ): string {
   const annotationAware = uiTools.every((t) => t.annotations !== undefined);
+  // Only families that pause on EVERY path belong here. Loading a skill an
+  // MCP server provided does not: the live SEP-2640 wrapper delegates to the
+  // base skill tool (`hostWantsApproval`), so with the switch off it can load
+  // without a prompt — what it always does is TAG the origin and bind the
+  // digest, which is not a pause. Promising one here would advertise a gate
+  // the turn may not have.
   const alwaysPause = [
     "anything driving a browser or a third-party web page",
     "anything running on the user's own machine",
-    "loading a skill an MCP server provided",
     ...(annotationAware ? ["destructive `ui_*` actions"] : []),
   ];
   const always =

@@ -1856,30 +1856,36 @@ export function ChatInput({
                       </button>
 
                       {onRequireToolApprovalChange && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                              <div className="flex items-center gap-2 text-sm">
-                                <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                                Tool Approval
-                              </div>
-                              <Switch
-                                checked={requireToolApproval}
-                                onCheckedChange={(checked) =>
-                                  onRequireToolApprovalChange(checked)
-                                }
-                              />
+                        <div className="rounded-md px-2 py-2 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm">
+                              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                              Tool Approval
                             </div>
-                          </TooltipTrigger>
-                          {/* The switch RAISES the floor and never lowers it,
-                              so the second half is true whether it is on or
-                              off — which is the half people are surprised by. */}
-                          <TooltipContent className="max-w-xs">
-                            Pause before every tool call. Browser, page,
-                            local-machine and destructive UI actions always
-                            pause.
-                          </TooltipContent>
-                        </Tooltip>
+                            <Switch
+                              checked={requireToolApproval}
+                              onCheckedChange={(checked) =>
+                                onRequireToolApprovalChange(checked)
+                              }
+                              aria-describedby="tool-approval-floor-note"
+                            />
+                          </div>
+                          {/* A caption rather than a tooltip: the row contains
+                              the switch itself, so a tooltip trigger wrapped
+                              around it would open over the control the user is
+                              reaching for, and a non-focusable trigger div
+                              would never open for a keyboard user at all. The
+                              second sentence is the half people are surprised
+                              by — the switch RAISES the floor and never lowers
+                              it — so it should not be behind a hover. */}
+                          <p
+                            id="tool-approval-floor-note"
+                            className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
+                          >
+                            Pause before every tool call. Browser, page and
+                            local-machine actions always pause.
+                          </p>
+                        </div>
                       )}
 
                       {showHostStyleSelectorControl && selectorHostStyle && (
