@@ -492,7 +492,13 @@ Any completed chat session can be turned into a test case without rewriting it f
 
 **From the Swarms tab** — Open a completed run, click a session row to select it, then click **Promote to test case** above the session viewer. The session must belong to a completed run attempt; sessions from in-progress runs show an error in the dialog instead of blocking at submit.
 
-In both cases the dialog shows the servers recorded for that session, lets you set a case title and suite name, and (when attachment pickers are enabled) lets you configure the server attachment and client host for the new suite.
+In both cases the dialog asks for a **Test case name** (prefilled from the session) and a destination suite.
+
+**Adding to an existing suite** — the default when the project already has suites. A suite picker appears with the first suite pre-selected. The suite's client and server are shown read-only underneath; you are not asked to choose them again.
+
+**Creating a new suite** — shown automatically when the project has no suites, or when you switch to **New suite**. A suite name field appears (seeded from the session's servers), followed by **Client** and **Server** pickers side by side, also seeded from the session.
+
+Client and server belong to the suite, not the individual case. Once a suite exists, promoting further sessions into it reuses its configuration without re-asking.
 
 ## Generating cases from your tools
 
