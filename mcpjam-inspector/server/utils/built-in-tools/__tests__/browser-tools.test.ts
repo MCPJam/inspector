@@ -1264,11 +1264,10 @@ describe("describeBrowserTools", () => {
   /**
    * The model's payload, serialized the way the provider receives it.
    *
-   * Derived from the BUILT TOOLSET rather than from `BROWSER_TOOL_NAMES`,
-   * because the description path already maps that list: comparing it against
-   * the list proves only that the list equals itself. A verb the builder starts
-   * advertising and the name list never learns about would be sent to the model
-   * and missing from the pane, and only this direction sees it.
+   * Built independently of the description path so the two can be compared at
+   * all: `describeBrowserTools` serializes its own build, and asserting its
+   * output against `BROWSER_TOOL_NAMES` alone measures only the half of the
+   * round trip that maps that list.
    */
   function modelPayload() {
     const { result } = build({ engine: "hosted" });
@@ -1279,11 +1278,22 @@ describe("describeBrowserTools", () => {
     }).tools;
   }
 
-  it("describes every tool the model is given", () => {
-    const described = describeBrowserTools("hosted");
-    expect(described.map((tool) => tool.name).sort()).toEqual(
-      Object.keys(modelPayload()).sort(),
+  it("describes every tool the model is given, and that is the whole list", () => {
+    // Three-way, because either pair alone leaves a real regression uncovered.
+    //
+    // `add` drops any name absent from `names` (itself a filter over
+    // `BROWSER_TOOL_NAMES`), so the built keys can never EXCEED the list. The
+    // direction that actually bites is a verb going MISSING — a lost `add`
+    // call, a `names` filter that over-matches — and pane-against-toolset
+    // alone would let both shrink together and still agree.
+    const built = Object.keys(modelPayload()).sort();
+    const described = describeBrowserTools("hosted")
+      .map((tool) => tool.name)
+      .sort();
+    expect(built, "the builder no longer advertises the whole list").toEqual(
+      [...BROWSER_TOOL_NAMES].sort(),
     );
+    expect(described, "the pane and the model disagree").toEqual(built);
   });
 
   it("carries the same wording and schemas the model is sent", () => {
