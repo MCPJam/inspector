@@ -1360,6 +1360,29 @@ describe("buildBrowserTools — first-class page tools", () => {
     expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
   });
 
+  it("keeps BOTH verbs when the daemon cannot bind an invocation", () => {
+    // A daemon too old to say which frame and registration declared a tool
+    // gets no first-class page tools at all — the builder refuses to advertise
+    // one it cannot bind, because the daemon would then resolve the call by
+    // name and run whatever carries it. Retiring the verbs there would leave
+    // the model with no page tools AND no way to reach one, which is strictly
+    // worse than the state before any of this existed.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        pageTools: { ...PAGE_TOOLS, canBind: false },
+      }),
+    )!;
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+    expect(built.pageTools).toBeUndefined();
+  });
+
   it("FLAG ON: retires the listing verb but keeps a way to ACT", () => {
     // Asymmetric on purpose. Listing is redundant once every observation
     // carries `{count, names}`; INVOKING is not, because an engine that cannot

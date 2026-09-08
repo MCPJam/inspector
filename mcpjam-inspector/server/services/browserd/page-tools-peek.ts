@@ -73,6 +73,16 @@ export interface PageToolsPeek {
   binding?: { bootId: string; tabId: string; navCounter: number };
   revision?: WebMcpToolsRevision;
   url?: string;
+  /**
+   * Whether this daemon can bind an invocation to a registration.
+   *
+   * Decides whether page tools may be FIRST-CLASS at all. A tool with no frame
+   * identity is refused by the builder — rightly, since the daemon would
+   * otherwise resolve the call by name — so a daemon too old to send it can
+   * offer no typed page tools, and the turn has to keep the generic verbs
+   * instead of retiring them and leaving the model nothing.
+   */
+  canBind?: boolean;
   /** Absent when tools were read successfully (even an empty list). */
   reason?: PageToolsPeekReason;
 }
@@ -207,6 +217,15 @@ async function peekHosted(
     (command) => client.sendCommand(command, session.bootId, { signal }),
     session.bootId,
     args.tabId,
+    // WHETHER THIS DAEMON CAN BE BOUND TO AT ALL.
+    //
+    // A tool with no `frameId`/`registrationSeq` is refused as unbindable by
+    // the builder, which is right — but the turn also has to know WHY it got
+    // none, because "this daemon is too old" and "this page declares none" want
+    // opposite answers. Without it a pre-`webmcp-binding` daemon would drop
+    // every page tool AND lose `browser_webmcp_invoke` to dynamic mode, leaving
+    // the model with no way to reach the page at all.
+    status.features?.includes("webmcp-binding") === true,
   );
 }
 
@@ -242,6 +261,8 @@ async function readTools(
   ) => Promise<BrowserdCommandResponse>,
   bootId: string,
   tabId: string | undefined,
+  /** Whether this daemon reports the `webmcp-binding` feature. */
+  canBind = true,
 ): Promise<PageToolsPeek> {
   const response = await send(
     webmcpToolsObserveCommand({
@@ -288,6 +309,7 @@ async function readTools(
       // turn mints would name a document generation nobody checked.
       navCounter: result.stateToken?.navCounter ?? 0,
     },
+    canBind,
     ...(result.webmcpTools ? { revision: result.webmcpTools } : {}),
     ...(observation.url ? { url: observation.url } : {}),
     ...(observation.webmcpSupported ? {} : { reason: "unsupported" as const }),
@@ -363,6 +385,7 @@ export function pageToolsSnapshotFrom(peek: PageToolsPeek | undefined):
       revision?: number;
       hash?: string;
       url?: string;
+      canBind?: boolean;
     }
   | undefined {
   // A ZERO-TOOL PEEK STILL COUNTS, as long as it came with a binding.
@@ -378,6 +401,7 @@ export function pageToolsSnapshotFrom(peek: PageToolsPeek | undefined):
   return {
     tools: peek.tools,
     ...peek.binding,
+    ...(peek.canBind === undefined ? {} : { canBind: peek.canBind }),
     ...(peek.revision
       ? { revision: peek.revision.revision, hash: peek.revision.hash }
       : {}),

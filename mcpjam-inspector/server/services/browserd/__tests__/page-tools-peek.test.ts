@@ -378,6 +378,28 @@ describe("pageToolsSnapshotFrom", () => {
     ).toBeUndefined();
   });
 
+  it("reports whether the daemon can BIND, not just whether it answered", () => {
+    // Two different daemons answer this read identically. Only one of them
+    // enforces `expectedBinding`, and on the other the binding is decorative —
+    // the call is still resolved by name at the far end. The turn has to be
+    // able to tell them apart, because a typed tool over an unenforced binding
+    // is the generic verb wearing a better schema.
+    expect(
+      pageToolsSnapshotFrom({
+        tools: [],
+        canBind: false,
+        binding: { bootId: "b", tabId: "@session", navCounter: 1 },
+      })?.canBind,
+    ).toBe(false);
+    expect(
+      pageToolsSnapshotFrom({
+        tools: [],
+        canBind: true,
+        binding: { bootId: "b", tabId: "@session", navCounter: 1 },
+      })?.canBind,
+    ).toBe(true);
+  });
+
   it("KEEPS a binding for a live page that declares no tools", () => {
     // "This page declares nothing" and "we could not look" are different facts,
     // and only the second is a reason to build nothing. A turn that opens on a

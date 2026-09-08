@@ -205,6 +205,15 @@ export interface BrowserPageToolsSnapshot {
   revision?: number;
   hash?: string;
   url?: string;
+  /**
+   * Whether this daemon can bind an invocation to a registration.
+   *
+   * `false` means no page tool can be first-class here — the builder refuses to
+   * advertise one it cannot bind — so the generic verbs have to stay. Absent
+   * means the caller did not say, which is treated as capable: every path that
+   * reads a real daemon fills it in, and a fake in a test should not have to.
+   */
+  canBind?: boolean;
 }
 
 /** Which engine drives this turn's browser. */
@@ -641,9 +650,17 @@ export function buildBrowserTools(
   // `MCPJAM_WEBMCP_PAGE_TOOLS=verbs` neither goes: that mode has to be an exact
   // rollback, and an invoke verb that takes a tool NAME is unusable beside no
   // way to learn one.
+  //
+  // AND ONLY WHERE A PAGE TOOL CAN BE FIRST-CLASS AT ALL. A daemon that cannot
+  // say which frame and registration declared a tool gets none of them — the
+  // builder refuses to advertise a tool it cannot bind, because the daemon
+  // would then resolve the call by name and run whatever carries it. Retiring
+  // the invoke verb there would leave the model with no page tools AND no way
+  // to reach one.
+  const canBindPageTools = opts.pageTools?.canBind !== false;
   const retireLegacyWebmcpVerbs =
-    firstClassPageTools && opts.dynamicPageTools === true;
-  const retireListVerb = firstClassPageTools;
+    firstClassPageTools && opts.dynamicPageTools === true && canBindPageTools;
+  const retireListVerb = firstClassPageTools && canBindPageTools;
   // A read-only run gets ONLY the tools that look. Refusing to build the rest
   // is stronger than gating them: with nobody to ask, an ungated interactive
   // tool would simply run.
@@ -1100,7 +1117,12 @@ export function buildBrowserTools(
     }),
   );
 
-  const page = firstClassPageTools
+  // `canBindPageTools` gates the BUILD, not only the verbs. A daemon that does
+  // not enforce `expectedBinding` makes the binding decorative: the tool would
+  // carry an identity nothing checks, and the call would still be resolved by
+  // name at the far end. That is the generic verb wearing a typed schema, so
+  // the honest thing is to ship the generic verb.
+  const page = firstClassPageTools && canBindPageTools
     ? buildPageToolsFor({
         opts,
         unattended,
