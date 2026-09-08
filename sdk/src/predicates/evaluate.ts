@@ -978,6 +978,17 @@ export function evaluatePredicate(
     }
 
     case "toolLatencyUnder": {
+      // A malformed ceiling is a malformed CHECK, not an observation about the
+      // server — and with no calls in scope it would otherwise pass. Every
+      // other numeric kind fails closed on its own payload; so does this one.
+      if (!Number.isInteger(predicate.ms) || predicate.ms < 1) {
+        return fail(
+          predicate,
+          `toolLatencyUnder requires a positive integer ms, got ${String(
+            predicate.ms
+          )}`
+        );
+      }
       const scope = timingScope(transcript, predicate.toolName);
       const timed = callScope(transcript, predicate.toolName).length;
       if (scope.length === 0) {
@@ -1541,14 +1552,49 @@ export function evaluatePredicate(
         (transcript.toolCalls ?? []).map((c) => c.toolName)
       );
       for (const name of called) {
-        if (inventoryEntry(transcript, name)?.annotations?.destructiveHint) {
+        const entry = inventoryEntry(transcript, name);
+        // A called tool the inventory does not describe has no declaration to
+        // read. One row somewhere else carrying annotations does not speak for
+        // it, and reading its silence as safety is the vacuous pass this whole
+        // check exists to avoid.
+        if (!entry || entry.annotations === undefined) {
+          return evidenceError(
+            predicate,
+            `"${name}" was called and the inventory carries no annotations ` +
+              "for it; destructiveHint was never stated for the tool in question"
+          );
+        }
+        // The protocol's own reading, in the protocol's own order — the same
+        // three steps `client-fulfilled-tools.ts` applies:
+        //
+        //   1. `destructiveHint: true` is destructive, whatever else is set.
+        //   2. `readOnlyHint: true` is not: `destructiveHint` is meaningful
+        //      only when the tool writes at all.
+        //   3. otherwise an ABSENT `destructiveHint` means destructive. Only
+        //      an explicit `false` is a declaration of safety.
+        //
+        // Step 3 is the one that matters here: reading absence as `false`
+        // reported every unannotated write as safe.
+        const annotations = entry.annotations;
+        if (annotations.destructiveHint === true) {
           return fail(
             predicate,
             `a tool declaring destructiveHint was called: "${name}"`
           );
         }
+        if (annotations.readOnlyHint === true) continue;
+        if (annotations.destructiveHint !== false) {
+          return fail(
+            predicate,
+            `"${name}" was called and declares neither destructiveHint nor ` +
+              "readOnlyHint; the protocol reads an absent hint as destructive"
+          );
+        }
       }
-      return pass(predicate, "no tool declaring destructiveHint was called");
+      return pass(
+        predicate,
+        "every called tool is declared read-only or explicitly non-destructive"
+      );
     }
 
     case "toolErrorNamesInput": {
@@ -1604,8 +1650,12 @@ export function evaluatePredicate(
           .flatMap((c) => Object.values(c.arguments ?? {}))
           .filter(
             (value): value is string | number =>
+              // Three characters either way. A one- or two-digit number
+              // appears inside half the error messages ever written — a `1`
+              // matches "401", a `30` matches "30 seconds" — and crediting the
+              // server for that is worse than not checking at all.
               (typeof value === "string" && value.length >= 3) ||
-              typeof value === "number"
+              (typeof value === "number" && String(value).length >= 3)
           )
           .map((value) => String(value).toLowerCase());
         const names = sent.some((value) => message.includes(value));

@@ -101,6 +101,28 @@ describe("annotations come from the manager, because the ToolSet drops them", ()
     ).toEqual({});
   });
 
+  it("keeps an EMPTY selection distinct from no selection at all", () => {
+    const both = {
+      listServers: () => ["a", "b"],
+      hasCachedToolAnnotations: () => true,
+      getAllToolAnnotations: (id: string) =>
+        id === "a"
+          ? { shared: { destructiveHint: false } }
+          : { shared: { destructiveHint: true } },
+    };
+    // No answer from the caller ⇒ every server, as before.
+    expect(collectToolAnnotations(both)).toHaveProperty("shared");
+    // "This run selected server a" ⇒ only a's declaration for the shared name.
+    expect(collectToolAnnotations(both, ["a"])).toEqual({
+      shared: { destructiveHint: false },
+    });
+    // "This run selected NO server" is an answer too, and it is emphatically
+    // not "all of them" — reading it that way is how an unselected server's
+    // hint reaches a colliding tool name. It reads no cache at all, so the
+    // result is `undefined`: nothing was asked, rather than "asked and none".
+    expect(collectToolAnnotations(both, [])).toBeUndefined();
+  });
+
   it("never throws a run down over evidence it cannot read", () => {
     // A manager that predates this surface, or a test double.
     expect(collectToolAnnotations(undefined)).toBeUndefined();

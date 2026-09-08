@@ -4108,7 +4108,20 @@ const runLocalIteration = async ({
       // to what was advertised. Checks that compare a call against what the
       // server DECLARED (its input schema, its `destructiveHint`) read it here
       // and report `status: "error"` when it is absent.
-      ...(prepared?.allTools ? { selectionTools: prepared.allTools } : {}),
+      // NARROWED to what progressive discovery actually advertised: the
+      // unnarrowed registry holds tools the model was never shown, and a
+      // schema or annotation check must not grade a call against a
+      // declaration that was not on offer. Same helper the persistence paths
+      // and the hosted runner use; a no-op when discovery is off.
+      ...(prepared?.allTools
+        ? {
+            selectionTools: narrowToolsToAdvertised(
+              prepared.allTools,
+              prepared.progressivePlan,
+              prepared.discoveryState,
+            ),
+          }
+        : {}),
       // The AI SDK ToolSet above drops the server's `annotations`; they come
       // from the manager's own tools/list cache instead.
       ...(toolAnnotations ? { selectionToolAnnotations: toolAnnotations } : {}),
@@ -5479,8 +5492,13 @@ const runHostedIterationWithBrowser = async (
     matchOptions: test.matchOptions,
     // Skill-tool calls are exempt from tool-call expectations (see local path).
     skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
-    // See the local path: the declaration a schema/annotation check reads.
-    selectionTools: prepared.allTools,
+    // See the local path: the declaration a schema/annotation check reads,
+    // narrowed to what was advertised.
+    selectionTools: narrowToolsToAdvertised(
+      prepared.allTools,
+      prepared.progressivePlan,
+      prepared.discoveryState,
+    ),
     // See the sibling call site: `annotations` are not on the ToolSet.
     ...(stepToolAnnotations
       ? { selectionToolAnnotations: stepToolAnnotations }

@@ -408,3 +408,96 @@ describe("a truncated row is not a short one", () => {
     expect(graded).not.toHaveProperty("status");
   });
 });
+
+describe("a declaration nobody made is not a declaration of safety", () => {
+  const called = (annotations?: Record<string, unknown>): IterationTranscript =>
+    ({
+      toolCalls: [{ toolName: "wipe", arguments: {} }],
+      toolErrors: [],
+      toolInventory: [
+        { name: "wipe", ...(annotations ? { annotations } : {}) },
+        // A second tool that DOES carry annotations, so the inventory-wide
+        // "nobody declared anything" guard cannot be what answers.
+        { name: "read", annotations: { readOnlyHint: true } },
+      ],
+      capture: {
+        toolResults: "absent",
+        toolCallTimings: "absent",
+        toolInventory: "complete",
+      },
+    }) as IterationTranscript;
+
+  it("reads an absent destructiveHint as destructive, per the protocol", () => {
+    // MCP's default, and the rule `client-fulfilled-tools.ts` already applies.
+    // Reading absence as `false` reported every unannotated write as safe.
+    const result = evaluatePredicate(called({ title: "Wipe" }), {
+      type: "noDestructiveToolCalled",
+    });
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("absent hint as destructive");
+  });
+
+  it("lets readOnlyHint settle it, because the hint means nothing then", () => {
+    expect(
+      evaluatePredicate(called({ readOnlyHint: true }), {
+        type: "noDestructiveToolCalled",
+      }),
+    ).toMatchObject({ passed: true });
+  });
+
+  it("takes an explicit false as the declaration of safety it is", () => {
+    expect(
+      evaluatePredicate(called({ destructiveHint: false }), {
+        type: "noDestructiveToolCalled",
+      }),
+    ).toMatchObject({ passed: true });
+  });
+
+  it("will not let another tool's annotations answer for this one", () => {
+    // The called tool carries no annotations at all. One row elsewhere having
+    // some does not speak for it.
+    const result = evaluatePredicate(called(), {
+      type: "noDestructiveToolCalled",
+    });
+    expect(result.status).toBe("error");
+    expect(result.reason).toContain("for the tool in question");
+  });
+});
+
+describe("a malformed check is not an observation about the server", () => {
+  it("fails a latency ceiling that is not a positive integer", () => {
+    // With no calls in scope this used to pass — a verdict from a check that
+    // could never have been evaluated.
+    const idle = buildIterationTranscript({
+      toolCalls: [],
+      toolCallTimings: [],
+      timingsCaptured: true,
+    });
+    for (const ms of [0, -1, 1.5, Number.NaN] as const) {
+      const result = evaluatePredicate(idle, { type: "toolLatencyUnder", ms });
+      expect(result.passed, String(ms)).toBe(false);
+      expect(result.reason, String(ms)).toContain("positive integer");
+    }
+  });
+
+  it("does not credit a one- or two-digit argument found in an error", () => {
+    // A `1` matches "401"; a `30` matches "30 seconds". Crediting the server
+    // for that is worse than not checking.
+    const transcript = buildIterationTranscript({
+      toolCalls: [{ toolName: "fetch", arguments: { page: 1, limit: 30 } }],
+      toolErrors: [
+        {
+          toolName: "fetch",
+          kind: "protocol-error",
+          message: "Upstream returned 401 after 30 seconds",
+        },
+      ],
+      toolInventory: [
+        { name: "fetch", inputSchema: { type: "object", properties: {} } },
+      ],
+    });
+    expect(
+      evaluatePredicate(transcript, { type: "toolErrorNamesInput" }).passed,
+    ).toBe(false);
+  });
+});

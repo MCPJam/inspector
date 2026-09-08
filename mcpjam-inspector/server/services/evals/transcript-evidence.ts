@@ -263,9 +263,13 @@ export function collectToolAnnotations(
   const merged: Record<string, Record<string, unknown>> = {};
   let read = false;
   try {
-    const scope = new Set(serverIds ?? []);
+    // `undefined` is "the caller has no narrower answer"; `[]` is "this run
+    // selected no server", and reading the second as the first would merge
+    // annotations from every registered server — the exact leak the scope is
+    // here to close.
+    const scope = serverIds === undefined ? undefined : new Set(serverIds);
     for (const serverId of manager.listServers()) {
-      if (scope.size > 0 && !scope.has(serverId)) continue;
+      if (scope && !scope.has(serverId)) continue;
       if (!manager.hasCachedToolAnnotations(serverId)) continue;
       read = true;
       for (const [name, annotations] of Object.entries(

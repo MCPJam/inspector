@@ -23,6 +23,43 @@ function unwrapToolOutput(output: unknown): unknown {
   return output.value;
 }
 
+/** An `error-text` output's value, as text. */
+function errorTextOf(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return undefined;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The model-visible text of an MCP `CallToolResult`, for an error record.
+ *
+ * Text parts first, because that is what a server writes its error into;
+ * `structuredContent` is a fallback for a server that answers only in JSON.
+ * Bounded by the caller's own reason cap, so no truncation here.
+ */
+function callToolResultText(result: Record<string, unknown>): string | undefined {
+  const content = result.content;
+  if (Array.isArray(content)) {
+    const text = content
+      .map((entry) =>
+        isRecord(entry) && entry.type === "text" && typeof entry.text === "string"
+          ? entry.text
+          : ""
+      )
+      .filter(Boolean)
+      .join(" ");
+    if (text.trim()) return text;
+  }
+  if (result.structuredContent !== undefined) {
+    return errorTextOf(result.structuredContent);
+  }
+  return undefined;
+}
+
 /**
  * Classify a tool failure on a single persisted trace message part, or `null`
  * if the part is not a failed tool result. Distinguishes:
@@ -42,33 +79,40 @@ export function classifyToolFailurePart(part: unknown): ToolErrorRecord | null {
   // that tool.
   const toolCallId =
     typeof part.toolCallId === "string" ? part.toolCallId : undefined;
-  const record = (kind: ToolErrorKind): ToolErrorRecord => ({
+  const record = (kind: ToolErrorKind, message?: string): ToolErrorRecord => ({
     kind,
     ...(toolName ? { toolName } : {}),
     ...(toolCallId ? { toolCallId } : {}),
+    // The server's own words, carried through. A record without them is not
+    // merely less informative: `toolErrorNamesInput` reads the message, and
+    // an absent one reports "a tool error carried no message at all" — a
+    // finding about the server, manufactured out of our own omission, on
+    // every live run.
+    ...(message && message.trim() ? { message: message.trim() } : {}),
   });
 
   // Transport / execution failures → protocol-error.
   if (typeof part.error === "string" && part.error.trim())
-    return record("protocol-error");
+    return record("protocol-error", part.error);
   if (
     isRecord(part.error) &&
     typeof part.error.message === "string" &&
     part.error.message.trim()
   ) {
-    return record("protocol-error");
+    return record("protocol-error", part.error.message);
   }
   const output = part.output;
   if (isRecord(output) && output.type === "error-text")
-    return record("protocol-error");
+    return record("protocol-error", errorTextOf(output.value));
 
   // Protocol-correct domain errors (tool ran, isError:true) → content-error.
   if (isRecord(part.result) && part.result.isError === true)
-    return record("content-error");
+    return record("content-error", callToolResultText(part.result));
   const unwrapped = unwrapToolOutput(output);
   if (isRecord(unwrapped) && unwrapped.isError === true)
-    return record("content-error");
-  if (part.isError === true) return record("content-error");
+    return record("content-error", callToolResultText(unwrapped));
+  if (part.isError === true)
+    return record("content-error", callToolResultText(part));
 
   return null;
 }
