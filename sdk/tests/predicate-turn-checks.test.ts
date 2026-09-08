@@ -117,14 +117,29 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
     expect(isTurnScopablePredicateKind("tokenBudgetUnder")).toBe(false);
     expect(TURN_SCOPABLE_PREDICATE_KINDS).not.toContain("tokenBudgetUnder");
     expect(isTurnScopablePredicateKind("noEndingQuestion")).toBe(true);
-    // Pinned as the COMPLEMENT of the case-only kinds rather than as a count:
-    // a bare number went stale the moment the union grew past 12, and said
-    // nothing about which kinds it was counting. Case-only means the claim is
-    // meaningless against a single turn's slice — a per-turn token total is
-    // not captured, and a turn's own turn count is always 1.
+    // Pinned as the COMPLEMENT of the case-only kinds, each named with the
+    // reason it is case-only. A bare count went stale the moment the union
+    // grew past 12 and said nothing about WHICH kinds it was counting.
+    const CASE_ONLY = {
+      // Meaningless against a single turn's slice.
+      tokenBudgetUnder: "per-turn token usage is not captured",
+      turnCountUnder: "a turn's own turn count is always 1",
+      // `buildTurnTranscript` carries tool calls, errors, the turn's message
+      // and render observations — and nothing else. A kind that reads results,
+      // timings or the tool inventory would fail closed on every turn.
+      toolLatencyUnder: "a turn slice carries no timings",
+      toolResultContains: "a turn slice carries no results",
+      toolResultMatchesSchema: "a turn slice carries no results",
+      toolResultSizeUnder: "a turn slice carries no results",
+      toolErrorNamesInput: "a turn slice carries no tool inventory",
+      fullPageHasContinuation: "a turn slice carries no results",
+      argumentsMatchToolSchema: "a turn slice carries no tool inventory",
+      noDeprecatedToolCalled: "a turn slice carries no tool inventory",
+      noDestructiveToolCalled: "a turn slice carries no tool inventory",
+    };
     expect([...TURN_SCOPABLE_PREDICATE_KINDS].sort()).toEqual(
       (PREDICATE_KINDS as readonly string[])
-        .filter((kind) => !["tokenBudgetUnder", "turnCountUnder"].includes(kind))
+        .filter((kind) => !(kind in CASE_ONLY))
         .slice()
         .sort(),
     );

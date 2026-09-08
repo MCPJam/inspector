@@ -51,6 +51,25 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   // something" is true of an offer and of a request for a missing parameter,
   // and this label must not pick one — the check cannot tell them apart.
   noEndingQuestion: "Final message does not end with a question",
+  // ── Response: what the server answered with ─────────────────────────────
+  toolLatencyUnder: "Tool call under N ms",
+  toolResultContains: "Tool result contains…",
+  toolResultMatchesSchema: "Tool result matches schema…",
+  toolResultSizeUnder: "Tool result under N bytes",
+  // Labels say what was SEEN. None of the observations below may name what it
+  // means: a repeat is what a poll loop looks like, a full page is not proof
+  // that more results exist, and an error that names no input may still be
+  // the best error a server can write.
+  toolErrorNamesInput: "Tool errors name an input",
+  fullPageHasContinuation: "Full pages carry continuation metadata",
+  // ── Tool call: was the call itself well formed ──────────────────────────
+  argumentsMatchToolSchema: "Arguments match the tool's schema",
+  noRepeatedIdenticalCall: "No identical call repeated back-to-back",
+  // ── Selection: which tools the run reached ──────────────────────────────
+  toolCallCountUnder: "Fewer than N tool calls",
+  toolCalledBefore: "Tool called before another tool",
+  noDeprecatedToolCalled: "No tool marked deprecated was called",
+  noDestructiveToolCalled: "No tool marked destructive was called",
 };
 
 /**
@@ -92,6 +111,18 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "widgetRenderLatencyUnder",
   "widgetNoConsoleErrors",
   "noEndingQuestion",
+  "toolLatencyUnder",
+  "toolResultSizeUnder",
+  "toolResultContains",
+  "toolResultMatchesSchema",
+  "toolErrorNamesInput",
+  "fullPageHasContinuation",
+  "argumentsMatchToolSchema",
+  "noRepeatedIdenticalCall",
+  "toolCallCountUnder",
+  "toolCalledBefore",
+  "noDeprecatedToolCalled",
+  "noDestructiveToolCalled",
 ];
 
 export const SYNTHETIC_MONITOR_KINDS: ReadonlySet<PredicateKind> = new Set([
@@ -222,6 +253,46 @@ export function blankPredicate(kind: PredicateKind): Predicate {
     // role would fail the very first save.
     case "noEndingQuestion":
       return { type: "noEndingQuestion", role: "advisory" };
+    case "toolLatencyUnder":
+      return { type: "toolLatencyUnder", ms: 3000 };
+    case "toolResultContains":
+      return { type: "toolResultContains", needle: "" };
+    case "toolResultMatchesSchema":
+      return {
+        type: "toolResultMatchesSchema",
+        schema: { type: "object" },
+      };
+    // Seeded as REPORT even though a byte ceiling is a measurement and may
+    // gate: a budget nobody has measured yet is a guess, and a guess that
+    // fails builds on its first run is how a useful check gets deleted.
+    case "toolResultSizeUnder":
+      return {
+        type: "toolResultSizeUnder",
+        maxBytes: 32_000,
+        role: "advisory",
+        severity: "warn",
+      };
+    case "argumentsMatchToolSchema":
+      return { type: "argumentsMatchToolSchema" };
+    case "toolCallCountUnder":
+      return { type: "toolCallCountUnder", count: 10 };
+    case "toolCalledBefore":
+      return { type: "toolCalledBefore", toolName: "", beforeToolName: "" };
+    case "noDestructiveToolCalled":
+      return { type: "noDestructiveToolCalled" };
+    // Observations seed advisory — the schema refuses a gating one.
+    case "noRepeatedIdenticalCall":
+      return { type: "noRepeatedIdenticalCall", role: "advisory" };
+    case "noDeprecatedToolCalled":
+      return {
+        type: "noDeprecatedToolCalled",
+        role: "advisory",
+        severity: "warn",
+      };
+    case "toolErrorNamesInput":
+      return { type: "toolErrorNamesInput", role: "advisory" };
+    case "fullPageHasContinuation":
+      return { type: "fullPageHasContinuation", role: "advisory" };
   }
 }
 
@@ -237,6 +308,13 @@ export function blankPredicate(kind: PredicateKind): Predicate {
  * (which receives `{label?, kind}` without the predicate) and the authoring
  * form (which has the whole entry) can share one function.
  */
+/** A number for a label, tolerant of a row whose payload lost the field. */
+function num(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value.toLocaleString()
+    : "?";
+}
+
 export function formatCriterion(
   entry:
     | { label?: string; predicate: Predicate }
@@ -270,6 +348,39 @@ export function formatCriterion(
     case "widgetRendered":
     case "widgetNoConsoleErrors":
       return predicate.toolName ? `${base} (${predicate.toolName})` : base;
+    // `num()` rather than a bare `.toLocaleString()`: this formatter also runs
+    // over rows read back from storage, where a payload field can be missing
+    // (a corrupted row, a kind written by a newer build). A label is not worth
+    // a render crash.
+    case "toolLatencyUnder":
+      return predicate.toolName
+        ? `${predicate.toolName} answered under ${num(predicate.ms)} ms`
+        : `Every tool answered under ${num(predicate.ms)} ms`;
+    case "toolResultSizeUnder":
+      return predicate.toolName
+        ? `${predicate.toolName} result under ${num(predicate.maxBytes)} bytes`
+        : `Every tool result under ${num(predicate.maxBytes)} bytes`;
+    case "toolResultContains":
+      return predicate.toolName
+        ? `${predicate.toolName} result contains "${predicate.needle ?? ""}"`
+        : `A tool result contains "${predicate.needle ?? ""}"`;
+    case "toolResultMatchesSchema":
+      return predicate.toolName
+        ? `${predicate.toolName} result matches the authored schema`
+        : `Every tool result matches the authored schema`;
+    case "toolErrorNamesInput":
+    case "fullPageHasContinuation":
+    case "argumentsMatchToolSchema":
+    case "noRepeatedIdenticalCall":
+      return predicate.toolName ? `${base} (${predicate.toolName})` : base;
+    case "toolCallCountUnder":
+      return predicate.toolName
+        ? `Fewer than ${num(predicate.count)} calls to ${predicate.toolName}`
+        : `Fewer than ${num(predicate.count)} tool calls`;
+    case "toolCalledBefore":
+      return predicate.toolName && predicate.beforeToolName
+        ? `${predicate.toolName} called before ${predicate.beforeToolName}`
+        : base;
     default:
       return base;
   }

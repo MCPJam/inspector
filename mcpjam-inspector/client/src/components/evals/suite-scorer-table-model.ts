@@ -317,21 +317,44 @@ function predicateKindLabel(predicate: Predicate): string {
   );
 }
 
+/**
+ * The number the Threshold cell shows for a ceiling-shaped check.
+ *
+ * `"1"` is the fixed pass for everything else: a check either holds or it does
+ * not, and showing "1" says so without pretending there is a knob.
+ */
 function budgetThreshold(predicate: Predicate): string {
   if (predicate.type === "tokenBudgetUnder") return String(predicate.tokens);
   if (predicate.type === "turnCountUnder") return String(predicate.turns);
+  if (predicate.type === "toolLatencyUnder") return String(predicate.ms);
+  if (predicate.type === "toolResultSizeUnder") return String(predicate.maxBytes);
+  if (predicate.type === "toolCallCountUnder") return String(predicate.count);
   return "1";
+}
+
+/**
+ * True when the row's verdict turns on a number the author set.
+ *
+ * NOT the same question as the Budgets presentation GROUP. `toolLatencyUnder`
+ * and `toolResultSizeUnder` are ceilings, so their Threshold cell shows the
+ * ceiling — but they are filed at `response` and belong under Response on the
+ * page, where an author reads them next to the other facts about what the
+ * server answered with. Conflating the two would move them into Budgets.
+ */
+function hasAuthoredThreshold(predicate: Predicate): boolean {
+  return (
+    predicate.type === "tokenBudgetUnder" ||
+    predicate.type === "turnCountUnder" ||
+    predicate.type === "toolLatencyUnder" ||
+    predicate.type === "toolResultSizeUnder" ||
+    predicate.type === "toolCallCountUnder"
+  );
 }
 
 function isBudgetRow(row: GraderRow, predicates: Predicate[]): boolean {
   if (row.predicateIndex === undefined) return false;
   const predicate = predicates[row.predicateIndex];
-  return (
-    predicate !== undefined &&
-    GRADER_PRESENTATION_GROUP[
-      predicate.type as keyof typeof GRADER_PRESENTATION_GROUP
-    ] === "budget"
-  );
+  return predicate !== undefined && hasAuthoredThreshold(predicate);
 }
 
 function observedRow(stage: UserValueStage): ScorerTableRow {

@@ -357,6 +357,48 @@ export function summarizePredicate(predicate: Predicate): string {
         }`;
       case "noEndingQuestion":
         return "final message does not end with a question";
+      case "toolLatencyUnder":
+        return `tool call < ${predicate.ms.toLocaleString()}ms${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolResultSizeUnder":
+        return `tool result < ${predicate.maxBytes.toLocaleString()} bytes${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolResultContains":
+        return `tool result contains "${truncate(predicate.needle, 60)}"${
+          predicate.caseSensitive ? " (case-sensitive)" : ""
+        }${predicate.toolName ? ` for "${predicate.toolName}"` : ""}`;
+      case "toolResultMatchesSchema":
+        return `tool result matches schema${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolErrorNamesInput":
+        return `tool errors name an input${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "fullPageHasContinuation":
+        return `full pages carry continuation metadata${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "argumentsMatchToolSchema":
+        return `arguments match the declared schema${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "noRepeatedIdenticalCall":
+        return `no identical call repeated back-to-back${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolCallCountUnder":
+        return `tool calls < ${predicate.count.toLocaleString()}${
+          predicate.toolName ? ` for "${predicate.toolName}"` : ""
+        }`;
+      case "toolCalledBefore":
+        return `"${predicate.toolName}" before "${predicate.beforeToolName}"`;
+      case "noDeprecatedToolCalled":
+        return "no tool marked deprecated was called";
+      case "noDestructiveToolCalled":
+        return "no tool marked destructive was called";
     }
   } catch {
     // A row whose `type` is valid but whose payload is missing/wrong (corruption,

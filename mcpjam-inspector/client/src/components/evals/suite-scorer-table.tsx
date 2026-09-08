@@ -519,6 +519,48 @@ function ThresholdCell({
         />
       );
     }
+    if (
+      predicate.type === "toolLatencyUnder" ||
+      predicate.type === "toolResultSizeUnder" ||
+      predicate.type === "toolCallCountUnder"
+    ) {
+      const { field, value, label } =
+        predicate.type === "toolLatencyUnder"
+          ? {
+              field: "ms" as const,
+              value: predicate.ms,
+              label: "Tool latency budget in ms",
+            }
+          : predicate.type === "toolResultSizeUnder"
+            ? {
+                field: "maxBytes" as const,
+                value: predicate.maxBytes,
+                label: "Tool result size budget in bytes",
+              }
+            : {
+                field: "count" as const,
+                value: predicate.count,
+                label: "Tool call budget",
+              };
+      return (
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          value={value}
+          aria-label={label}
+          className="h-7 w-24 text-xs"
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            if (!Number.isFinite(next)) return;
+            onPredicateChange(row.predicateIndex!, {
+              ...predicate,
+              [field]: Math.floor(next),
+            } as Predicate);
+          }}
+        />
+      );
+    }
     if (predicate.type === "turnCountUnder") {
       return (
         <Input

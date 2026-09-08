@@ -196,6 +196,18 @@ The built-in predicate types:
 | `widgetNoConsoleErrors` | No widget render captured console errors |
 | `turnCountUnder` | The iteration used strictly fewer than N user turns |
 | `noEndingQuestion` | **Observation.** The final message does not end with a question. Warn/Report only |
+| `toolLatencyUnder` | Every observed call settled under a millisecond ceiling |
+| `toolResultContains` | A tool result contains a substring |
+| `toolResultMatchesSchema` | Every tool result matches an authored JSON Schema (any JSON root) |
+| `toolResultSizeUnder` | Every tool result is under a byte ceiling, measured before our storage cap |
+| `argumentsMatchToolSchema` | Every call's arguments validate against the tool's declared inputSchema |
+| `noRepeatedIdenticalCall` | **Observation.** No identical call repeated back-to-back. Warn/Report only |
+| `toolCallCountUnder` | Strictly fewer than N tool calls |
+| `toolCalledBefore` | Every call to one tool was preceded by a call to another |
+| `noDeprecatedToolCalled` | **Observation.** No called tool's description marks it deprecated. Warn/Report only |
+| `noDestructiveToolCalled` | No called tool declares `destructiveHint` |
+| `toolErrorNamesInput` | **Observation.** Tool errors name an input key or a sent value. Warn/Report only |
+| `fullPageHasContinuation` | **Observation.** Full pages carry continuation metadata. Warn/Report only |
 
 When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example.
 

@@ -358,6 +358,196 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "toolLatencyUnder — all tools",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 3000
+      }
+    },
+    {
+      "label": "toolLatencyUnder — one tool, advisory",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 500,
+        "toolName": "search_issues",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolResultContains — minimal",
+      "value": {
+        "type": "toolResultContains",
+        "needle": "ISS-4412"
+      }
+    },
+    {
+      "label": "toolResultContains — case-sensitive, one tool",
+      "value": {
+        "type": "toolResultContains",
+        "needle": "OK",
+        "caseSensitive": true,
+        "toolName": "ping"
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — object root",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — array root (legal under 2026-07-28)",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toolName": "list_regions"
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — all tools",
+      "value": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": 32000
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — one tool, advisory",
+      "value": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": 4096,
+        "toolName": "dump_logs",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "argumentsMatchToolSchema — all tools",
+      "value": {
+        "type": "argumentsMatchToolSchema"
+      }
+    },
+    {
+      "label": "argumentsMatchToolSchema — one tool",
+      "value": {
+        "type": "argumentsMatchToolSchema",
+        "toolName": "search_issues"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — advisory (the only role an observation may carry)",
+      "value": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — advisory, one tool",
+      "value": {
+        "type": "noRepeatedIdenticalCall",
+        "toolName": "get_job",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCallCountUnder — all tools",
+      "value": {
+        "type": "toolCallCountUnder",
+        "count": 10
+      }
+    },
+    {
+      "label": "toolCallCountUnder — one tool",
+      "value": {
+        "type": "toolCallCountUnder",
+        "count": 3,
+        "toolName": "search_issues"
+      }
+    },
+    {
+      "label": "toolCalledBefore — minimal",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "get_issue",
+        "beforeToolName": "add_comment"
+      }
+    },
+    {
+      "label": "toolCalledBefore — advisory",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "list_orders",
+        "beforeToolName": "void_invoice",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noDeprecatedToolCalled — advisory",
+      "value": {
+        "type": "noDeprecatedToolCalled",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noDeprecatedToolCalled — advisory + warn",
+      "value": {
+        "type": "noDeprecatedToolCalled",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noDestructiveToolCalled — minimal",
+      "value": {
+        "type": "noDestructiveToolCalled"
+      }
+    },
+    {
+      "label": "noDestructiveToolCalled — advisory",
+      "value": {
+        "type": "noDestructiveToolCalled",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolErrorNamesInput — advisory",
+      "value": {
+        "type": "toolErrorNamesInput",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolErrorNamesInput — advisory, one tool",
+      "value": {
+        "type": "toolErrorNamesInput",
+        "toolName": "get_user",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "fullPageHasContinuation — advisory",
+      "value": {
+        "type": "fullPageHasContinuation",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "fullPageHasContinuation — advisory, one tool",
+      "value": {
+        "type": "fullPageHasContinuation",
+        "toolName": "list_orders",
+        "role": "advisory"
+      }
     }
   ],
   "reject": [
@@ -637,6 +827,122 @@
       "value": {
         "type": "noEndingQuestion",
         "role": "gating"
+      }
+    },
+    {
+      "label": "toolLatencyUnder — zero ms (a ceiling nothing can satisfy)",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 0
+      }
+    },
+    {
+      "label": "toolLatencyUnder — fractional ms",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 12.5
+      }
+    },
+    {
+      "label": "toolLatencyUnder — empty toolName (filters to nothing)",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 100,
+        "toolName": ""
+      }
+    },
+    {
+      "label": "toolResultContains — empty needle (would match everything)",
+      "value": {
+        "type": "toolResultContains",
+        "needle": ""
+      }
+    },
+    {
+      "label": "toolResultContains — needle over the 1000-char cap",
+      "value": {
+        "type": "toolResultContains",
+        "needle": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — negative maxBytes",
+      "value": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": -1
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — missing maxBytes",
+      "value": {
+        "type": "toolResultSizeUnder"
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — missing schema",
+      "value": {
+        "type": "toolResultMatchesSchema"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — no role (an observation may not gate)",
+      "value": {
+        "type": "noRepeatedIdenticalCall"
+      }
+    },
+    {
+      "label": "noDeprecatedToolCalled — role gating (a description regex must never gate)",
+      "value": {
+        "type": "noDeprecatedToolCalled",
+        "role": "gating"
+      }
+    },
+    {
+      "label": "toolErrorNamesInput — no role",
+      "value": {
+        "type": "toolErrorNamesInput"
+      }
+    },
+    {
+      "label": "fullPageHasContinuation — role gating",
+      "value": {
+        "type": "fullPageHasContinuation",
+        "role": "gating"
+      }
+    },
+    {
+      "label": "toolCallCountUnder — zero count (a ceiling nothing can satisfy)",
+      "value": {
+        "type": "toolCallCountUnder",
+        "count": 0
+      }
+    },
+    {
+      "label": "toolCallCountUnder — missing count",
+      "value": {
+        "type": "toolCallCountUnder"
+      }
+    },
+    {
+      "label": "toolCalledBefore — missing beforeToolName",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "get_issue"
+      }
+    },
+    {
+      "label": "toolCalledBefore — empty toolName",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "",
+        "beforeToolName": "add_comment"
+      }
+    },
+    {
+      "label": "argumentsMatchToolSchema — empty toolName (filters to nothing)",
+      "value": {
+        "type": "argumentsMatchToolSchema",
+        "toolName": ""
       }
     }
   ]

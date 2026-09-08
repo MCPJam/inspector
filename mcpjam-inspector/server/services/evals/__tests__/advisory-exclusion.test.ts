@@ -38,8 +38,32 @@ const FAILING_ADVISORY: Predicate = {
   severity: "warn",
 };
 
-/** hostedCriterionId literals pinned 2026-09-06. */
+/**
+ * hostedCriterionId literals, pinned 2026-09-06 and extended with each kind.
+ *
+ * The pin catches the HASHER's inputs moving: an existing literal that changes
+ * renames a scorer, which breaks every historical join on it. New rows are
+ * added when the fixture set grows; a changed row is a bug.
+ */
 const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
+  // Tool-call and selection kinds (plan step C4), pinned 2026-09-08. Only the
+  // fixtures with no `role` appear: the pin walks the role-free accept rows,
+  // and every observation kind must carry `role: "advisory"`.
+  "argumentsMatchToolSchema — all tools": "argumentsMatchToolSchema-1133950cdc56",
+  "argumentsMatchToolSchema — one tool": "argumentsMatchToolSchema-b241a938d174",
+  "toolCallCountUnder — all tools": "toolCallCountUnder-8f28c5b8530e",
+  "toolCallCountUnder — one tool": "toolCallCountUnder-8d40f66fe2f2",
+  "toolCalledBefore — minimal": "toolCalledBefore-32c7ea98b93d",
+  "noDestructiveToolCalled — minimal": "noDestructiveToolCalled-4d38da27d4c1",
+  // Response kinds (plan step C3), pinned 2026-09-08.
+  "toolLatencyUnder — all tools": "toolLatencyUnder-a6090b8a9328",
+  "toolResultContains — minimal": "toolResultContains-25686816ee42",
+  "toolResultContains — case-sensitive, one tool":
+    "toolResultContains-e9027a7d0d3d",
+  "toolResultMatchesSchema — object root": "toolResultMatchesSchema-bb67e721141b",
+  "toolResultMatchesSchema — array root (legal under 2026-07-28)":
+    "toolResultMatchesSchema-48c37c32583d",
+  "toolResultSizeUnder — all tools": "toolResultSizeUnder-b2b683d7a85c",
   "toolCalledWith — minimal (only required fields)":
     "toolCalledWith-bb535809fe86",
   "toolCalledWith — all optional fields populated":

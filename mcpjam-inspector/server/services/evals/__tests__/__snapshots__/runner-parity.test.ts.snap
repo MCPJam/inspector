@@ -175,13 +175,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -210,7 +211,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -407,6 +408,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "inputTokens": 0,
@@ -422,7 +424,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "stepIndex": 1,
           },
         ],
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -451,7 +453,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -746,13 +748,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -781,7 +784,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -982,12 +985,13 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1016,7 +1020,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1255,13 +1259,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1290,7 +1295,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1509,12 +1514,13 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1543,7 +1549,7 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -1719,6 +1725,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -1745,7 +1752,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           },
         ],
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -1774,7 +1781,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2003,6 +2010,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "failureCategory": "userValue",
         "firstFailedStage": "userValue",
@@ -2029,7 +2037,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             },
           },
         ],
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2058,7 +2066,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2221,6 +2229,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "failureCategory": "setup",
         "inputTokens": 0,
@@ -2236,7 +2245,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "reason": "no widget render observations recorded",
           },
         ],
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2265,7 +2274,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2459,13 +2468,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2494,7 +2504,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2651,12 +2661,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2685,7 +2696,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -2841,12 +2852,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -2875,7 +2887,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3066,6 +3078,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -3090,7 +3103,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           },
         ],
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3119,7 +3132,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3292,12 +3305,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3326,7 +3340,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3492,12 +3506,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3526,7 +3541,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3677,12 +3692,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3711,7 +3727,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -3872,6 +3888,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -3886,7 +3903,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "reason": "widget rendered (1/1 observation(s))",
           },
         ],
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -3915,7 +3932,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4109,13 +4126,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4144,7 +4162,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4368,13 +4386,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4403,7 +4422,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4583,12 +4602,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 0,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 0,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4617,7 +4637,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {
@@ -4739,12 +4759,13 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "endedWithQuestion": false,
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 10,
+        "stageAnalyzerVersion": 11,
         "stageMeasurements": {
           "rows": [
             {
@@ -4773,7 +4794,7 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
             },
           ],
           "schemaVersion": 1,
-          "stageAnalyzerVersion": 10,
+          "stageAnalyzerVersion": 11,
         },
         "stageResults": [
           {

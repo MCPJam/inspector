@@ -30,6 +30,11 @@ import {
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
 import { finalizePassedForEval } from "@mcpjam/sdk";
+import {
+  extractTranscriptEvidence,
+  toTranscriptToolInventory,
+  type SelectionToolLike,
+} from "./transcript-evidence";
 
 type EvalArgs = Parameters<typeof evaluateMultiTurnResults>;
 type TranscriptArgs = Parameters<typeof buildIterationTranscript>[0];
@@ -63,6 +68,16 @@ export interface EvalIterationVerdictInput {
   renderObservations: TranscriptArgs["renderObservations"];
   /** Pinned tool errors threaded into the case-predicate transcript. */
   toolErrors?: ToolErrorRecord[];
+  /**
+   * The live tool registry as the runner had it THIS iteration, keyed by name.
+   *
+   * Absent ⇒ the transcript carries no inventory and every check that compares
+   * a call against what the server DECLARED reports `status: "error"`. That is
+   * the honest default for a caller that cannot say what the model was shown:
+   * a rule about a declaration cannot be evaluated against no declaration, and
+   * passing would read as "nothing was declared wrong".
+   */
+  selectionTools?: Record<string, SelectionToolLike>;
 
   // ── gates ──
   iterationError: string | undefined;
@@ -99,6 +114,10 @@ export function buildEvalIterationVerdict(
     { skillToolsActive: input.skillToolsActive === true },
   );
 
+  // Extracted once, outside the `effectivePredicates` guard's branch, so the
+  // capture states describe THIS iteration rather than whether anybody
+  // happened to author a check over it.
+  const evidence = extractTranscriptEvidence(input.trace);
   const casePredicateResults = input.effectivePredicates?.length
     ? evaluatePredicates(
         buildIterationTranscript({
@@ -111,6 +130,15 @@ export function buildEvalIterationVerdict(
           // Pinned turns have no trace; thread their tool errors explicitly.
           ...(input.toolErrors !== undefined
             ? { toolErrors: input.toolErrors }
+            : {}),
+          toolResults: evidence.toolResults,
+          resultsCaptured: evidence.resultsCaptured,
+          toolCallTimings: evidence.toolCallTimings,
+          timingsCaptured: evidence.timingsCaptured,
+          ...(input.selectionTools
+            ? {
+                toolInventory: toTranscriptToolInventory(input.selectionTools),
+              }
             : {}),
         }),
         input.effectivePredicates,

@@ -865,6 +865,226 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   },
                                   required: ["type"],
                                 },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolLatencyUnder",
+                                    },
+                                    ms: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "ms"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolResultContains",
+                                    },
+                                    needle: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 1000,
+                                    },
+                                    caseSensitive: { type: "boolean" },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "needle"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolResultMatchesSchema",
+                                    },
+                                    schema: {},
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "schema"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolResultSizeUnder",
+                                    },
+                                    maxBytes: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "maxBytes"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "argumentsMatchToolSchema",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "noRepeatedIdenticalCall",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolCallCountUnder",
+                                    },
+                                    count: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "count"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolCalledBefore",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    beforeToolName: {
+                                      type: "string",
+                                      minLength: 1,
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: [
+                                    "type",
+                                    "toolName",
+                                    "beforeToolName",
+                                  ],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "noDeprecatedToolCalled",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "noDestructiveToolCalled",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "toolErrorNamesInput",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "fullPageHasContinuation",
+                                    },
+                                    toolName: { type: "string", minLength: 1 },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
                               ],
                             },
                             {
@@ -1061,6 +1281,143 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   },
                   required: ["type"],
                 },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolLatencyUnder" },
+                    ms: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "ms"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultContains" },
+                    needle: { type: "string", minLength: 1, maxLength: 1000 },
+                    caseSensitive: { type: "boolean" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "needle"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultMatchesSchema" },
+                    schema: {},
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "schema"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultSizeUnder" },
+                    maxBytes: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "maxBytes"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "argumentsMatchToolSchema" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noRepeatedIdenticalCall" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolCallCountUnder" },
+                    count: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "count"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolCalledBefore" },
+                    toolName: { type: "string", minLength: 1 },
+                    beforeToolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "toolName", "beforeToolName"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noDeprecatedToolCalled" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noDestructiveToolCalled" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolErrorNamesInput" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "fullPageHasContinuation" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
               ],
             },
           },
@@ -1238,6 +1595,143 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "noEndingQuestion" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolLatencyUnder" },
+                    ms: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "ms"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultContains" },
+                    needle: { type: "string", minLength: 1, maxLength: 1000 },
+                    caseSensitive: { type: "boolean" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "needle"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultMatchesSchema" },
+                    schema: {},
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "schema"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolResultSizeUnder" },
+                    maxBytes: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "maxBytes"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "argumentsMatchToolSchema" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noRepeatedIdenticalCall" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolCallCountUnder" },
+                    count: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "count"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolCalledBefore" },
+                    toolName: { type: "string", minLength: 1 },
+                    beforeToolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "toolName", "beforeToolName"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noDeprecatedToolCalled" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noDestructiveToolCalled" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "toolErrorNamesInput" },
+                    toolName: { type: "string", minLength: 1 },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "fullPageHasContinuation" },
+                    toolName: { type: "string", minLength: 1 },
                     role: { type: "string", enum: ["gating", "advisory"] },
                     severity: { type: "string", const: "warn" },
                   },

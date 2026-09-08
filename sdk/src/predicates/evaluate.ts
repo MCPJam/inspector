@@ -12,12 +12,18 @@
 import { argMatch } from "./argMatcher.js";
 import { checkRole } from "./policy.js";
 import { isTurnScopablePredicateKind } from "./types.js";
+import { validateAgainstSchema } from "./schema-validation.js";
+import { canonicalJson } from "../contract/canonical.js";
 import type {
   IterationTranscript,
   Predicate,
   PredicateResult,
   RenderObservationSummary,
+  TranscriptCaptureState,
   TranscriptToolCall,
+  TranscriptToolCallTiming,
+  TranscriptToolInventoryEntry,
+  TranscriptToolResult,
 } from "./types.js";
 
 // Reason strings are persisted to `testIteration.metadata.predicates`, so any
@@ -234,6 +240,237 @@ function fail(predicate: Predicate, reason: string): PredicateResult {
     passed: false,
     reason: truncate(reason, MAX_REASON_CHARS),
   };
+}
+
+/**
+ * THE EVIDENCE WAS NOT THERE.
+ *
+ * Not a verdict in either direction. `passed: false` because the field is
+ * required and an unscored check is not a passed one — but `status: "error"`
+ * is what every reader keys on: the score row carries no value, the stage
+ * stays `notMeasured`, and nothing attributes a defect to the server for a
+ * measurement WE could not take.
+ *
+ * Distinct from a fail-closed row (`tokenBudgetUnder` with no usage), which
+ * predates this field and stays a scored failure so no historical verdict
+ * moves. New evidence-dependent kinds use this instead: they are about the
+ * server's answers, and blaming a server for our own blind spot is exactly
+ * the mis-attribution the chain exists to avoid.
+ */
+function evidenceError(predicate: Predicate, reason: string): PredicateResult {
+  return {
+    predicate: sanitizePredicate(predicate),
+    passed: false,
+    status: "error",
+    reason: truncate(reason, MAX_REASON_CHARS),
+  };
+}
+
+/** How completely a channel was captured. Absent capture ⇒ `absent`. */
+function captureState(
+  transcript: IterationTranscript,
+  channel: keyof NonNullable<IterationTranscript["capture"]>
+): TranscriptCaptureState {
+  return transcript.capture?.[channel] ?? "absent";
+}
+
+/** Tool results in scope, narrowed to `toolName` when the predicate sets it. */
+function resultScope(
+  transcript: IterationTranscript,
+  toolName: string | undefined
+): TranscriptToolResult[] {
+  const all = transcript.toolResults ?? [];
+  return toolName === undefined
+    ? all
+    : all.filter((r) => r.toolName === toolName);
+}
+
+/** Timings in scope, narrowed to `toolName` when the predicate sets it. */
+function timingScope(
+  transcript: IterationTranscript,
+  toolName: string | undefined
+): TranscriptToolCallTiming[] {
+  const all = transcript.toolCallTimings ?? [];
+  return toolName === undefined
+    ? all
+    : all.filter((t) => t.toolName === toolName);
+}
+
+/** `"tool \"x\""` / `"any tool"`, for reasons. */
+function scopeLabel(toolName: string | undefined): string {
+  return toolName === undefined ? "any tool" : `tool "${toolName}"`;
+}
+
+/**
+ * Model-visible text of a result, flattened for `toolResultContains`.
+ *
+ * Reads the stored text first, then the structured/JSON payloads — a server
+ * that answers only with `structuredContent` still has content the check is
+ * about, and requiring text would report it as containing nothing.
+ */
+function resultText(result: TranscriptToolResult): string {
+  const parts: string[] = [];
+  if (typeof result.text === "string") parts.push(result.text);
+  for (const payload of [result.structuredContent, result.json]) {
+    if (payload === undefined) continue;
+    try {
+      parts.push(JSON.stringify(payload) ?? "");
+    } catch {
+      // A payload that will not serialize contributes nothing rather than
+      // aborting the check.
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * The payload a schema check validates, most authoritative first.
+ *
+ * `structuredContent` is the server's own typed answer, so it outranks the
+ * JSON output part and both outrank text that merely looks like JSON.
+ */
+function resultPayload(
+  result: TranscriptToolResult
+): { found: true; value: unknown } | { found: false } {
+  if (result.structuredContent !== undefined) {
+    return { found: true, value: result.structuredContent };
+  }
+  if (result.json !== undefined) return { found: true, value: result.json };
+  if (typeof result.text === "string" && result.text.trim().length > 0) {
+    try {
+      return { found: true, value: JSON.parse(result.text) };
+    } catch {
+      return { found: false };
+    }
+  }
+  return { found: false };
+}
+
+/** Calls in scope, narrowed to `toolName` when the predicate sets it. */
+function callScope(
+  transcript: IterationTranscript,
+  toolName: string | undefined
+): TranscriptToolCall[] {
+  const all = transcript.toolCalls ?? [];
+  return toolName === undefined
+    ? all
+    : all.filter((c) => c.toolName === toolName);
+}
+
+/** The advertised tool, by name, or `undefined` when it was not advertised. */
+function inventoryEntry(
+  transcript: IterationTranscript,
+  toolName: string
+): TranscriptToolInventoryEntry | undefined {
+  return (transcript.toolInventory ?? []).find((t) => t.name === toolName);
+}
+
+/**
+ * Canonical form of a call's arguments, for equality.
+ *
+ * `canonicalJson` rather than `canonicalDigest`: the two answer the same
+ * question (are these argument objects the same?) and comparing the canonical
+ * STRINGS skips a hash per call while staying key-order- and
+ * whitespace-insensitive. A value that will not canonicalize compares as
+ * unequal to everything, including itself — an unreadable argument blob is
+ * not evidence of a repeat.
+ */
+function canonicalArgs(call: TranscriptToolCall, index: number): string {
+  try {
+    return canonicalJson(call.arguments ?? {});
+  } catch {
+    return `«uncanonical:${index}»`;
+  }
+}
+
+/**
+ * A tool's description marks it deprecated ABOUT ITSELF.
+ *
+ * Anchored patterns, not "mentions the word": "Replaces the deprecated
+ * `old_search` tool" is a CURRENT tool describing its predecessor, and firing
+ * on it would be a detector error rather than a debatable finding. Still a
+ * heuristic — it reads prose — which is why the kind is Warn/Report only.
+ */
+const SELF_DEPRECATION = [
+  /^\s*\[?\s*deprecated\b/i,
+  /\bthis (?:tool|endpoint|method) is deprecated\b/i,
+  /\bdeprecated[:.]/i,
+  /\buse\s+\S+\s+instead\b/i,
+];
+
+function describesItselfAsDeprecated(description: string | undefined): boolean {
+  if (typeof description !== "string" || description.length === 0) return false;
+  return SELF_DEPRECATION.some((pattern) => pattern.test(description));
+}
+
+/**
+ * Argument names a server uses for "how many results do you want".
+ *
+ * A closed list rather than a pattern: a page-size check that guessed from any
+ * numeric argument would fire on `timeoutMs` and `retries`.
+ */
+const PAGE_LIMIT_KEYS = [
+  "limit",
+  "page_size",
+  "pageSize",
+  "per_page",
+  "perPage",
+  "max_results",
+  "maxResults",
+  "first",
+  "top",
+];
+
+/** Keys a server uses to say "there is more". Recognized, not exhaustive. */
+const CONTINUATION_KEYS = [
+  "nextCursor",
+  "next_cursor",
+  "hasMore",
+  "has_more",
+  "cursor",
+  "nextPage",
+  "next_page",
+  "nextPageToken",
+  "truncated",
+];
+
+/** The requested page size on a call, if it asked for one. */
+function requestedLimit(call: TranscriptToolCall): number | undefined {
+  const args = call.arguments ?? {};
+  for (const key of PAGE_LIMIT_KEYS) {
+    const value = (args as Record<string, unknown>)[key];
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/** The longest top-level array in a payload, as the page it stands for. */
+function longestTopLevelArray(payload: unknown): number | undefined {
+  if (Array.isArray(payload)) return payload.length;
+  if (!payload || typeof payload !== "object") return undefined;
+  let longest: number | undefined;
+  for (const value of Object.values(payload as Record<string, unknown>)) {
+    if (Array.isArray(value) && (longest === undefined || value.length > longest)) {
+      longest = value.length;
+    }
+  }
+  return longest;
+}
+
+/** True when a payload carries any recognized continuation key. */
+function hasContinuation(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const keys = Object.keys(payload as Record<string, unknown>);
+  return CONTINUATION_KEYS.some((key) => keys.includes(key));
+}
+
+/** `≈ N tokens`, always labelled as the estimate it is. */
+function estimatedTokens(bytes: number): string {
+  return `≈${Math.ceil(bytes / 4).toLocaleString()} tokens (estimate)`;
 }
 
 /** Evaluate a single predicate against the iteration transcript. */
@@ -612,6 +849,567 @@ export function evaluatePredicate(
           lastNonEmptyLine(message),
           MAX_VALUE_CHARS
         )}"`
+      );
+    }
+
+    case "toolLatencyUnder": {
+      const scope = timingScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        // Zero calls in scope with a COMPLETE capture is a scored absence:
+        // nothing ran, so nothing was slow. An incomplete capture is not —
+        // that is a measurement we failed to take.
+        const complete =
+          captureState(transcript, "toolCallTimings") === "complete";
+        if (!complete) {
+          return evidenceError(
+            predicate,
+            `no per-call timing captured for ${scopeLabel(
+              predicate.toolName
+            )}; cannot verify latency < ${predicate.ms}ms`
+          );
+        }
+        return pass(
+          predicate,
+          `no calls to ${scopeLabel(
+            predicate.toolName
+          )}; latency budget ${predicate.ms}ms not exercised`
+        );
+      }
+      const slowest = scope.reduce((worst, t) =>
+        t.durationMs > worst.durationMs ? t : worst
+      );
+      return slowest.durationMs < predicate.ms
+        ? pass(
+            predicate,
+            `${scope.length} call(s) under ${predicate.ms}ms ` +
+              `(slowest "${slowest.toolName}" at ${slowest.durationMs}ms)`
+          )
+        : fail(
+            predicate,
+            `"${slowest.toolName}" took ${slowest.durationMs}ms, not under ` +
+              `${predicate.ms}ms (${
+                scope.filter((t) => t.durationMs >= predicate.ms).length
+              }/${scope.length} call(s) over budget)`
+          );
+    }
+
+    case "toolResultContains": {
+      if (
+        typeof predicate.needle !== "string" ||
+        predicate.needle.length === 0
+      ) {
+        return fail(
+          predicate,
+          "toolResultContains requires a non-empty needle"
+        );
+      }
+      const scope = resultScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        const state = captureState(transcript, "toolResults");
+        if (state !== "complete") {
+          return evidenceError(
+            predicate,
+            `no tool results captured for ${scopeLabel(
+              predicate.toolName
+            )}; cannot look for "${truncate(predicate.needle, MAX_VALUE_CHARS)}"`
+          );
+        }
+        return fail(
+          predicate,
+          `${scopeLabel(predicate.toolName)} returned no results to search`
+        );
+      }
+      const caseSensitive = predicate.caseSensitive ?? false;
+      const needle = caseSensitive
+        ? predicate.needle
+        : predicate.needle.toLowerCase();
+      const hit = scope.find((result) => {
+        const text = resultText(result);
+        return (caseSensitive ? text : text.toLowerCase()).includes(needle);
+      });
+      const suffix = caseSensitive ? " (case-sensitive)" : "";
+      return hit
+        ? pass(
+            predicate,
+            `"${hit.toolName}" result contains "${truncate(
+              predicate.needle,
+              MAX_VALUE_CHARS
+            )}"${suffix}`
+          )
+        : fail(
+            predicate,
+            `no result from ${scopeLabel(
+              predicate.toolName
+            )} contains "${truncate(
+              predicate.needle,
+              MAX_VALUE_CHARS
+            )}"${suffix} (${scope.length} result(s) searched)`
+          );
+    }
+
+    case "toolResultMatchesSchema": {
+      const scope = resultScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        const state = captureState(transcript, "toolResults");
+        if (state !== "complete") {
+          return evidenceError(
+            predicate,
+            `no tool results captured for ${scopeLabel(
+              predicate.toolName
+            )}; cannot validate against the authored schema`
+          );
+        }
+        return fail(
+          predicate,
+          `${scopeLabel(predicate.toolName)} returned no results to validate`
+        );
+      }
+      const failures: string[] = [];
+      for (const result of scope) {
+        const payload = resultPayload(result);
+        if (!payload.found) {
+          failures.push(`"${result.toolName}" result was not JSON`);
+          continue;
+        }
+        const validation = validateAgainstSchema(
+          predicate.schema,
+          payload.value
+        );
+        if (validation.outcome === "valid") continue;
+        if (validation.outcome === "unsupported-dialect") {
+          // OUR gap, not the server's data. Reported as an error so it cannot
+          // read as "the server returned the wrong shape".
+          return evidenceError(
+            predicate,
+            `authored schema declares dialect "${validation.dialect}", which ` +
+              "this validator does not carry; nothing was validated"
+          );
+        }
+        if (validation.outcome === "unusable-schema") {
+          return evidenceError(
+            predicate,
+            `authored schema is unusable: ${validation.message}`
+          );
+        }
+        const first = validation.violations[0];
+        failures.push(
+          `"${result.toolName}"${first?.at ? ` at ${first.at}` : ""}: ${
+            first?.message ?? "did not match the schema"
+          }`
+        );
+      }
+      if (failures.length === 0) {
+        return pass(
+          predicate,
+          `${scope.length} result(s) from ${scopeLabel(
+            predicate.toolName
+          )} match the authored schema`
+        );
+      }
+      const shown = failures.slice(0, MAX_ITEMS_SHOWN).join("; ");
+      const more =
+        failures.length > MAX_ITEMS_SHOWN
+          ? ` (+${failures.length - MAX_ITEMS_SHOWN} more)`
+          : "";
+      return fail(
+        predicate,
+        `${failures.length}/${scope.length} result(s) did not match: ${shown}${more}`
+      );
+    }
+
+    case "toolResultSizeUnder": {
+      const scope = resultScope(transcript, predicate.toolName);
+      if (scope.length === 0) {
+        const state = captureState(transcript, "toolResults");
+        if (state !== "complete") {
+          return evidenceError(
+            predicate,
+            `no tool results captured for ${scopeLabel(
+              predicate.toolName
+            )}; cannot verify size < ${predicate.maxBytes} bytes`
+          );
+        }
+        return pass(
+          predicate,
+          `no results from ${scopeLabel(
+            predicate.toolName
+          )}; size budget ${predicate.maxBytes} bytes not exercised`
+        );
+      }
+      // A row we could not measure is not a small row. One unmeasured result
+      // makes the whole check unscorable rather than silently narrowing the
+      // budget to the rows that happened to carry a number.
+      const unmeasured = scope.filter((r) => r.size?.complete !== true);
+      if (unmeasured.length > 0) {
+        return evidenceError(
+          predicate,
+          `${unmeasured.length}/${scope.length} result(s) carry no complete ` +
+            `size measurement (first: "${unmeasured[0]?.toolName}"); ` +
+            `cannot verify size < ${predicate.maxBytes} bytes`
+        );
+      }
+      const largest = scope.reduce((worst, r) =>
+        r.size.bytes > worst.size.bytes ? r : worst
+      );
+      const basis = largest.size.basis;
+      return largest.size.bytes < predicate.maxBytes
+        ? pass(
+            predicate,
+            `largest result "${largest.toolName}" is ` +
+              `${largest.size.bytes.toLocaleString()} bytes ` +
+              `(${basis}, ${estimatedTokens(largest.size.bytes)}), ` +
+              `under ${predicate.maxBytes.toLocaleString()}`
+          )
+        : fail(
+            predicate,
+            `result "${largest.toolName}" is ` +
+              `${largest.size.bytes.toLocaleString()} bytes ` +
+              `(${basis}, ${estimatedTokens(largest.size.bytes)}), not under ` +
+              `${predicate.maxBytes.toLocaleString()}`
+          );
+    }
+
+    case "argumentsMatchToolSchema": {
+      const calls = callScope(transcript, predicate.toolName);
+      if (captureState(transcript, "toolInventory") !== "complete") {
+        return evidenceError(
+          predicate,
+          "no tool inventory captured; cannot compare arguments against a " +
+            "schema the run never recorded"
+        );
+      }
+      if (calls.length === 0) {
+        return pass(
+          predicate,
+          `no calls to ${scopeLabel(predicate.toolName)} to validate`
+        );
+      }
+      const failures: string[] = [];
+      const undeclared = new Set<string>();
+      for (const call of calls) {
+        const tool = inventoryEntry(transcript, call.toolName);
+        if (!tool) {
+          return evidenceError(
+            predicate,
+            `tool "${call.toolName}" was called but is not in the captured ` +
+              "inventory; cannot validate its arguments"
+          );
+        }
+        if (tool.inputSchema === undefined) {
+          return evidenceError(
+            predicate,
+            `tool "${call.toolName}" declares no inputSchema; there is no ` +
+              "contract to validate against"
+          );
+        }
+        // A key absent from `properties` is NOT a violation: JSON Schema
+        // allows additional properties by default, and only a schema that
+        // closes the object (`additionalProperties: false`) forbids one. Such
+        // keys are surfaced for the author's eye and never fail the check —
+        // the validator itself decides what is a violation.
+        const schema = tool.inputSchema as Record<string, unknown>;
+        const declared =
+          schema && typeof schema === "object" && schema.properties
+            ? Object.keys(schema.properties as Record<string, unknown>)
+            : [];
+        for (const key of Object.keys(call.arguments ?? {})) {
+          if (declared.length > 0 && !declared.includes(key)) {
+            undeclared.add(key);
+          }
+        }
+        const validation = validateAgainstSchema(
+          tool.inputSchema,
+          call.arguments ?? {}
+        );
+        if (validation.outcome === "valid") continue;
+        if (validation.outcome === "unsupported-dialect") {
+          return evidenceError(
+            predicate,
+            `tool "${call.toolName}" declares JSON Schema dialect ` +
+              `"${validation.dialect}", which this validator does not carry`
+          );
+        }
+        if (validation.outcome === "unusable-schema") {
+          return evidenceError(
+            predicate,
+            `tool "${call.toolName}" declares an unusable inputSchema: ` +
+              validation.message
+          );
+        }
+        for (const violation of validation.violations.slice(
+          0,
+          MAX_ITEMS_SHOWN
+        )) {
+          failures.push(
+            `"${call.toolName}" ${violation.class}` +
+              `${violation.at && violation.at !== "#" ? ` at ${violation.at}` : ""}`
+          );
+        }
+      }
+      const note =
+        undeclared.size > 0
+          ? ` (undeclared keys, allowed by the schema: ${[...undeclared]
+              .slice(0, MAX_ITEMS_SHOWN)
+              .join(", ")})`
+          : "";
+      if (failures.length === 0) {
+        return pass(
+          predicate,
+          `${calls.length} call(s) match the declared inputSchema${note}` +
+            "; schema validity does not establish that the arguments match " +
+            "the user's intent"
+        );
+      }
+      const shown = failures.slice(0, MAX_ITEMS_SHOWN).join("; ");
+      const more =
+        failures.length > MAX_ITEMS_SHOWN
+          ? ` (+${failures.length - MAX_ITEMS_SHOWN} more)`
+          : "";
+      return fail(
+        predicate,
+        `${failures.length} schema violation(s): ${shown}${more}${note}`
+      );
+    }
+
+    case "noRepeatedIdenticalCall": {
+      const calls = callScope(transcript, predicate.toolName);
+      for (let i = 1; i < calls.length; i++) {
+        const previous = calls[i - 1]!;
+        const current = calls[i]!;
+        if (previous.toolName !== current.toolName) continue;
+        if (canonicalArgs(previous, i - 1) !== canonicalArgs(current, i)) {
+          continue;
+        }
+        // The label says WHAT WAS SEEN. A poll loop and a retry after a
+        // transient failure are this exact shape and both are correct, so the
+        // reason must not call it waste.
+        return fail(
+          predicate,
+          `an identical call was repeated back-to-back: "${current.toolName}" ` +
+            `with ${brief(current.arguments ?? {})}`
+        );
+      }
+      return pass(predicate, "no identical call was repeated back-to-back");
+    }
+
+    case "toolCallCountUnder": {
+      const calls = callScope(transcript, predicate.toolName);
+      return calls.length < predicate.count
+        ? pass(
+            predicate,
+            `${calls.length} call(s) to ${scopeLabel(
+              predicate.toolName
+            )}, fewer than ${predicate.count}`
+          )
+        : fail(
+            predicate,
+            `${calls.length} call(s) to ${scopeLabel(
+              predicate.toolName
+            )} is not fewer than ${predicate.count}`
+          );
+    }
+
+    case "toolCalledBefore": {
+      if (
+        typeof predicate.toolName !== "string" ||
+        predicate.toolName.length === 0 ||
+        typeof predicate.beforeToolName !== "string" ||
+        predicate.beforeToolName.length === 0
+      ) {
+        return fail(
+          predicate,
+          "toolCalledBefore requires non-empty toolName and beforeToolName"
+        );
+      }
+      const calls = transcript.toolCalls ?? [];
+      let seenPrerequisite = false;
+      let checked = 0;
+      for (const call of calls) {
+        if (call.toolName === predicate.toolName) seenPrerequisite = true;
+        if (call.toolName !== predicate.beforeToolName) continue;
+        checked += 1;
+        if (!seenPrerequisite) {
+          return fail(
+            predicate,
+            `"${predicate.beforeToolName}" was called before any ` +
+              `"${predicate.toolName}"`
+          );
+        }
+      }
+      // Vacuously true: the rule constrains calls that did not happen.
+      return checked === 0
+        ? pass(
+            predicate,
+            `"${predicate.beforeToolName}" was never called, so the ordering ` +
+              "rule has nothing to violate"
+          )
+        : pass(
+            predicate,
+            `all ${checked} "${predicate.beforeToolName}" call(s) followed a ` +
+              `"${predicate.toolName}" call`
+          );
+    }
+
+    case "noDeprecatedToolCalled": {
+      if (captureState(transcript, "toolInventory") !== "complete") {
+        return evidenceError(
+          predicate,
+          "no tool inventory captured; cannot read tool descriptions"
+        );
+      }
+      const called = new Set(
+        (transcript.toolCalls ?? []).map((c) => c.toolName)
+      );
+      for (const name of called) {
+        const tool = inventoryEntry(transcript, name);
+        if (describesItselfAsDeprecated(tool?.description)) {
+          return fail(
+            predicate,
+            `a tool whose description marks it deprecated was called: "${name}"`
+          );
+        }
+      }
+      return pass(
+        predicate,
+        "no called tool's description marks it deprecated"
+      );
+    }
+
+    case "noDestructiveToolCalled": {
+      if (captureState(transcript, "toolInventory") !== "complete") {
+        return evidenceError(
+          predicate,
+          "no tool inventory captured; cannot read destructiveHint"
+        );
+      }
+      const inventory = transcript.toolInventory ?? [];
+      // A DECLARATION nobody made is not a declaration of safety. Passing on
+      // an inventory with no annotations at all would read as "nothing
+      // destructive was called", which the run cannot support.
+      if (!inventory.some((tool) => tool.annotations !== undefined)) {
+        return evidenceError(
+          predicate,
+          "no tool in the inventory declares annotations; destructiveHint " +
+            "was never stated, so it cannot be checked"
+        );
+      }
+      const called = new Set(
+        (transcript.toolCalls ?? []).map((c) => c.toolName)
+      );
+      for (const name of called) {
+        if (inventoryEntry(transcript, name)?.annotations?.destructiveHint) {
+          return fail(
+            predicate,
+            `a tool declaring destructiveHint was called: "${name}"`
+          );
+        }
+      }
+      return pass(predicate, "no tool declaring destructiveHint was called");
+    }
+
+    case "toolErrorNamesInput": {
+      const errors = (transcript.toolErrors ?? []).filter(
+        (e) =>
+          predicate.toolName === undefined || e.toolName === predicate.toolName
+      );
+      if (errors.length === 0) {
+        return pass(
+          predicate,
+          `no errors from ${scopeLabel(predicate.toolName)} to inspect`
+        );
+      }
+      if (captureState(transcript, "toolInventory") !== "complete") {
+        return evidenceError(
+          predicate,
+          "no tool inventory captured; cannot tell an input key from any " +
+            "other word in the message"
+        );
+      }
+      for (const error of errors) {
+        const message = (error.message ?? "").toLowerCase();
+        if (message.length === 0) {
+          return fail(
+            predicate,
+            `a tool error carried no message at all${
+              error.toolName ? ` ("${error.toolName}")` : ""
+            }`
+          );
+        }
+        const tool = error.toolName
+          ? inventoryEntry(transcript, error.toolName)
+          : undefined;
+        const schema = tool?.inputSchema as Record<string, unknown> | undefined;
+        const keys =
+          schema && typeof schema === "object" && schema.properties
+            ? Object.keys(schema.properties as Record<string, unknown>)
+            : [];
+        const sent = (transcript.toolCalls ?? [])
+          .filter((c) => !error.toolName || c.toolName === error.toolName)
+          .flatMap((c) => Object.values(c.arguments ?? {}))
+          .filter(
+            (value): value is string | number =>
+              (typeof value === "string" && value.length >= 3) ||
+              typeof value === "number"
+          )
+          .map((value) => String(value).toLowerCase());
+        const names =
+          keys.some((key) => message.includes(key.toLowerCase())) ||
+          sent.some((value) => message.includes(value));
+        if (!names) {
+          // WHAT WAS SEEN, and no more. Naming an input is not the same as
+          // recovery quality: "Rate limited. Retry in 30 seconds." names
+          // nothing and is exemplary.
+          return fail(
+            predicate,
+            `a tool error did not name an input${
+              error.toolName ? ` ("${error.toolName}")` : ""
+            }: ${truncate(error.message ?? "", MAX_ERROR_MSG_CHARS)}`
+          );
+        }
+      }
+      return pass(
+        predicate,
+        `all ${errors.length} tool error(s) named an input key or a sent value`
+      );
+    }
+
+    case "fullPageHasContinuation": {
+      if (captureState(transcript, "toolResults") !== "complete") {
+        return evidenceError(
+          predicate,
+          "no tool results captured; cannot tell a full page from a short one"
+        );
+      }
+      const calls = callScope(transcript, predicate.toolName);
+      let inspected = 0;
+      for (const call of calls) {
+        const limit = requestedLimit(call);
+        if (limit === undefined) continue;
+        const result = (transcript.toolResults ?? []).find((r) =>
+          call.toolCallId && r.toolCallId
+            ? r.toolCallId === call.toolCallId
+            : r.toolName === call.toolName
+        );
+        if (!result) continue;
+        const payload = resultPayload(result);
+        if (!payload.found) continue;
+        const length = longestTopLevelArray(payload.value);
+        if (length === undefined || length !== limit) continue;
+        inspected += 1;
+        if (!hasContinuation(payload.value)) {
+          // NOT "truncated": a full page does not prove more results exist.
+          return fail(
+            predicate,
+            `a full page carried no continuation metadata: "${call.toolName}" ` +
+              `returned ${length} result(s) against a requested limit of ${limit}`
+          );
+        }
+      }
+      return pass(
+        predicate,
+        inspected === 0
+          ? `no full page from ${scopeLabel(predicate.toolName)} to inspect`
+          : `all ${inspected} full page(s) carried continuation metadata`
       );
     }
 

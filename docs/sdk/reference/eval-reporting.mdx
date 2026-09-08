@@ -487,6 +487,18 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 | `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
 | `turnCountUnder` | `turns` | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
 | `noEndingQuestion` | — | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Warn/Report only — `role: "advisory"` is required and a gating one is refused. |
+| `toolLatencyUnder` | `ms`, `toolName?` | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
+| `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
+| `toolResultMatchesSchema` | `schema`, `toolName?` | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
+| `toolResultSizeUnder` | `maxBytes`, `toolName?` | Every tool result in scope is strictly under `maxBytes`, measured on what the server returned and **before** the transcript's own 64 000-character text cap. Bytes, not tokens. |
+| `argumentsMatchToolSchema` | `toolName?` | Every call's arguments validate against the tool's declared `inputSchema`, classified as `missing-required`, `wrong-type`, `bad-enum` or `hallucinated-param`. A key merely absent from `properties` is legal and is reported, never failed. Schema validity does not establish that the arguments match the user's intent. |
+| `noRepeatedIdenticalCall` | `toolName?` | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Warn/Report only. |
+| `toolCallCountUnder` | `count`, `toolName?` | Strictly fewer than `count` calls in scope. Total calls, which is not the same as calls before the right tool. |
+| `toolCalledBefore` | `toolName`, `beforeToolName` | Every call to `beforeToolName` was preceded by a call to `toolName`. Vacuously true when `beforeToolName` never ran. |
+| `noDeprecatedToolCalled` | — | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Warn/Report only. |
+| `noDestructiveToolCalled` | — | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
+| `toolErrorNamesInput` | `toolName?` | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Warn/Report only. |
+| `fullPageHasContinuation` | `toolName?` | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Warn/Report only. |
 
 #### ArgMatcher
 
@@ -498,6 +510,22 @@ Used by `toolCalledWith` to specify expected arguments and matching mode.
 | `argumentMatching` | `"partial" \| "exact" \| "ignore"` | Matching mode. `"partial"` (default) checks only the keys present in `args`; `"exact"` requires deep equality; `"ignore"` skips argument comparison. |
 
 #### A predicate never passes by default
+
+#### Observations may never gate
+
+Some kinds above are marked **Observation**. They are heuristics — a pattern
+that can be right about what it saw and still wrong about what it means — so
+they carry one rule everywhere: `role: "advisory"` is required, a gating one is
+refused by the schema and by the backend, the authoring UI offers Warn and
+Report only, and they never enter `allGatingScorersPassed`.
+
+#### Missing evidence is an error, not a failure
+
+The kinds that read tool results, per-call timings or the tool inventory report
+`status: "error"` when the run did not capture what they need. An error row
+carries no value, keeps its scorer in `unresolvedScorerIds`, and leaves its
+stage `notMeasured`. A gate with an unscored row does not pass — but nothing is
+attributed to the server for a measurement we could not take.
 
 A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
 

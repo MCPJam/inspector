@@ -59,10 +59,10 @@ export type PredicateKind =
  * point-in-time row contradict the adjudicated matcher verdict.
  *
  * FUTURE ANALYZER-BUMP CANDIDATES, named so nobody "fixes" them here alone:
- * `noToolErrors` is arguably `call` or `response` evidence, and the three
- * `widget*` kinds are arguably `response`. Moving any of them changes where
- * historical failures are attributed, so each is a `STAGE_ANALYZER_VERSION`
- * bump with a re-derivation, not an edit to this table.
+ * the three `widget*` kinds are arguably `response`. Moving any of them
+ * changes where historical failures are attributed, so each is a
+ * `STAGE_ANALYZER_VERSION` bump with a re-derivation, not an edit to this
+ * table. (`noToolErrors` was one of these; analyzer 11 moved it.)
  */
 export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
   // ── Selection: which tool the model chose ───────────────────────────────
@@ -70,11 +70,39 @@ export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
   toolCalledAtLeastOnce: "selection",
   toolNeverCalled: "selection",
   firstToolWas: "selection",
+  // ── Selection: which tools the run reached ──────────────────────────────
+  //
+  // Count and route kinds file HERE, not at `call`: they are about which tools
+  // were reached and in what order, which is the selection question. `call` is
+  // about whether the call that was made was usable.
+  toolCallCountUnder: "selection",
+  toolCalledBefore: "selection",
+  noDeprecatedToolCalled: "selection",
+  noDestructiveToolCalled: "selection",
+  // ── Tool call: was the call itself well formed ──────────────────────────
+  argumentsMatchToolSchema: "call",
+  noRepeatedIdenticalCall: "call",
+  // ── Response: what the server answered with ─────────────────────────────
+  //
+  // `noToolErrors` MOVED HERE in analyzer 11, from `userValue` where it had
+  // been filed since v8. The docblock above named it as a bump candidate for
+  // exactly this reason: a tool error is the server's answer, not a statement
+  // about whether the person got what they asked for. Until the bump it
+  // failed BOTH stages on the same evidence — the analyzer already failed
+  // `response` on an observed tool error while the predicate row failed
+  // `userValue` — so one defect was counted twice and `firstFailedStage`
+  // depended on which the reader looked at first.
+  noToolErrors: "response",
+  toolLatencyUnder: "response",
+  toolResultContains: "response",
+  toolResultMatchesSchema: "response",
+  toolResultSizeUnder: "response",
+  toolErrorNamesInput: "response",
+  fullPageHasContinuation: "response",
   // ── User value: did the person get what they asked for ──────────────────
   responseContains: "userValue",
   responseMatches: "userValue",
   finalAssistantMessageNonEmpty: "userValue",
-  noToolErrors: "userValue",
   tokenBudgetUnder: "userValue",
   turnCountUnder: "userValue",
   widgetRendered: "userValue",

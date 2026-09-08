@@ -4099,6 +4099,11 @@ const runLocalIteration = async ({
       // Skill-tool calls are exempt from tool-call expectations (a skill load is
       // agent housekeeping); active only when skill tools were advertised.
       skillToolsActive: hasSkillTools(Object.keys(prepared?.allTools ?? {})),
+      // The registry the model actually saw this iteration — already narrowed
+      // to what was advertised. Checks that compare a call against what the
+      // server DECLARED (its input schema, its `destructiveHint`) read it here
+      // and report `status: "error"` when it is absent.
+      ...(prepared?.allTools ? { selectionTools: prepared.allTools } : {}),
       turnCheckResults,
       effectivePredicates,
       trace: traceForGate,
@@ -5462,6 +5467,8 @@ const runHostedIterationWithBrowser = async (
     matchOptions: test.matchOptions,
     // Skill-tool calls are exempt from tool-call expectations (see local path).
     skillToolsActive: hasSkillTools(Object.keys(prepared.allTools)),
+    // See the local path: the declaration a schema/annotation check reads.
+    selectionTools: prepared.allTools,
     turnCheckResults,
     effectivePredicates,
     trace: traceForGate,
