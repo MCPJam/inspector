@@ -397,6 +397,64 @@ describe("case kind", () => {
   });
 });
 
+/**
+ * The case's grading rules are CHECKS. `assertions` is the name they were
+ * authored under before the API, the UI and `create_eval_case` all settled on
+ * `check`, and it still loads — a customer's committed suite file cannot stop
+ * working because the word moved.
+ */
+describe("case checks", () => {
+  const CHECK = {
+    type: "toolCalledAtLeastOnce",
+    toolName: "search",
+  } as const;
+
+  it("loads `checks` into the runner view", () => {
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, checks: [CHECK] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.checks).toEqual([CHECK]);
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([CHECK]);
+  });
+
+  it("still loads the deprecated `assertions` spelling", () => {
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, assertions: [CHECK] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([CHECK]);
+  });
+
+  it("refuses a case that sets both, rather than picking one", () => {
+    // Two lists are two different gradings of one case. Choosing silently
+    // would score it against rules its author cannot see in the file.
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, checks: [CHECK], assertions: [] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const result = loadEvalSuiteFile(asText(authored));
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).toContain("assertions");
+  });
+
+  it("leaves a case with neither empty in the runner view", () => {
+    const loaded = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
+    expect(loaded.resolved.cases[0]?.assertions).toEqual([]);
+  });
+});
+
 describe("findings", () => {
   const duplicateCaseIds = asText(
     payload(findFixture(data.reject, "duplicate case ids"))

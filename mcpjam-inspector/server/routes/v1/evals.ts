@@ -115,6 +115,7 @@ import {
 import {
   matchOptionsSchema,
   casePredicatesSchema,
+  type CasePredicates,
 } from "@/shared/eval-matching";
 import {
   stepsSchema,
@@ -356,6 +357,43 @@ const MAX_V1_TESTS = 100;
 // contract (`TestStep[]`); model/provider/runs are required (no suite-level
 // defaults exist on the run path). `stepsToInternalCaseFields` projects each
 // case onto the internal run-schema fields before `prepareEvalRun`.
+/**
+ * A case's grading rule is a CHECK.
+ *
+ * One rule travelled under three names a customer types: `assertions` in the
+ * suite file, `predicates` on the inline-create paths here, and `checks` on
+ * the case CRUD routes, the UI and the OpenAPI document. `check` is the
+ * survivor by explicit decision — it is the field name the case routes already
+ * use and the SDK's own `CheckPolicy` / `checkRole` / `checkSeverity` prefix —
+ * so the inline paths accept it too. `predicates` still works and is now
+ * documented rather than silently accepted through `additionalProperties`.
+ *
+ * Both spellings at once is a REFUSAL: two gates are two different gradings of
+ * one case, and picking one silently would score the case against rules its
+ * author cannot see in the body they sent.
+ */
+const CASE_CHECKS_DESCRIPTION =
+  "Per-case check gate. `predicates` is the deprecated spelling of this field; sending both is a validation error.";
+
+export function foldInlineTestChecks<
+  T extends {
+    title: string;
+    checks?: CasePredicates;
+    predicates?: CasePredicates;
+  },
+>(test: T): T {
+  if (test.checks === undefined) return test;
+  if (test.predicates !== undefined) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Test "${test.title}" sets both checks and its deprecated predicates alias — set one.`,
+    );
+  }
+  const { checks: _checks, ...rest } = test;
+  return { ...rest, predicates: test.checks } as T;
+}
+
 const publicInlineTestSchema = z.object({
   title: z.string().min(1),
   steps: stepsSchema.min(1),
@@ -377,14 +415,17 @@ const publicInlineTestSchema = z.object({
     .passthrough()
     .optional(),
   matchOptions: matchOptionsSchema.optional(),
+  checks: casePredicatesSchema.optional().describe(CASE_CHECKS_DESCRIPTION),
+  /** @deprecated Use `checks`, which means exactly this. */
   predicates: casePredicatesSchema.optional(),
 });
 type PublicInlineTest = z.infer<typeof publicInlineTestSchema>;
 
 /** Project a public inline test (`steps`) onto the internal run-schema test. */
 function publicInlineTestToRunTest(
-  test: PublicInlineTest,
+  raw: PublicInlineTest,
 ): RunEvalsRequest["tests"][number] {
+  const test = foldInlineTestChecks(raw);
   const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
   return {
     title: test.title,
@@ -537,6 +578,10 @@ const createEvalSuiteSchema = z.strictObject({
           .passthrough()
           .optional(),
         matchOptions: matchOptionsSchema.optional(),
+        checks: casePredicatesSchema
+          .optional()
+          .describe(CASE_CHECKS_DESCRIPTION),
+        /** @deprecated Use `checks`, which means exactly this. */
         predicates: casePredicatesSchema.optional(),
       }),
     )
@@ -650,7 +695,8 @@ function normalizeCreateTestsToRunTests(
   tests: CreateEvalSuiteBody["tests"],
   suite: { model: string; provider?: string },
 ): RunEvalsRequest["tests"] {
-  return tests.map((test) => {
+  return tests.map((raw) => {
+    const test = foldInlineTestChecks(raw);
     const runs = test.runs ?? 1;
     // Trimmed — and rejected when blank — for the same reason as
     // `toPersistedModelEntry`: this id is what gets stored on the case and

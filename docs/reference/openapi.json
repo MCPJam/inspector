@@ -13046,7 +13046,7 @@
           },
           "assertion": {
             "type": "object",
-            "description": "Predicate or widget assertion (`kind: assert`).",
+            "description": "The rule an `assert` step checks (`kind: assert`). NOT a narrower spelling of a case's `checks`: this is `WidgetAssertion | Predicate`, and that union is why the field is called an assertion rather than a check. A `Predicate` is evaluated against the PERSISTED transcript, so a stored run can be re-graded against it months later; a `WidgetAssertion` is evaluated against a LIVE DOM and can never be replayed. Calling this a check would promise the replayability only one half of it has.",
             "additionalProperties": true
           }
         },
@@ -13054,7 +13054,7 @@
       },
       "EvalTestCase": {
         "type": "object",
-        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model).",
+        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model). Its case-level grading rules are `checks`; `predicates` is the deprecated spelling of that same field.",
         "required": ["title", "runs", "model", "provider", "steps"],
         "properties": {
           "title": {
@@ -13093,6 +13093,44 @@
             "type": "object",
             "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
             "additionalProperties": true
+          },
+          "matchOptions": {
+            "type": "object",
+            "description": "Per-case tool-call match options, overriding the suite's.",
+            "additionalProperties": true
+          },
+          "checks": {
+            "type": "object",
+            "description": "Per-case CHECK gate — the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "predicates": {
+            "type": "object",
+            "deprecated": true,
+            "description": "DEPRECATED spelling of `checks`, which means exactly this. It has always been accepted here and was never written down, passing only because this schema allows unknown properties; documented rather than removed so no caller already sending it breaks. Sending both is a VALIDATION_ERROR.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
           }
         },
         "additionalProperties": true

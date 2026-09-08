@@ -1256,6 +1256,79 @@ describe("createEvalSuiteOperation", () => {
     });
   });
 
+  /**
+   * A case's grading rule is a CHECK. This operation called the same field
+   * `predicates` while the API, the UI and `create_eval_case` all called it
+   * `checks` — so an agent authored a suite in one word and then edited one of
+   * its own cases in another.
+   */
+  it("folds a case's `checks` onto the wire's `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = {
+      mode: "replace",
+      list: [{ type: "toolCalledAtLeastOnce", toolName: "echo" }],
+    };
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+            checks: gate,
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.tests[0].predicates).toEqual(gate);
+    expect(body.tests[0]).not.toHaveProperty("checks");
+  });
+
+  it("refuses a case that sets both `checks` and `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = { mode: "replace", list: [] };
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Authored smoke",
+          servers: ["echo"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [
+            {
+              title: "echo works",
+              steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+              checks: gate,
+              predicates: gate,
+            },
+          ],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("echo works");
+    expect(
+      fetchMock.mock.calls.some(
+        ([target, init]) =>
+          String(target).endsWith("/eval-suites") &&
+          (init as RequestInit | undefined)?.method === "POST"
+      )
+    ).toBe(false);
+  });
+
   it("attaches the named clients so the suite is not authored without one", async () => {
     // An API-authored suite had no way to name its client: it read back with
     // an empty Client everywhere it was listed, and `run_eval_suite`'s host
