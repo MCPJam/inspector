@@ -271,7 +271,9 @@ async function fillConnectForm(
   await chooseOption(user, "Outage policy", policyLabel);
 }
 
-const connectButton = () => screen.getByRole("button", { name: /Connect/ });
+// EXACT. The accounts section has a "Connect a GitHub account" button, and a
+// loose /Connect/ matches both — this one is the repository form's.
+const connectButton = () => screen.getByRole("button", { name: /^Connect$/ });
 
 describe("GithubChecksRoute availability gate", () => {
   beforeEach(() => {
@@ -1416,67 +1418,63 @@ describe("GithubChecksRoute installations", () => {
     mockRedirectToGithub.mockReset();
   });
 
-  it("offers both an install and a claim, and explains why claiming needs GitHub", async () => {
+  it("offers ONE way in, and explains why it goes through GitHub", async () => {
     renderRoute();
     expect(
       await screen.findByRole("button", {
-        name: /Install on a GitHub account/,
+        name: /Connect a GitHub account/,
       }),
     ).toBeInTheDocument();
+    // The second button is GONE. It sent the browser to GitHub's install URL,
+    // which GitHub redirects into an existing installation whenever the user
+    // administers one — so it dead-ended for exactly the people it was for,
+    // and could never reach a second account.
     expect(
-      screen.getByRole("button", { name: /Claim an existing installation/ }),
-    ).toBeInTheDocument();
-    // The whole reason the claim path needs an OAuth leg, in one sentence: the
-    // App JWT can read every installation it has, so installing is not proof
-    // that an installation is yours to connect here.
+      screen.queryByRole("button", { name: /Claim an existing installation/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Install on a GitHub account/ }),
+    ).toBeNull();
+    // The whole reason this path has an OAuth leg, in one sentence: the App JWT
+    // can read every installation it has, so installing is not proof that an
+    // installation is yours to connect here. Losing the second button must not
+    // lose that.
     expect(
       screen.getByText(/is not on its own proof that it is yours to connect/i),
     ).toBeInTheDocument();
   });
 
-  it("sends the admin to the server-built install URL", async () => {
+  it("sends the admin to GitHub to sign in, not to the install URL", async () => {
     const user = userEvent.setup();
     renderRoute();
     await user.click(
       await screen.findByRole("button", {
-        name: /Install on a GitHub account/,
-      }),
-    );
-
-    await waitFor(() => expect(mockStartInstallation).toHaveBeenCalledTimes(1));
-    // The URL carries a one-time state the BACKEND minted and hashed. The page
-    // only follows it.
-    expect(mockRedirectToGithub).toHaveBeenCalledWith(
-      "https://github.com/apps/mcpjam/installations/new?state=abc",
-    );
-  });
-
-  it("sends the admin to the OAuth URL for a claim", async () => {
-    const user = userEvent.setup();
-    renderRoute();
-    await user.click(
-      await screen.findByRole("button", {
-        name: /Claim an existing installation/,
+        name: /Connect a GitHub account/,
       }),
     );
 
     await waitFor(() => expect(mockStartDirectClaim).toHaveBeenCalledTimes(1));
+    // The URL carries a one-time state the BACKEND minted and hashed. The page
+    // only follows it.
     expect(mockRedirectToGithub).toHaveBeenCalledWith(
       "https://github.com/login/oauth/authorize?client_id=x",
     );
+    // Installing is now driven from the picker, using a URL that arrives with
+    // it — this page never asks for one.
+    expect(mockStartInstallation).not.toHaveBeenCalled();
   });
 
   it("shows the backend's conflict wording verbatim, naming no other workspace", async () => {
     const conflict = Object.assign(new Error("Server Error"), {
       data: "That GitHub installation is already connected to a workspace. This is not a problem with your repositories — ask whoever set it up to disconnect it first, or install the app on a different account.",
     });
-    mockStartInstallation.mockRejectedValue(conflict);
+    mockStartDirectClaim.mockRejectedValue(conflict);
     const user = userEvent.setup();
     renderRoute();
 
     await user.click(
       await screen.findByRole("button", {
-        name: /Install on a GitHub account/,
+        name: /Connect a GitHub account/,
       }),
     );
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -1740,10 +1738,7 @@ describe("GithubChecksRoute permissions", () => {
     renderRoute();
 
     expect(
-      await screen.findByRole("button", { name: /Install on a GitHub account/ })
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: /Claim an existing installation/ })
+      await screen.findByRole("button", { name: /Connect a GitHub account/ })
     ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: /Disconnect mcpjam$/ })
@@ -1779,7 +1774,7 @@ describe("GithubChecksRoute permissions", () => {
     renderRoute();
 
     expect(
-      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+      await screen.findByRole("button", { name: /Connect a GitHub account/ })
     ).toBeEnabled();
     expect(
       screen.getByRole("switch", {
@@ -1801,7 +1796,7 @@ describe("GithubChecksRoute permissions", () => {
 
     // Closed: the role is not known yet, so the page may not act on it.
     expect(
-      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+      await screen.findByRole("button", { name: /Connect a GitHub account/ })
     ).toBeDisabled();
     // Silent: we do not yet know the notice applies, so it must not flash.
     expect(
