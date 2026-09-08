@@ -211,7 +211,7 @@ describe("a take's lifecycle", () => {
     const { recorder, ffmpeg } = build();
     expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
     expect(ffmpeg.spawned).toHaveLength(1);
-    expect(ffmpeg.spawned[0]!.args).toContain("/rec/run-1.mp4");
+    expect(ffmpeg.spawned[0]!.args).toContain("/rec/run-1-1.mp4");
     expect(recorder.status()).toMatchObject({
       active: true,
       id: "run-1",
@@ -247,7 +247,7 @@ describe("a take's lifecycle", () => {
     ffmpeg.latest().exit(0);
 
     expect(await stopping).toEqual({
-      path: "/rec/run-1.mp4",
+      path: "/rec/run-1-1.mp4",
       bytes: 1_234,
       durationMs: 9_000,
       // AFTER decimation: the honest measure of how much the recording shows.
@@ -465,5 +465,60 @@ describe("shutdown", () => {
       ok: false,
       error: "record_unavailable",
     });
+  });
+});
+
+/**
+ * Every take owns its file.
+ *
+ * The stop lock releases when ffmpeg exits, so a same-id start can spawn while
+ * the previous take's `stat` — and the inspector's read of the file, later
+ * still — are outstanding. Sharing one path let the new encoder truncate the
+ * old recording under both of them: the old stop would report the NEW take's
+ * size, and the collector would upload the new take as the old run's evidence.
+ */
+describe("each take writes its own file", () => {
+  it("never reuses a path, even for the same id", async () => {
+    // The window, exactly: ffmpeg has exited (so the lock is free and a new
+    // take may start) while the old take's `stat` — and the collector's read
+    // of the file, much later — are still outstanding.
+    let releaseStat: (() => void) | undefined;
+    const { recorder, ffmpeg } = build({
+      statFile: () =>
+        new Promise<{ size: number }>((resolve) => {
+          releaseStat = () => resolve({ size: 10 });
+        }),
+    });
+    recorder.start({ id: "run-1", fps: 15 });
+
+    const stopping = recorder.stop();
+    await Promise.resolve();
+    ffmpeg.latest().exit(0);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Same id, because that is the case a shared path loses: a retry of the
+    // same run, or a second attempt under the same recording id.
+    expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
+
+    const paths = ffmpeg.spawned.map((s) => s.args[s.args.length - 1]);
+    expect(paths).toEqual(["/rec/run-1-1.mp4", "/rec/run-1-2.mp4"]);
+    expect(new Set(paths).size).toBe(2);
+
+    releaseStat?.();
+    // The first take still reports ITS file, not the one now being written.
+    expect((await stopping)?.path).toBe("/rec/run-1-1.mp4");
+  });
+
+  it("reports the path it actually wrote, so a reader never rebuilds it", async () => {
+    const { recorder, ffmpeg } = build({ statFile: async () => ({ size: 7 }) });
+    recorder.start({ id: "run-1", fps: 15 });
+    const stopping = recorder.stop();
+    await Promise.resolve();
+    ffmpeg.latest().exit(0);
+
+    const result = await stopping;
+    expect(result?.path).toBe("/rec/run-1-1.mp4");
+    expect(ffmpeg.spawned[0]!.args).toContain(result!.path);
   });
 });

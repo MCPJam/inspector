@@ -331,6 +331,21 @@ export function createVideoRecorder(
    * `record_active` while nothing at all was recording.
    */
   let stopping: Promise<unknown> | undefined;
+  /**
+   * Monotonic, so every take gets a FILE OF ITS OWN.
+   *
+   * Naming the file for the id alone made the path mutable: once the lock
+   * above releases at process exit, a same-id start can spawn and (with `-y`)
+   * truncate the previous take's `.mp4` while its `stat` — and the
+   * inspector's read, which happens later still — are outstanding. The old
+   * stop would then report the NEW recording's size, and the collector would
+   * upload the new take as the old run's evidence.
+   *
+   * An immutable path per take removes the race outright rather than locking
+   * around it, and costs nothing: the result carries `path`, and every reader
+   * uses it rather than rebuilding the name.
+   */
+  let takeSeq = 0;
   let disposed = false;
 
   const start = (
@@ -343,7 +358,10 @@ export function createVideoRecorder(
     // that from a 200. `stopping` covers the window after `stop` cleared
     // `take` and before the old ffmpeg is actually gone.
     if (take || stopping) return { ok: false, error: "record_active" };
-    const path = join(options.dir, `${args.id}.mp4`);
+    takeSeq += 1;
+    // `-y` stays alongside this: the counter resets when the daemon restarts,
+    // so a file from a previous boot can still be in the way.
+    const path = join(options.dir, `${args.id}-${takeSeq}.mp4`);
     let child: RecorderProcess;
     try {
       child = spawnProcess(

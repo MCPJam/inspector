@@ -384,11 +384,13 @@ function createVideoRecorder(options) {
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   let take;
   let stopping;
+  let takeSeq = 0;
   let disposed = false;
   const start = (args) => {
     if (disposed) return { ok: false, error: "record_unavailable" };
     if (take || stopping) return { ok: false, error: "record_active" };
-    const path = join(options.dir, `${args.id}.mp4`);
+    takeSeq += 1;
+    const path = join(options.dir, `${args.id}-${takeSeq}.mp4`);
     let child;
     try {
       child = spawnProcess(
