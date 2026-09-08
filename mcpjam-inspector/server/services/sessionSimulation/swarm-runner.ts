@@ -294,23 +294,38 @@ function terminalForOutcome(
   };
 }
 
+/** Backend denial codes whose limit belongs to the ACCOUNT, not to one host's
+ * provider key. Kept separate from `USER_OWNED_DENIAL_CODES` in
+ * `server/utils/mcpjam-stream-handler.ts` — that list answers who is at fault,
+ * this one whether another host could escape the limit, and they already
+ * disagree on `mcpjam_rate_limit`. A parity test pins the overlap so a code
+ * added there is not silently missed here. Exported for that test. */
+export const ACCOUNT_LIMIT_CODE =
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included)\b/i;
+
 /**
- * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
- * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
- * A spend/cap/quota/budget message is the org cap (WHOLE-RUN stop); anything
- * else (a provider 429 / rate limit) is a per-HOST stop. A missing message
- * defaults to the narrower per-host stop — never escalate to a whole-run halt
- * on ambiguous signal.
+ * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
+ * shared core's `rate_limited` bucket and the `failed` attempts whose message
+ * carries an account denial code.
+ * An account-wide limit is the org cap (WHOLE-RUN stop); a provider 429 on one
+ * host's own key is a per-HOST stop. A missing message defaults to the narrower
+ * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * `cap`/`quota`/`budget` are word-anchored so only genuine spend-cap wording
- * matches: "spend cap exceeded" / "quota exceeded" / "budget exhausted" →
- * org cap, but "capacity" / "rate capacity exceeded" / "recap" / "escape" →
- * NOT a spend cap (they stay a per-host provider rate-limit).
+ * The backend's denial code decides it. `runner.ts` concatenates that code into
+ * the message ("<sentence> (<code>, HTTP <status>)"), and it is the only
+ * reliable signal: no MCPJam limit sentence — "Daily credit limit reached.",
+ * "Daily MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ *
+ * The prose check is kept as a second signal for a backend that words a cap
+ * without a code. `cap`/`quota`/`budget` stay word-anchored so "capacity" /
+ * "recap" / "escape" remain a per-host provider rate-limit.
  */
 function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
-  if (message && /spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+  if (!message) return "provider_rate_limit";
+  if (ACCOUNT_LIMIT_CODE.test(message)) return "org_spend_cap";
+  if (/spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
@@ -1220,7 +1235,15 @@ async function runJourneyFanOut(
             modelSource: modelId,
           });
 
-          if (outcome === "rate_limited") {
+          // An account-wide denial arrives under EITHER terminal: only the
+          // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
+          // `rate_limited`, so `wallet_locked` and the billing codes land in
+          // `failed` and would never reach the whole-run stop below.
+          const accountLimitFailure =
+            outcome === "failed" &&
+            !abortedBySpendCap &&
+            ACCOUNT_LIMIT_CODE.test(errorMessage ?? "");
+          if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage);
             if (cause === "org_spend_cap") {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
