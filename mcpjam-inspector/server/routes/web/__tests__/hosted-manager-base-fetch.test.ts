@@ -12,9 +12,9 @@
  * route: `createAuthorizedManager` (behind every `/api/web/*` MCP operation,
  * including `/servers/validate`) and `buildReplayManager` (eval replay). The
  * two agent surfaces construct theirs inside streaming route handlers; they are
- * held by `scripts/check-hosted-manager-base-fetch.mjs`, which counts
- * constructions against guard injections per file and so cannot be satisfied by
- * guarding one of a file's two managers.
+ * held by `scripts/check-hosted-manager-base-fetch.mjs`, which inspects each
+ * construction's own argument list and so cannot be satisfied by guarding one
+ * of a file's two managers, nor by a `baseFetch` nested on a single server.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

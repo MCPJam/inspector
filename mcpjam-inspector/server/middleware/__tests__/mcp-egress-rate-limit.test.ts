@@ -167,6 +167,75 @@ describe("mcpEgressRateLimitMiddleware", () => {
     expect((await post(app)).status).toBe(429);
   });
 
+  it("does not charge the budget to a method that opens no connection", async () => {
+    // The middleware is mounted on a PATH, so without the method gate a GET
+    // would spend the quota the POST that actually dials needs.
+    const { module, restore: r } = await loadMiddleware(true);
+    restore = r;
+    const app = appWith(module.mcpEgressRateLimitMiddleware, {
+      workosApiKeyId: "key_1",
+    });
+    app.get("/doctor", (c) => c.json({ ok: true }));
+
+    for (let i = 0; i < module.MCP_EGRESS_CREDENTIAL_LIMIT * 2; i++) {
+      const response = await app.request("/doctor", {
+        method: "GET",
+        headers: { "x-forwarded-for": "203.0.113.7" },
+      });
+      expect(response.status).toBe(200);
+    }
+    expect((await post(app)).status).toBe(200);
+  });
+
+  it("stashes the refusal on `webErrorMeta` for the request log", async () => {
+    const { module, restore: r } = await loadMiddleware(true);
+    restore = r;
+    const app = new Hono();
+    let meta: unknown;
+    app.use("/doctor", async (c, next) => {
+      c.set("workosApiKeyId", "key_1");
+      await next();
+      meta = c.get("webErrorMeta");
+    });
+    app.use("/doctor", module.mcpEgressRateLimitMiddleware);
+    app.post("/doctor", (c) => c.json({ ok: true }));
+
+    for (let i = 0; i < module.MCP_EGRESS_CREDENTIAL_LIMIT; i++) {
+      expect((await post(app)).status).toBe(200);
+    }
+    expect((await post(app)).status).toBe(429);
+    expect(meta).toMatchObject({ status: 429, code: "RATE_LIMITED" });
+  });
+
+  it("degrades an unclassifiable credential to the address budget, not a refusal", async () => {
+    // The credential map fails OPEN at its cap while the address map fails
+    // closed. Refusing traffic we have merely run out of room to classify
+    // would make the limiter the outage, and an entry only lands here after
+    // the address backstop already admitted the request — so filling it costs
+    // an attacker the address budget it would have spent anyway.
+    const { module, restore: r } = await loadMiddleware(true);
+    restore = r;
+    const app = appWith(module.mcpEgressRateLimitMiddleware);
+
+    for (let i = 0; i < module.MCP_EGRESS_MAX_ENTRIES; i++) {
+      await post(app, {
+        bearer: `filler-${i}`,
+        ip: `10.0.${Math.floor(i / 60 / 256)}.${Math.floor(i / 60) % 256}`,
+      });
+    }
+
+    // Past its own limit, so a credential that had been given a window would
+    // be refused by now. This one never got one, and the address it arrives
+    // from is fresh.
+    for (let i = 0; i < module.MCP_EGRESS_CREDENTIAL_LIMIT + 1; i++) {
+      const response = await post(app, {
+        bearer: "unclassifiable",
+        ip: "198.51.100.200",
+      });
+      expect(response.status).toBe(200);
+    }
+  });
+
   it("is inert outside hosted mode", async () => {
     const { module, restore: r } = await loadMiddleware(false);
     restore = r;

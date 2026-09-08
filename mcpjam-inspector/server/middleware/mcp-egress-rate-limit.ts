@@ -133,12 +133,22 @@ function credentialKey(c: Context): string {
   return `bearer:${createHash("sha256").update(token).digest("hex")}`;
 }
 
+const TOO_MANY_MESSAGE =
+  "Too many server diagnostics from this account. Try again in a few minutes.";
+
 function tooMany(c: Context, retryAfterMs: number) {
+  // `requestLogContextMiddleware` reads the code and message off `webErrorMeta`
+  // for a RETURNED response, so without this every refusal reaches Axiom as a
+  // bare 429 with no reason attached.
+  c.set("webErrorMeta", {
+    status: 429,
+    code: ErrorCode.RATE_LIMITED,
+    message: TOO_MANY_MESSAGE,
+  });
   return c.json(
     {
       code: ErrorCode.RATE_LIMITED,
-      message:
-        "Too many server diagnostics from this account. Try again in a few minutes.",
+      message: TOO_MANY_MESSAGE,
     },
     429,
     {

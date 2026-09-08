@@ -150,6 +150,34 @@ function constructionArguments(source, openParenIndex) {
   return null;
 }
 
+/**
+ * `args` with everything that is not a DIRECT property of an argument object
+ * blanked out. Bracket characters survive at every depth so a kept
+ * `hostedMcpBaseFetch()` still reads as a call.
+ *
+ * A `baseFetch` one level deeper is a PER-SERVER field: it guards that one
+ * server and not the manager, so it covers neither the rest of the batch nor a
+ * server attached later through `connectToServer`. The flat search this
+ * replaces could not tell the two apart, so a nested decoy was enough to vouch
+ * for an unguarded manager.
+ */
+function directProperties(args) {
+  let depth = 0;
+  let out = "";
+  for (const ch of args) {
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth += 1;
+      out += ch;
+    } else if (ch === ")" || ch === "]" || ch === "}") {
+      depth -= 1;
+      out += ch;
+    } else {
+      out += depth === 2 ? ch : " ";
+    }
+  }
+  return out;
+}
+
 function lineOf(source, index) {
   return source.slice(0, index).split("\n").length;
 }
@@ -198,7 +226,7 @@ for (const dir of GUARDED_DIRS) {
 
     for (const open of opens) {
       const args = constructionArguments(code, open);
-      if (args === null || !GUARD_INJECTION.test(args)) {
+      if (args === null || !GUARD_INJECTION.test(directProperties(args))) {
         unguardedAllowed.push({ file: rel, line: lineOf(code, open) });
       }
     }
