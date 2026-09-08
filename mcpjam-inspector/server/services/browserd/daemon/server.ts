@@ -195,6 +195,14 @@ export function buildBrowserdStack(
     features?: readonly string[];
     /** The display encoder, when this box has one. See the frame-stream host. */
     video?: import("./video-encoder").VideoEncoder;
+    /**
+     * The file recorder, when this box has one.
+     *
+     * A SEPARATE process from `video` above, deliberately: the live encoder is
+     * demand-driven and restarts on a tier change, either of which would
+     * truncate a file the run is still filling.
+     */
+    recorder?: import("./video-recorder").VideoRecorder;
     displaySize?: { width: number; height: number };
     /** Observability and the lazy-upgrade decision, never admission. */
     bundleHash?: string;
@@ -230,6 +238,7 @@ export function buildBrowserdStack(
     ...(config.video
       ? { setVideoTier: (tier) => config.video?.setTier(tier) }
       : {}),
+    ...(config.recorder ? { recorder: config.recorder } : {}),
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,

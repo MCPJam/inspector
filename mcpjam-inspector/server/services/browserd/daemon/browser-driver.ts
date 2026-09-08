@@ -57,6 +57,22 @@ export interface BrowserDriver {
    */
   viewport?(tabId?: string): Promise<TabViewport | null>;
   /**
+   * The viewport a tab ALREADY has, or null — never one built on the spot.
+   *
+   * `viewport()` above opens a tab and attaches a CDP session on a miss, which
+   * is right for a person opening the pane and wrong for everything that only
+   * wants to nudge a picture somebody is already watching. Raising the frame
+   * rate after an agent command is exactly that: on a box where nobody has the
+   * pane open, calling `viewport()` would attach a screencast and start
+   * encoding JPEGs for an audience of nobody, on the same two cores the agent
+   * is using. This asks the question without paying for the answer.
+   *
+   * Synchronous by shape (it is a map lookup) but returns a promise because
+   * the map holds in-flight creations: a viewport somebody asked for a
+   * millisecond ago is still theirs.
+   */
+  viewportIfWatched?(tabId?: string): Promise<TabViewport | null> | null;
+  /**
    * What is open and which one is on screen — for the HUMAN pane.
    *
    * Optional, like `viewport`: a driver with no concept of tabs is still a
