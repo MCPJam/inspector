@@ -6,6 +6,7 @@ import {
   maskApiKeyId,
   resolveRunOrigin,
   resolveRunProvenance,
+  toQueryOrigins,
 } from "../run-origin";
 
 /**
@@ -142,6 +143,76 @@ describe("the origin vocabulary", () => {
         RUN_ORIGIN_META[resolveRunOrigin({ source: hostile })],
       ).toBeTruthy();
     }
+  });
+});
+
+/**
+ * The wire contract. The chips are the reader's vocabulary; `listProjectRuns`
+ * validates against the STORED one, and a value it does not know fails the
+ * whole query rather than the one filter — a blank Runs table, not a blank
+ * chip.
+ */
+describe("toQueryOrigins", () => {
+  /**
+   * `convex/lib/runLauncher.ts`'s `runOriginValidator`, copied deliberately.
+   *
+   * A copy, because the client cannot import from the backend: the point is to
+   * fail HERE, in a fast unit test, the moment the two vocabularies drift —
+   * rather than in production, on the one chip nobody clicked before deploy.
+   */
+  const BACKEND_ORIGINS = [
+    "ui",
+    "sdk",
+    "api",
+    "schedule",
+    "github_check",
+    "cli",
+    "mcp",
+    "github_action",
+    "slack",
+    "discord",
+  ];
+
+  it("only ever emits values the backend validator accepts", () => {
+    // The invariant that matters, checked across every chip at once.
+    for (const origin of RUN_ORIGIN_FILTERS) {
+      for (const value of toQueryOrigins([origin])) {
+        expect(BACKEND_ORIGINS, `${origin} → ${value}`).toContain(value);
+      }
+    }
+  });
+
+  it("expands the one chip that stands for two stored values", () => {
+    // GitHub reaches a row two ways — declared by the Action, stamped by the
+    // check — and "GitHub" means both to the person clicking it.
+    expect(toQueryOrigins(["github"])).toEqual([
+      "github_action",
+      "github_check",
+    ]);
+  });
+
+  it("passes the origins that need no translation straight through", () => {
+    expect(toQueryOrigins(["cli"])).toEqual(["cli"]);
+    expect(toQueryOrigins(["api"])).toEqual(["api"]);
+    expect(toQueryOrigins(["slack"])).toEqual(["slack"]);
+  });
+
+  it("asks for `mcp` once, though it is both a verified surface and a launcher", () => {
+    expect(toQueryOrigins(["mcp"])).toEqual(["mcp"]);
+  });
+
+  it("is stable in order, so one selection is one query", () => {
+    // `usePaginatedQuery` keys on its arguments: an order that wobbled between
+    // renders would silently reset the pagination the table is holding.
+    expect(toQueryOrigins(["sdk", "github"])).toEqual(
+      toQueryOrigins(["github", "sdk"]),
+    );
+  });
+
+  it("leaves an empty selection empty", () => {
+    // The caller sends `undefined` rather than `[]`; this just must not invent
+    // a filter of its own.
+    expect(toQueryOrigins([])).toEqual([]);
   });
 });
 

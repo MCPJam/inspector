@@ -32,8 +32,11 @@
  *     labelled one thing and filtered as another.
  *   * The FILTER now runs server-side (`listProjectRuns`'s `origins` arg), and
  *     the backend re-implements this precedence as a query pushdown so a page
- *     is a page of matching runs. Its own tests check the two against each
- *     other. If you change the rule here, change it there.
+ *     is a page of matching runs. If you change the rule here, change it there.
+ *   * The backend speaks the STORED vocabulary, which splits GitHub in two
+ *     (`github_action` declared, `github_check` stamped) where a reader wants
+ *     one chip. `toQueryOrigins` translates on the way out; nothing else in
+ *     the client should send an origin over the wire untranslated.
  */
 
 /** The origins a run can resolve to. Two of them are verified-only. */
@@ -166,6 +169,56 @@ const SOURCE_ORIGINS = new Map<string, RunOrigin>([
   ["schedule", "schedule"],
   ["github_check", "github"],
 ]);
+
+/**
+ * The stored values one chip stands for.
+ *
+ * The chips speak the reader's vocabulary and `listProjectRuns` speaks the
+ * stored one, and `github` is the single place the two genuinely disagree: a
+ * GitHub run arrives either as a DECLARED `github_action` launcher or as a
+ * STAMPED `github_check`, and a reader who picks "GitHub" means both. Sending
+ * the chip's own name would ask the query for an origin its validator has
+ * never heard of, which fails the whole table rather than the one filter.
+ *
+ * INVERTED from the three maps above rather than hand-listed, for the same
+ * reason the chip labels are derived: a second copy of this vocabulary is a
+ * copy that drifts, and the drift shows up as a filter that silently returns
+ * nothing.
+ */
+const ORIGIN_WIRE_VALUES: ReadonlyMap<RunOrigin, readonly string[]> = (() => {
+  const wire = new Map<RunOrigin, string[]>();
+  for (const map of [
+    VERIFIED_ORIGIN_SURFACES,
+    LAUNCHER_KIND_ORIGINS,
+    SOURCE_ORIGINS,
+  ]) {
+    for (const [value, origin] of map) {
+      const values = wire.get(origin) ?? [];
+      // `mcp` is both a verified surface and a launcher kind; one chip must
+      // not ask the query for it twice.
+      if (!values.includes(value)) values.push(value);
+      wire.set(origin, values);
+    }
+  }
+  return wire;
+})();
+
+/**
+ * Selected chips, as the `origins` argument `listProjectRuns` accepts.
+ *
+ * Sorted and de-duplicated so one selection always produces one array: the
+ * paginated query is keyed by its arguments, and an order that wobbled between
+ * renders would reset the pagination the table is holding.
+ */
+export function toQueryOrigins(origins: Iterable<RunOrigin>): string[] {
+  const wire = new Set<string>();
+  for (const origin of origins) {
+    for (const value of ORIGIN_WIRE_VALUES.get(origin) ?? [origin]) {
+      wire.add(value);
+    }
+  }
+  return [...wire].sort();
+}
 
 /**
  * Resolve one run's origin: verified, then declared, then stamped.

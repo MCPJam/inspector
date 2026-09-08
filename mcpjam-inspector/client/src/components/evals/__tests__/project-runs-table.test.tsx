@@ -142,8 +142,15 @@ describe("ProjectRunsTable", () => {
     await user.click(screen.getByRole("button", { name: "SDK" }));
     expect(mocks.queryArgs.at(-1)?.origins).toEqual(["sdk"]);
 
+    // One chip, TWO stored values: the backend's `origins` validator knows
+    // `github_action` and `github_check` and has never heard of `github`, so
+    // sending the chip's own name would fail the whole query.
     await user.click(screen.getByRole("button", { name: "GitHub" }));
-    expect(mocks.queryArgs.at(-1)?.origins).toEqual(["github", "sdk"]);
+    expect(mocks.queryArgs.at(-1)?.origins).toEqual([
+      "github_action",
+      "github_check",
+      "sdk",
+    ]);
 
     // And the rows the server returned are rendered UNTOUCHED. Re-filtering
     // them here would be a second implementation of the rule, and the one that

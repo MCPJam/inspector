@@ -25,6 +25,7 @@ import {
   RUN_ORIGIN_FILTERS,
   RUN_ORIGIN_META,
   maskApiKeyId,
+  toQueryOrigins,
   type RunOrigin,
 } from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
@@ -208,11 +209,15 @@ export function ProjectRunsTable({
   // these filters" — a false negative about rows that were one page back.
   // Passing them to the query makes a page a page of matching runs.
   //
-  // Stable identity per selection: a fresh array literal on every render would
-  // make `usePaginatedQuery` treat each render as a new query and reset the
+  // Translated to the STORED vocabulary on the way out: the "GitHub" chip is
+  // one reader-facing origin covering two backend values (`github_action`
+  // declared, `github_check` stamped), and the query's validator only knows
+  // the latter pair. `toQueryOrigins` also gives a stable identity per
+  // selection — a fresh array literal on every render would make
+  // `usePaginatedQuery` treat each render as a new query and reset the
   // pagination it is holding.
   const origins = useMemo(
-    () => (sourceFilter.size > 0 ? [...sourceFilter].sort() : undefined),
+    () => (sourceFilter.size > 0 ? toQueryOrigins(sourceFilter) : undefined),
     [sourceFilter],
   );
 
