@@ -339,9 +339,15 @@ export interface OrgLocalModelHandlerOptions {
  * `never` — workspace reads, exa search — has no resume to support, so there
  * is nothing for the refusal to protect.
  *
- * A FUNCTION-form declaration counts as asking. It cannot be evaluated without
- * a model input, and this runs before the model has produced one, so the
- * fail-closed reading is the only sound one.
+ * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
+ * here — this runs before the model has produced an input — and the two
+ * families that use the form (`effective-skill-tools`, `server-skill-tools`)
+ * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
+ * "unevaluable" as "asks" refused every local-runtime turn that carried a
+ * skill tool, switch or no switch, where before it ran. `streamText` evaluates
+ * the function per call, exactly as it did before the declaration was unified;
+ * a call that does answer `true` still reaches the unsupported resume, which is
+ * the pre-existing gap this guard never covered.
  *
  * Client-fulfilled tools (`ui_*`, `app_*`, `page_*`) don't need the resume even
  * when they DO ask. Their approval is emitted natively by `streamText` from the
@@ -356,7 +362,7 @@ function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   return Object.entries(tools).some(([name, tool]) => {
     const declared = (tool as { needsApproval?: unknown } | undefined)
       ?.needsApproval;
-    if (declared !== true && typeof declared !== "function") return false;
+    if (declared !== true) return false;
     if (!isClientFulfilledToolName(name)) return true;
     // Name is necessary but NOT sufficient. A real MCP server tool called
     // `ui_foo` matches the namespace regex while still having an `execute`,

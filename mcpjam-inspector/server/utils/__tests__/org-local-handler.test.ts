@@ -224,9 +224,12 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     expect(streamTextMock).toHaveBeenCalled();
   });
 
-  it("still refuses when a FUNCTION-form declaration might ask", async () => {
-    // Unevaluable before the model has produced an input, so the guard reads
-    // it as "might ask" rather than gambling.
+  it("does NOT refuse a FUNCTION-form declaration up front", async () => {
+    // The skill tools declare `needsApproval` as a function, unconditionally,
+    // and answer `false` on the common path. Reading the form itself as
+    // "might ask" refused every local-runtime turn that carried a skill tool,
+    // switch off or on, where before it ran. The guard reads `true`;
+    // `streamText` evaluates the function per call, as it always did.
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
       projectId: "proj",
@@ -251,8 +254,8 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       }
     }
 
-    expect(buildOrgModelFromResolvedConfig).not.toHaveBeenCalled();
-    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(buildOrgModelFromResolvedConfig).toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalled();
   });
 
   it("surfaces config errors via formatLocalStreamError without invoking the engine", async () => {
