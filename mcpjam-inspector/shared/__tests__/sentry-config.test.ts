@@ -222,16 +222,25 @@ describe("groupDomMutationConflicts", () => {
     };
   }
 
-  // Both wordings observed in production for the same defect: Blink names the
-  // method, WebKit emits one sentence for the whole NotFoundError class.
+  // Blink names the mutating method, so both wordings are the same defect.
   it.each([
     "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
     "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.",
-    "The object can not be found here.",
   ])("collapses %j into one fingerprint", (value) => {
     expect(
       groupDomMutationConflicts(domMutationEvent(value)).fingerprint,
     ).toEqual(["dom-mutation-conflict", "prod"]);
+  });
+
+  it("keeps the ambiguous WebKit wording out of the Blink group", () => {
+    // WebKit uses this sentence for the whole NotFoundError class, so it
+    // collapses under its own key — a storage bug landing here must not read
+    // as a React conflict.
+    expect(
+      groupDomMutationConflicts(
+        domMutationEvent("The object can not be found here."),
+      ).fingerprint,
+    ).toEqual(["webkit-not-found", "prod"]);
   });
 
   it("keeps dev out of the production group", () => {
@@ -239,7 +248,10 @@ describe("groupDomMutationConflicts", () => {
     // this project's volume — one group for both would bury production again.
     expect(
       groupDomMutationConflicts(
-        domMutationEvent("The object can not be found here.", "dev"),
+        domMutationEvent(
+          "Failed to execute 'removeChild' on 'Node': gone.",
+          "dev",
+        ),
       ).fingerprint,
     ).toEqual(["dom-mutation-conflict", "dev"]);
   });

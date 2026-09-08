@@ -176,14 +176,21 @@ export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
 ];
 
 /**
- * The two wordings browsers use when a DOM mutation targets a node that is no
- * longer where the mutating code last saw it. Blink names the method, WebKit
- * emits one generic sentence for the whole `NotFoundError` class.
+ * Blink names the mutating method, so a match is a DOM mutation conflict and
+ * nothing else.
  */
-const DOM_MUTATION_CONFLICT_VALUES: RegExp[] = [
-  /^Failed to execute '(?:removeChild|insertBefore)' on 'Node'/,
-  /^The object can not be found here\.$/,
-];
+const BLINK_DOM_MUTATION_CONFLICT =
+  /^Failed to execute '(?:removeChild|insertBefore)' on 'Node'/;
+
+/**
+ * WebKit emits one generic sentence for the whole `NotFoundError` class, so a
+ * match is only probably this defect — IndexedDB raises `NotFoundError` too,
+ * and nothing left in a minified frame separates the two. It gets its own key
+ * rather than joining the Blink events: the collapse still fires, and a
+ * storage bug hiding in here stays attributable instead of being read as a
+ * React conflict.
+ */
+const WEBKIT_NOT_FOUND = /^The object can not be found here\.$/;
 
 /**
  * Minimal structural view of the event `beforeSend` receives.
@@ -229,11 +236,14 @@ export function groupDomMutationConflicts<T extends FingerprintableEvent>(
   if (exception?.type !== "NotFoundError") return event;
 
   const value = exception.value ?? "";
-  if (!DOM_MUTATION_CONFLICT_VALUES.some((pattern) => pattern.test(value))) {
-    return event;
-  }
+  const group = BLINK_DOM_MUTATION_CONFLICT.test(value)
+    ? "dom-mutation-conflict"
+    : WEBKIT_NOT_FOUND.test(value)
+      ? "webkit-not-found"
+      : undefined;
+  if (!group) return event;
 
-  event.fingerprint = ["dom-mutation-conflict", event.environment ?? "unknown"];
+  event.fingerprint = [group, event.environment ?? "unknown"];
   return event;
 }
 
