@@ -1428,7 +1428,16 @@ export type PlatformEvalSuiteGroundednessJudge = {
 };
 
 export interface PlatformEvalSuiteSettings {
-  /** Minimum pass rate as a percentage, 0–100. */
+  /**
+   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   *
+   * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
+   * still holds: a v2 suite is decided by
+   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
+   * an upgrade leaves behind is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * threshold no run uses.
+   */
   minimumAccuracy: number | null;
   /**
    * Suite-level FLOOR on per-case iterations, 1–10: every case runs at least

@@ -13218,11 +13218,21 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true
               }
-            }
+            },
+            "additionalProperties": false
           },
           "tags": {
             "type": "array",
@@ -13566,11 +13576,21 @@
           },
           "defaultPassCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true
               }
-            }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -13807,7 +13827,7 @@
             "properties": {
               "minimumAccuracy": {
                 "type": ["number", "null"],
-                "description": "Minimum pass rate for the suite to count as passing."
+                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
               },
               "minimumIterations": {
                 "type": ["number", "null"],
@@ -14030,11 +14050,21 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true
               }
-            }
+            },
+            "additionalProperties": false
           },
           "iterationOverride": {
             "type": "integer",
@@ -14251,11 +14281,21 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true
               }
-            }
+            },
+            "additionalProperties": false
           },
           "idempotencyKey": {
             "type": "string",

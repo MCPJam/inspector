@@ -97,6 +97,7 @@ import {
 } from "../shared/eval-case-batch.js";
 import {
   RunEvalsRequestSchema,
+  passCriteriaSchema,
   prepareEvalRun,
   authorEvalSuite,
   createConvexClients,
@@ -637,7 +638,7 @@ const createEvalSuiteSchema = z.strictObject({
     .optional(),
   model: z.string().min(1),
   provider: z.string().optional(),
-  passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
+  passCriteria: passCriteriaSchema.optional(),
   // Accepted for forward-compat; the current Convex suite/case mutations do
   // not persist tags, so this is a no-op today (documented as such).
   tags: z.array(z.string()).optional(),
@@ -755,11 +756,7 @@ const syncFileOwnedSuiteSchema = z
       .strict()
       .optional(),
     minIterations: z.number().int().min(1).max(10).optional(),
-    defaultPassCriteria: z
-      .object({
-        minimumPassRate: z.number(),
-      })
-      .optional(),
+    defaultPassCriteria: passCriteriaSchema.optional(),
   })
   .strict()
   .superRefine((body, ctx) => {
@@ -2095,7 +2092,23 @@ function toSuiteDetailDto(
       ? suite.environmentIds.map(String)
       : [],
     settings: {
+      // `null` on a v2 suite, whatever the column still holds.
+      //
+      // `applyVerdictPolicySettings` upgrades a suite by ADDING
+      // `verdictPolicyDefaults`; it cannot remove `defaultPassCriteria`,
+      // because the platform's `updateTestSuite` types that argument
+      // `v.optional(passCriteriaValidator)` — there is no null to send, so
+      // there is no way to clear it from here. The column therefore keeps a
+      // percent that NOTHING reads once the suite is v2.
+      //
+      // Reporting it anyway put a dead percent beside the live fraction in
+      // `verdictPolicyDefaults` and left a reader to guess which one decides.
+      // Worse, `mcpjam cloud eval export` reads exactly this field and writes
+      // it into a suite file as `defaults.passThreshold` — a file claiming a
+      // threshold the platform does not use. A v2 suite has no legacy floor in
+      // effect, and `null` is what "no floor in effect" already means here.
       minimumAccuracy:
+        !isEvalVerdictPolicyV2(suite.verdictPolicyVersion) &&
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
           ? suite.defaultPassCriteria.minimumPassRate
           : null,
@@ -3858,7 +3871,7 @@ const createEvalRunGroupSchema = z
       .optional(),
     skillsOverride: z.literal("exclude").optional(),
     notes: z.string().optional(),
-    passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
+    passCriteria: passCriteriaSchema.optional(),
     idempotencyKey: z.string().min(1).max(256).optional(),
     ephemeralEnvironment: z.boolean().optional(),
     /**

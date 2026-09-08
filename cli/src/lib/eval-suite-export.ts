@@ -117,6 +117,30 @@ export function suiteFileTooLarge(
  * Returns `null` for anything that is not plain decimal notation (an exponent
  * form, a non-finite value) rather than converting it approximately.
  */
+/**
+ * A verdict-policy-2 suite's own pass threshold, or `null` when the suite is
+ * legacy.
+ *
+ * The v2 value is ALREADY the fraction a suite file wants, so it is read
+ * rather than converted — and reading it is what keeps export from writing a
+ * v2 suite's dead legacy percent as its `passThreshold`.
+ *
+ * `null` for anything that is not a validated v2 threshold, so a legacy suite
+ * and a v2 suite whose stored defaults did not validate both fall back to the
+ * percent path and its findings.
+ */
+function suiteVerdictPolicyThreshold(
+  settings: PlatformEvalSuiteDetail["settings"]
+): number | null {
+  if (settings.policy !== "v2" && settings.verdictPolicyVersion !== 2) {
+    return null;
+  }
+  const threshold = settings.verdictPolicyDefaults?.passThreshold;
+  return typeof threshold === "number" && threshold >= 0 && threshold <= 1
+    ? threshold
+    : null;
+}
+
 export function percentToFraction(percent: number): number | null {
   if (!Number.isFinite(percent)) return null;
   // `plainDecimal` on the way IN as well as out: a percent small enough that
@@ -366,30 +390,38 @@ function suiteLevelFindings(
   }
 
   // ── settings ─────────────────────────────────────────────────────────────
-  if (
-    settings.minimumAccuracy === null ||
-    settings.minimumAccuracy === undefined
-  ) {
-    findings.push(
-      unsupported(
-        ["settings", "minimumAccuracy"],
-        "suite sets no minimum accuracy, and `defaults.passThreshold` is " +
-          "required in a suite file. Set one and export again."
-      )
-    );
-  } else if (
-    settings.minimumAccuracy < 0 ||
-    settings.minimumAccuracy > 100 ||
-    percentToFraction(settings.minimumAccuracy) === null
-  ) {
-    findings.push(
-      unsupported(
-        ["settings", "minimumAccuracy"],
-        `minimum accuracy ${settings.minimumAccuracy} does not convert to a ` +
-          `fraction in [0,1] without losing a digit; a suite file's ` +
-          `\`passThreshold\` is a fraction, never a percent`
-      )
-    );
+  // WHICH policy decides this suite is what says where its threshold lives.
+  //
+  // A v2 suite's floor is `verdictPolicyDefaults.passThreshold`, already the
+  // fraction a suite file wants. Its `minimumAccuracy` is a legacy percent the
+  // platform stopped reading at upgrade, and converting THAT would write a
+  // file claiming a threshold no run uses.
+  if (suiteVerdictPolicyThreshold(settings) === null) {
+    if (
+      settings.minimumAccuracy === null ||
+      settings.minimumAccuracy === undefined
+    ) {
+      findings.push(
+        unsupported(
+          ["settings", "minimumAccuracy"],
+          "suite sets no minimum accuracy, and `defaults.passThreshold` is " +
+            "required in a suite file. Set one and export again."
+        )
+      );
+    } else if (
+      settings.minimumAccuracy < 0 ||
+      settings.minimumAccuracy > 100 ||
+      percentToFraction(settings.minimumAccuracy) === null
+    ) {
+      findings.push(
+        unsupported(
+          ["settings", "minimumAccuracy"],
+          `minimum accuracy ${settings.minimumAccuracy} does not convert to a ` +
+            `fraction in [0,1] without losing a digit; a suite file's ` +
+            `\`passThreshold\` is a fraction, never a percent`
+        )
+      );
+    }
   }
 
   const floor = settings.minimumIterations;
@@ -782,9 +814,11 @@ export function buildSuiteFileFromPlatform(
         ? {}
         : { temperature: executionConfig.temperature }),
       repetitions,
-      passThreshold: percentToFraction(
-        detail.settings.minimumAccuracy as number
-      ) as number,
+      passThreshold:
+        suiteVerdictPolicyThreshold(detail.settings) ??
+        (percentToFraction(
+          detail.settings.minimumAccuracy as number
+        ) as number),
       // `{}`, not the resolved defaults: the contract documents them and the
       // loader applies them, and writing them here would put values nobody
       // authored into the file (`sdk/src/contract/suite-file.ts:12-17`).

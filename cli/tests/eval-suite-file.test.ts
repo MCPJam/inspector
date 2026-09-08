@@ -2009,6 +2009,78 @@ async function startFileRunFixture(options?: {
  * before: the fixture recorded bodies without grading them, so every
  * suite-file test passed against a payload the route rejected outright.
  */
+describe("eval export — which policy owns the threshold", () => {
+  // A suite upgraded to verdict policy 2 keeps its legacy `defaultPassCriteria`
+  // percent in storage: the platform's `updateTestSuite` types that argument
+  // `v.optional(passCriteriaValidator)`, so the upgrade has no null to send and
+  // cannot clear it. Nothing reads it once the suite is v2 — but export read it
+  // and wrote it into the file as `defaults.passThreshold`, so a v2 suite whose
+  // real threshold is 0.9 exported a file claiming 0.8.
+  //
+  // The API now reports `minimumAccuracy: null` on a v2 suite. Export reads the
+  // v2 fraction directly, which is both the fix and the reason this does not
+  // simply start refusing every v2 suite.
+  const V2_SETTINGS = {
+    minimumAccuracy: null,
+    matchOptions: null,
+    checks: [],
+    judge: { enabled: false, model: null },
+    policy: "v2",
+    verdictPolicyVersion: 2,
+    verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.9 },
+  };
+
+  test("writes a v2 suite's own passThreshold, not a converted percent", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        { detail: { settings: V2_SETTINGS } },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.9);
+    });
+  });
+
+  test("ignores a stale legacy percent left on a v2 suite", async () => {
+    // The state an upgraded suite is actually in, if the API still reported the
+    // dead column: 80 is the value export used to write, 0.9 is the live one.
+    await withTempDir(async () => {
+      const run = await runExport(
+        { detail: { settings: { ...V2_SETTINGS, minimumAccuracy: 80 } } },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.9);
+      assert.notEqual(reloaded.authored.defaults.passThreshold, 0.8);
+    });
+  });
+
+  test("a legacy suite still converts its percent", async () => {
+    await withTempDir(async () => {
+      const run = await runExport({}, "--suite", "Billing smoke");
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.8);
+    });
+  });
+});
+
 describe("the upload contract guard", () => {
   test("rejects the resolved validity shape the loader produces", () => {
     // The actual regression: `coverage` is emitted unconditionally by
