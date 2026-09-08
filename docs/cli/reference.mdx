@@ -2050,6 +2050,8 @@ Enable or disable scheduled runs for a suite.
 
 Pass either `--enable` or `--disable` (not both).
 
+**`--enable` answers `404`** on deployments where scheduled runs are not available. **`--disable` is always allowed**, so a schedule already running can always be stopped regardless of deployment availability.
+
 A scheduled run launches exactly one run, so a suite with several attached environments
 must pin one with `--environment`; a suite with exactly one defaults to it. `--environment`
 is rejected with `--disable`: disabling preserves the existing pin, so accepting one there
