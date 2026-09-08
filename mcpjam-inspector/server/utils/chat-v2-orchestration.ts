@@ -1428,7 +1428,11 @@ export async function prepareChatV2(
           serverLabel: serverLabels?.[serverId] ?? serverId,
         })),
       });
-  const finalSkillTools: Record<string, unknown> = serverSkills.tools;
+  // COPIED, not aliased. The reserved-namespace sweep below deletes from this
+  // map, and in the un-wrapped case it is the caller's own skill set — a
+  // function that quietly removed an entry from an object it was handed would
+  // be a surprise waiting for whoever hands it the same one twice.
+  const finalSkillTools: Record<string, unknown> = { ...serverSkills.tools };
   // Level 1 of progressive disclosure: the catalog goes in the prompt so the
   // model can decide which skill fits, and only bodies are fetched on demand.
   // Drained here, sharing ONE `skills/list` with any `loadSkill` later in the
@@ -1514,6 +1518,8 @@ export async function prepareChatV2(
   // free to call its tool `webmcp_pay` would be free to put an origin chip of
   // its choosing on its own card. Keeping the namespace clean here is what lets
   // that check be sound there.
+  // Each of these is this function's own object — `mcpTools` it already prunes
+  // above, the app and UI maps it just built, and `finalSkillTools` it copied.
   for (const source of [mcpTools, appToolEntries, uiToolEntries, finalSkillTools]) {
     for (const name of Object.keys(source)) {
       if (!isWebmcpPageToolName(name)) continue;
