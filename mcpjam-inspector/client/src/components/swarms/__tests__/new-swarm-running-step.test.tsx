@@ -5,8 +5,8 @@
  * a session chip must open the shared SwarmLiveStreamPane on the right with
  * that session's selection — not leave the wizard.
  *
- * Findings is the other half: "Open findings" is always available, and
- * "Look now" on the first-finding ping leaves for Findings — not the session.
+ * Findings is the other half: "Open findings" is the single door while the
+ * wave runs, and a finished wave announces itself and walks through it.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +27,15 @@ const streamState = {
  * the persisted spans or nothing at all.
  */
 const liveTraceState = { trace: null as Record<string, unknown> | null };
+
+vi.mock("@/lib/toast", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+  },
+}));
 
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
   useJourneyRunStream: () => streamState,
@@ -136,6 +145,7 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+import { toast } from "@/lib/toast";
 import {
   NewSwarmRunningStep,
   swarmCellHeadline,
@@ -164,6 +174,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     persistedState.error = null;
     persistedState.spanError = null;
     traceViewerProps.mockClear();
+    vi.mocked(toast.success).mockClear();
   });
 
   /** Render the wizard and open the pane on the first session chip. */
@@ -462,11 +473,12 @@ describe("NewSwarmRunningStep — session stream pane", () => {
   });
 
   /**
-   * The ping is a notification, not the only door. "Look now" leaves for
-   * Findings — the claim — not the session. Session evidence stays on the
-   * swarm page. "Open findings" is already on the frame before any ping.
+   * BB-161 removed the first-finding ping: it advertised a finding and then
+   * dropped the viewer somewhere broken. The fixture here HAS a failed
+   * criterion, which is what makes the absence meaningful — the banner used to
+   * render off exactly this data.
    */
-  it("'Look now' and 'Open findings' leave for Findings, not the session", async () => {
+  it("does not ping a first finding, even when a session has one", async () => {
     sessionsFixture = [failedSessionFixture];
     const onLeave = vi.fn();
     const onOpenSession = vi.fn();
@@ -502,38 +514,30 @@ describe("NewSwarmRunningStep — session stream pane", () => {
       </div>,
     );
 
-    const finding = await screen.findByTestId("new-swarm-running-finding");
-    expect(finding.textContent).toMatch(/never called the refund tool/);
-    // Ping sits with the title, not under the matrix.
+    await screen.findByTestId("new-swarm-running-step");
     expect(
-      screen
-        .getByTestId("new-swarm-running-title")
-        .compareDocumentPosition(finding) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.queryByTestId("new-swarm-running-finding"),
+    ).not.toBeInTheDocument();
     expect(
-      finding.compareDocumentPosition(
-        screen.getAllByTestId("new-swarm-running-session")[0]!,
-      ) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+      screen.queryByTestId("new-swarm-running-finding-open"),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
-    // The criterion rides along with the session (BB-74): the wizard's line
-    // says what was found, and the run page this leaves for has to be able to
-    // repeat it rather than presenting an unexplained transcript.
-    expect(onOpenSession).toHaveBeenCalledWith("thread-fail", "crit-refund");
-    expect(onLeave).not.toHaveBeenCalled();
-
-    // The button beside it is the one that goes to Findings, and it is a
-    // DIFFERENT destination — that separation is the point of the pair.
+    // The one door out is still there, and still goes to Findings.
     fireEvent.click(screen.getByTestId("new-swarm-running-open-findings"));
     expect(onLeave).toHaveBeenCalledTimes(1);
-    expect(onOpenSession).toHaveBeenCalledTimes(1);
+    expect(onOpenSession).not.toHaveBeenCalled();
   });
 
-  it("shows Done next to Open findings when the wave has finished", async () => {
+  /**
+   * BB-195: two CTAs both called `onLeave`, so "Done" was a second control
+   * that looked equal and went to the same place. BB-161: the finish is
+   * announced and then walks the viewer to Findings on its own.
+   */
+  it("announces a finished wave and goes to Findings by itself", async () => {
     runFixture.status = "completed";
     runFixture.summary = { total: 2, succeeded: 2, failed: 0, rateLimited: 0 };
     const onLeave = vi.fn();
+    const onRunsComplete = vi.fn();
 
     render(
       <div className="h-[40rem]">
@@ -562,15 +566,36 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           ]}
           onLeave={onLeave}
           onOpenSession={vi.fn()}
+          onRunsComplete={onRunsComplete}
         />
       </div>,
     );
 
-    await screen.findByTestId("new-swarm-running-done");
+    await screen.findByTestId("new-swarm-running-step");
+    expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
+      "Swarm finished 2 of 2 sessions",
+    );
+    // One primary, and no second button that looks equal to it.
     expect(
       screen.getByTestId("new-swarm-running-open-findings"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("new-swarm-running-done"));
+    expect(
+      screen.queryByTestId("new-swarm-running-done"),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Swarm complete!"),
+    );
+    // The rail needs this to draw a checkmark on the last step, and it has to
+    // arrive BEFORE the trip out or the checkmark is never on screen.
+    expect(onRunsComplete).toHaveBeenCalledTimes(1);
+    // Not yet: the dwell is what makes the finished frame observable at all.
+    expect(onLeave).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(onLeave).toHaveBeenCalledTimes(1), {
+      timeout: 4000,
+    });
+    // Once. A re-render on the same terminal state must not navigate twice.
     expect(onLeave).toHaveBeenCalledTimes(1);
   });
 });

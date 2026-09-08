@@ -9,13 +9,14 @@
  * Click a session chip to watch its live stream in the right pane
  * (`SwarmLiveStreamPane` — same Trace / Chat / Raw surface as Personas).
  *
- * Open findings / Done / Leave all leave this watch surface for the swarm's
- * Findings page. The run keeps going. A first-finding ping at the top is a
- * notification, not the only door.
+ * "Open findings" and Leave both exit this watch surface for the swarm's
+ * Findings page; the run keeps going. A finished run goes there on its own —
+ * see `COMPLETION_TOAST_DWELL_MS`.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
+import { toast } from "@/lib/toast";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { SwarmRunningHero } from "@/components/swarms/swarm-running-hero";
 import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
@@ -182,25 +183,6 @@ function avatarState(
   if (outcome === "failed") return "error";
   return "idle";
 }
-
-type FirstFinding = {
-  text: string;
-  /**
-   * The session that produced it. Kept so we only ping a finding that can
-   * still be traced on the swarm page — a row without a session id is a
-   * claim, so it is skipped. The ping opens THIS session on the swarm's own
-   * page; "Open findings" beside it is the route to Findings.
-   */
-  sessionId: string;
-  /**
-   * The criterion that failed, when exactly one did. Carried so the run page
-   * this link leaves for can NAME the finding — the wizard's own line says
-   * what was found, and that sentence used to be lost the moment the viewer
-   * followed it. Omitted for a multi-check failure: naming one of several
-   * would misreport which claim the viewer is looking at.
-   */
-  criterionId?: string;
-};
 
 function columnsFromRun(
   run: JourneyRun,
@@ -612,60 +594,14 @@ function mergeStreams(
   return stream;
 }
 
-function findFirstFinding(
-  snapshots: Record<string, RunLiveSnapshot>
-): FirstFinding | null {
-  for (const snap of Object.values(snapshots)) {
-    for (const session of snap.sessions) {
-      const criteria = session.criteria;
-      if (criteria?.status !== "completed" || !criteria.results?.length) {
-        continue;
-      }
-      const failed = criteria.results.filter((result) => !result.passed);
-      if (failed.length === 0) continue;
-      if (!session.id) continue;
-      const reason =
-        session.goalScore?.reason?.trim() ||
-        `failed ${failed.length} ${failed.length === 1 ? "check" : "checks"}`;
-      return {
-        text: `First finding: ${reason}`,
-        sessionId: session.id,
-        ...(failed.length === 1 && failed[0]
-          ? { criterionId: failed[0].criterionId }
-          : {}),
-      };
-    }
-  }
-  return null;
-}
-
-function FirstFindingPing({
-  finding,
-  onOpen,
-}: {
-  finding: FirstFinding;
-  onOpen: () => void;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2.5"
-      data-testid="new-swarm-running-finding"
-    >
-      <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">
-        {finding.text}
-      </p>
-      <button
-        type="button"
-        className="shrink-0 text-sm font-medium text-primary hover:text-primary/80"
-        data-testid="new-swarm-running-finding-open"
-        aria-label="Open the session behind this finding"
-        onClick={onOpen}
-      >
-        Look now
-      </button>
-    </div>
-  );
-}
+/**
+ * How long the finished screen stays up before Findings takes over.
+ *
+ * BB-161 wants both halves: the step checkmark, 100%, and the per-goal
+ * completion lines, AND an automatic trip to Findings. Navigating on the same
+ * tick the run finishes would make the first half unobservable.
+ */
+const COMPLETION_TOAST_DWELL_MS = 1800;
 
 export function NewSwarmRunningStep({
   runs,
@@ -674,6 +610,7 @@ export function NewSwarmRunningStep({
   hosts = [],
   onLeave,
   onOpenSession,
+  onRunsComplete,
 }: {
   projectId: string;
   runs: SwarmLaunchedRun[];
@@ -691,7 +628,13 @@ export function NewSwarmRunningStep({
    * Follow one session's transcript out of the wizard (the live pane's
    * completed-session control). Findings is a different exit — `onLeave`.
    */
-  onOpenSession: (sessionId: string, criterionId?: string) => void;
+  onOpenSession: (sessionId: string) => void;
+  /**
+   * Fired once, when every launched run has reached a terminal state. The
+   * wizard owns the step rail, so this is how the last step gets its
+   * checkmark before the automatic trip to Findings.
+   */
+  onRunsComplete?: () => void;
 }) {
   const hostById = useMemo(() => {
     return new Map(hosts.map((host) => [host.hostId, host] as const));
@@ -843,6 +786,35 @@ export function NewSwarmRunningStep({
       };
     }, [runs, snapshots]);
 
+  // Read through a ref so the effect below depends on `allTerminal` alone:
+  // re-running it because a callback's identity changed would clear the
+  // pending timer and strand the viewer on a finished run.
+  const callbacksRef = useRef({ onLeave, onRunsComplete });
+  useEffect(() => {
+    callbacksRef.current = { onLeave, onRunsComplete };
+  }, [onLeave, onRunsComplete]);
+
+  /**
+   * Announce the finish, then hand the viewer to Findings (BB-161).
+   *
+   * Guarded to fire once. `allTerminal` starts false and only turns true once
+   * every launched run has a snapshot and none is still running, so there is
+   * no first-paint window where this triggers on unloaded data. The cleanup
+   * cancels the pending trip, which is what keeps an unmounted wizard from
+   * navigating out from under whatever replaced it.
+   */
+  const completionAnnouncedRef = useRef(false);
+  useEffect(() => {
+    if (!allTerminal || completionAnnouncedRef.current) return;
+    completionAnnouncedRef.current = true;
+    callbacksRef.current.onRunsComplete?.();
+    toast.success("Swarm complete!");
+    const timer = window.setTimeout(() => {
+      callbacksRef.current.onLeave();
+    }, COMPLETION_TOAST_DWELL_MS);
+    return () => window.clearTimeout(timer);
+  }, [allTerminal]);
+
   /**
    * The first non-success terminal, humanized — what the run banner explains.
    *
@@ -875,7 +847,6 @@ export function NewSwarmRunningStep({
   }, [allTerminal, failed, rateLimited, snapshots]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
-  const finding = useMemo(() => findFirstFinding(snapshots), [snapshots]);
 
   const mergedStream = useMemo(() => mergeStreams(snapshots), [snapshots]);
 
@@ -941,18 +912,6 @@ export function NewSwarmRunningStep({
                 >
                   Open findings
                 </Button>
-                {allTerminal ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    data-testid="new-swarm-running-done"
-                    onClick={onLeave}
-                  >
-                    Done
-                  </Button>
-                ) : null}
               </div>
             </div>
             {columns.length > 0 ? (
@@ -960,18 +919,6 @@ export function NewSwarmRunningStep({
                 Clients:{" "}
                 {columns.map((column) => column.label).join(" · ")}
               </p>
-            ) : null}
-            {finding ? (
-              <FirstFindingPing
-                finding={finding}
-                // The session that produced the finding, with the criterion
-                // riding along so that page can NAME what was found instead of
-                // opening an unexplained transcript. "Open findings" beside it
-                // is the route to Findings; this one is not a duplicate of it.
-                onOpen={() =>
-                  onOpenSession(finding.sessionId, finding.criterionId)
-                }
-              />
             ) : null}
             {missingPlannedClients.length > 0 ? (
               <p
