@@ -3255,6 +3255,14 @@ describe("buildBrowserTools — a refresher with NO turn-start snapshot", () => 
     expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
     expect(built.currentPageToolsBinding!()).toBeUndefined();
 
+    // THE NAVIGATE THIS TURN'S STORY STARTS WITH. It is what reserves the
+    // browser, and the refresher deliberately will not reserve one itself —
+    // see the sibling case below.
+    await (built.tools.browser_navigate as any).execute(
+      { url: "https://x.test/" },
+      {},
+    );
+
     const refresh = await built.refreshPageTools!({});
     expect(Object.keys(refresh?.add ?? {})).toEqual(["webmcp_book"]);
     expect(built.tools.webmcp_book).toBeDefined();
@@ -3264,8 +3272,45 @@ describe("buildBrowserTools — a refresher with NO turn-start snapshot", () => 
       bootId: "boot-live",
       navCounter: 2,
     });
-    // The two reads, and no page-touching observation beyond them.
-    expect(fake.seen).toEqual(["observe:webmcp_revision", "observe:webmcp_tools"]);
+    // The navigate, then the two reads, and no page-touching observation
+    // beyond them.
+    expect(fake.seen).toEqual([
+      "navigate",
+      "observe:webmcp_revision",
+      "observe:webmcp_tools",
+    ]);
+  });
+
+  it("BOOTS NOTHING when no browser exists and the model never asked for one", async () => {
+    // The refresher runs after every continuing model step, not only after a
+    // browser command — so on a turn that merely advertised the capability and
+    // then did something else entirely, its first read would go through `send`
+    // and reserve a desktop and start Chromium. A cloud browser provisioned,
+    // and paid for, to ask a page that does not exist what tools it offers.
+    //
+    // With no turn-start snapshot AND no session, there is no browser to read
+    // and nothing is lost by declining: no browser means no page means no page
+    // tools. The case above shows the moment a navigate creates one, this
+    // starts working.
+    const fake = daemon([PAGE]);
+    const ensureSession = vi.fn(async () => {
+      throw new Error("the refresher must never reserve a browser");
+    });
+    const built = withFirstClass(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession: ensureSession as never,
+        dynamicPageTools: true,
+        // No `pageTools`: the peek found nothing.
+      }),
+    )!;
+
+    await expect(built.refreshPageTools!({})).resolves.toBeUndefined();
+
+    expect(ensureSession, "the refresher reserved a browser").not.toHaveBeenCalled();
+    expect(fake.seen).toEqual([]);
   });
 
   it("is not built when the flag is off, whatever dynamic mode says", () => {

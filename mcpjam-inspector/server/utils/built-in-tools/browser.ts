@@ -620,6 +620,19 @@ class BrowserTurnState {
     return this.opts.runKey?.trim() || undefined;
   }
 
+  /**
+   * Whether a browser has already been reserved on this turn.
+   *
+   * ASKS WITHOUT STARTING ONE, which is the whole point: `handle()` below
+   * provisions a desktop and launches Chromium on a miss, so anything that
+   * wants to know "is there a browser yet?" rather than "give me one" reads
+   * this instead. The mid-turn page-tool refresher is the caller that needs
+   * it — see the guard at the top of `refresh`.
+   */
+  hasSession(): boolean {
+    return this.session !== null;
+  }
+
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
   handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
     this.session ??= this.ensure({
@@ -1538,6 +1551,7 @@ export function buildBrowserTools(
           // page it is actually looking at.
           currentTabId: () => modelTabId,
           currentBootId: () => lastBootId,
+          sessionStarted: () => state.hasSession(),
           daemonCanBind: async (signal) => {
             const handle = await state.handle(signal);
             // A status that cannot be read says nothing either way, and the
@@ -1619,6 +1633,13 @@ function createPageToolRefresher(args: {
    * when no turn-start snapshot already answered it.
    */
   daemonCanBind: (signal?: AbortSignal) => Promise<boolean>;
+  /**
+   * Whether a browser has been reserved yet — asked WITHOUT reserving one.
+   *
+   * See the guard at the top of `refresh`: every read this refresher makes
+   * goes through `send`, and `send` boots a browser on a miss.
+   */
+  sessionStarted: () => boolean;
 }): {
   refresh: (ctx: {
     signal?: AbortSignal;
@@ -1669,6 +1690,27 @@ function createPageToolRefresher(args: {
     current: () => [...advertised.values()],
     currentBinding: () => binding,
     refresh: async ({ signal }) => {
+      // A REFRESH NEVER BOOTS A BROWSER.
+      //
+      // This runs after every continuing model step, not only after a browser
+      // command, and its first read goes through `send` — which reserves a
+      // desktop and starts Chromium on a miss. So a turn that merely
+      // ADVERTISED the browser capability and never used it would provision
+      // one, and pay for it, to ask a page that does not exist what tools it
+      // has. The refresher is built on any dynamic engine now, snapshot or
+      // not, which is what put a turn in that position.
+      //
+      // TWO WAYS TO KNOW ONE EXISTS, and either will do: the turn-start peek
+      // read a live daemon (`initial`), or a command this turn has already
+      // reserved a session. Neither is a boot — the peek only looks, and a
+      // reserved session is one the model's own `browser_*` call paid for.
+      //
+      // Nothing is lost by waiting on the remaining case: with no browser
+      // there is no page, and so no page tools to find. The moment the model
+      // navigates there is a session, and the next refresh reads it normally —
+      // which is what lets a turn that started with no snapshot still grow its
+      // tools.
+      if (!args.initial && !args.sessionStarted()) return undefined;
       const tabId = args.currentTabId();
       // A MOVE IS A CHANGE, whatever the revisions say. Two tabs keep separate
       // revision counters, so the tab the model just switched to can be sitting
