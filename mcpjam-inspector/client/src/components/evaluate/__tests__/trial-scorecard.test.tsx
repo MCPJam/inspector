@@ -226,3 +226,41 @@ describe("summaryLine", () => {
     expect(PASS_WORDS.test(summaryLine({ ...base, warn: 2 }))).toBe(false);
   });
 });
+
+describe("the chain lives inside the Scorecard", () => {
+  const chain = {
+    status: "verified",
+    stages: [
+      { stage: "connection", state: "passed" },
+      { stage: "discovery", state: "passed" },
+      { stage: "selection", state: "failed", reason: "missingToolCall" },
+      { stage: "call", state: "notReached" },
+      { stage: "response", state: "notReached" },
+      { stage: "userValue", state: "notReached" },
+    ],
+    firstFailedStage: "selection",
+  } as never;
+
+  it("renders the strip above the rows", () => {
+    renderCard({ chain });
+    const card = screen.getByTestId("trial-scorecard");
+    expect(within(card).getByTestId("stage-strip")).toBeTruthy();
+  });
+
+  it("puts the verdict WORD on the group heading, not on the chip", () => {
+    renderCard({ chain });
+    const states = screen
+      .getAllByTestId("scorecard-group-state")
+      .map((el) => el.textContent);
+    expect(states).toContain("failed");
+    expect(
+      screen.getByTestId("stage-chip-selection").textContent,
+    ).not.toContain("failed");
+  });
+
+  it("shows no group state when the trial has no chain", () => {
+    renderCard({});
+    expect(screen.queryAllByTestId("scorecard-group-state")).toHaveLength(0);
+    expect(screen.queryByTestId("stage-strip")).toBeNull();
+  });
+});

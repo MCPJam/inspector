@@ -20,6 +20,7 @@
  */
 
 import { useMemo, type ReactNode } from "react";
+import { STAGE_STATE_LABELS } from "@mcpjam/sdk/contract";
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import type { TestStep } from "@/shared/steps";
 import type { StepReplayEnvelope } from "@/shared/eval-step-replay";
@@ -30,6 +31,7 @@ import type { CaseScorecardInput } from "./case-scorecard-model";
 import { buildCaseScorecard } from "./case-scorecard-model";
 import { joinTrialResults, summarizeTrialScorecard } from "./trial-results";
 import { ScorecardGroupSection } from "./scorecard-group";
+import { StageStrip } from "./stage-strip";
 import { TrialScorecardRow } from "./trial-scorecard-row";
 
 /**
@@ -137,11 +139,40 @@ export function TrialScorecard({
 
   const summary = useMemo(() => summarizeTrialScorecard(groups), [groups]);
 
+  /**
+   * The state word each group heading shows, read from the chain the strip
+   * above is drawn from — one source, so the chip's colour and the heading's
+   * word can never disagree.
+   */
+  const stageState = useMemo(() => {
+    const byStage = new Map(
+      (chain?.status === "verified" ? chain.stages : []).map((row) => [
+        row.stage as string,
+        row,
+      ]),
+    );
+    return (stage: string) => {
+      const row = byStage.get(stage);
+      if (!row) return undefined;
+      return {
+        label: STAGE_STATE_LABELS[row.state],
+        tone:
+          row.state === "failed"
+            ? ("failed" as const)
+            : row.state === "passed"
+              ? ("passed" as const)
+              : ("neutral" as const),
+      };
+    };
+  }, [chain]);
+
   return (
     <div
       className="flex flex-col gap-3 p-3"
       data-testid="trial-scorecard"
     >
+      <StageStrip chain={chain} resetKey={iteration?._id} />
+
       <p
         className="text-xs text-muted-foreground"
         data-testid="trial-scorecard-summary"
@@ -155,6 +186,7 @@ export function TrialScorecard({
           stage={group.stage}
           label={group.label}
           question={group.question}
+          state={stageState(group.stage)}
         >
           {group.rows.map((row) => (
             <TrialScorecardRow

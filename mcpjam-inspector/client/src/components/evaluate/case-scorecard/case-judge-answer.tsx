@@ -13,7 +13,7 @@
  * looser would spend on their behalf repeatedly.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { EvalSuiteRun } from "@/components/evals/types";
 import {
   resolveIterationJudge,
@@ -30,6 +30,7 @@ export function CaseJudgeAnswer({
   skippedForCase,
   shouldRequest,
   onOpenSuiteSettings,
+  children,
 }: {
   run: EvalSuiteRun | null;
   iteration:
@@ -50,6 +51,13 @@ export function CaseJudgeAnswer({
    */
   shouldRequest: boolean;
   onOpenSuiteSettings?: () => void;
+  /**
+   * The trial's judge panel — the review flow when a label is being taken,
+   * the verdict panel otherwise. Passed in rather than chosen here, because
+   * the blind-label protocol belongs to the caller that knows whether a
+   * reviewer is active.
+   */
+  children?: ReactNode;
 }) {
   const { requestGoalCompletion, canRequest } = useGoalCompletion(run);
   const requestedRef = useRef<Set<string>>(new Set());
@@ -104,7 +112,8 @@ export function CaseJudgeAnswer({
       }
       onOpenSuiteSettings={onOpenSuiteSettings}
     >
-      {judgeCase ? <JudgeVerdictPanel judgeCase={judgeCase} /> : null}
+      {children ??
+        (judgeCase ? <JudgeVerdictPanel judgeCase={judgeCase} /> : null)}
     </JudgeAnswerRow>
   );
 }

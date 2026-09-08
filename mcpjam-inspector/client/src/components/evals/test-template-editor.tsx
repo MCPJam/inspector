@@ -1416,7 +1416,11 @@ export function TestTemplateEditor({
    */
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
     let chain: ReactNode = null;
-    if (iteration && chainSlotEnabled) {
+    // On the spine the chain lives INSIDE the Scorecard as a chip strip: the
+    // trial header already carries the verdict on every tab, and the stage
+    // detail only makes sense beside the rows it explains. Above the tabs it
+    // showed half the story on Chat and Raw.
+    if (iteration && chainSlotEnabled && !useSpine) {
       if (iteration.suiteRunId) {
         const assembled = trialChains.chains.get(iteration._id);
         chain = assembled ? (
@@ -1455,32 +1459,7 @@ export function TestTemplateEditor({
     const showRecordAdopt =
       !!rollup && draftKind === "record" && !!iteration && rollup.total >= 1;
 
-    /**
-     * The judge's answer, above the chain, because on the observe-first flow it
-     * IS the result the author came for: they described what a good answer
-     * accomplishes, and this says whether it did.
-     */
-    const judgeAnswer =
-      useSpine && iteration ? (
-        <CaseJudgeAnswer
-          run={
-            iteration.suiteRunId
-              ? (suiteRuns.find((r) => r._id === iteration.suiteRunId) ?? null)
-              : null
-          }
-          iteration={iteration}
-          isQuickRun={!iteration.suiteRunId}
-          skippedForCase={
-            editForm?.judgeConfigOverride?.goalCompletion?.enabled === false
-          }
-          shouldRequest={judgeIntentRunIds.current.has(
-            currentTestCase?._id ?? "",
-          )}
-          onOpenSuiteSettings={onOpenSuiteSettings}
-        />
-      ) : null;
-
-    if (!chain && !showRollup && !showRecordAdopt && !judgeAnswer) return null;
+    if (!chain && !showRollup && !showRecordAdopt) return null;
 
     const resolvedMatch = resolveMatchOptions(
       suite?.defaultMatchOptions,
@@ -1518,7 +1497,6 @@ export function TestTemplateEditor({
 
     return (
       <div className="space-y-2">
-        {judgeAnswer}
         {chain}
         {nextQuestion}
         {rollup && (showRollup || showRecordAdopt) ? (
@@ -4719,7 +4697,45 @@ export function TestTemplateEditor({
                                 ) : null
                               }
                               judgeSlot={
-                                ctx.reviewActive ? (
+                                // On the spine the judge row also owns the ONE
+                                // request that grades a run this page launched,
+                                // and says "did it accomplish the goal?" in a
+                                // sentence — wrapping the existing panel rather
+                                // than replacing it, so the blind-label flow is
+                                // untouched.
+                                useSpine ? (
+                                  <CaseJudgeAnswer
+                                    run={workspaceTrialRun ?? null}
+                                    iteration={workspacePersistedIteration}
+                                    isQuickRun={
+                                      !workspacePersistedIteration.suiteRunId
+                                    }
+                                    skippedForCase={
+                                      editForm?.judgeConfigOverride
+                                        ?.goalCompletion?.enabled === false
+                                    }
+                                    shouldRequest={judgeIntentRunIds.current.has(
+                                      currentTestCase?._id ?? "",
+                                    )}
+                                    onOpenSuiteSettings={onOpenSuiteSettings}
+                                  >
+                                    {ctx.reviewActive ? (
+                                      <TrialJudgeReviewPanel
+                                        key={workspacePersistedIteration._id}
+                                        iterationId={
+                                          workspacePersistedIteration._id
+                                        }
+                                        judgeCase={resolveIterationJudge(
+                                          workspacePersistedIteration,
+                                          suiteRuns,
+                                        )!}
+                                        onVisibilityChange={
+                                          ctx.onJudgeVisibilityChange
+                                        }
+                                      />
+                                    ) : null}
+                                  </CaseJudgeAnswer>
+                                ) : ctx.reviewActive ? (
                                   // Keyed by trial: a switch remounts the
                                   // panel, so no read or label state from the
                                   // previous trial survives into this one.
