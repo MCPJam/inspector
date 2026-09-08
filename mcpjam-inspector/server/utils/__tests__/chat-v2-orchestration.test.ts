@@ -360,7 +360,7 @@ describe("prepareChatV2", () => {
             app_tool: { ui: { visibility: ["app"] } },
             both_tool: { ui: { visibility: ["model", "app"] } },
           }
-        : {}
+        : {},
     );
 
     const result = await prepareChatV2({
@@ -392,7 +392,7 @@ describe("prepareChatV2", () => {
             app_tool: { ui: { visibility: ["app"] } },
             both_tool: { ui: { visibility: ["model", "app"] } },
           }
-        : {}
+        : {},
     );
 
     const result = await prepareChatV2({
@@ -488,7 +488,7 @@ describe("prepareChatV2", () => {
 
     expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
       ["live-server"],
-      undefined
+      undefined,
     );
   });
 
@@ -528,13 +528,16 @@ describe("prepareChatV2", () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "srv");
     manager.getToolsForAiSdk = vi.fn(
-      async (_ids: string[], options?: { toolDescriptionOverrides?: Record<string, string> }) => {
+      async (
+        _ids: string[],
+        options?: { toolDescriptionOverrides?: Record<string, string> },
+      ) => {
         const description =
           options?.toolDescriptionOverrides?.get_user ?? original.description;
         return {
           get_user: { ...original, description },
         };
-      }
+      },
     );
 
     const rewritten = await prepareChatV2({
@@ -542,7 +545,9 @@ describe("prepareChatV2", () => {
       selectedServers: ["srv"],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+      toolDescriptionOverrides: {
+        get_user: "Find the user record for this id.",
+      },
     });
     const baseline = await prepareChatV2({
       mcpClientManager: manager,
@@ -552,12 +557,14 @@ describe("prepareChatV2", () => {
     });
 
     expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(1, ["srv"], {
-      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+      toolDescriptionOverrides: {
+        get_user: "Find the user record for this id.",
+      },
     });
     expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(
       2,
       ["srv"],
-      undefined
+      undefined,
     );
     const rewrittenTool = rewritten.allTools.get_user as typeof original;
     const baselineTool = baseline.allTools.get_user as typeof original;
@@ -708,11 +715,11 @@ describe("prepareChatV2", () => {
       const search = (result.allTools as any).search_mcp_tools.execute;
       const searchRes = await search(
         { query: "create task assignee" },
-        {} as any
+        {} as any,
       );
       expect(searchRes.matches.length).toBeGreaterThan(0);
       const target = searchRes.matches.find(
-        (m: any) => m.name === "asana_task_17"
+        (m: any) => m.name === "asana_task_17",
       );
       expect(target).toBeDefined();
       const targetToolId: string = target.toolId;
@@ -722,14 +729,14 @@ describe("prepareChatV2", () => {
       const loadRes = await load({ toolIds: [targetToolId] }, {} as any);
       expect(loadRes.loaded.map((l: any) => l.toolId)).toEqual([targetToolId]);
       expect(result.discoveryState.newlyLoadedToolIds.has(targetToolId)).toBe(
-        true
+        true,
       );
 
       // 3. The orchestrator promotes newly-loaded ids between steps;
       // simulate that here so the gate sees the tool as loaded.
       commitNewlyLoaded(result.discoveryState);
       const activeNames = new Set(
-        resolveActiveToolNames(result.progressivePlan, result.discoveryState)
+        resolveActiveToolNames(result.progressivePlan, result.discoveryState),
       );
       expect(activeNames.has("asana_task_17")).toBe(true);
       // Non-loaded siblings stay hidden from the model.
@@ -740,7 +747,7 @@ describe("prepareChatV2", () => {
       const gated = gateToolsToActiveSubset(
         result.allTools as Record<string, unknown>,
         result.progressivePlan,
-        () => result.discoveryState
+        () => result.discoveryState,
       );
       const loadedOut = await (gated as any).asana_task_17.execute({}, {});
       expect(loadedOut).toEqual({ ok: true, index: 17 });
@@ -749,10 +756,10 @@ describe("prepareChatV2", () => {
       // 5. …and rejects the siblings the model never loaded, pointing
       // back at load_mcp_tools so the model can recover in-loop.
       await expect(
-        (gated as any).asana_task_18.execute({}, {})
+        (gated as any).asana_task_18.execute({}, {}),
       ).rejects.toThrow(/asana_task_18.*not loaded/);
       await expect(
-        (gated as any).asana_task_18.execute({}, {})
+        (gated as any).asana_task_18.execute({}, {}),
       ).rejects.toThrow(/load_mcp_tools/);
     });
 
@@ -776,7 +783,7 @@ describe("prepareChatV2", () => {
               _serverId: "srv",
               execute: async () => ({}),
             },
-          ])
+          ]),
         ),
       });
       await expect(
@@ -789,7 +796,7 @@ describe("prepareChatV2", () => {
             contextLength: 200_000,
           } as any,
           systemPrompt: "Base prompt.",
-        })
+        }),
       ).rejects.toThrow(/search_mcp_tools/);
     });
   });
@@ -891,7 +898,7 @@ describe("prepareChatV2 built-in tools", () => {
             ],
           },
         },
-      })
+      }),
     ).rejects.toThrow(/loadSkill.*collides/);
   });
 
@@ -916,7 +923,7 @@ describe("prepareChatV2 built-in tools", () => {
         mcpClientManager: manager,
         appTools,
         builtInTools: webSearchBuiltIn(),
-      })
+      }),
     ).rejects.toThrow(/web_search.*collides/);
   });
 });
@@ -944,7 +951,7 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
 
   it("rejects non-array input", () => {
     expect(() => validateAppToolEntries({} as unknown)).toThrow(
-      AppToolValidationError
+      AppToolValidationError,
     );
   });
 
@@ -959,19 +966,19 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
 
   it("rejects an alias that doesn't match the regex", () => {
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, alias: "evil__name" }])
+      validateAppToolEntries([{ ...validEntry, alias: "evil__name" }]),
     ).toThrow(/alias must match/);
   });
 
   it("rejects duplicate aliases", () => {
     expect(() =>
-      validateAppToolEntries([validEntry, { ...validEntry }])
+      validateAppToolEntries([validEntry, { ...validEntry }]),
     ).toThrow(/duplicated/);
   });
 
   it("rejects description over 512 chars", () => {
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, description: "x".repeat(513) }])
+      validateAppToolEntries([{ ...validEntry, description: "x".repeat(513) }]),
     ).toThrow(/description exceeds 512/);
   });
 
@@ -981,7 +988,7 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
       properties: { x: { description: "y".repeat(9000) } },
     };
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, inputSchema: big }])
+      validateAppToolEntries([{ ...validEntry, inputSchema: big }]),
     ).toThrow(/inputSchema exceeds/);
   });
 
@@ -989,7 +996,7 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
     expect(() =>
       validateAppToolEntries([
         { ...validEntry, inputSchema: [1, 2, 3] as unknown },
-      ])
+      ]),
     ).toThrow(/inputSchema must be a JSON object/);
   });
 
@@ -1000,10 +1007,10 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
 
   it("rejects empty / over-length rawName", () => {
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, rawName: "" }])
+      validateAppToolEntries([{ ...validEntry, rawName: "" }]),
     ).toThrow(/rawName must be/);
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, rawName: "x".repeat(129) }])
+      validateAppToolEntries([{ ...validEntry, rawName: "x".repeat(129) }]),
     ).toThrow(/rawName must be/);
   });
 });
@@ -1030,12 +1037,12 @@ describe("widget model context helpers (SEP-1865 boundary)", () => {
 
   it("rejects malformed input with the widget-context error type", () => {
     expect(() => validateWidgetModelContextEntries({})).toThrow(
-      WidgetModelContextValidationError
+      WidgetModelContextValidationError,
     );
     expect(() =>
       validateWidgetModelContextEntries([
         { ...validEntry, context: { content: "not-array" } },
-      ])
+      ]),
     ).toThrow(/context.content must be an array/);
   });
 
@@ -1075,7 +1082,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
   it("rejects non-array input", () => {
     expect(() => validateUiToolEntries({})).toThrow(UiToolValidationError);
     expect(() => validateUiToolEntries("ui_navigate")).toThrow(
-      /must be an array/
+      /must be an array/,
     );
   });
 
@@ -1101,7 +1108,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
     it("rejects a non-object annotations value", () => {
       for (const annotations of [null, "readOnly", 1, []]) {
         expect(() =>
-          validateUiToolEntries([{ ...validTool, annotations }])
+          validateUiToolEntries([{ ...validTool, annotations }]),
         ).toThrow(/annotations must be an object/);
       }
     });
@@ -1110,7 +1117,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHint: "yes" } },
-        ])
+        ]),
       ).toThrow(/annotations.destructiveHint must be a boolean/);
     });
 
@@ -1120,7 +1127,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       expect(() =>
         validateUiToolEntries([
           { ...validTool, annotations: { destructiveHnit: true } },
-        ])
+        ]),
       ).toThrow(/unknown key 'destructiveHnit'/);
     });
 
@@ -1132,7 +1139,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: true,
             annotations: { readOnlyHint: false },
           },
-        ])
+        ]),
       ).toThrow(/readOnlyHint must equal readOnly/);
       expect(() =>
         validateUiToolEntries([
@@ -1141,7 +1148,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: false,
             annotations: { readOnlyHint: true },
           },
-        ])
+        ]),
       ).toThrow(/readOnlyHint must equal readOnly/);
     });
 
@@ -1153,7 +1160,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: false,
             annotations: { readOnlyHint: false },
           },
-        ])
+        ]),
       ).not.toThrow();
       // Symmetric case: a read-only tool agreeing it's read-only.
       expect(() =>
@@ -1164,7 +1171,7 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
             readOnly: true,
             annotations: { readOnlyHint: true },
           },
-        ])
+        ]),
       ).not.toThrow();
     });
   });
@@ -1180,32 +1187,32 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
       `ui_${"a".repeat(62)}`, // 65 chars
     ]) {
       expect(() => validateUiToolEntries([{ ...validTool, name }])).toThrow(
-        UiToolValidationError
+        UiToolValidationError,
       );
     }
   });
 
   it("rejects duplicated names", () => {
     expect(() => validateUiToolEntries([validTool, validTool])).toThrow(
-      /duplicated/
+      /duplicated/,
     );
   });
 
   it("rejects a missing/empty/oversize description", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: undefined }])
+      validateUiToolEntries([{ ...validTool, description: undefined }]),
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "   " }])
+      validateUiToolEntries([{ ...validTool, description: "   " }]),
     ).toThrow(/description/);
     expect(() =>
-      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }])
+      validateUiToolEntries([{ ...validTool, description: "x".repeat(513) }]),
     ).toThrow(/exceeds 512/);
   });
 
   it("rejects non-object or oversize inputSchema", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, inputSchema: [] }])
+      validateUiToolEntries([{ ...validTool, inputSchema: [] }]),
     ).toThrow(/JSON object/);
     expect(() =>
       validateUiToolEntries([
@@ -1213,13 +1220,13 @@ describe("validateUiToolEntries (WebMCP UI tools)", () => {
           ...validTool,
           inputSchema: { blob: "x".repeat(9 * 1024) },
         },
-      ])
+      ]),
     ).toThrow(/exceeds 8192 bytes/);
   });
 
   it("rejects a non-boolean readOnly", () => {
     expect(() =>
-      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }])
+      validateUiToolEntries([{ ...validTool, readOnly: "yes" as never }]),
     ).toThrow(/readOnly/);
   });
 
@@ -1331,7 +1338,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     });
 
     expect(
-      (result.allTools["ui_render"] as { execute?: unknown }).execute
+      (result.allTools["ui_render"] as { execute?: unknown }).execute,
     ).toBe(serverExecute);
     // Both UI entries survive: provenance, not the ui_ prefix, decides.
     expect(result.effectiveUiTools.map((t) => t.name).sort()).toEqual([
@@ -1339,7 +1346,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       "ui_snapshot_app",
     ]);
     expect(
-      (result.allTools["ui_navigate"] as { execute?: unknown }).execute
+      (result.allTools["ui_navigate"] as { execute?: unknown }).execute,
     ).toBeUndefined();
   });
 
@@ -1378,7 +1385,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
         // the catalog — both sets are first-party curated, so this is a bug
         // by construction and must fail the turn loudly.
         builtInTools: { ui_navigate: builtIn },
-      })
+      }),
     ).rejects.toThrow(/collides with an existing app, UI, page, or skill tool/);
   });
 
@@ -1408,7 +1415,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
 
     expect(result.progressivePlan.enabled).toBe(true);
     const catalogNames = result.progressivePlan.catalog.map(
-      (entry) => entry.modelName
+      (entry) => entry.modelName,
     );
     // MCP tools are lazily loaded; UI tools must not be — both stream
     // paths advertise non-cataloged tools unconditionally, which keeps
@@ -1451,24 +1458,25 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
   it("stamps needsApproval on mutating UI tools only when the flag is on", () => {
     const withoutFlag = buildUiTools(uiTools);
     expect(
-      (withoutFlag["ui_navigate"] as { needsApproval?: unknown }).needsApproval
+      (withoutFlag["ui_navigate"] as { needsApproval?: unknown }).needsApproval,
     ).toBeFalsy();
     expect(
       (withoutFlag["ui_snapshot_app"] as { needsApproval?: unknown })
-        .needsApproval
+        .needsApproval,
     ).toBeFalsy();
 
     const withFlag = buildUiTools(uiTools, { requireToolApproval: true });
     expect(
-      (withFlag["ui_navigate"] as { needsApproval?: unknown }).needsApproval
+      (withFlag["ui_navigate"] as { needsApproval?: unknown }).needsApproval,
     ).toBe(true);
     // Read-only tools observe; approval buys no safety and costs a click.
     expect(
-      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown }).needsApproval
+      (withFlag["ui_snapshot_app"] as { needsApproval?: unknown })
+        .needsApproval,
     ).toBeFalsy();
     // Still no-execute either way — the CLIENT executes after approval.
     expect(
-      (withFlag["ui_navigate"] as { execute?: unknown }).execute
+      (withFlag["ui_navigate"] as { execute?: unknown }).execute,
     ).toBeUndefined();
   });
 
@@ -1483,11 +1491,11 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     });
     expect(
       (result.allTools["ui_navigate"] as { needsApproval?: unknown })
-        .needsApproval
+        .needsApproval,
     ).toBe(true);
     expect(
       (result.allTools["ui_snapshot_app"] as { needsApproval?: unknown })
-        .needsApproval
+        .needsApproval,
     ).toBeFalsy();
   });
 
@@ -1507,22 +1515,36 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       },
     ];
 
-    // Strict mode: every mutating tool pauses, regardless of annotations.
+    // The families that pause whatever the settings say are stated in every
+    // mode — they are the ones the model should know about before it commits
+    // to a plan, and none of them depends on the ui snapshot.
+    for (const prompt of [
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
+      buildUiToolsSystemPrompt(annotated),
+      buildUiToolsSystemPrompt(uiTools),
+    ]) {
+      expect(prompt).toContain("always pause");
+      expect(prompt).toContain("driving a browser");
+      expect(prompt).toContain("on the user's own machine");
+      expect(prompt).toContain("A denial is final");
+    }
+
+    // Strict mode: everything else pauses too.
     expect(
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true })
-    ).toContain("Every mutating `ui_*` action pauses");
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
+    ).toContain("every other tool call pauses too");
 
-    // Default mode, annotation-aware: the destructive-gate promise holds.
+    // Default mode, annotation-aware: the destructive-`ui_*` promise holds.
     const annotatedDefault = buildUiToolsSystemPrompt(annotated);
-    expect(annotatedDefault).toContain("Destructive `ui_*` actions pause");
-    expect(annotatedDefault).toContain("other actions apply immediately");
+    expect(annotatedDefault).toContain("destructive `ui_*` actions");
+    expect(annotatedDefault).toContain("Everything else applies immediately");
 
-    // Default mode, LEGACY snapshot (the fixture has no annotations): the
-    // predicate is `requireToolApproval && !readOnly`, so with the flag off
-    // NOTHING pauses. The prompt must not promise a destructive gate that
-    // isn't enforced.
+    // Default mode, LEGACY snapshot (the fixture has no annotations): a bare
+    // `readOnly` entry sits at the `setting` floor, so with the switch off
+    // NOTHING in that namespace pauses. The prompt must not promise a
+    // destructive gate that isn't enforced.
     const legacyDefault = buildUiToolsSystemPrompt(uiTools);
-    expect(legacyDefault).not.toContain("Destructive `ui_*` actions pause");
+    expect(legacyDefault).not.toContain("destructive `ui_*` actions");
     expect(legacyDefault).toContain("applies immediately");
   });
 });
@@ -1577,7 +1599,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
             { name: "s", description: "d", content: "c", contentHash: "h" },
           ],
         },
-      })
+      }),
     ).rejects.toThrow(/receive skills on box via `pinnedHarnessSkills`/);
   });
 
@@ -1599,7 +1621,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
           capabilities: emptyCapabilities(),
           composeLiveServerSkills: true,
         },
-      })
+      }),
     ).rejects.toThrow(/deliberately disjoint/);
   });
 
@@ -1624,7 +1646,7 @@ describe("prepareChatV2 — a live resolved source", () => {
   // `listSkills` discovery tool. Catalog fetching and its failure modes are
   // `listCloudRuntimeSkills`'s to prove, and are covered where they live.
   function liveSet(
-    skills: Array<{ ref: string; name: string; description: string }>
+    skills: Array<{ ref: string; name: string; description: string }>,
   ) {
     return {
       ...emptyCapabilities(),
@@ -1700,7 +1722,7 @@ describe("prepareChatV2 — a live resolved source", () => {
     });
     expect(
       (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
-        .needsApproval
+        .needsApproval,
     ).toBe(true);
   });
 });

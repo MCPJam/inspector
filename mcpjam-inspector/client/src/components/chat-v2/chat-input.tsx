@@ -152,7 +152,7 @@ function getPreferredRecordingMimeType(): string | undefined {
   if (typeof MediaRecorder.isTypeSupported !== "function") return undefined;
 
   return SUPPORTED_RECORDING_MIME_TYPES.find((mimeType) =>
-    MediaRecorder.isTypeSupported(mimeType)
+    MediaRecorder.isTypeSupported(mimeType),
   );
 }
 
@@ -230,7 +230,7 @@ function getExtensionForMediaType(mediaType: string): string {
 function normalizeIncomingFile(
   file: File,
   source: AttachmentInputSource,
-  index: number
+  index: number,
 ): File {
   if (source !== "paste" || file.name.trim().length > 0) {
     return file;
@@ -264,7 +264,7 @@ interface ChatInputProps {
   onChange: (value: string) => void;
   onSubmit: (
     event: FormEvent<HTMLFormElement>,
-    additionalInput?: string
+    additionalInput?: string,
   ) => void;
   stop: () => void;
   disabled?: boolean;
@@ -276,7 +276,7 @@ interface ChatInputProps {
   availableModels: ModelDefinition[];
   onModelChange: (
     model: ModelDefinition,
-    options?: { userInitiated?: boolean }
+    options?: { userInitiated?: boolean },
   ) => void;
   onModelSelectorOpenChange?: (open: boolean) => void;
   multiModelEnabled?: boolean;
@@ -510,7 +510,7 @@ export function ChatInput({
         connected: true,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedServersSignature]
+    [selectedServersSignature],
   );
 
   const skillsSource = useMemo<SkillsSource | undefined>(
@@ -518,7 +518,7 @@ export function ChatInput({
       skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
-    [clientSelector?.cloudProjectId, skillsEnabled]
+    [clientSelector?.cloudProjectId, skillsEnabled],
   );
   const scenarioHostStyle = useScenarioHostStyle();
   const scenarioHostTheme = useScenarioHostTheme();
@@ -535,10 +535,10 @@ export function ChatInput({
   const recordingMimeTypeRef = useRef("audio/webm");
   const recordingFinalizedRef = useRef(false);
   const stopFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
+    null,
   );
   const recordingCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
+    null,
   );
   const fileErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -573,10 +573,10 @@ export function ChatInput({
         // the recording regardless of budget.
         voiceSecondsRemaining < VOICE_GLOBAL_MAX_SECONDS
         ? `You have about ${formatVoiceSeconds(
-            voiceSecondsRemaining
+            voiceSecondsRemaining,
           )} of voice left today — recording will stop when it runs out.`
         : `You have about ${formatVoiceSeconds(
-            voiceSecondsRemaining
+            voiceSecondsRemaining,
           )} of voice left today.`
       : null;
   const voiceBudgetExhausted =
@@ -594,7 +594,7 @@ export function ChatInput({
   const hasServerRows = Boolean(
     allServerConfigs &&
       onDisconnectServer &&
-      Object.keys(allServerConfigs).length > 0
+      Object.keys(allServerConfigs).length > 0,
   );
   // Environment mode replaces the ad-hoc section outright — presence of the
   // prop (not its length) is the mode switch, so an environment that resolves
@@ -621,7 +621,7 @@ export function ChatInput({
     textareaRef,
     containerRef,
     value,
-    caretIndex
+    caretIndex,
   );
 
   useEffect(() => {
@@ -696,7 +696,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults]
+    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults],
   );
 
   const removeMCPPromptResult = (index: number) => {
@@ -713,7 +713,7 @@ export function ChatInput({
       if (!onChangeFileAttachments) return false;
 
       const incomingFiles = Array.from(files).map((file, index) =>
-        normalizeIncomingFile(file, source, index)
+        normalizeIncomingFile(file, source, index),
       );
       if (incomingFiles.length === 0) return false;
 
@@ -747,7 +747,7 @@ export function ChatInput({
 
       return true;
     },
-    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer]
+    [fileAttachments, onChangeFileAttachments, clearFileErrorTimer],
   );
 
   const handleFileInputChange = useCallback(
@@ -760,7 +760,7 @@ export function ChatInput({
       // Reset input so the same file can be selected again
       event.target.value = "";
     },
-    [addFileAttachments]
+    [addFileAttachments],
   );
 
   const handlePaste = useCallback(
@@ -774,7 +774,7 @@ export function ChatInput({
       addFileAttachments(files, "paste");
       textareaRef.current?.focus();
     },
-    [addFileAttachments, canAttachFiles]
+    [addFileAttachments, canAttachFiles],
   );
 
   const handleDragEnter = useCallback(
@@ -788,7 +788,7 @@ export function ChatInput({
 
       setFileDragDepth((depth) => depth + 1);
     },
-    [canHandleFileTransfers, disabled]
+    [canHandleFileTransfers, disabled],
   );
 
   const handleDragOver = useCallback(
@@ -800,7 +800,7 @@ export function ChatInput({
       event.stopPropagation();
       event.dataTransfer.dropEffect = disabled ? "none" : "copy";
     },
-    [canHandleFileTransfers, disabled]
+    [canHandleFileTransfers, disabled],
   );
 
   const handleDragLeave = useCallback(
@@ -814,7 +814,7 @@ export function ChatInput({
 
       setFileDragDepth((depth) => Math.max(0, depth - 1));
     },
-    [canHandleFileTransfers, disabled]
+    [canHandleFileTransfers, disabled],
   );
 
   const handleDrop = useCallback(
@@ -830,7 +830,7 @@ export function ChatInput({
       addFileAttachments(Array.from(event.dataTransfer.files), "drop");
       textareaRef.current?.focus();
     },
-    [addFileAttachments, canHandleFileTransfers, disabled]
+    [addFileAttachments, canHandleFileTransfers, disabled],
   );
 
   const removeFileAttachment = useCallback(
@@ -844,7 +844,7 @@ export function ChatInput({
 
       onChangeFileAttachments(fileAttachments.filter((a) => a.id !== id));
     },
-    [fileAttachments, onChangeFileAttachments]
+    [fileAttachments, onChangeFileAttachments],
   );
 
   const openFilePicker = useCallback(() => {
@@ -868,7 +868,7 @@ export function ChatInput({
         setCaretIndex(end);
       });
     },
-    [onChange]
+    [onChange],
   );
 
   const transcribeAudio = useCallback(
@@ -893,7 +893,7 @@ export function ChatInput({
           throw new Error(
             abortState.reason === "timeout"
               ? VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE
-              : "Voice transcription was interrupted."
+              : "Voice transcription was interrupted.",
           );
         }
 
@@ -964,7 +964,7 @@ export function ChatInput({
           throw new Error(
             abortState.reason === "timeout"
               ? VOICE_TRANSCRIPTION_TIMEOUT_MESSAGE
-              : "Voice transcription was interrupted."
+              : "Voice transcription was interrupted.",
           );
         }
         throw error;
@@ -983,7 +983,7 @@ export function ChatInput({
       voiceInputContext?.scenarioId,
       voiceInputContext?.projectId,
       voiceInputContext?.selectedServerIds,
-    ]
+    ],
   );
 
   const handleRecordedAudio = useCallback(
@@ -994,7 +994,7 @@ export function ChatInput({
 
       return transcribeAudio(audioBlob);
     },
-    [transcribeAudio]
+    [transcribeAudio],
   );
 
   const finalizeRecordedAudio = useCallback(
@@ -1006,7 +1006,7 @@ export function ChatInput({
       if (recordingStartedAtRef.current != null) {
         recordingDurationSecondsRef.current = Math.max(
           0,
-          (Date.now() - recordingStartedAtRef.current) / 1000
+          (Date.now() - recordingStartedAtRef.current) / 1000,
         );
         recordingStartedAtRef.current = null;
       }
@@ -1051,7 +1051,7 @@ export function ChatInput({
           setVoiceInputError(
             error instanceof Error
               ? error.message
-              : "Voice transcription failed."
+              : "Voice transcription failed.",
           );
         })
         .finally(() => {
@@ -1068,7 +1068,7 @@ export function ChatInput({
       commitTranscriptToDraft,
       handleRecordedAudio,
       stopAudioStream,
-    ]
+    ],
   );
 
   const startVoiceInput = useCallback(async () => {
@@ -1100,7 +1100,7 @@ export function ChatInput({
       recordingMimeTypeRef.current = mimeType || "audio/webm";
       const recorder = new MediaRecorder(
         stream,
-        mimeType ? { mimeType } : undefined
+        mimeType ? { mimeType } : undefined,
       );
       mediaRecorderRef.current = recorder;
 
@@ -1148,7 +1148,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : "Could not start voice input."
+        error instanceof Error ? error.message : "Could not start voice input.",
       );
     }
   }, [
@@ -1185,7 +1185,7 @@ export function ChatInput({
       mediaRecorderRef.current = null;
       setVoiceInputState("idle");
       setVoiceInputError(
-        error instanceof Error ? error.message : "Could not stop voice input."
+        error instanceof Error ? error.message : "Could not stop voice input.",
       );
       return;
     }
@@ -1264,7 +1264,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange, skillResults, onChangeSkillResults]
+    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
   );
 
   const removeSkillResult = (index: number) => {
@@ -1371,14 +1371,14 @@ export function ChatInput({
           "scenario-host-composer rounded-[1.75rem]",
           isDarkScenarioTheme
             ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
-            : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]"
+            : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
         )
       : scenarioHostFamily === "claude"
       ? cn(
           "scenario-host-composer rounded-[1.35rem]",
           isDarkScenarioTheme
             ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
-            : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]"
+            : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
         )
       : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
@@ -1434,7 +1434,7 @@ export function ChatInput({
             "relative flex w-full flex-col px-2 pt-2 pb-2",
             isFileDragActive &&
               "ring-2 ring-primary/45 ring-offset-2 ring-offset-background",
-            composerClasses
+            composerClasses,
           )}
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
@@ -1586,7 +1586,7 @@ export function ChatInput({
               "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
               "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
               voiceInputState === "recording" && "italic text-muted-foreground",
-              disabled ? "cursor-not-allowed text-muted-foreground" : ""
+              disabled ? "cursor-not-allowed text-muted-foreground" : "",
             )}
             autoFocus={!disabled}
           />
@@ -1663,14 +1663,14 @@ export function ChatInput({
                                         "w-2 h-2 rounded-full shrink-0",
                                         server.enabled
                                           ? "bg-green-500 dark:bg-green-400"
-                                          : "bg-muted-foreground"
+                                          : "bg-muted-foreground",
                                       )}
                                     />
                                     <span
                                       className={cn(
                                         "text-sm font-medium truncate",
                                         !server.enabled &&
-                                          "text-muted-foreground"
+                                          "text-muted-foreground",
                                       )}
                                     >
                                       {server.name}
@@ -1687,7 +1687,7 @@ export function ChatInput({
                                       onCheckedChange={(next) =>
                                         onEnvironmentServerToggle?.(
                                           server.serverId,
-                                          next === true
+                                          next === true,
                                         )
                                       }
                                       // Locked while a turn is in flight —
@@ -1749,7 +1749,7 @@ export function ChatInput({
                                         <div
                                           className={cn(
                                             "w-2 h-2 rounded-full shrink-0",
-                                            statusColor
+                                            statusColor,
                                           )}
                                         />
                                         <span
@@ -1757,7 +1757,7 @@ export function ChatInput({
                                             "text-sm font-medium truncate",
                                             !isConnected &&
                                               !isConnecting &&
-                                              "text-muted-foreground"
+                                              "text-muted-foreground",
                                           )}
                                         >
                                           {name}
@@ -1787,7 +1787,7 @@ export function ChatInput({
                                             className="text-xs font-medium text-primary hover:text-primary/80 transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/5"
                                             onClick={() => {
                                               onReconnectServer?.(name).catch(
-                                                () => {}
+                                                () => {},
                                               );
                                             }}
                                           >
@@ -1823,7 +1823,7 @@ export function ChatInput({
                           ? environmentSectionVisible
                           : allServerConfigs &&
                             Object.keys(allServerConfigs).length > 0) &&
-                          "border-t border-border mt-1 pt-1"
+                          "border-t border-border mt-1 pt-1",
                       )}
                     >
                       {onChangeFileAttachments && (
@@ -1856,18 +1856,30 @@ export function ChatInput({
                       </button>
 
                       {onRequireToolApprovalChange && (
-                        <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                          <div className="flex items-center gap-2 text-sm">
-                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                            Tool Approval
-                          </div>
-                          <Switch
-                            checked={requireToolApproval}
-                            onCheckedChange={(checked) =>
-                              onRequireToolApprovalChange(checked)
-                            }
-                          />
-                        </div>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
+                              <div className="flex items-center gap-2 text-sm">
+                                <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                                Tool Approval
+                              </div>
+                              <Switch
+                                checked={requireToolApproval}
+                                onCheckedChange={(checked) =>
+                                  onRequireToolApprovalChange(checked)
+                                }
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          {/* The switch RAISES the floor and never lowers it,
+                              so the second half is true whether it is on or
+                              off — which is the half people are surprised by. */}
+                          <TooltipContent className="max-w-xs">
+                            Pause before every tool call. Browser, page,
+                            local-machine and destructive UI actions always
+                            pause.
+                          </TooltipContent>
+                        </Tooltip>
                       )}
 
                       {showHostStyleSelectorControl && selectorHostStyle && (
@@ -1949,7 +1961,7 @@ export function ChatInput({
                       size="icon"
                       className={cn(
                         "size-[34px] rounded-full transition-colors shadow-none",
-                        activeSubmitButtonClasses
+                        activeSubmitButtonClasses,
                       )}
                       aria-label="Stop recording voice input"
                       onClick={stopVoiceInput}
@@ -2057,7 +2069,7 @@ export function ChatInput({
                       size="icon"
                       className={cn(
                         "size-[34px] rounded-full transition-colors shadow-none",
-                        inactiveSubmitButtonClasses
+                        inactiveSubmitButtonClasses,
                       )}
                       aria-label="Transcribing recording"
                       disabled
@@ -2099,7 +2111,7 @@ export function ChatInput({
                             !submitDisabled
                             ? activeSubmitButtonClasses
                             : inactiveSubmitButtonClasses,
-                          pulseSubmit && "animate-onboarding-pulse"
+                          pulseSubmit && "animate-onboarding-pulse",
                         )}
                         disabled={
                           (!value.trim() && !hasResults) ||

@@ -1105,24 +1105,40 @@ export function buildUiToolsSystemPrompt(
 }
 
 /**
- * The approval sentence, told honestly for the snapshot that was actually
- * sent. The destructive-pauses promise only holds when EVERY entry is
- * annotation-aware — a legacy client sends bare `readOnly`, whose predicate
- * with the flag off is `requireToolApproval && !readOnly`, i.e. nothing
- * pauses. Promising a destructive gate there advertises a safety net that
- * isn't there.
+ * The approval sentence for the turn.
+ *
+ * States the FLOOR RULE once, for every family, rather than only for `ui_*`.
+ * The model is choosing between a browser tool, a shell and a UI action in the
+ * same breath; a sentence about one namespace leaves it guessing about the
+ * others — including the ones that pause whatever the settings say, which are
+ * exactly the ones worth knowing about before it commits to a plan.
+ *
+ * Told honestly for the snapshot that was actually sent. The destructive-`ui_*`
+ * half of the promise only holds when EVERY entry is annotation-aware: a legacy
+ * client sends bare `readOnly`, whose floor with the switch off is `setting`,
+ * i.e. nothing pauses. The families above it do not depend on the snapshot and
+ * are stated either way.
  */
 function approvalGuidance(
   uiTools: UiToolEntry[],
   requireToolApproval: boolean,
 ): string {
-  if (requireToolApproval) {
-    return "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call.";
-  }
   const annotationAware = uiTools.every((t) => t.annotations !== undefined);
-  return annotationAware
-    ? "Destructive `ui_*` actions pause for the user's explicit approval before they run; other actions apply immediately. A denial is final — explain what you wanted to do instead of retrying the call."
-    : "Every `ui_*` action applies immediately, so be deliberate about mutating ones — describe what you're about to do when it isn't obviously what the user asked for.";
+  const alwaysPause = [
+    "anything driving a browser or a third-party web page",
+    "anything running on the user's own machine",
+    "loading a skill an MCP server provided",
+    ...(annotationAware ? ["destructive `ui_*` actions"] : []),
+  ];
+  const always =
+    "Some actions always pause for the user's explicit approval before they " +
+    `run, whatever the settings say: ${alwaysPause
+      .slice(0, -1)
+      .join(", ")}, and ${alwaysPause[alwaysPause.length - 1]}.`;
+  const rest = requireToolApproval
+    ? "Tool approval is ON for this conversation, so every other tool call pauses too; reads and observations never do."
+    : "Everything else applies immediately, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for.";
+  return `${always} ${rest} A denial is final — explain what you wanted to do instead of retrying the call.`;
 }
 
 /**
