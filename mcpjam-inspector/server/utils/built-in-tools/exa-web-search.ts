@@ -13,6 +13,7 @@
  * model can relay the problem to the user instead of breaking the turn.
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
@@ -56,6 +57,9 @@ export function buildExaWebSearchTool(
         .max(400)
         .describe("Natural-language web search query"),
     }),
+    // Floor: never. A read of the public web reaches nothing of the user's,
+    // and a pill before every search is a click that buys nothing.
+    needsApproval: needsApprovalFor("never", false),
     execute: async ({ query }, { toolCallId, abortSignal }) => {
       const convexUrl = process.env.CONVEX_HTTP_URL;
       if (!convexUrl) {

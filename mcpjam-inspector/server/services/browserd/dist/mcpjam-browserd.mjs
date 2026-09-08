@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
-var BROWSERD_PROTOCOL_VERSION = 1;
+var BROWSERD_PROTOCOL_VERSION = 2;
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -19,6 +19,13 @@ var HOSTED_DISPLAY = {
 };
 function isPointInViewport(x, y) {
   return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
+}
+function wantsFor(observe) {
+  const mode = observe ?? "screenshot";
+  return {
+    a11y: mode === "a11y" || mode === "both",
+    screenshot: mode === "screenshot" || mode === "both"
+  };
 }
 var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   maxRetained: 512,
@@ -51,6 +58,8 @@ var BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
@@ -286,6 +295,259 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/video-recorder.ts
+import { spawn } from "node:child_process";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+var MIN_RECORD_FPS = 1;
+var MAX_RECORD_FPS = 30;
+var DEFAULT_RECORD_FPS = 15;
+var FRAGMENT_SECONDS = 4;
+var DEFAULT_FINALIZE_GRACE_MS = 2e3;
+function recorderArgs(options) {
+  return [
+    "-loglevel",
+    "error",
+    "-progress",
+    "pipe:2",
+    "-f",
+    "x11grab",
+    "-framerate",
+    String(options.fps),
+    "-video_size",
+    `${options.width}x${options.height}`,
+    "-draw_mouse",
+    "1",
+    "-i",
+    options.display,
+    "-vf",
+    // `max`: the most consecutive frames mpdecimate may drop — the floor
+    // that gives `-force_key_frames` below something to land on.
+    `mpdecimate=max=${options.fps * FRAGMENT_SECONDS}`,
+    "-fps_mode",
+    "vfr",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-tune",
+    "zerolatency",
+    "-threads",
+    "1",
+    "-profile:v",
+    "baseline",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    String(options.fps * FRAGMENT_SECONDS),
+    "-sc_threshold",
+    "0",
+    // Wall clock, not frame count — the only one of the three that survives
+    // decimation. `t` is the frame's presentation time in seconds.
+    "-force_key_frames",
+    `expr:gte(t,n_forced*${FRAGMENT_SECONDS})`,
+    "-crf",
+    "28",
+    "-maxrate",
+    "800k",
+    "-bufsize",
+    "1600k",
+    "-movflags",
+    "+frag_keyframe+empty_moov+default_base_moof",
+    "-fs",
+    String(options.maxBytes),
+    "-f",
+    "mp4",
+    // OVERWRITE. Without it ffmpeg stops at an interactive "File exists?"
+    // prompt on a reused id — with stdin ignored that is a process that writes
+    // nothing and exits, AFTER `start` has already answered `ok`. A take that
+    // reuses an id means the previous one is finished with; replacing it is
+    // the only reading under which the answer stays true.
+    "-y",
+    options.outputPath
+  ];
+}
+function createProgressReader() {
+  let pending = "";
+  return {
+    push(chunk) {
+      const text = pending + chunk;
+      const lastBreak = text.lastIndexOf("\n");
+      if (lastBreak < 0) {
+        pending = text;
+        return void 0;
+      }
+      pending = text.slice(lastBreak + 1);
+      let found;
+      for (const line2 of text.slice(0, lastBreak).split("\n")) {
+        const match = /^frame=\s*(\d+)\s*$/.exec(line2.trim());
+        if (!match) continue;
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) found = value;
+      }
+      return found;
+    }
+  };
+}
+function createVideoRecorder(options) {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+    stdio: [...spawnOptions.stdio]
+  }));
+  const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
+  const statFile = options.statFile ?? (async (path) => stat(path));
+  const now = options.now ?? Date.now;
+  const nonce = options.nonce ?? randomBytes2(4).toString("hex");
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let take;
+  let stopping;
+  let takeSeq = 0;
+  let disposed = false;
+  const start = (args) => {
+    if (disposed) return { ok: false, error: "record_unavailable" };
+    if (take || stopping) return { ok: false, error: "record_active" };
+    takeSeq += 1;
+    const path = join(options.dir, `${args.id}-${nonce}-${takeSeq}.mp4`);
+    let child;
+    try {
+      child = spawnProcess(
+        ffmpegPath,
+        recorderArgs({
+          display: options.display,
+          width: options.width,
+          height: options.height,
+          fps: args.fps,
+          maxBytes: options.maxBytes,
+          outputPath: path
+        }),
+        // stdout ignored: everything this process says rides the progress pipe
+        // on stderr, and the video goes to a file.
+        { stdio: ["ignore", "ignore", "pipe"] }
+      );
+    } catch {
+      return { ok: false, error: "record_unavailable" };
+    }
+    let settleExit = () => {
+    };
+    const exited = new Promise((resolve) => {
+      settleExit = resolve;
+    });
+    const entry = {
+      id: args.id,
+      fps: args.fps,
+      path,
+      startedAtMs: now(),
+      child,
+      distinctFrames: 0,
+      exited,
+      settleExit,
+      endedEarly: false
+    };
+    take = entry;
+    child.on("error", () => {
+      if (take !== entry) return;
+      entry.endedEarly = true;
+      entry.settleExit();
+    });
+    child.on("exit", () => {
+      entry.settleExit();
+      if (take !== entry) return;
+      entry.endedEarly = true;
+    });
+    const progress = createProgressReader();
+    child.stderr.on("data", (chunk) => {
+      const frames = progress.push(String(chunk));
+      if (frames !== void 0) entry.distinctFrames = frames;
+    });
+    return { ok: true };
+  };
+  const stop = async () => {
+    const entry = take;
+    take = void 0;
+    if (!entry) return null;
+    const processGone = entry.exited.then(() => {
+      if (stopping === processGone) stopping = void 0;
+    });
+    stopping = processGone;
+    return runStop(entry);
+  };
+  const runStop = async (entry) => {
+    if (!entry.endedEarly) {
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+      }
+    }
+    await entry.exited;
+    const durationMs = Math.max(0, now() - entry.startedAtMs);
+    let bytes = 0;
+    try {
+      bytes = (await statFile(entry.path)).size;
+    } catch {
+      bytes = 0;
+    }
+    return {
+      path: entry.path,
+      bytes,
+      durationMs,
+      distinctFrames: entry.distinctFrames,
+      truncated: entry.endedEarly
+    };
+  };
+  return {
+    start,
+    stop,
+    status() {
+      if (!take) return { active: false };
+      return {
+        active: !take.endedEarly,
+        id: take.id,
+        fps: take.fps,
+        startedAtMs: take.startedAtMs,
+        distinctFrames: take.distinctFrames
+      };
+    },
+    async finalize(args) {
+      disposed = true;
+      const entry = take;
+      if (!entry) return;
+      take = void 0;
+      if (entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+        return;
+      }
+      const graceMs = args?.graceMs ?? DEFAULT_FINALIZE_GRACE_MS;
+      let timer;
+      await Promise.race([
+        entry.exited,
+        new Promise((resolve) => {
+          timer = setTimer(() => {
+            try {
+              entry.child.kill("SIGKILL");
+            } catch {
+            }
+            resolve();
+          }, graceMs);
+        })
+      ]);
+      clearTimer(timer);
+    },
+    dispose() {
+      disposed = true;
+      const entry = take;
+      take = void 0;
+      if (!entry || entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGKILL");
+      } catch {
+      }
+    }
+  };
+}
+
 // server/services/browserd/daemon/lease.ts
 var DEFAULT_TTL_MS = 5 * 60 * 1e3;
 var MAX_TTL_MS = 30 * 60 * 1e3;
@@ -493,8 +755,15 @@ function handoffNoteFor(kind) {
 
 // server/services/browserd/daemon/request-handler.ts
 var MAX_INPUT_EVENTS = 64;
-var INPUT_BOOST_INTERVAL_MS = 33;
-var INPUT_BOOST_WINDOW_MS = 1500;
+var ACTIVITY_BOOST_INTERVAL_MS = 33;
+var ACTIVITY_BOOST_WINDOW_MS = 1500;
+var MOTION_ACTIONS = /* @__PURE__ */ new Set([
+  "navigate",
+  "back",
+  "reload",
+  "act"
+]);
+var RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 var BrowserdRequestHandler = class {
   queue;
   driver;
@@ -506,6 +775,7 @@ var BrowserdRequestHandler = class {
   contextMode;
   startedBy;
   setVideoTier;
+  recorder;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -536,6 +806,7 @@ var BrowserdRequestHandler = class {
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
     this.setVideoTier = deps.setVideoTier;
+    this.recorder = deps.recorder;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -622,6 +893,12 @@ var BrowserdRequestHandler = class {
       }
       return this.handlePolicy(req);
     }
+    if (req.path === "/v1/record") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleRecord(req);
+    }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -649,6 +926,98 @@ var BrowserdRequestHandler = class {
     }
     this.setVideoTier?.(tier);
     return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
+  }
+  /**
+   * Start or stop a recording.
+   *
+   * EVERY argument is validated before any spawn. A recording id becomes a
+   * filename and an fps becomes an x11grab rate: getting either wrong after
+   * the process is running means a file in the wrong place or an encoder at a
+   * rate the box cannot sustain, and neither is visible from the 200 that
+   * would come back. `fps` and `id` are echoed on every answer — including the
+   * refusals — so a caller never has to remember what it asked for to make
+   * sense of what it got.
+   */
+  async handleRecord(req) {
+    if (req.method === "GET") {
+      const status = this.recorder?.status() ?? { active: false };
+      return { status: 200, body: { ...status, bootId: this.bootId } };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    const { action, id, fps } = parsed;
+    if (action !== "start" && action !== "stop") {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    if (action === "stop") {
+      if (!this.recorder) {
+        return {
+          status: 503,
+          body: { error: "record_unavailable", bootId: this.bootId }
+        };
+      }
+      const result = await this.recorder.stop();
+      return {
+        status: 200,
+        body: { ok: true, recording: result, bootId: this.bootId }
+      };
+    }
+    const resolvedFps = fps === void 0 ? DEFAULT_RECORD_FPS : fps;
+    if (typeof resolvedFps !== "number" || !Number.isInteger(resolvedFps) || resolvedFps < MIN_RECORD_FPS || resolvedFps > MAX_RECORD_FPS) {
+      return {
+        status: 400,
+        body: { error: "invalid_fps", fps, bootId: this.bootId }
+      };
+    }
+    if (typeof id !== "string" || !RECORD_ID_PATTERN.test(id)) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_id", id, bootId: this.bootId }
+      };
+    }
+    if (!this.recorder) {
+      return {
+        status: 503,
+        body: {
+          error: "record_unavailable",
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    const started = this.recorder.start({ id, fps: resolvedFps });
+    if (!started.ok) {
+      return {
+        status: started.error === "record_active" ? 409 : 503,
+        body: {
+          error: started.error,
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: 200,
+      body: { ok: true, id, fps: resolvedFps, bootId: this.bootId }
+    };
   }
   async handleInput(req) {
     let parsed;
@@ -740,7 +1109,34 @@ var BrowserdRequestHandler = class {
       };
     }
     const outcome = await this.queue.submit(parsed.command);
+    await this.boostAfterMotion(parsed.command, outcome);
     return this.mapOutcome(outcome);
+  }
+  /**
+   * Raise the frame rate for a moment after a command that moved the page.
+   *
+   * The seam is HERE rather than in the driver because this is where the
+   * command's fate is known: a `navigate` the lease refused, or one the queue
+   * de-duplicated, never touched the page, and boosting after it would spend a
+   * box's cores on a picture nothing changed. It runs for every source —
+   * a chat-driven scroll and a person's own `manual` command are the same
+   * motion to whoever is watching.
+   *
+   * `viewportIfWatched` and never `viewport`: on a box where nobody has the
+   * pane open there is no viewport, and building one here would attach a CDP
+   * screencast and start encoding JPEGs for an audience of nobody — on the
+   * same two cores the agent is using. A driver too old to answer the question
+   * (or a fake that does not implement it) simply gets no boost.
+   */
+  async boostAfterMotion(command, outcome) {
+    if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    if (outcome.status !== "ok") return;
+    if (!outcome.result.ok) return;
+    try {
+      const viewport = await this.driver.viewportIfWatched?.(command.tabId);
+      viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
+    } catch {
+    }
   }
   /**
    * Watch a tab.
@@ -885,7 +1281,7 @@ var BrowserdRequestHandler = class {
       args.holder
     );
     if (args.events.length > 0) {
-      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+      viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
     return { ok: true };
   }
@@ -1536,11 +1932,17 @@ function guardStaleness(driver, lease) {
     const refusal = lease && leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
+      const fresh = await Promise.resolve(
+        driver.observeForRefusal?.(command, wantsFor(action.observe))
+      ).catch(() => void 0);
+      if (fresh?.leaseBlocked) return fresh;
+      const bound = fresh?.stateToken !== void 0;
       return {
         ok: false,
         staleObservation: true,
         error: "stale_observation",
-        stateToken: current
+        stateToken: bound ? fresh.stateToken : current,
+        ...bound && fresh.output !== void 0 ? { output: fresh.output } : {}
       };
     }
     return driver.execute(command);
@@ -1682,7 +2084,8 @@ function buildBrowserdStack(driver, config) {
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
     ...config.contextMode ? { contextMode: config.contextMode } : {},
     ...config.startedBy ? { startedBy: config.startedBy } : {},
-    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {}
+    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
+    ...config.recorder ? { recorder: config.recorder } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -1704,7 +2107,7 @@ function buildBrowserdStack(driver, config) {
 }
 
 // server/services/browserd/daemon/video-encoder.ts
-import { spawn } from "node:child_process";
+import { spawn as spawn2 } from "node:child_process";
 var NAL_AUD = 9;
 var NAL_IDR = 5;
 var MAX_RING_BYTES = 3 * 1024 * 1024;
@@ -1762,6 +2165,10 @@ function ffmpegArgs(options) {
     "0",
     "-x264-params",
     "aud=1:repeat-headers=1",
+    // Before the tier args and the output, so a tier that ever grows its own
+    // rate-control flags cannot end up on the far side of it.
+    "-threads",
+    "1",
     ...tier,
     "-f",
     "h264",
@@ -1830,7 +2237,7 @@ function containsIdr(bytes) {
   return false;
 }
 function createVideoEncoder(options) {
-  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn2(command, [...args], {
     stdio: [...spawnOptions.stdio]
   }));
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
@@ -3253,6 +3660,22 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var ActError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "ActError";
+  }
+};
+var LeaseTakenMidAct = class extends Error {
+};
+function withoutRefIndex(fields) {
+  const { refs: _unstored, ...rest } = fields;
+  return rest;
+}
+function isNotAnInputRefusal(message) {
+  return /not an <input>/i.test(message) && !/<select>/i.test(message);
+}
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3412,9 +3835,16 @@ var ChromiumDriver = class {
   }
   /**
    * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
-   * returns the post-act screenshot + URL with a fresh state token, so the
-   * model never has to spend a turn asking "what happened?" — and the token it
-   * gets back is the one its NEXT act should be pinned to.
+   * returns what the page BECAME — its URL, the tree of what can be acted on
+   * next (with refs), a screenshot, or whichever of those `observe` asked for
+   * — with a fresh state token, so the model never has to spend a turn asking
+   * "what happened?" and the token it gets back is the one its NEXT act should
+   * be pinned to.
+   *
+   * The a11y half is what closes the last round trip: an act used to hand back
+   * a picture, and a model that wanted to know what was now CLICKABLE had to
+   * observe again. `afterAct` is the funnel every one of these paths — success,
+   * failure, and the stale refusal above — leaves through.
    *
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
@@ -3434,16 +3864,28 @@ var ChromiumDriver = class {
     if (action.verb === "activate_tab") {
       await page.bringToFront();
       this.activeTabId = tabId;
-      const frame2 = await this.snapshot(page);
-      return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
+      const frame = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+    }
+    const wants = wantsFor(action.observe);
+    const before = await this.snapshot(page).catch(() => void 0);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
     }
     try {
-      await this.dispatchVerb(page, action);
+      await this.dispatchVerb(page, action, permit);
     } catch (error) {
+      if (error instanceof LeaseTakenMidAct) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser partway through this action; any earlier steps of it have already been applied to the page \u2014 re-observe after they hand it back rather than repeating it"
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
-      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
-      const before = permit() ? await this.snapshot(page).catch(() => null) : null;
-      const frame2 = permit() ? before : null;
+      const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const fresh = await this.afterAct(tabId, entry, permit, wants, before);
+      if (fresh.leaseBlocked) return fresh;
       return {
         ok: false,
         error: `${kind}: ${message.split("\n")[0]}`,
@@ -3452,34 +3894,37 @@ var ChromiumDriver = class {
         // carries the handoff note too — an act that failed right after a
         // person used the browser most likely failed BECAUSE the page is now
         // somewhere else, and "your click missed" would be the wrong lesson.
-        ...frame2 ? {
-          stateToken: this.tokenFor(tabId, entry, frame2),
-          output: this.withHandoffNote({ url: frame2.url })
+        ...fresh.ok ? {
+          ...fresh.stateToken ? { stateToken: fresh.stateToken } : {},
+          ...fresh.output !== void 0 ? { output: fresh.output } : {}
         } : {}
       };
     }
     const settled = await this.settle(page);
-    if (!permit()) {
-      return this.leaseBlockedResult(
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
-      );
-    }
-    const frame = await this.snapshot(page);
-    const screenshot = await page.screenshotBase64().catch(() => void 0);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url, ...screenshot ? { screenshot } : {} },
-        frame,
-        permit,
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
-      ),
-      settled
-    };
+    const observed = await this.afterAct(
+      tabId,
+      entry,
+      permit,
+      wants,
+      before,
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+    );
+    return observed.ok ? { settled, ...observed } : observed;
   }
-  /** Map an act verb onto the page primitives. */
-  async dispatchVerb(page, action) {
+  /**
+   * Map an act verb onto the page primitives.
+   *
+   * `permit` is threaded in for the COMPOSITE verbs only. A single-step verb is
+   * one dispatch and the caller's check immediately precedes it; `fill_form` is
+   * a loop of awaited page writes, so a person taking the browser after the
+   * first field would otherwise have the rest of the form — and the Enter —
+   * typed into it. The check is between steps because there is no way to take
+   * back the ones already made.
+   */
+  async dispatchVerb(page, action, permit = () => true) {
+    const stillOurs = () => {
+      if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
+    };
     const target = action.target;
     const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
     if (point && !isPointInViewport(point.x, point.y)) {
@@ -3504,8 +3949,33 @@ var ChromiumDriver = class {
         throw new Error("no element: hover needs coordinates or a selector");
       case "type": {
         const text = action.value ?? "";
-        if (selector) return page.fillSelector(selector, text);
-        return page.typeText(text);
+        if (selector) await page.fillSelector(selector, text);
+        else await page.typeText(text);
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
+      }
+      case "fill_form": {
+        const fields = action.fields;
+        if (!Array.isArray(fields) || fields.length === 0 || fields.some(
+          (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"
+        )) {
+          throw new ActError(
+            "act_failed",
+            "fill_form needs fields: [{selector, value}]"
+          );
+        }
+        for (const [index, field] of fields.entries()) {
+          stillOurs();
+          await this.fillOneField(page, field, index, stillOurs);
+        }
+        if (action.submit) {
+          stillOurs();
+          await page.press("Enter");
+        }
+        return;
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
@@ -3538,6 +4008,62 @@ var ChromiumDriver = class {
       case "close_tab":
       case "activate_tab":
         return;
+      default:
+        throw new ActError(
+          "act_failed",
+          `this browser daemon does not support the "${action.verb}" verb; it is running an older build`
+        );
+    }
+  }
+  /**
+   * One field of a `fill_form`, with the `<select>` fallback.
+   *
+   * A model should not have to know what KIND of control it is filling: it
+   * read "Size" off a tree or a screenshot and wants "L" in it, so the
+   * fallback is driven by Playwright's own refusal rather than by a per-field
+   * hint the model would have to get right.
+   *
+   * WHICH refusal, measured against a real Chromium rather than guessed —
+   * the two messages differ by one item in the same list:
+   *
+   *   <select>  "Element is not an <input>, <textarea> or [contenteditable]
+   *              element"
+   *   <button>  "Element is not an <input>, <textarea>, <select> or
+   *              [contenteditable] and does not have a role allowing
+   *              [aria-readonly]"
+   *
+   * So "names <input>" alone is NOT the discriminator: it matches both, and
+   * matching the second sent a `fill` at a button off to `selectOption`, which
+   * failed for its own unrelated reason and reported that instead of "this
+   * element cannot be filled". The `<select>` case is the one whose message
+   * does not offer `<select>` as an alternative.
+   *
+   * Any OTHER failure stops the form. Half a filled form is a state the page
+   * is in and the model cannot see, so the error names the field that failed
+   * AND the ones that went in before it.
+   */
+  async fillOneField(page, field, index, stillOurs) {
+    try {
+      await page.fillSelector(field.selector, field.value);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isNotAnInputRefusal(message)) {
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
+      stillOurs();
+      try {
+        await page.selectOption(field.selector, field.value);
+      } catch (selectError) {
+        const detail = selectError instanceof Error ? selectError.message : String(selectError);
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
     }
   }
   async webmcpInvoke(tabId, action, permit) {
@@ -3671,39 +4197,17 @@ var ChromiumDriver = class {
         return this.observeText(tabId, entry, permit);
       }
       case "a11y": {
-        const raw = await this.readA11y(tabId, entry, action);
-        if (!raw.ok) return raw.error;
-        const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
+        const rendered = await this.renderA11y(tabId, entry, action);
+        if (!rendered.ok) return rendered.error;
         const frame = await this.snapshot(entry.page);
-        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          filtered,
-          this.a11yBudget
-        );
-        const refs = assignRefs(tree);
-        const rendered = renderA11yTree(tree, {
-          interactiveOnly: raw.filter === "interactive"
-        });
         const result = this.observation(
           tabId,
           entry,
-          {
-            a11y: rendered,
-            refs: Object.fromEntries(
-              [...refs].map(([ref, entryValue]) => [
-                ref,
-                { role: entryValue.role, name: entryValue.name }
-              ])
-            ),
-            ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
-          },
+          rendered.fields,
           frame,
           permit
         );
-        if (!result.ok) {
-          this.refs.delete(tabId);
-          return result;
-        }
-        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
       case "console": {
@@ -3881,6 +4385,22 @@ var ChromiumDriver = class {
       list.splice(dropIndex(list, this.activeTabId), 1);
     }
     return payload();
+  }
+  /**
+   * The viewport this tab already has, without ever creating one.
+   *
+   * `viewport()` below opens the tab and attaches a CDP session on a miss.
+   * That is right for a person opening the pane and wrong for the frame-rate
+   * boost after an agent command, which only wants to nudge a picture someone
+   * is ALREADY watching: on a box with no pane open, going through
+   * `viewport()` would attach a screencast and start encoding JPEGs for
+   * nobody, on the same two cores the agent is using.
+   *
+   * Returns the map's promise rather than awaiting it, so a viewport that is
+   * still being created counts as watched — somebody asked for it.
+   */
+  viewportIfWatched(tabId) {
+    return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
   }
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;
@@ -4071,6 +4591,176 @@ var ChromiumDriver = class {
     } finally {
       this.pendingTabs.delete(tabId);
     }
+  }
+  /**
+   * Read, filter, cap, number and render one a11y tree — everything between
+   * "ask the page" and "here are the fields", for BOTH readers of a tree.
+   *
+   * filter → cap → number → render, in that order, and the order is
+   * load-bearing. Filtering first keeps the budget from being spent on prose
+   * the interactive view will not show; numbering after the cap keeps every
+   * ref in the map reachable in the text (a ref stamped on a node the budget
+   * then dropped would be a name for something the model cannot see);
+   * rendering last means the map and the text were built from one pass over
+   * one tree.
+   *
+   * IT DOES NOT TAKE THE FRAME SNAPSHOT. The caller does, after this returns,
+   * so the token an observation carries describes the page as it was once the
+   * tree had been walked — never before it.
+   */
+  async renderA11y(tabId, entry, action) {
+    const raw = await this.readA11y(tabId, entry, action);
+    if (!raw.ok) return raw;
+    const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
+    const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+      filtered,
+      this.a11yBudget
+    );
+    const refs = assignRefs(tree);
+    const rendered = renderA11yTree(tree, {
+      interactiveOnly: raw.filter === "interactive"
+    });
+    return {
+      ok: true,
+      fields: {
+        a11y: rendered,
+        refs: Object.fromEntries(
+          [...refs].map(([ref, entryValue]) => [
+            ref,
+            { role: entryValue.role, name: entryValue.name }
+          ])
+        ),
+        ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+      },
+      refMap: refs
+    };
+  }
+  /**
+   * Store (or discard) the refs an observation just minted.
+   *
+   * COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+   * mid-read discards the result — and refs stored anyway would be names for a
+   * page the model was never shown, guessable afterwards by a model that never
+   * received them. On that path the old map goes too: it described a page this
+   * tab may no longer be on.
+   *
+   * A commit REPLACES the per-tab map wholesale: refs are valid for exactly
+   * one observation, and leaving an older map merged underneath is how `e7`
+   * comes to mean two things at once. Bound to the token the observation
+   * carries, so a ref used after the page moved is refused rather than
+   * resolved by name against whatever is there now.
+   */
+  commitRefs(tabId, result, refMap) {
+    if (!result.ok || !refMap) {
+      this.refs.delete(tabId);
+      return;
+    }
+    this.refs.set(tabId, { stateToken: result.stateToken, entries: refMap });
+  }
+  /**
+   * THE ONE FUNNEL for "what does the page look like now that something
+   * happened to it" — the post-act observation (L1), the observation a failed
+   * act still owes, and the fresh page a `stale_observation` refusal hands
+   * back.
+   *
+   * Every caller reaches `observation` through here, so `withHandoffNote` and
+   * the final permit re-check are inherited rather than repeated, and the refs
+   * an act's tree hands out are committed with the same semantics an `observe`
+   * gives them — which is what makes `rootRef` zoom work off an act result.
+   *
+   * `before` is the frame captured just before the verb ran; `previousUrl` is
+   * reported only when the act actually moved the page, because a URL repeated
+   * on every result is noise the model has to read past.
+   */
+  async afterAct(tabId, entry, permit, wants, before, blockedDetail) {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+      );
+    }
+    const page = entry.page;
+    const captures = wants.a11y || wants.screenshot;
+    const pre = captures ? await this.snapshot(page).catch(() => void 0) : void 0;
+    let a11yFields = {};
+    let refMap;
+    if (wants.a11y) {
+      const rendered = await this.renderA11y(tabId, entry, {
+        filter: "interactive"
+      }).catch(() => ({ ok: false, error: void 0 }));
+      if (rendered.ok) {
+        a11yFields = rendered.fields;
+        refMap = rendered.refMap;
+      } else {
+        a11yFields = { a11yUnavailable: true };
+      }
+    }
+    const screenshot = wants.screenshot ? await page.screenshotBase64().catch(() => void 0) : void 0;
+    const frame = await this.snapshot(page).catch(() => void 0);
+    if (!frame) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      this.refs.delete(tabId);
+      const url = safeUrl(page);
+      return {
+        ok: true,
+        output: this.withHandoffNote(
+          url ? {
+            url,
+            ...withoutRefIndex(a11yFields),
+            ...screenshot ? { screenshot } : {},
+            observationFailed: true
+          } : { observationFailed: true }
+        ),
+        settled: false
+      };
+    }
+    const output = {
+      // Only when it MOVED. `url` is on every observation already; a
+      // `previousUrl` equal to it teaches the model nothing and costs a line
+      // on every act.
+      ...before && before.url !== frame.url ? { previousUrl: before.url } : {},
+      ...a11yFields,
+      ...screenshot ? { screenshot } : {}
+    };
+    const held = !captures || pre !== void 0 && pre.url === frame.url && pre.domSignal === frame.domSignal;
+    if (!held) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      this.refs.delete(tabId);
+      return {
+        ok: true,
+        output: this.withHandoffNote({
+          url: frame.url,
+          ...withoutRefIndex(output)
+        }),
+        settled: false
+      };
+    }
+    const result = blockedDetail === void 0 ? this.observation(tabId, entry, output, frame, permit) : this.observation(tabId, entry, output, frame, permit, blockedDetail);
+    if (wants.a11y) this.commitRefs(tabId, result, refMap);
+    return result;
+  }
+  /**
+   * The observation that rides a refusal — `guardStaleness`'s recovery read.
+   *
+   * Public because the guard sits ABOVE the driver (it is pure, and testable
+   * with a fake), so the one thing it cannot do for itself is look at the
+   * page. Without this the refusal says "re-read the page" and the model
+   * spends the very round trip the state token exists to save.
+   */
+  async observeForRefusal(command, wants) {
+    const tabId = command.tabId ?? DEFAULT_TAB;
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    return this.afterAct(tabId, entry, this.permitFor(command), wants);
   }
   /**
    * Read the tree for an a11y observation, rooted where the caller asked.
@@ -4289,7 +4979,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 import { execFileSync } from "node:child_process";
 import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
@@ -4310,7 +5000,7 @@ async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner)
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
-      await unlink(join(userDataDir, name));
+      await unlink(join2(userDataDir, name));
       result.removed.push(name);
     } catch (err) {
       if (isNotFound(err)) continue;
@@ -4328,7 +5018,7 @@ function isNotFound(err) {
 async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
   let target;
   try {
-    target = await readlink(join(userDataDir, "SingletonLock"));
+    target = await readlink(join2(userDataDir, "SingletonLock"));
   } catch {
     return { live: false };
   }
@@ -4624,12 +5314,16 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/main.ts
+import { mkdirSync } from "node:fs";
+
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
 function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
   const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
   const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
@@ -4666,6 +5360,11 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
@@ -4676,8 +5375,13 @@ function readDeviceScaleFactor(env) {
   if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
   return raw;
 }
+function readRecordMaxBytes(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+}
 function defaultMintToken(path) {
-  const token = randomBytes2(32).toString("hex");
+  const token = randomBytes3(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;
@@ -4733,7 +5437,10 @@ function displayHeight(config) {
 }
 function videoFeatures(config) {
   if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
-  return config.kiosk ? ["h264"] : [];
+  const features = [];
+  if (config.kiosk) features.push("h264");
+  if (config.recordingEnabled) features.push("record");
+  return features;
 }
 async function main() {
   const config = readBrowserdConfig();
@@ -4753,6 +5460,22 @@ async function main() {
     width: displayWidth(config),
     height: displayHeight(config)
   }) : void 0;
+  const recorder = features.includes("record") ? createVideoRecorder({
+    display: process.env.DISPLAY || ":0",
+    width: displayWidth(config),
+    height: displayHeight(config),
+    dir: config.recordDir,
+    maxBytes: config.recordMaxBytes
+  }) : void 0;
+  if (recorder) {
+    try {
+      mkdirSync(config.recordDir, { recursive: true });
+    } catch (error) {
+      log(
+        `could not create ${config.recordDir}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -4765,6 +5488,7 @@ async function main() {
     startedBy: config.startedBy,
     features,
     ...video ? { video } : {},
+    ...recorder ? { recorder } : {},
     displaySize: {
       width: displayWidth(config),
       height: displayHeight(config)
@@ -4775,6 +5499,8 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     stack.closeStreams();
+    await recorder?.finalize({ graceMs: 2e3 }).catch(() => {
+    });
     video?.dispose();
     stack.server.close();
     await driver.close().catch(() => {

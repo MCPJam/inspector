@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BROWSERD_HOST,
   DEFAULT_BROWSERD_PORT,
+  DEFAULT_BROWSERD_RECORD_MAX_BYTES,
   DEFAULT_BROWSERD_USER_DATA_DIR,
   extraArgsFor,
   formatReadyLine,
@@ -40,9 +41,64 @@ describe("readBrowserdConfig", () => {
       // 1 unless the box says otherwise. Raising it is a MEASUREMENT, not a
       // promise — see the wave's DPR gate.
       deviceScaleFactor: 1,
+      // Recordings live beside the profile, capped below the evidence pipe's
+      // own 64 MiB limit: a file past it can only be dropped at upload time,
+      // which is the one moment the evidence cannot be re-made.
+      recordDir: `${DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+      recordMaxBytes: DEFAULT_BROWSERD_RECORD_MAX_BYTES,
+      recordingEnabled: true,
       // An inspector replica handed us a token; nothing was minted here.
       startedBy: "inspector",
     });
+  });
+
+  it("puts recordings under a user data dir the box chose", () => {
+    const c = readBrowserdConfig(
+      withToken({ MCPJAM_BROWSERD_USER_DATA_DIR: "/data/profile" }),
+    );
+    expect(c.recordDir).toBe("/data/profile/recordings");
+    expect(
+      readBrowserdConfig(
+        withToken({ MCPJAM_BROWSERD_RECORD_DIR: "/evidence" }),
+      ).recordDir,
+    ).toBe("/evidence");
+  });
+
+  it("only the exact string turns recording off", () => {
+    // A typo must not silently cost a run its evidence — the same rule every
+    // other switch here follows.
+    expect(readBrowserdConfig(withToken()).recordingEnabled).toBe(true);
+    expect(
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_RECORD: "0" }))
+        .recordingEnabled,
+    ).toBe(false);
+    expect(
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_RECORD: "false" }))
+        .recordingEnabled,
+    ).toBe(true);
+  });
+
+  it("never lets the size cap exceed what the evidence pipe can accept", () => {
+    // Lenient about nonsense (a mistyped variable must not cost the run its
+    // browser) and strict about the ceiling (a value past it produces a file
+    // nothing can accept).
+    expect(
+      readBrowserdConfig(
+        withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: "1048576" }),
+      ).recordMaxBytes,
+    ).toBe(1_048_576);
+    // `0.5` is the one that mattered: it is positive, so a `<= 0` guard let it
+    // through, and `Math.floor` then made it `0` — `-fs 0` tells ffmpeg to
+    // stop at the first byte, so a switch meant to BOUND a recording would
+    // have silently abolished it.
+    for (const raw of ["", "lots", "-5", "0", "0.5", String(1024 ** 4)]) {
+      expect(
+        readBrowserdConfig(
+          withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: raw }),
+        ).recordMaxBytes,
+        `raw=${raw}`,
+      ).toBe(DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+    }
   });
 
   it("mints a token into a file when the box started this daemon", () => {

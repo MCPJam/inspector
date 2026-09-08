@@ -53,8 +53,16 @@ export const DEFAULT_QUEUE_KEY = "@session";
  *
  * History:
  *   1 — the wire as of the viewport-fidelity wave (V-4a).
+ *   2 — `act` gained the `fill_form` VERB (and `submit`). Additive on the
+ *       wire and not additive in meaning: a daemon at 1 has no case for
+ *       `fill_form`, so it falls through its verb switch and answers `ok`
+ *       for a form it never touched, and it drops `submit` so a login is
+ *       typed and never sent. Both are commands whose SEMANTICS an older
+ *       daemon cannot honour while reporting success, which is exactly the
+ *       bump condition above — unlike `act`'s `observe` field, which an old
+ *       daemon ignores to produce the screenshot-only result it always did.
  */
-export const BROWSERD_PROTOCOL_VERSION = 1;
+export const BROWSERD_PROTOCOL_VERSION = 2;
 
 /**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
@@ -139,6 +147,34 @@ export interface ObservationStateToken {
   domHash: string;
 }
 
+/**
+ * What an `act` hands back once the page has settled.
+ *
+ * `both` is what an interactive model actually needs while acts still target
+ * by coordinate or selector: the tree says what is there, the screenshot says
+ * WHERE. `none` is for a caller driving a script it already trusts.
+ */
+export type ActObserve = "a11y" | "screenshot" | "both" | "none";
+
+/**
+ * Which reads an `observe` choice asks for — the ONE place guard and driver
+ * agree on the mapping, so a new member cannot mean two things in two files.
+ *
+ * `undefined` is the wire default (`"screenshot"`), not a synonym for `none`:
+ * a command from a caller that predates the field must still come back with
+ * the picture it has always come back with.
+ */
+export function wantsFor(observe: ActObserve | undefined): {
+  a11y: boolean;
+  screenshot: boolean;
+} {
+  const mode = observe ?? "screenshot";
+  return {
+    a11y: mode === "a11y" || mode === "both",
+    screenshot: mode === "screenshot" || mode === "both",
+  };
+}
+
 export type BrowserAction =
   | { kind: "navigate"; url: string; newTab?: boolean }
   | { kind: "back" }
@@ -153,10 +189,31 @@ export type BrowserAction =
         | "hover"
         | "drag"
         | "select"
+        | "fill_form"
         | "close_tab"
         | "activate_tab";
       target?: BrowserActTarget;
       value?: string;
+      /**
+       * `fill_form` only: the fields to fill, IN ORDER.
+       *
+       * A login or a search was three gated calls — type, type, press — and so
+       * three approvals for a person and three observations for the model.
+       * This is the same work as one, which is the shape Playwright MCP
+       * settled on and the reason there is no generic multi-step verb here:
+       * a small composite is orderable and reviewable, a sequence verb is
+       * neither.
+       */
+      fields?: Array<{ selector: string; value: string }>;
+      /**
+       * Press Enter once the text is in (`type` and `fill_form`).
+       *
+       * One settle and one observation for what is otherwise two commands,
+       * and the submit is the half a model most often forgets to pin: it acts
+       * on the page the typing produced, which is by definition a page nothing
+       * has observed yet.
+       */
+      submit?: boolean;
       /**
        * The observation token this act was decided from (L3). When present, the
        * daemon refuses the act if the tab's current state token no longer matches
@@ -164,6 +221,16 @@ export type BrowserAction =
        * can re-decide. Optional: a caller that opts out accepts stale targeting.
        */
       expectedState?: ObservationStateToken;
+      /**
+       * What to CAPTURE once the act has settled, so the model does not spend a
+       * second call asking what changed.
+       *
+       * Absent means `"screenshot"` — exactly what an act returned before this
+       * existed, so an old caller against a new daemon reads today's result and
+       * a new caller against an old daemon reads today's result too (the field
+       * is simply ignored there). The tool layer always sends one explicitly.
+       */
+      observe?: ActObserve;
     }
   | {
       kind: "observe";
@@ -275,9 +342,18 @@ export interface BrowserCommandResult {
   settled?: boolean;
   /**
    * Set when an `act` was REFUSED because its `expectedState` no longer matched
-   * the live tab (L3). The action did NOT run; `output`/`stateToken` carry the
-   * fresh observation so the caller can re-decide. The HTTP layer maps a result
-   * with this flag to `409 stale_observation`.
+   * the live tab (L3). The action did NOT run.
+   *
+   * `stateToken` is the tab's CURRENT token and `output` the observation that
+   * goes with it — read the same way an act reads its own aftermath, in the
+   * shape the act asked for. The refusal used to carry the token alone, which
+   * told the model "re-read the page" and then made it spend a call doing so:
+   * the recovery from a stale observation cost exactly the round trip the
+   * token exists to save. `output` is absent only when the read itself could
+   * not happen (a driver with no way to observe, or a person taking the
+   * browser during it — which comes back as `leaseBlocked` instead).
+   *
+   * The HTTP layer maps a result with this flag to `409 stale_observation`.
    */
   staleObservation?: boolean;
   /**
@@ -389,6 +465,8 @@ export const BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */

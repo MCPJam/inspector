@@ -163,6 +163,25 @@ The Chat/Trace tab renders widget tool calls as the same app-attributed cards yo
 - **JSON tool results** — Tool outputs that are JSON (including JSON wrapped in a text block) render as structured data in the card's **Data** tab rather than as a raw text block. There is no duplicate result row below the card.
 - **Frozen widget diagnostics** — When a widget was captured as a screenshot during the run, the card's **Sandbox** tab shows the recorded policy: resource URI, CSP declaration, permissions, permissive mode, and any console errors or blocked requests logged during that run. Live-only fields (sandbox attributes, lifecycle, view origin) show as **not recorded** because they are not available after the run completes.
 
+### The screen recording
+
+The **Replay** tab plays a recording of the run beside the screenshot
+filmstrip, and every step that captured an offset seeks the video to it.
+
+Unattended runs on a hosted browser are recorded at **15 fps**. Idle time is
+held rather than dropped, so the file's duration matches the run's wall clock
+even when the page sat still for a minute — the frame count above the player
+is the number of *distinct* frames, which is small on a page that did not move
+and is not a sign of a fault.
+
+Recordings stop at **60 MiB** and say so. A capped take is a complete, playable
+*beginning* of the run, not a corrupt file and not the whole run: the player
+shows a **Stopped at the size limit** badge, so a twelve-minute recording of a
+forty-minute run is never mistaken for the run itself. Long runs that routinely
+cap are the signal to shorten the case rather than to distrust the video.
+
+A run that never uses a browser tool records nothing, and costs nothing.
+
 
 
 Checks are what actually decide pass/fail. They're pure functions of the iteration transcript, so the verdict is the same every time you replay it — which is the property you want if you're using Evaluate as a regression gate.
