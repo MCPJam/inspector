@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
+import type { EvalTraceVideoMeta } from "@/shared/eval-trace";
 import type {
   EvalTraceSpan,
   EvalTraceWidgetSnapshot,
@@ -928,6 +929,26 @@ export type FinalizeEvalIterationParams = {
    * iteration, so this is iteration-level, not per-turn.
    */
   videoBytes?: Buffer | null;
+  /**
+   * The container `videoBytes` is in.
+   *
+   * EXPLICIT rather than sniffed, and defaulted to `video/webm` by the
+   * uploader so every existing caller is unchanged. It matters because Convex
+   * serves back exactly the content type the bytes were posted with: an MP4
+   * announced as `video/webm` is a file a browser refuses to play, and the
+   * only symptom is an empty player on the trace page.
+   */
+  videoMime?: string;
+  /**
+   * What the recording itself reports — duration, rate, how many distinct
+   * frames it actually holds, and whether it was cut short at the size cap.
+   *
+   * Beside the bytes rather than derived from them: the daemon is the only
+   * thing that knows a take stopped early, and re-deriving a duration by
+   * demuxing the file here would be work that answers a question already
+   * answered.
+   */
+  videoMeta?: EvalTraceVideoMeta;
   /** Explicit harness lifecycle status; never infer it from the verdict. */
   status: IterationStatus;
   startedAt?: number;
@@ -989,6 +1010,8 @@ export async function finalizeEvalIteration(
     widgetRenderObservations,
     browserInteractionSteps,
     videoBytes,
+    videoMime,
+    videoMeta,
     status,
     startedAt,
     error,
@@ -1094,7 +1117,9 @@ export async function finalizeEvalIteration(
   let videoBlobId: string | undefined;
   if (videoBytes && videoBytes.length > 0) {
     try {
-      videoBlobId = await uploadVideoBlob(convexClient, videoBytes);
+      videoBlobId = await uploadVideoBlob(convexClient, videoBytes, {
+        ...(videoMime ? { contentType: videoMime } : {}),
+      });
     } catch (err) {
       logger.warn("[evals] replay video upload failed; finalizing without it", {
         iterationId,
@@ -1116,6 +1141,10 @@ export async function finalizeEvalIteration(
     widgetRenderObservations: serializedWidgetRenderObservations,
     browserInteractionSteps: serializedBrowserInteractionSteps,
     ...(videoBlobId ? { videoBlobId } : {}),
+    // Only alongside a blob that actually landed. Metadata describing a video
+    // nothing uploaded would render a duration and an fps under an empty
+    // player — worse than no metadata, because it asserts a recording exists.
+    ...(videoBlobId && videoMeta ? { videoMeta } : {}),
   });
   // Fall back to the W1 single-call path ONLY when the fanout failed
   // before any turn landed. With turns already written, re-sending
@@ -1197,7 +1226,14 @@ export async function finalizeEvalIteration(
               : {}),
             // Iteration replay video already uploaded above; carry the storageId
             // onto the W1 fallback so the replay survives the fanout-failed path.
-            ...(videoBlobId ? { videoBlobId } : {}),
+            ...(videoBlobId
+              ? {
+                  videoBlobId,
+                  // ...and what it says about itself, on the same call. On its
+                  // own it would render a duration under an empty player.
+                  ...(videoMeta ? { videoMeta } : {}),
+                }
+              : {}),
           }
         : {}),
       error,

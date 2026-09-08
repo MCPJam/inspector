@@ -38,6 +38,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type {
   BrowserInteractionStepPayload,
+  EvalTraceVideoMeta,
   RunnerBrowserInteractionStep,
   RunnerWidgetRenderObservation,
   WidgetRenderObservationPayload,
@@ -78,8 +79,18 @@ export interface BrowserArtifactOutbox {
   /**
    * Upload the terminal replay video and hold its blob id for the next flush.
    * Idempotent — a no-op once a video is staged or attached. Never throws.
+   *
+   * `options` names the container and what the recording says about itself.
+   * Omitted by the local harness, whose replay has always been a `.webm` — the
+   * uploader's default. A hosted daemon's MP4 MUST say so: Convex serves back
+   * exactly the content type the bytes were posted with, so an MP4 announced
+   * as webm is a file the browser refuses to play, and the only symptom is an
+   * empty player on the trace page.
    */
-  stageVideo(bytes: Buffer): Promise<void>;
+  stageVideo(
+    bytes: Buffer,
+    options?: { mime?: string; meta?: EvalTraceVideoMeta },
+  ): Promise<void>;
   /**
    * Serialize anything not yet serialized, then attempt every held batch (and
    * the staged video). Whatever fails stays held. Never throws; returns what
@@ -112,6 +123,8 @@ export function createBrowserArtifactOutbox(args: {
   const raw = new Map<number, RawBucket>();
   const wire = new Map<number, WireBatch>();
   let stagedVideoBlobId: string | undefined;
+  /** What the staged recording says about itself; rides the same write. */
+  let stagedVideoMeta: EvalTraceVideoMeta | undefined;
   let videoAttached = false;
   let client: ConvexHttpClient | null = null;
   let clientUnavailable = false;
@@ -270,12 +283,18 @@ export function createBrowserArtifactOutbox(args: {
       }
     },
 
-    async stageVideo(bytes) {
+    async stageVideo(bytes, options) {
       if (videoAttached || stagedVideoBlobId || bytes.length === 0) return;
       const convexClient = getClient();
       if (!convexClient) return;
       try {
-        stagedVideoBlobId = await uploadVideoBlob(convexClient, bytes);
+        stagedVideoBlobId = await uploadVideoBlob(convexClient, bytes, {
+          ...(options?.mime ? { contentType: options.mime } : {}),
+        });
+        // Held beside the blob id and written with it, never on its own:
+        // metadata describing a video nothing uploaded would render a duration
+        // and an fps under an empty player.
+        stagedVideoMeta = stagedVideoBlobId ? options?.meta : undefined;
         if (stagedVideoBlobId === undefined) {
           // `uploadVideoBlob` also returns undefined WITHOUT throwing — an
           // unusable upload URL, or a response carrying no storageId. Staging
@@ -349,7 +368,14 @@ export function createBrowserArtifactOutbox(args: {
                 ...(batch.steps.length
                   ? { browserInteractionSteps: batch.steps }
                   : {}),
-                ...(carriesVideo ? { videoBlobId: stagedVideoBlobId } : {}),
+                ...(carriesVideo
+                  ? {
+                      videoBlobId: stagedVideoBlobId,
+                      ...(stagedVideoMeta
+                        ? { videoMeta: stagedVideoMeta }
+                        : {}),
+                    }
+                  : {}),
               },
             );
             // The session row hasn't landed yet (`/ingest-chat` race) — a
@@ -383,6 +409,7 @@ export function createBrowserArtifactOutbox(args: {
         if (carriesVideo) {
           videoAttached = true;
           stagedVideoBlobId = undefined;
+          stagedVideoMeta = undefined;
         }
       }
 
@@ -392,11 +419,17 @@ export function createBrowserArtifactOutbox(args: {
         try {
           const result = await convexClient.mutation(
             "chatSessions:recordBrowserArtifacts" as any,
-            { ...auth, promptIndex: 0, videoBlobId: stagedVideoBlobId },
+            {
+              ...auth,
+              promptIndex: 0,
+              videoBlobId: stagedVideoBlobId,
+              ...(stagedVideoMeta ? { videoMeta: stagedVideoMeta } : {}),
+            },
           );
           if (result != null) {
             videoAttached = true;
             stagedVideoBlobId = undefined;
+            stagedVideoMeta = undefined;
           }
         } catch (err) {
           logger.warn(`[${logScope}] replay video attach failed`, {
