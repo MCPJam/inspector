@@ -52,11 +52,12 @@ export function foldSizeLabel(text: string): string {
   if (lines > FOLD_LINE_LIMIT) {
     return `${lines} lines`;
   }
-  // Folded on length instead. Characters up to a kilobyte, because "1,400
-  // characters" is a size a reader can picture; KB past that, because
-  // "512,000 characters" is not.
-  if (text.length >= 1024) {
-    return `${(text.length / 1024).toFixed(1)} KB`;
+  // Folded on length instead. Counted in CHARACTERS, not bytes: `text.length`
+  // is UTF-16 code units, so calling it KB would understate any payload that
+  // is not plain ASCII by however much UTF-8 expands it. Abbreviated past a
+  // thousand, because "512,000 characters" is not a size anyone pictures.
+  if (text.length >= 1000) {
+    return `${(text.length / 1000).toFixed(1)}k characters`;
   }
   return `${text.length} characters`;
 }

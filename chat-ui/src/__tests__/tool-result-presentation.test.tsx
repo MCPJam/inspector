@@ -164,7 +164,7 @@ describe("tool result presentation", () => {
     const toggle = screen.getByRole("button", { name: /Output/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle.textContent).not.toContain("1 lines");
-    expect(toggle.textContent).toContain("KB");
+    expect(toggle.textContent).toContain("k characters");
     // Two words, not one, for anything computing an accessible name off the
     // concatenated text rather than off the flex gap a sighted reader sees.
     expect(toggle.textContent).toContain("Output ");
@@ -345,7 +345,7 @@ describe("fold thresholds", () => {
     expect(foldSizeLabel("x".repeat(FOLD_CHAR_LIMIT + 100))).toBe(
       "900 characters",
     );
-    expect(foldSizeLabel("x".repeat(2048))).toBe("2.0 KB");
+    expect(foldSizeLabel("x".repeat(2000))).toBe("2.0k characters");
   });
 
   it("counts lines without a trailing-newline off-by-one", () => {
