@@ -73,6 +73,7 @@ import {
   listAgentSessions,
   mirrorLedger,
   openAgentSession,
+  artifactMediaType,
   readArtifact,
   readLedger,
   readSession,
@@ -91,6 +92,15 @@ const computers = new Hono();
  * hand the browser an unbounded array to replay.
  */
 const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
+
+/**
+ * The only media types the agent artifact store writes.
+ *
+ * Anything else is served as `application/octet-stream`: the type rides on a
+ * row alongside page-derived content, and a browser that will render whatever
+ * a `content-type` claims is one redirect away from executing it.
+ */
+const ARTIFACT_MEDIA_TYPES = new Set(["image/jpeg", "text/plain"]);
 
 computers.use("/local-consent/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-consent/*", async (c, next) => {
@@ -1017,16 +1027,23 @@ computers.post("/local-browser/artifact", async (c) => {
   const projectId = typeof body?.projectId === "string" ? body.projectId : "";
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const artifactId = typeof body?.artifactId === "string" ? body.artifactId : "";
-  const mediaType =
-    typeof body?.mediaType === "string" ? body.mediaType : "image/jpeg";
   if (!artifactId) return c.json({ error: "An artifactId is required" }, 400);
   let bytes: Buffer | undefined;
+  // The media type comes from the ROW that named this artifact, never from the
+  // request. A caller's `mediaType` is what it hopes to get; echoing it into a
+  // `content-type` is how page-derived text ends up served as `text/html`.
+  let mediaType: string | undefined;
   try {
+    const validSession = validateSessionId(sessionId);
+    mediaType = await artifactMediaType({
+      projectId,
+      sessionId: validSession,
+      artifactId,
+    });
     bytes = await readArtifact({
       projectId,
-      sessionId: validateSessionId(sessionId),
+      sessionId: validSession,
       artifactId,
-      mediaType,
     });
   } catch {
     return c.json({ error: "invalid_session" }, 404);
@@ -1040,8 +1057,15 @@ computers.post("/local-browser/artifact", async (c) => {
   // is the web `BodyInit` and naming the web type keeps this honest about what
   // is actually being written.
   return c.body(new Uint8Array(bytes), 200, {
-    "content-type": mediaType,
+    // Narrowed to what the store actually writes, whatever the row says. A
+    // media type is metadata that travelled with page content, and this
+    // response is served from the Inspector's own origin.
+    "content-type": ARTIFACT_MEDIA_TYPES.has(mediaType ?? "")
+      ? (mediaType as string)
+      : "application/octet-stream",
     "content-length": String(bytes.byteLength),
+    // Belt and braces: even a narrowed type should not be re-interpreted.
+    "x-content-type-options": "nosniff",
   });
 });
 

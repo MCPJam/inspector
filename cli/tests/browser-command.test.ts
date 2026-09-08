@@ -156,6 +156,76 @@ test("an executed-but-failed command is not reported as a success", async () => 
   assert.equal(emitForTests({ status: "unknown" }).success, false);
 });
 
+test("the normalized success wins over anything in the payload", async () => {
+  // Spread-then-assign, not the other way round: a payload carrying its own
+  // `success` would otherwise override the normalization, and the field a
+  // script branches on would come from the wire rather than the outcome rules.
+  const { emitForTests } = await import("../src/commands/browser.js");
+  assert.equal(
+    emitForTests({ status: "executed", ok: false, success: true }).success,
+    false,
+  );
+  assert.equal(
+    emitForTests({ status: "refused", success: true }).success,
+    false,
+  );
+});
+
+test("a project name that is an inherited property is not a session", async () => {
+  // A parsed JSON object still inherits from Object.prototype, so
+  // `--project toString` resolved to a function and was handed on as a session.
+  const file = await stateFile({ version: 1, consent: "cap", sessions: {} });
+  const result = await runCli(
+    ["--format", "json", "browser", "observe", "--project", "toString"],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /No open browser session/i);
+});
+
+test("the consent capability is never sent to a cleartext remote Inspector", async () => {
+  // It authorizes driving a browser signed into the user's accounts; in
+  // cleartext to a remote host it is on the wire for anyone on the path.
+  const file = await stateFile({
+    version: 1,
+    consent: "cap",
+    sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
+  });
+  const remote = await runCli(
+    [
+      "--format",
+      "json",
+      "browser",
+      "observe",
+      "--project",
+      "p",
+      "--inspector-url",
+      "http://inspector.example.com",
+    ],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(remote.exitCode, 0);
+  assert.match(remote.stderr + remote.stdout, /cleartext/i);
+  // …but http://localhost is how everybody actually runs it.
+  const local = await runCli(
+    [
+      "--format",
+      "json",
+      "browser",
+      "observe",
+      "--project",
+      "p",
+      "--inspector-url",
+      "http://localhost:6274",
+    ],
+    undefined,
+    { env: env(file) },
+  );
+  assert.doesNotMatch(local.stderr + local.stdout, /cleartext/i);
+});
+
 test("act and navigate default to folding in an a11y observation", async () => {
   // One round trip, one ledger row, and refs for the next act — a screenshot
   // carries none.

@@ -272,7 +272,12 @@ function sessionKey(args: EnsureLocalBrowserArgs): string {
         "ownerKey two unattended runs would share one profile",
     );
   }
-  return `${project}:ephemeral:${owner}`;
+  // `captureTypedText` is part of the KEY, because it configures the daemon at
+  // boot and a reused session keeps whatever the first one asked for. Without
+  // this, a run that asked for recording and a later run on the same owner key
+  // that did not would share a browser whose ledger records typed values — the
+  // quieter direction of that mistake, and the one nobody would notice.
+  return `${project}:ephemeral:${owner}${args.captureTypedText ? ":typed" : ""}`;
 }
 
 /**
@@ -753,6 +758,15 @@ function disposeSession(session: LocalSession): Promise<void> {
 
 /** Close every local browser. Non-latching: the app may start another. */
 /**
+ * Who the teardown claims the lease as.
+ *
+ * A `script` holder rather than a `human` one: nothing is going to hand this
+ * back, and the lease's resume semantics for a script are the ones that
+ * describe a process that took the page and then finished with it.
+ */
+const TEARDOWN_HOLDER = "browserd:teardown";
+
+/**
  * Close ONE local browser, by the boot the caller is looking at.
  *
  * `killLocalBrowserSessions` closes every browser on the machine, which is the
@@ -768,15 +782,24 @@ export async function closeLocalBrowserSession(
 ): Promise<{ closed: true } | { closed: false; reason: "not_found" | "lease_held" }> {
   for (const session of sessions.values()) {
     if (session.stack.bootId !== bootId) continue;
-    // RE-CHECKED HERE, not only by the caller. A route asks the lease and then
-    // awaits — reading the session, writing the participant list — and a person
-    // can take the browser inside that window. Closing it then shuts the window
-    // they are typing into, which is the one thing termination must never do.
-    if (session.lease.isBlocking()) {
+    // CLAIMED, not merely checked. A read says who held the lease a moment ago;
+    // `acquire` says who holds it now and keeps holding it. It returns the
+    // OTHER holder's state unchanged when somebody already has the browser, so
+    // "it took" is the only atomic way to know the page is ours to close — and
+    // holding it through disposal closes the window in which a person takes the
+    // browser between the check and the teardown.
+    const claim = session.lease.acquire(TEARDOWN_HOLDER, 30_000, "script");
+    if (claim.state !== "held" || claim.holder !== TEARDOWN_HOLDER) {
       return { closed: false, reason: "lease_held" };
     }
     session.stack.closeStreams();
-    await disposeSession(session);
+    // The SAME per-key lock the sweep and the kill path take. Without it a
+    // `session`/`ensure` arriving a moment later either reuses an entry that is
+    // already disposing or launches straight into the profile's singleton lock
+    // that Chromium has not yet released, and the caller sees `profile_in_use`.
+    await withKeyedLock(`local-browser:${session.key}`, () =>
+      disposeSession(session),
+    );
     return { closed: true };
   }
   return { closed: false, reason: "not_found" };

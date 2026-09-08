@@ -18,6 +18,7 @@ vi.mock("node:os", async () => {
 
 const {
   appendNote,
+  artifactMediaType,
   findOpenSession,
   leaveAgentSession,
   listAgentSessions,
@@ -349,7 +350,6 @@ describe("the durable ledger sink", () => {
       projectId: PROJECT,
       sessionId: session.sessionId,
       artifactId: artifactId!,
-      mediaType: "image/jpeg",
     });
     expect(bytes?.toString()).toBe("PIXELS");
     // The daemon's store is a hand-off buffer, not a second copy: holding
@@ -384,9 +384,44 @@ describe("the durable ledger sink", () => {
         sessionId: session.sessionId,
         artifactId:
           row.kind === "command" ? row.artifacts!.screenshot!.id : "",
-        mediaType: "image/jpeg",
       }),
     ).toBeUndefined();
+  });
+
+  it("finds a TEXT artifact without being told its media type", async () => {
+    // The filename used to carry an extension derived from the media type, so a
+    // reader had to already know what an artifact was in order to find it: a
+    // fetch without one looked for `<id>.jpg` and 410'd on a file sitting right
+    // there as `<id>.txt`. The row carries the type; the name only has to be
+    // unique.
+    const created = await open();
+    const session = created.ok ? created.session : null;
+    if (!session) throw new Error("no session");
+    const ledger = ledgerWith("boot-1", [
+      { id: "c1", output: { text: "readable page text" } },
+    ]);
+    await mirrorLedger({ session, ledger, bootId: "boot-1" });
+    const trace = await readLedger({
+      projectId: PROJECT,
+      sessionId: session.sessionId,
+    });
+    const row = trace.entries[0];
+    const ref = row.kind === "command" ? row.artifacts?.text : undefined;
+    expect(ref?.mediaType).toBe("text/plain");
+    const bytes = await readArtifact({
+      projectId: PROJECT,
+      sessionId: session.sessionId,
+      artifactId: ref!.id,
+    });
+    expect(bytes?.toString()).toBe("readable page text");
+    // …and the row is what says how to interpret those bytes.
+    expect(
+      await artifactMediaType({
+        projectId: PROJECT,
+        sessionId: session.sessionId,
+        artifactId: ref!.id,
+      }),
+    ).toBe("text/plain");
   });
 
   it("reads forward from a cursor and by commandId", async () => {

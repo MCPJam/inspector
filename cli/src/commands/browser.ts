@@ -105,14 +105,54 @@ function sessionOf(options: CommonOptions, projectId: string): string {
   if (typeof options.session === "string" && options.session.trim()) {
     return options.session.trim();
   }
-  const stored = readBrowserState(getBrowserStateFilePath()).sessions?.[
-    projectId
-  ];
-  if (stored) return stored;
+  // `Object.hasOwn`, because a parsed JSON object still inherits from
+  // `Object.prototype`: `--project toString` would otherwise resolve to a
+  // function and be handed on as though it were a session id.
+  const sessions = readBrowserState(getBrowserStateFilePath()).sessions;
+  const stored =
+    sessions && Object.hasOwn(sessions, projectId)
+      ? sessions[projectId]
+      : undefined;
+  if (typeof stored === "string" && stored) return stored;
   throw usageError(
     `No open browser session for project \`${projectId}\`.`,
     "Run `mcpjam browser open` first, or pass --session <id>.",
   );
+}
+
+/**
+ * The Inspector base URL these commands may use.
+ *
+ * Every request here carries the local computer CONSENT capability — a
+ * credential that authorizes driving a browser signed into the user's accounts.
+ * Sending it in cleartext to a host that is not this machine puts it on the
+ * wire for anyone on the path, so http:// is admitted for loopback only.
+ * (`normalizeInspectorBaseUrl` is shared with every other CLI command and is
+ * deliberately not changed here; this is the narrower rule this credential
+ * needs.)
+ */
+function browserBaseUrl(options: CommonOptions): string {
+  const baseUrl = normalizeInspectorBaseUrl(
+    typeof options.inspectorUrl === "string" ? options.inspectorUrl : undefined,
+  );
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw usageError(`\`${baseUrl}\` is not a valid Inspector URL.`);
+  }
+  const loopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "[::1]" ||
+    parsed.hostname === "::1";
+  if (parsed.protocol !== "https:" && !loopback) {
+    throw usageError(
+      `Refusing to send the local computer consent capability to ${baseUrl} in cleartext.`,
+      "Use https:// for a remote Inspector; http:// is allowed for localhost only.",
+    );
+  }
+  return baseUrl;
 }
 
 async function post(
@@ -121,11 +161,7 @@ async function post(
   body: Record<string, unknown>,
   timeoutMs?: number,
 ): Promise<Record<string, unknown>> {
-  const client = new InspectorApiClient({
-    baseUrl: normalizeInspectorBaseUrl(
-      typeof options.inspectorUrl === "string" ? options.inspectorUrl : undefined,
-    ),
-  });
+  const client = new InspectorApiClient({ baseUrl: browserBaseUrl(options) });
   const result = await client.request(`${BROWSER_ROUTE}${path}`, {
     method: "POST",
     body,
@@ -158,6 +194,7 @@ async function fetchScreenshot(
   page: unknown,
   outDir?: string,
   inline = false,
+  timeoutMs?: number,
 ): Promise<
   | { kind: "none" }
   | { kind: "file"; path: string }
@@ -178,9 +215,7 @@ async function fetchScreenshot(
       detail: "the screenshot was captured but its payload is no longer kept",
     };
   }
-  const baseUrl = normalizeInspectorBaseUrl(
-    typeof options.inspectorUrl === "string" ? options.inspectorUrl : undefined,
-  );
+  const baseUrl = browserBaseUrl(options);
   // Its OWN fetch, rather than the shared `request` helper, and for a reason
   // that is easy to get wrong: that helper reads every response with
   // `response.text()`, which decodes as UTF-8 and replaces every invalid
@@ -194,12 +229,11 @@ async function fetchScreenshot(
       "X-MCP-Session-Auth": `Bearer ${token}`,
       [LOCAL_CONSENT_HEADER]: consentOf(options),
     },
-    body: JSON.stringify({
-      projectId,
-      sessionId,
-      artifactId: artifact.id,
-      mediaType: artifact.mediaType ?? "image/jpeg",
-    }),
+    body: JSON.stringify({ projectId, sessionId, artifactId: artifact.id }),
+    // The SAME budget the command itself got. Without a signal a route that
+    // keeps its response body open never settles `arrayBuffer()`, and the CLI
+    // sits there having already run the command it will never print.
+    signal: AbortSignal.timeout(timeoutMs ?? 30_000),
   });
   if (!response.ok) {
     // REPORTED, not silently turned into "there was no screenshot". A caller
@@ -323,6 +357,8 @@ export function registerBrowserCommands(program: Command): void {
           session.sessionId,
           body.page,
           typeof options.outDir === "string" ? options.outDir : undefined,
+          false,
+          globalOptions.timeout,
         ).catch((error: unknown) => ({
           kind: "failed" as const,
           detail: error instanceof Error ? error.message : String(error),
@@ -377,6 +413,7 @@ export function registerBrowserCommands(program: Command): void {
         projectId,
         sessionId,
         format: globalOptions.format,
+        timeoutMs: globalOptions.timeout,
         saveScreenshots: options.mode === "screenshot" && !options.inline,
         inline: options.mode === "screenshot" && options.inline === true,
         outDir: typeof options.outDir === "string" ? options.outDir : undefined,
@@ -427,6 +464,7 @@ export function registerBrowserCommands(program: Command): void {
         projectId,
         sessionId,
         format: globalOptions.format,
+        timeoutMs: globalOptions.timeout,
         saveScreenshots: options.observeAfter === "screenshot",
         outDir: typeof options.outDir === "string" ? options.outDir : undefined,
       });
@@ -490,6 +528,7 @@ export function registerBrowserCommands(program: Command): void {
         projectId,
         sessionId,
         format: globalOptions.format,
+        timeoutMs: globalOptions.timeout,
         saveScreenshots: options.observeAfter === "screenshot",
         outDir: typeof options.outDir === "string" ? options.outDir : undefined,
       });
@@ -622,6 +661,7 @@ async function emit(
     saveScreenshots: boolean;
     inline?: boolean;
     outDir?: string;
+    timeoutMs?: number;
   },
 ): Promise<void> {
   let extra: Record<string, unknown> = {};
@@ -636,6 +676,7 @@ async function emit(
       page,
       context.outDir,
       context.inline === true,
+      context.timeoutMs,
     ).catch((error: unknown) => ({
       kind: "failed" as const,
       detail: error instanceof Error ? error.message : String(error),
@@ -660,9 +701,13 @@ async function emit(
  * form were submitted.
  */
 function envelopeFor(result: Record<string, unknown>): Record<string, unknown> {
+  // Spread FIRST, then assign. The other way round, a payload carrying its own
+  // `success` would override the normalization this function exists to do —
+  // and the field a script branches on would come from the wire rather than
+  // from the outcome rules.
   return {
-    success: result.status === "executed" && result.ok !== false,
     ...result,
+    success: result.status === "executed" && result.ok !== false,
   };
 }
 

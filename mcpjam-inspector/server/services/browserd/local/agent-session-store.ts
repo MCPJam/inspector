@@ -524,7 +524,7 @@ async function drainArtifact(
   if (!payload) return false;
   const artifactsDir = join(dir, ARTIFACTS_DIR);
   await ensureDir(artifactsDir);
-  const file = join(artifactsDir, artifactFileName(artifactId, payload.mediaType));
+  const file = join(artifactsDir, artifactFileName(artifactId));
   await writeFile(
     file,
     payload.encoding === "base64"
@@ -536,13 +536,21 @@ async function drainArtifact(
   return true;
 }
 
-function artifactFileName(artifactId: string, mediaType: string): string {
-  const extension = mediaType === "image/jpeg" ? "jpg" : "txt";
+/**
+ * The file one artifact is stored as.
+ *
+ * NAMED BY ID ALONE, with no extension derived from the media type. Coupling
+ * them meant a reader had to already know an artifact's type in order to find
+ * it: a caller fetching a text artifact without saying so looked for `<id>.jpg`
+ * and got a 410 for a file sitting right there under `<id>.txt`. The row
+ * carries the media type; the filename only has to be unique and safe.
+ */
+function artifactFileName(artifactId: string): string {
   // The id is minted by the daemon and never reaches here from a caller, but
   // this path is joined onto a directory, so the segment is still constrained.
   const safe = artifactId.replace(/[^A-Za-z0-9_-]/g, "");
   if (!safe) throw new Error("invalid artifact id");
-  return `${safe}.${extension}`;
+  return safe;
 }
 
 /** Read one artifact back off disk, for the trace's fetch-by-id. */
@@ -550,14 +558,39 @@ export async function readArtifact(args: {
   projectId: string;
   sessionId: string;
   artifactId: string;
-  mediaType: string;
 }): Promise<Buffer | undefined> {
   const file = join(
     sessionDir(args.projectId, args.sessionId),
     ARTIFACTS_DIR,
-    artifactFileName(args.artifactId, args.mediaType),
+    artifactFileName(args.artifactId),
   );
   return readFile(file).catch(() => undefined);
+}
+
+/**
+ * What kind of thing an artifact is, according to the row that named it.
+ *
+ * The DESCRIPTOR is the authority, not the caller: a request that names its own
+ * media type is naming what it hopes to get, and echoing that back into a
+ * `content-type` is how page-derived text ends up served as HTML.
+ */
+export async function artifactMediaType(args: {
+  projectId: string;
+  sessionId: string;
+  artifactId: string;
+}): Promise<string | undefined> {
+  const { entries } = await readLedger({
+    projectId: args.projectId,
+    sessionId: args.sessionId,
+    limit: 1000,
+  });
+  for (const entry of entries) {
+    if (entry.kind !== "command" || !entry.artifacts) continue;
+    for (const ref of Object.values(entry.artifacts)) {
+      if (ref?.id === args.artifactId) return ref.mediaType;
+    }
+  }
+  return undefined;
 }
 
 /**
