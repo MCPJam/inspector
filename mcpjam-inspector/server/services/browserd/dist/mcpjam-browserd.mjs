@@ -3873,6 +3873,16 @@ var ChromiumDriver = class {
     }
   }
   async webmcpInvoke(tabId, action, permit, commandId) {
+    this.activeInvocations.add(commandId);
+    try {
+      return await this.runWebmcpInvoke(tabId, action, permit, commandId);
+    } finally {
+      this.activeInvocations.delete(commandId);
+      this.pendingCancels.delete(commandId);
+    }
+  }
+  /** The body of `webmcpInvoke`, run inside its in-flight registration. */
+  async runWebmcpInvoke(tabId, action, permit, commandId) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -3903,7 +3913,6 @@ var ChromiumDriver = class {
         };
       }
     }
-    this.activeInvocations.add(commandId);
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -3950,9 +3959,6 @@ var ChromiumDriver = class {
         ok: false,
         error: error instanceof WebMcpBridgeError ? `${error.failure}: ${error.message}` : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`
       };
-    } finally {
-      this.activeInvocations.delete(commandId);
-      this.pendingCancels.delete(commandId);
     }
   }
   async webmcpCancel(tabId, action, permit) {

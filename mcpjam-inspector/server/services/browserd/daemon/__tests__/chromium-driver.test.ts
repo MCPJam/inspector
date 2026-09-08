@@ -2216,6 +2216,63 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     expect(cancelled).toEqual([]);
   });
 
+  it("latches a Stop that lands while the BRIDGE is still resolving", async () => {
+    // The window before `bridge.invoke` is reached at all: resolving the page's
+    // bridge and settling its probe are both awaits, and a Stop landing in them
+    // has no invocation to name AND, if the command is not yet registered as in
+    // flight, nothing to latch onto either. It was dropped, and the invoke then
+    // proceeded under a cancellation that had already arrived — the same
+    // failure as the `onStarted` race, one await earlier.
+    const cancelled: string[] = [];
+    let resolveBridge: ((bridge: unknown) => void) | undefined;
+    let releaseInvoke: (() => void) | undefined;
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        (args.onStarted as ((id: string) => void) | undefined)?.("inv-slowb");
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+        return { invocationId: "inv-slowb", output: { ok: true } };
+      },
+      cancel: async (invocationId: string) => {
+        cancelled.push(invocationId);
+        return true;
+      },
+    };
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge as never });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    // From here the bridge resolves only when this test says so.
+    page.webmcp = () =>
+      new Promise((resolve) => {
+        resolveBridge = resolve;
+      }) as never;
+
+    const invoking = driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-slowb",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Stop, with the bridge not yet resolved — before `invoke` is even called.
+    await driver.execute(cmd({ kind: "webmcp_cancel", commandId: "cmd-slowb" }));
+    expect(cancelled).toEqual([]);
+
+    resolveBridge?.(bridge);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelled).toEqual(["inv-slowb"]);
+
+    releaseInvoke?.();
+    await invoking;
+  });
+
   it("latches NOTHING for a command that is not running", async () => {
     // A cancel can arrive long after its invoke failed early — a refused
     // binding, no bridge, a lease. That command will never reach `onStarted`

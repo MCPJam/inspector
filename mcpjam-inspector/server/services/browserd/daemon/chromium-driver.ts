@@ -623,6 +623,32 @@ export class ChromiumDriver implements BrowserDriver {
     permit: () => boolean,
     commandId: string,
   ): Promise<BrowserCommandResult> {
+    // REGISTERED FIRST, before anything that can await.
+    //
+    // This set answers "is this command in flight", and the honest answer from
+    // the moment it is dequeued is yes. Registering it later — after the bridge
+    // resolve and the probe settle, as a first attempt did — left a window in
+    // which a Stop found nothing to latch onto, was dropped, and the invoke
+    // then proceeded under a cancellation that had already arrived. Every exit
+    // below is inside the `finally`, so an early return clears it too.
+    this.activeInvocations.add(commandId);
+    try {
+      return await this.runWebmcpInvoke(tabId, action, permit, commandId);
+    } finally {
+      // THE COMMAND IS OVER, so any cancellation still waiting on it is moot,
+      // and nothing may latch a new one against it from here.
+      this.activeInvocations.delete(commandId);
+      this.pendingCancels.delete(commandId);
+    }
+  }
+
+  /** The body of `webmcpInvoke`, run inside its in-flight registration. */
+  private async runWebmcpInvoke(
+    tabId: string,
+    action: Extract<BrowserAction, { kind: "webmcp_invoke" }>,
+    permit: () => boolean,
+    commandId: string,
+  ): Promise<BrowserCommandResult> {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -669,7 +695,6 @@ export class ChromiumDriver implements BrowserDriver {
         };
       }
     }
-    this.activeInvocations.add(commandId);
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -729,11 +754,6 @@ export class ChromiumDriver implements BrowserDriver {
             ? `${error.failure}: ${error.message}`
             : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`,
       };
-    } finally {
-      // THE COMMAND IS OVER, so any cancellation still waiting on it is moot,
-      // and nothing may latch a new one against it from here.
-      this.activeInvocations.delete(commandId);
-      this.pendingCancels.delete(commandId);
     }
   }
 
