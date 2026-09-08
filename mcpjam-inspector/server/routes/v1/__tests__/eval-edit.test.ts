@@ -8,6 +8,15 @@ import { Hono } from "hono";
 // columns leak), project-scope guards, null-clears, schedule preserve-interval,
 // environment edits without a live MCP connection, and generate persistence.
 
+// The schedule PATCH refuses an ENABLE unless the deployment switch is on
+// (`config.ts`, default OFF while Schedule is untested). These cases exercise
+// the schedule's own semantics — interval reuse, environment pinning — which
+// only exist past that guard, so the switch is on for this file. The guard
+// itself is covered in `eval-schedule-write-switch.test.ts`.
+vi.hoisted(() => {
+  process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED = "true";
+});
+
 const {
   validateGuestTokenMock,
   createAuthorizedManagerMock,
