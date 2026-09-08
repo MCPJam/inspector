@@ -821,6 +821,35 @@ export function operationDescription(
     : operation.description;
 }
 
+/**
+ * What this worker declares itself to be on the runs it launches.
+ *
+ * A run started through `run_eval_suite` reaches the platform at `/v1` like
+ * every other API call, so `source` stamps it `api` and the Runs table cannot
+ * tell an agent from a script. Declaring `mcp` is what makes it legible, and
+ * `client` names WHICH agent — half the question people actually ask.
+ *
+ * Declared at CLIENT CONSTRUCTION, not through the operation's input.
+ * `runEvalSuiteOperation.inputSchema` is exposed verbatim as this tool's input
+ * schema, so a launcher field there would be a label a model writes about a
+ * request it did not make. This is the worker speaking about itself.
+ *
+ * Exported for its test: it is one object literal, and a test that reached it
+ * through a launch would have to fixture the whole project/suite resolution
+ * chain to assert one label.
+ */
+export function workerLauncher(callingAgent: string | undefined): {
+  kind: "mcp";
+  client?: string;
+} {
+  // Absent stays absent. An empty `client` renders as a named client with no
+  // name, which is worse than an unnamed MCP run.
+  return {
+    kind: "mcp",
+    ...(callingAgent ? { client: callingAgent } : {}),
+  };
+}
+
 export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
@@ -839,6 +868,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
+    launcher: workerLauncher(context.callingAgent),
   });
 
   try {

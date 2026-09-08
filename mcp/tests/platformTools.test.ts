@@ -12,6 +12,7 @@ import {
   PLATFORM_TOOL_WIDGET_VIEWS,
   registerPlatformCatalogTools,
   runPlatformOperation,
+  workerLauncher,
 } from "../src/tools/platformTools.js";
 import {
   registerShowServersTool,
@@ -87,6 +88,7 @@ function fakeToolContext(
     bearerToken?: string;
     platformApiUrl?: string;
     appOrigin?: string;
+    callingAgent?: string;
   } = {}
 ): PlatformToolContext {
   return {
@@ -98,6 +100,7 @@ function fakeToolContext(
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
       MCPJAM_APP_ORIGIN: overrides.appOrigin ?? "https://staging.example.com",
     },
+    ...(overrides.callingAgent ? { callingAgent: overrides.callingAgent } : {}),
   };
 }
 
@@ -902,6 +905,77 @@ describe("plugin read tools", () => {
     // present regardless, so a consumer never has to branch on the field
     // existing.
     expect(result.structuredContent).toEqual({ ...version, permalinks: [] });
+  });
+});
+
+/**
+ * The worker declares ITSELF as the launcher.
+ *
+ * A run started through `run_eval_suite` reaches the platform at `/v1` like
+ * every other API call, so `source` stamps it `api` and the Runs table cannot
+ * tell an agent from a script. The declaration is made on the client the worker
+ * constructs — NOT through the operation's input, which is exposed verbatim as
+ * this tool's input schema and would therefore be something a model writes.
+ */
+describe("the calling agent is declared, not asked for", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("declares kind mcp, and names the agent when the caller sent one", () => {
+    expect(workerLauncher("claude-code/1.2.3")).toEqual({
+      kind: "mcp",
+      client: "claude-code/1.2.3",
+    });
+    // Absent stays absent: an empty `client` renders as a named client with no
+    // name, which is worse than an unnamed MCP run.
+    expect(workerLauncher(undefined)).toEqual({ kind: "mcp" });
+  });
+
+  it("does not put the launcher header on a read", async () => {
+    const requests: Array<{ headers: Record<string, string> }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        requests.push({
+          headers: ((init as { headers?: Record<string, string> })?.headers ??
+            {}) as Record<string, string>,
+        });
+        return Response.json({ items: [] });
+      })
+    );
+
+    await runPlatformOperation(
+      fakeToolContext({
+        bearerToken: "user-jwt",
+        callingAgent: "claude-code/1.2.3",
+      }),
+      listProjectsOperation,
+      {}
+    );
+
+    // A READ carries no launcher header — the SDK sends it on launches only —
+    // so what this pins is that declaring one does not leak onto every call.
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers["x-mcpjam-launcher"]).toBeUndefined();
+    expect(requests[0]?.headers["user-agent"]).toBe("mcpjam-mcp-worker/0.2.0");
+  });
+
+  it("keeps the launcher off every operation's input schema", () => {
+    // The one thing that must not happen. `run_eval_suite`'s input schema is
+    // published to the model verbatim, so a launcher field there would be a
+    // label a model could write about a request it did not make — which is
+    // exactly why the worker declares it on the client instead.
+    for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+      const shape = (
+        operation.inputSchema as { shape?: Record<string, unknown> }
+      ).shape;
+      if (!shape) continue;
+      expect(
+        Object.keys(shape),
+        `${operation.name} exposes a launcher field to the model`
+      ).not.toContain("launcher");
+    }
   });
 });
 

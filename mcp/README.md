@@ -305,6 +305,32 @@ The verified bearer token is forwarded to the Platform API
 the API sees the same WorkOS identity the main app does and applies its own
 per-project authorization to listings, probes, and eval runs.
 
+### Run attribution
+
+An eval run launched through `run_eval_suite` reaches the Platform API at
+`/api/v1` like every other call, so the platform stamps it `source: "api"`.
+That stamp is correct and unforgeable, and it cannot tell an MCP agent from a
+shell script — every launcher badges the same.
+
+So the worker **declares** itself on the client it builds for each request:
+`launcher: { kind: "mcp", client: <inbound user-agent> }`. The run then badges
+**MCP** in the Runs table, with the calling agent named beside it.
+
+Two decisions worth knowing:
+
+- **The user-agent, not `initialize`'s `clientInfo`.** The worker builds a fresh
+  `McpServer` per HTTP request (there is no Durable Object holding a session),
+  so no `initialize` handshake is available by the time a tool runs. The UA is
+  what the request actually carries.
+- **On the client, not in the tool's input.** `runEvalSuiteOperation.inputSchema`
+  is published verbatim as this tool's input schema, so a launcher field there
+  would be a label a model writes about a request it did not make. The worker
+  speaks about itself.
+
+The label is self-reported, so it is a display hint rather than audit evidence.
+The verified counterpart is minted from the credential and reported on the run
+as `attribution`; where the two disagree the app prefers the verified one.
+
 ### AuthKit domains
 
 | Target | `AUTHKIT_DOMAIN` |
