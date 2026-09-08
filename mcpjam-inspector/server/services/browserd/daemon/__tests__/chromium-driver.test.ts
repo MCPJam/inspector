@@ -1545,6 +1545,49 @@ describe("ChromiumDriver — the viewport follows its page, not its name", () =>
     expect(after).not.toBe(before);
   });
 
+  it("answers `viewportIfWatched` null until somebody actually watches", async () => {
+    // The whole point of the second accessor: the frame-rate boost after an
+    // agent command must not be what CREATES a viewport. On a box with no pane
+    // open, going through `viewport()` would attach a CDP screencast and
+    // start encoding JPEGs for nobody, on the same two cores the agent uses.
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }));
+    expect(driver.viewportIfWatched()).toBeNull();
+    // ...and asking did not open anything, either.
+    expect(created).toHaveLength(1);
+
+    const watched = await driver.viewport();
+    expect(await driver.viewportIfWatched()).toBe(watched);
+  });
+
+  it("never opens a tab of its own to answer `viewportIfWatched`", async () => {
+    // `viewport()` opens the startup page on a miss (a person opening the pane
+    // should see a browser, not an error). This must not.
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+
+    expect(driver.viewportIfWatched()).toBeNull();
+    expect(driver.viewportIfWatched("tab-9")).toBeNull();
+    expect(created).toHaveLength(0);
+  });
+
+  it("hands back the cached promise rather than doing any work of its own", async () => {
+    // It reads the map and returns what is in it — the same promise
+    // `viewport()` registered, not a second creation racing the first. Two
+    // screencasts on one page is two encoders for one picture.
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+
+    const watched = await driver.viewport();
+    const openedSoFar = created.length;
+
+    expect(driver.viewportIfWatched()).toBe(driver.viewportIfWatched());
+    expect(await driver.viewportIfWatched()).toBe(watched);
+    expect(created).toHaveLength(openedSoFar);
+  });
+
   it("opens ONE page when two callers ask for the same tab at once", async () => {
     const { context, created } = fakeContext();
     const driver = new ChromiumDriver(context);

@@ -286,6 +286,220 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/video-recorder.ts
+import { spawn } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+var MIN_RECORD_FPS = 1;
+var MAX_RECORD_FPS = 30;
+var DEFAULT_RECORD_FPS = 15;
+var DEFAULT_FINALIZE_GRACE_MS = 2e3;
+function recorderArgs(options) {
+  return [
+    "-loglevel",
+    "error",
+    "-progress",
+    "pipe:2",
+    "-f",
+    "x11grab",
+    "-framerate",
+    String(options.fps),
+    "-video_size",
+    `${options.width}x${options.height}`,
+    "-draw_mouse",
+    "1",
+    "-i",
+    options.display,
+    "-vf",
+    "mpdecimate",
+    "-fps_mode",
+    "vfr",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-tune",
+    "zerolatency",
+    "-threads",
+    "1",
+    "-profile:v",
+    "baseline",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    String(options.fps * 4),
+    "-sc_threshold",
+    "0",
+    "-crf",
+    "28",
+    "-maxrate",
+    "800k",
+    "-bufsize",
+    "1600k",
+    "-movflags",
+    "+frag_keyframe+empty_moov+default_base_moof",
+    "-fs",
+    String(options.maxBytes),
+    "-f",
+    "mp4",
+    options.outputPath
+  ];
+}
+function parseProgressFrames(chunk) {
+  let found;
+  for (const line2 of chunk.split("\n")) {
+    const match = /^frame=\s*(\d+)\s*$/.exec(line2.trim());
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) found = value;
+  }
+  return found;
+}
+function createVideoRecorder(options) {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+    stdio: [...spawnOptions.stdio]
+  }));
+  const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
+  const statFile = options.statFile ?? (async (path) => stat(path));
+  const now = options.now ?? Date.now;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let take;
+  let disposed = false;
+  const start = (args) => {
+    if (disposed) return { ok: false, error: "record_unavailable" };
+    if (take) return { ok: false, error: "record_active" };
+    const path = join(options.dir, `${args.id}.mp4`);
+    let child;
+    try {
+      child = spawnProcess(
+        ffmpegPath,
+        recorderArgs({
+          display: options.display,
+          width: options.width,
+          height: options.height,
+          fps: args.fps,
+          maxBytes: options.maxBytes,
+          outputPath: path
+        }),
+        // stdout ignored: everything this process says rides the progress pipe
+        // on stderr, and the video goes to a file.
+        { stdio: ["ignore", "ignore", "pipe"] }
+      );
+    } catch {
+      return { ok: false, error: "record_unavailable" };
+    }
+    let settleExit = () => {
+    };
+    const exited = new Promise((resolve) => {
+      settleExit = resolve;
+    });
+    const entry = {
+      id: args.id,
+      fps: args.fps,
+      path,
+      startedAtMs: now(),
+      child,
+      distinctFrames: 0,
+      exited,
+      settleExit,
+      endedEarly: false
+    };
+    take = entry;
+    child.on("error", () => {
+      if (take !== entry) return;
+      entry.endedEarly = true;
+      entry.settleExit();
+    });
+    child.on("exit", () => {
+      entry.settleExit();
+      if (take !== entry) return;
+      entry.endedEarly = true;
+    });
+    child.stderr.on("data", (chunk) => {
+      const frames = parseProgressFrames(String(chunk));
+      if (frames !== void 0) entry.distinctFrames = frames;
+    });
+    return { ok: true };
+  };
+  const stop = async () => {
+    const entry = take;
+    take = void 0;
+    if (!entry) return null;
+    if (!entry.endedEarly) {
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+      }
+    }
+    await entry.exited;
+    const durationMs = Math.max(0, now() - entry.startedAtMs);
+    let bytes = 0;
+    try {
+      bytes = (await statFile(entry.path)).size;
+    } catch {
+      bytes = 0;
+    }
+    return {
+      path: entry.path,
+      bytes,
+      durationMs,
+      distinctFrames: entry.distinctFrames,
+      truncated: entry.endedEarly
+    };
+  };
+  return {
+    start,
+    stop,
+    status() {
+      if (!take) return { active: false };
+      return {
+        active: true,
+        id: take.id,
+        fps: take.fps,
+        startedAtMs: take.startedAtMs,
+        distinctFrames: take.distinctFrames
+      };
+    },
+    async finalize(args) {
+      const entry = take;
+      if (!entry) return;
+      take = void 0;
+      if (entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGINT");
+      } catch {
+        return;
+      }
+      const graceMs = args?.graceMs ?? DEFAULT_FINALIZE_GRACE_MS;
+      let timer;
+      await Promise.race([
+        entry.exited,
+        new Promise((resolve) => {
+          timer = setTimer(() => {
+            try {
+              entry.child.kill("SIGKILL");
+            } catch {
+            }
+            resolve();
+          }, graceMs);
+        })
+      ]);
+      clearTimer(timer);
+    },
+    dispose() {
+      disposed = true;
+      const entry = take;
+      take = void 0;
+      if (!entry || entry.endedEarly) return;
+      try {
+        entry.child.kill("SIGKILL");
+      } catch {
+      }
+    }
+  };
+}
+
 // server/services/browserd/daemon/lease.ts
 var DEFAULT_TTL_MS = 5 * 60 * 1e3;
 var MAX_TTL_MS = 30 * 60 * 1e3;
@@ -493,8 +707,15 @@ function handoffNoteFor(kind) {
 
 // server/services/browserd/daemon/request-handler.ts
 var MAX_INPUT_EVENTS = 64;
-var INPUT_BOOST_INTERVAL_MS = 33;
-var INPUT_BOOST_WINDOW_MS = 1500;
+var ACTIVITY_BOOST_INTERVAL_MS = 33;
+var ACTIVITY_BOOST_WINDOW_MS = 1500;
+var MOTION_ACTIONS = /* @__PURE__ */ new Set([
+  "navigate",
+  "back",
+  "reload",
+  "act"
+]);
+var RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 var BrowserdRequestHandler = class {
   queue;
   driver;
@@ -506,6 +727,7 @@ var BrowserdRequestHandler = class {
   contextMode;
   startedBy;
   setVideoTier;
+  recorder;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -536,6 +758,7 @@ var BrowserdRequestHandler = class {
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
     this.setVideoTier = deps.setVideoTier;
+    this.recorder = deps.recorder;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -622,6 +845,12 @@ var BrowserdRequestHandler = class {
       }
       return this.handlePolicy(req);
     }
+    if (req.path === "/v1/record") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleRecord(req);
+    }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -649,6 +878,98 @@ var BrowserdRequestHandler = class {
     }
     this.setVideoTier?.(tier);
     return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
+  }
+  /**
+   * Start or stop a recording.
+   *
+   * EVERY argument is validated before any spawn. A recording id becomes a
+   * filename and an fps becomes an x11grab rate: getting either wrong after
+   * the process is running means a file in the wrong place or an encoder at a
+   * rate the box cannot sustain, and neither is visible from the 200 that
+   * would come back. `fps` and `id` are echoed on every answer — including the
+   * refusals — so a caller never has to remember what it asked for to make
+   * sense of what it got.
+   */
+  async handleRecord(req) {
+    if (req.method === "GET") {
+      const status = this.recorder?.status() ?? { active: false };
+      return { status: 200, body: { ...status, bootId: this.bootId } };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    const { action, id, fps } = parsed;
+    if (action !== "start" && action !== "stop") {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId }
+      };
+    }
+    if (action === "stop") {
+      if (!this.recorder) {
+        return {
+          status: 503,
+          body: { error: "record_unavailable", bootId: this.bootId }
+        };
+      }
+      const result = await this.recorder.stop();
+      return {
+        status: 200,
+        body: { ok: true, recording: result, bootId: this.bootId }
+      };
+    }
+    const resolvedFps = fps === void 0 ? DEFAULT_RECORD_FPS : fps;
+    if (typeof resolvedFps !== "number" || !Number.isInteger(resolvedFps) || resolvedFps < MIN_RECORD_FPS || resolvedFps > MAX_RECORD_FPS) {
+      return {
+        status: 400,
+        body: { error: "invalid_fps", fps, bootId: this.bootId }
+      };
+    }
+    if (typeof id !== "string" || !RECORD_ID_PATTERN.test(id)) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_id", id, bootId: this.bootId }
+      };
+    }
+    if (!this.recorder) {
+      return {
+        status: 503,
+        body: {
+          error: "record_unavailable",
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    const started = this.recorder.start({ id, fps: resolvedFps });
+    if (!started.ok) {
+      return {
+        status: started.error === "record_active" ? 409 : 503,
+        body: {
+          error: started.error,
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: 200,
+      body: { ok: true, id, fps: resolvedFps, bootId: this.bootId }
+    };
   }
   async handleInput(req) {
     let parsed;
@@ -740,7 +1061,32 @@ var BrowserdRequestHandler = class {
       };
     }
     const outcome = await this.queue.submit(parsed.command);
+    await this.boostAfterMotion(parsed.command);
     return this.mapOutcome(outcome);
+  }
+  /**
+   * Raise the frame rate for a moment after a command that moved the page.
+   *
+   * The seam is HERE rather than in the driver because this is where the
+   * command's fate is known: a `navigate` the lease refused, or one the queue
+   * de-duplicated, never touched the page, and boosting after it would spend a
+   * box's cores on a picture nothing changed. It runs for every source —
+   * a chat-driven scroll and a person's own `manual` command are the same
+   * motion to whoever is watching.
+   *
+   * `viewportIfWatched` and never `viewport`: on a box where nobody has the
+   * pane open there is no viewport, and building one here would attach a CDP
+   * screencast and start encoding JPEGs for an audience of nobody — on the
+   * same two cores the agent is using. A driver too old to answer the question
+   * (or a fake that does not implement it) simply gets no boost.
+   */
+  async boostAfterMotion(command) {
+    if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    try {
+      const viewport = await this.driver.viewportIfWatched?.(command.tabId);
+      viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
+    } catch {
+    }
   }
   /**
    * Watch a tab.
@@ -885,7 +1231,7 @@ var BrowserdRequestHandler = class {
       args.holder
     );
     if (args.events.length > 0) {
-      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+      viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
     return { ok: true };
   }
@@ -1682,7 +2028,8 @@ function buildBrowserdStack(driver, config) {
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
     ...config.contextMode ? { contextMode: config.contextMode } : {},
     ...config.startedBy ? { startedBy: config.startedBy } : {},
-    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {}
+    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
+    ...config.recorder ? { recorder: config.recorder } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -1704,7 +2051,7 @@ function buildBrowserdStack(driver, config) {
 }
 
 // server/services/browserd/daemon/video-encoder.ts
-import { spawn } from "node:child_process";
+import { spawn as spawn2 } from "node:child_process";
 var NAL_AUD = 9;
 var NAL_IDR = 5;
 var MAX_RING_BYTES = 3 * 1024 * 1024;
@@ -1762,6 +2109,10 @@ function ffmpegArgs(options) {
     "0",
     "-x264-params",
     "aud=1:repeat-headers=1",
+    // Before the tier args and the output, so a tier that ever grows its own
+    // rate-control flags cannot end up on the far side of it.
+    "-threads",
+    "1",
     ...tier,
     "-f",
     "h264",
@@ -1830,7 +2181,7 @@ function containsIdr(bytes) {
   return false;
 }
 function createVideoEncoder(options) {
-  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
+  const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn2(command, [...args], {
     stdio: [...spawnOptions.stdio]
   }));
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
@@ -3882,6 +4233,22 @@ var ChromiumDriver = class {
     }
     return payload();
   }
+  /**
+   * The viewport this tab already has, without ever creating one.
+   *
+   * `viewport()` below opens the tab and attaches a CDP session on a miss.
+   * That is right for a person opening the pane and wrong for the frame-rate
+   * boost after an agent command, which only wants to nudge a picture someone
+   * is ALREADY watching: on a box with no pane open, going through
+   * `viewport()` would attach a screencast and start encoding JPEGs for
+   * nobody, on the same two cores the agent is using.
+   *
+   * Returns the map's promise rather than awaiting it, so a viewport that is
+   * still being created counts as watched — somebody asked for it.
+   */
+  viewportIfWatched(tabId) {
+    return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
+  }
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
@@ -4289,7 +4656,7 @@ function buildBrowserdLaunchArgs(extra = []) {
 import { execFileSync } from "node:child_process";
 import { readlink, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join as join2 } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
@@ -4310,7 +4677,7 @@ async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner)
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
-      await unlink(join(userDataDir, name));
+      await unlink(join2(userDataDir, name));
       result.removed.push(name);
     } catch (err) {
       if (isNotFound(err)) continue;
@@ -4328,7 +4695,7 @@ function isNotFound(err) {
 async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
   let target;
   try {
-    target = await readlink(join(userDataDir, "SingletonLock"));
+    target = await readlink(join2(userDataDir, "SingletonLock"));
   } catch {
     return { live: false };
   }
@@ -4624,12 +4991,16 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/main.ts
+import { mkdirSync } from "node:fs";
+
 // server/services/browserd/daemon/config.ts
 import { createHash as createHash2, randomBytes as randomBytes2 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
 function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
   const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
   const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
@@ -4666,6 +5037,11 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
@@ -4675,6 +5051,11 @@ function readDeviceScaleFactor(env) {
   const raw = Number(env.MCPJAM_BROWSERD_DPR);
   if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
   return raw;
+}
+function readRecordMaxBytes(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
   const token = randomBytes2(32).toString("hex");
@@ -4733,7 +5114,10 @@ function displayHeight(config) {
 }
 function videoFeatures(config) {
   if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
-  return config.kiosk ? ["h264"] : [];
+  const features = [];
+  if (config.kiosk) features.push("h264");
+  if (config.recordingEnabled) features.push("record");
+  return features;
 }
 async function main() {
   const config = readBrowserdConfig();
@@ -4753,6 +5137,22 @@ async function main() {
     width: displayWidth(config),
     height: displayHeight(config)
   }) : void 0;
+  const recorder = features.includes("record") ? createVideoRecorder({
+    display: process.env.DISPLAY || ":0",
+    width: displayWidth(config),
+    height: displayHeight(config),
+    dir: config.recordDir,
+    maxBytes: config.recordMaxBytes
+  }) : void 0;
+  if (recorder) {
+    try {
+      mkdirSync(config.recordDir, { recursive: true });
+    } catch (error) {
+      log(
+        `could not create ${config.recordDir}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
   const stack = buildBrowserdStack(driver, {
     token: config.token,
     lease,
@@ -4765,6 +5165,7 @@ async function main() {
     startedBy: config.startedBy,
     features,
     ...video ? { video } : {},
+    ...recorder ? { recorder } : {},
     displaySize: {
       width: displayWidth(config),
       height: displayHeight(config)
@@ -4775,6 +5176,8 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     stack.closeStreams();
+    await recorder?.finalize({ graceMs: 2e3 }).catch(() => {
+    });
     video?.dispose();
     stack.server.close();
     await driver.close().catch(() => {

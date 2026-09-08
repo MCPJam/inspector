@@ -19,6 +19,9 @@ function makeHandler(over: {
   health?: () => Promise<{ ok: boolean; detail?: string }>;
   lease?: HandoffLease;
   setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
+  viewport?: (tabId?: string) => Promise<unknown>;
+  viewportIfWatched?: (tabId?: string) => unknown;
+  recorder?: unknown;
 } = {}) {
   const submit: (c: BrowserCommand) => Promise<BrowserCommandOutcome> =
     over.submit ??
@@ -30,11 +33,18 @@ function makeHandler(over: {
   const lease = over.lease ?? new HandoffLease();
   const handler = new BrowserdRequestHandler({
     queue: { submit },
-    driver: { health },
+    driver: {
+      health,
+      ...(over.viewport ? { viewport: over.viewport as never } : {}),
+      ...(over.viewportIfWatched
+        ? { viewportIfWatched: over.viewportIfWatched as never }
+        : {}),
+    },
     bootId: BOOT,
     token: TOKEN,
     lease,
     ...(over.setVideoTier ? { setVideoTier: over.setVideoTier } : {}),
+    ...(over.recorder ? { recorder: over.recorder as never } : {}),
   });
   return { handler, submit, lease };
 }
@@ -856,5 +866,377 @@ describe("BrowserdRequestHandler — POST /v1/policy", () => {
       authorization: undefined,
     });
     expect(res.status).toBe(401);
+  });
+});
+
+/**
+ * R-1. Motion looks the same whoever is driving.
+ *
+ * A person's input already bought 30fps for a second and a half; an agent's
+ * `navigate` or `act` did not, so watching the model scroll a long page was a
+ * 10fps slideshow on the throttle's floor. These pin the three things that
+ * would silently come apart: which commands buy it, that an unwatched tab
+ * never pays for one, and that a boost is never allowed to change a command's
+ * answer.
+ */
+describe("BrowserdRequestHandler — the frame rate follows the page, not the hand", () => {
+  function boostSpy() {
+    const boosts: Array<[number, number]> = [];
+    const viewport = {
+      boost: (intervalMs: number, windowMs: number) =>
+        boosts.push([intervalMs, windowMs]),
+    };
+    return { boosts, viewport };
+  }
+
+  function commandReq(action: BrowserCommand["action"], tabId?: string) {
+    return req({
+      body: JSON.stringify({
+        command: { commandId: `c-${Math.random()}`, tabId, source: "chat", action },
+      }),
+    });
+  }
+
+  it("boosts a watched tab after a command that moved the page", async () => {
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    for (const action of [
+      { kind: "navigate", url: "https://x.test/" },
+      { kind: "back" },
+      { kind: "reload" },
+      { kind: "act", verb: "scroll", direction: "down" },
+    ] as Array<BrowserCommand["action"]>) {
+      expect((await handler.handle(commandReq(action))).status).toBe(200);
+    }
+
+    // 33ms is 30fps, the ceiling the transports carry; 1.5s covers the settle
+    // after the command without holding a page at full rate for a whole turn.
+    expect(boosts).toEqual([
+      [33, 1_500],
+      [33, 1_500],
+      [33, 1_500],
+      [33, 1_500],
+    ]);
+  });
+
+  it("does not boost after an observe, which changed nothing on the page", async () => {
+    // Reading the page moves no pixels. Boosting after one buys 45 extra JPEG
+    // encodes of a picture that did not change, on cores the agent is using.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "observe", mode: "url" }));
+    await handler.handle(
+      commandReq({ kind: "webmcp_cancel", invocationId: "i-1" }),
+    );
+
+    expect(boosts).toEqual([]);
+  });
+
+  it("never CREATES a viewport for a tab nobody is watching", async () => {
+    // The load-bearing one. `viewport()` opens a tab and attaches a CDP
+    // screencast on a miss; if the boost went through it, every agent command
+    // on an unattended box would start encoding JPEGs for an audience of
+    // nobody. Revert `viewportIfWatched` back to `viewport` and this fails.
+    const viewport = vi.fn(async () => ({ boost: () => {} }));
+    const { handler } = makeHandler({
+      viewport,
+      viewportIfWatched: () => null,
+    });
+
+    const res = await handler.handle(
+      commandReq({ kind: "navigate", url: "https://x.test/" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(viewport).not.toHaveBeenCalled();
+  });
+
+  it("asks about the command's own tab", async () => {
+    const asked: Array<string | undefined> = [];
+    const { handler } = makeHandler({
+      viewportIfWatched: (tabId?: string) => {
+        asked.push(tabId);
+        return null;
+      },
+    });
+
+    await handler.handle(
+      commandReq({ kind: "navigate", url: "https://x.test/" }, "tab-7"),
+    );
+
+    expect(asked).toEqual(["tab-7"]);
+  });
+
+  it("does not boost a command the lease refused", async () => {
+    // Nothing ran and nothing was captured, so there is no repaint to cover —
+    // and the person holding the browser should not have their pane's rate
+    // decided by somebody else's refused command.
+    const { boosts, viewport } = boostSpy();
+    const lease = new HandoffLease();
+    lease.acquire("rail-1");
+    const { handler } = makeHandler({
+      lease,
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    const res = await handler.handle(
+      commandReq({ kind: "navigate", url: "https://x.test/" }),
+    );
+
+    expect(res.status).toBe(423);
+    expect(boosts).toEqual([]);
+  });
+
+  it("still answers the command when the boost throws", async () => {
+    // A viewport whose page closed under it rejects here. The command already
+    // succeeded and its result is already owed to the caller; a frame-rate
+    // hint must never turn that into a 500.
+    const { handler } = makeHandler({
+      viewportIfWatched: () => Promise.reject(new Error("page closed")),
+    });
+
+    const res = await handler.handle(
+      commandReq({ kind: "reload" }),
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it("works against a driver too old to answer the question", async () => {
+    const { handler } = makeHandler();
+    expect((await handler.handle(commandReq({ kind: "reload" }))).status).toBe(200);
+  });
+});
+
+/**
+ * R-2. Recording control.
+ *
+ * A daemon ROUTE, not a `BrowserAction`: a recording outlives lease handoffs,
+ * must not be refused while a person holds the browser, and must never enter
+ * the at-most-once command queue, where a retried `stop` would be answered
+ * from a cache instead of stopping anything.
+ *
+ * Every validation case asserts the recorder was NOT touched. An id becomes a
+ * filename and an fps becomes an x11grab rate: getting either wrong after the
+ * process is running means a file in the wrong place or an encoder at a rate
+ * the box cannot sustain, and neither is visible from the 200 that comes back.
+ */
+describe("BrowserdRequestHandler — /v1/record", () => {
+  function fakeRecorder(
+    over: {
+      start?: (args: { id: string; fps: number }) => unknown;
+      stop?: () => Promise<unknown>;
+      status?: () => unknown;
+    } = {},
+  ) {
+    const started: Array<{ id: string; fps: number }> = [];
+    const start = vi.fn((args: { id: string; fps: number }) => {
+      started.push(args);
+      return over.start ? over.start(args) : { ok: true };
+    });
+    const stop = vi.fn(over.stop ?? (async () => null));
+    const status = vi.fn(over.status ?? (() => ({ active: false })));
+    return { recorder: { start, stop, status }, start, stop, status, started };
+  }
+
+  function recordReq(body: unknown, method = "POST") {
+    return {
+      method,
+      path: "/v1/record",
+      origin: undefined,
+      authorization: `Bearer ${TOKEN}`,
+      body: JSON.stringify(body),
+    };
+  }
+
+  it("starts a take at the fps it was asked for and echoes both back", async () => {
+    const { recorder, started } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    const res = await handler.handle(recordReq({ action: "start", id: "run-1", fps: 15 }));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, id: "run-1", fps: 15 });
+    expect(started).toEqual([{ id: "run-1", fps: 15 }]);
+  });
+
+  it("defaults fps to 15 rather than leaving the recorder to guess", async () => {
+    const { recorder, started } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    const res = await handler.handle(recordReq({ action: "start", id: "run-1" }));
+
+    expect(res.body).toMatchObject({ fps: 15 });
+    expect(started).toEqual([{ id: "run-1", fps: 15 }]);
+  });
+
+  it("refuses an fps outside 1..30 BEFORE any spawn", async () => {
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    for (const fps of [0, 31, -1, 15.5, "15", null]) {
+      const res = await handler.handle(
+        recordReq({ action: "start", id: "run-1", fps }),
+      );
+      expect(res.status, `fps=${String(fps)}`).toBe(400);
+      expect(res.body).toMatchObject({ error: "invalid_fps" });
+    }
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("refuses an id that is not a plain filename, BEFORE any spawn", async () => {
+    // It becomes a path. A `..` or a slash here is a directory the caller
+    // chose, and the daemon writes wherever it points.
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    for (const id of ["../etc/passwd", "a/b", "", "x".repeat(65), 7, undefined]) {
+      const res = await handler.handle(
+        recordReq({ action: "start", id, fps: 15 }),
+      );
+      expect(res.status, `id=${String(id)}`).toBe(400);
+      expect(res.body).toMatchObject({ error: "invalid_record_id" });
+    }
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("refuses an action it does not have, and invalid JSON", async () => {
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    expect((await handler.handle(recordReq({ action: "pause" }))).status).toBe(400);
+    expect((await handler.handle(recordReq({}))).status).toBe(400);
+    expect((await handler.handle(recordReq(null))).status).toBe(400);
+    expect(
+      (await handler.handle({ ...recordReq({}), body: "{not json" })).status,
+    ).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 record_unavailable on a box with no recorder", async () => {
+    // The honest answer: `features` omits `"record"` in the first place, so a
+    // caller that reads the status before asking never gets here.
+    const { handler } = makeHandler();
+    const res = await handler.handle(recordReq({ action: "start", id: "run-1" }));
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ error: "record_unavailable", id: "run-1" });
+  });
+
+  it("maps a refused second start to 409", async () => {
+    const { recorder } = fakeRecorder({
+      start: () => ({ ok: false, error: "record_active" }),
+    });
+    const { handler } = makeHandler({ recorder });
+    const res = await handler.handle(recordReq({ action: "start", id: "run-2" }));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "record_active", id: "run-2" });
+  });
+
+  it("maps a missing ffmpeg to 503", async () => {
+    const { recorder } = fakeRecorder({
+      start: () => ({ ok: false, error: "record_unavailable" }),
+    });
+    const { handler } = makeHandler({ recorder });
+    expect(
+      (await handler.handle(recordReq({ action: "start", id: "run-1" }))).status,
+    ).toBe(503);
+  });
+
+  it("hands the stop result straight back, truncation and all", async () => {
+    const recording = {
+      path: "/rec/run-1.mp4",
+      bytes: 1_234,
+      durationMs: 9_000,
+      distinctFrames: 42,
+      truncated: true,
+    };
+    const { recorder } = fakeRecorder({ stop: async () => recording });
+    const { handler } = makeHandler({ recorder });
+
+    const res = await handler.handle(recordReq({ action: "stop" }));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, recording });
+  });
+
+  it("answers 200 for a stop with nothing to stop", async () => {
+    // Not a 409: a caller collecting evidence on a teardown path stops a take
+    // that may have hit its size cap five minutes ago, and it needs an answer
+    // it can read rather than an error it must special-case.
+    const { recorder } = fakeRecorder({ stop: async () => null });
+    const { handler } = makeHandler({ recorder });
+    const res = await handler.handle(recordReq({ action: "stop" }));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, recording: null });
+  });
+
+  it("reports the current state on GET, with a recorder or without one", async () => {
+    const { recorder } = fakeRecorder({
+      status: () => ({ active: true, id: "run-1", fps: 15, distinctFrames: 7 }),
+    });
+    const withOne = makeHandler({ recorder }).handler;
+    const withNone = makeHandler().handler;
+
+    expect((await withOne.handle(recordReq({}, "GET"))).body).toMatchObject({
+      active: true,
+      id: "run-1",
+    });
+    expect((await withNone.handle(recordReq({}, "GET"))).body).toMatchObject({
+      active: false,
+    });
+  });
+
+  it("is NOT blocked by a held lease", async () => {
+    // The whole reason this is a route rather than a `BrowserAction`. A person
+    // taking control mid-run must not end the recording of the run they took
+    // it during — and this endpoint neither observes the page nor drives it.
+    const lease = new HandoffLease();
+    lease.acquire("someone-else");
+    const { recorder, start, stop } = fakeRecorder();
+    const { handler } = makeHandler({ lease, recorder });
+
+    expect(
+      (await handler.handle(recordReq({ action: "start", id: "run-1" }))).status,
+    ).toBe(200);
+    expect((await handler.handle(recordReq({ action: "stop" }))).status).toBe(200);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("still needs the bearer, and refuses a cross-origin caller", async () => {
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    expect(
+      (
+        await handler.handle({
+          ...recordReq({ action: "start", id: "run-1" }),
+          authorization: undefined,
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await handler.handle({
+          ...recordReq({ action: "start", id: "run-1" }),
+          origin: "https://evil.test",
+        })
+      ).status,
+    ).toBe(403);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("answers 405 for a method the route does not have", async () => {
+    const { recorder } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+    const res = await handler.handle(recordReq({}, "DELETE"));
+    expect(res.status).toBe(405);
+    expect(res.headers).toEqual({ allow: "GET, POST" });
   });
 });

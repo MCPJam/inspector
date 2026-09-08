@@ -1015,6 +1015,23 @@ export class ChromiumDriver implements BrowserDriver {
     return payload();
   }
 
+  /**
+   * The viewport this tab already has, without ever creating one.
+   *
+   * `viewport()` below opens the tab and attaches a CDP session on a miss.
+   * That is right for a person opening the pane and wrong for the frame-rate
+   * boost after an agent command, which only wants to nudge a picture someone
+   * is ALREADY watching: on a box with no pane open, going through
+   * `viewport()` would attach a screencast and start encoding JPEGs for
+   * nobody, on the same two cores the agent is using.
+   *
+   * Returns the map's promise rather than awaiting it, so a viewport that is
+   * still being created counts as watched — somebody asked for it.
+   */
+  viewportIfWatched(tabId?: string): Promise<TabViewport | null> | null {
+    return this.viewports.get(tabId ?? DEFAULT_TAB) ?? null;
+  }
+
   async viewport(tabId?: string): Promise<TabViewport | null> {
     const key = tabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);

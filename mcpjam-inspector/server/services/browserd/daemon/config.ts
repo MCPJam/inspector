@@ -47,6 +47,32 @@ export interface BrowserdConfig {
    */
   deviceScaleFactor: number;
   /**
+   * Where recordings are written, one MP4 per take.
+   *
+   * A directory rather than a file: the id names the file, and the inspector
+   * reads it back over the same E2B files API that put the daemon's own bytes
+   * there. Under the user data dir by default so a box with a writable profile
+   * has a writable recording dir for free.
+   */
+  recordDir: string;
+  /**
+   * The size ffmpeg stops itself at (`-fs`).
+   *
+   * Below the evidence pipe's 64 MiB upload limit, with room for the fragment
+   * being written when the cap lands. A take that hits it is TRUNCATED, not
+   * dropped — the fragmented container keeps it playable and the caller says
+   * so beside it.
+   */
+  recordMaxBytes: number;
+  /**
+   * May this daemon record at all?
+   *
+   * The operator's kill switch. Off means `/v1/status.features` omits
+   * `"record"`, so the inspector never asks — the same announced-capability
+   * rule the video encoder follows.
+   */
+  recordingEnabled: boolean;
+  /**
    * Where to write a freshly-minted token, when none was supplied.
    *
    * The prelaunch case: a daemon baked into the image has no inspector to hand
@@ -62,6 +88,18 @@ export interface BrowserdConfig {
 export const DEFAULT_BROWSERD_PORT = 8791;
 export const DEFAULT_BROWSERD_HOST = "0.0.0.0";
 export const DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+
+/**
+ * The default size cap for one recording.
+ *
+ * 60 MiB against the evidence pipe's 64 MiB ceiling
+ * (`MAX_REPLAY_VIDEO_BYTES`), leaving room for the fragment in flight when
+ * `-fs` lands. Chosen on the SAFE side because the failure it prevents —
+ * discovering an oversized file at upload time, where the only options left
+ * are dropping the evidence or failing the run — is worse than a recording
+ * that stops early and says so.
+ */
+export const DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
 
 /**
  * Parse and validate the environment. Throws (fail closed) rather than falling
@@ -122,6 +160,13 @@ export function readBrowserdConfig(
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir:
+      env.MCPJAM_BROWSERD_RECORD_DIR?.trim() ||
+      `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...(tokenFile ? { tokenFile } : {}),
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector",
@@ -140,6 +185,21 @@ function readDeviceScaleFactor(env: NodeJS.ProcessEnv): number {
   const raw = Number(env.MCPJAM_BROWSERD_DPR);
   if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
   return raw;
+}
+
+/**
+ * The recording size cap, in bytes.
+ *
+ * LENIENT like `readDeviceScaleFactor`, and for the same reason: this is a
+ * bound on evidence, and refusing to boot a browser over a mistyped
+ * environment variable trades a shorter recording for no browser at all.
+ * Bounded above by the evidence pipe's own limit, because a value past it
+ * produces a file nothing can accept.
+ */
+function readRecordMaxBytes(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 
 /**
