@@ -144,11 +144,12 @@ export type RunOriginMeta = {
  * status.
  *
  * The two origins this file ADDED (`cli`, and the agent surfaces) tint from
- * `--run-origin-cli` / `--run-origin-agent` in `design-system/src/tokens.css`,
- * which are redefined under `.dark` and so track the theme. The Tailwind
- * palette classes on `api`, `schedule` and `github_check` predate this file
- * and are left as they were found; converting them would restyle badges this
- * change has no business restyling.
+ * `--run-origin-{cli,agent}-{border,bg}` in `design-system/src/tokens.css`.
+ * Those carry their own alpha and are redefined under `.dark`, so the tint
+ * tracks the theme with no `dark:` variant here. The Tailwind palette classes
+ * on `api`, `schedule` and `github_check` predate this file and are left as
+ * they were found; converting them would restyle badges this change has no
+ * business restyling.
  */
 export const RUN_ORIGIN_META: Record<RunOrigin, RunOriginMeta> = {
   ui: {
@@ -191,27 +192,27 @@ export const RUN_ORIGIN_META: Record<RunOrigin, RunOriginMeta> = {
     label: "CLI",
     title: "Launched by the mcpjam CLI",
     className:
-      "border-[color-mix(in_oklab,var(--run-origin-cli)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-cli)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-cli)_15%,transparent)]",
+      "border-[var(--run-origin-cli-border)] bg-[var(--run-origin-cli-bg)] text-foreground",
     declared: true,
   },
   mcp: {
     label: "MCP",
     title: "Launched by an MCP client's agent",
     className:
-      "border-[color-mix(in_oklab,var(--run-origin-agent)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-agent)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-agent)_15%,transparent)]",
+      "border-[var(--run-origin-agent-border)] bg-[var(--run-origin-agent-bg)] text-foreground",
     declared: true,
   },
   slack: {
     label: "Slack",
     title: "Launched by the MCPJam Slack agent",
     className:
-      "border-[color-mix(in_oklab,var(--run-origin-agent)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-agent)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-agent)_15%,transparent)]",
+      "border-[var(--run-origin-agent-border)] bg-[var(--run-origin-agent-bg)] text-foreground",
   },
   discord: {
     label: "Discord",
     title: "Launched by the MCPJam Discord agent",
     className:
-      "border-[color-mix(in_oklab,var(--run-origin-agent)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-agent)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-agent)_15%,transparent)]",
+      "border-[var(--run-origin-agent-border)] bg-[var(--run-origin-agent-bg)] text-foreground",
   },
 };
 

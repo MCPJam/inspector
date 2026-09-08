@@ -78,11 +78,12 @@ type RunResultBadgeKind =
 /**
  * "via claude-code" / "via API key ····3f9a" — WHICH CREDENTIAL made this run.
  *
- * Exported for its own test: it is the only place the run-by cell says
- * anything beyond a person's name, and it has to keep answering for a run
- * whose creator cannot be resolved.
+ * The agent name comes from the DECLARED `launcher.kind`, not the resolved
+ * origin: a run made through the Slack or Discord agent resolves to
+ * `slack`/`discord`, so asking the origin whether this was an MCP run hid the
+ * name for exactly the runs that have one.
  */
-export function runCredentialLabel(run: EvalSuiteRun): string | null {
+function runCredentialLabel(run: EvalSuiteRun): string | null {
   const agent = runAgentName(run);
   if (agent) return `via ${agent}`;
   const tail = apiKeyTail(run.attribution?.apiKeyId);
