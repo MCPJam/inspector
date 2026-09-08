@@ -2270,6 +2270,7 @@ export function PlaygroundRoute() {
     activeProject,
     activeProjectId,
     appState,
+    areServersHydrated,
     ensureServersReady,
     evalChatHandoff,
     handleConnect,
@@ -2299,6 +2300,7 @@ export function PlaygroundRoute() {
       isConvexAuthenticated={isAuthenticated}
       isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
       isClientConfigSyncPending={isClientConfigSyncPending}
+      areServersHydrated={areServersHydrated}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
