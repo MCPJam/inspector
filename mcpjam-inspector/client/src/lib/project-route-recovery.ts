@@ -51,12 +51,12 @@ export function resolveProjectSignInReturnRecovery(args: {
       : routeState.requestedProjectId;
   if (routeProjectId !== intent.requestedProjectId) return { kind: "clear" };
   if (routeState.status === "resolving") return { kind: "none" };
-  if (routeState.status === "ready") return { kind: "clear" };
 
   if (!isProjectIdShape(intent.requestedProjectId)) return { kind: "clear" };
   if (membershipProjectIds === undefined) return { kind: "none" };
   if (
-    routeState.reason !== "not-a-member" ||
+    (routeState.status === "inaccessible" &&
+      routeState.reason !== "not-a-member") ||
     membershipProjectIds.has(intent.requestedProjectId)
   ) {
     return { kind: "clear" };

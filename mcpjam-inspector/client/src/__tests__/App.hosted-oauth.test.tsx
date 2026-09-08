@@ -1964,6 +1964,90 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
+  it("keeps recovery armed while a cached active project waits for membership", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/playground?model=test#chat`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", stalePath);
+
+    let projectsLoaded = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isLoadingRemoteProjects: !projectsLoaded,
+      activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+      projects: projectsLoaded
+        ? {
+            [currentProjectId]: {
+              id: currentProjectId,
+              name: "Default Project",
+              sharedProjectId: currentProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
+        : {
+            [staleProjectId]: {
+              id: staleProjectId,
+              name: "Cached Project",
+              sharedProjectId: staleProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return projectsLoaded
+          ? [
+              {
+                _id: currentProjectId,
+                name: "Default Project",
+                organizationId: "org-1",
+                ownerId: "user-1",
+                servers: {},
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            ]
+          : undefined;
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+
+    projectsLoaded = true;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(`/p/${currentProjectId}/playground?model=test#chat`);
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
   it("returns a no-project account home without claiming it switched projects", async () => {
     clearScenarioSession();
     const staleProjectId = "k5700000000000000000000000a";

@@ -112,6 +112,21 @@ describe("project sign-in return recovery", () => {
         membershipProjectIds: new Set([CURRENT]),
       }).kind,
     ).toBe("switch");
+
+    expect(
+      resolveProjectSignInReturnRecovery({
+        ...input,
+        routeState: { status: "ready", projectId: STALE },
+        membershipProjectIds: undefined,
+      }),
+    ).toEqual({ kind: "none" });
+    expect(
+      resolveProjectSignInReturnRecovery({
+        ...input,
+        routeState: { status: "ready", projectId: STALE },
+        membershipProjectIds: new Set([CURRENT]),
+      }).kind,
+    ).toBe("switch");
   });
 
   it("uses home when the account has no fallback project", () => {
