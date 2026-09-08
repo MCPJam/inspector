@@ -1791,6 +1791,56 @@ Fetch the full trace for one eval iteration (complete message history and spans)
 | `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
+### `cloud eval screenshots`
+
+Pull the rendered widget screenshots an eval iteration captured — printed
+inline when the terminal supports images, otherwise as URLs, or saved to disk
+with `--out`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--out <path>` | No | Save the PNGs here instead of printing them. A directory unless the iteration rendered exactly one screenshot |
+| `--index <n>` | No | Only the Nth screenshot (1-based) |
+| `--video` | No | With `--out`, also save the iteration's replay recording beside the screenshots, as `<iteration>.mp4` or `<iteration>.webm` |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+### `cloud eval video`
+
+Get the replay recording an eval iteration made — prints the URL, or downloads
+it with `--out`.
+
+**Unattended runs on a hosted browser are recorded at 15 fps.** Idle time is
+held rather than dropped, so the file's duration matches the run's wall clock
+even when the page sat still for a minute. Recordings stop at 60 MiB and
+**say so**: a capped take is a complete, playable *beginning* of the run rather
+than a corrupt file, and both this command and the run page label it. Read
+`videoMeta.truncated` before treating a duration as the length of the run.
+
+A local widget-harness run records a `.webm` through Playwright and reports
+nothing else about it; a hosted run records an `.mp4` and reports its duration,
+rate, and distinct-frame count. `--format json` returns `videoMeta` when the
+recording carried one.
+
+`MCPJAM_HOSTED_BROWSER_RECORDING=0` on the runner turns hosted recording off.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--out <path>` | No | Download the recording to this file instead of printing the URL |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+```bash
+# The URL, plus what the recording says about itself
+mcpjam cloud eval video --run "$RUN_ID" --iteration "$ITERATION_ID"
+
+# Screenshots and the recording together, into one directory
+mcpjam cloud eval screenshots --run "$RUN_ID" --iteration "$ITERATION_ID" \
+  --out ./evidence/ --video
+```
+
 ### `cloud eval get`
 
 Show an eval suite's full settings.
