@@ -394,6 +394,52 @@ describe("the durable ledger sink", () => {
     }
   });
 
+  it("survives two sessions writing one shared artifact at once", async () => {
+    // The store is the PROJECT's; the mirror serializes per SESSION. Two
+    // sessions copying the same unclaimed row hold different locks and can
+    // both reach the write for one id.
+    //
+    // This asserts the OUTCOME — both sessions end up able to read the whole
+    // payload, and no staging file is orphaned. It does NOT prove the write is
+    // atomic: catching a torn read means reading between a truncate and a
+    // write, which cannot be provoked deterministically from here. The `rename`
+    // in `drainArtifact` is what closes that window, and this test would not
+    // fail if it were removed.
+    const a = await open();
+    const b = await open({ attach: "never" });
+    if (!a.ok || !b.ok) throw new Error("no session");
+    const big = Buffer.alloc(256 * 1024, 7).toString("base64");
+    const ledgerA = ledgerWith("boot-1", [
+      { id: "c1", output: { screenshot: big } },
+    ]);
+    const ledgerB = ledgerWith("boot-1", [
+      { id: "c1", output: { screenshot: big } },
+    ]);
+    // Both mirrors in flight at once, as two sessions genuinely are.
+    await Promise.all([
+      mirrorLedger({ session: a.session, ledger: ledgerA, bootId: "boot-1" }),
+      mirrorLedger({ session: b.session, ledger: ledgerB, bootId: "boot-1" }),
+    ]);
+    for (const sessionId of [a.session.sessionId, b.session.sessionId]) {
+      const trace = await readLedger({ projectId: PROJECT, sessionId });
+      const ref =
+        trace.entries[0].kind === "command"
+          ? trace.entries[0].artifacts?.screenshot
+          : undefined;
+      const bytes = await readArtifact({
+        projectId: PROJECT,
+        sessionId,
+        artifactId: ref!.id,
+      });
+      // Whole, not a prefix.
+      expect(bytes?.byteLength).toBe(Buffer.from(big, "base64").byteLength);
+    }
+    // And no staging files left behind.
+    const { readdir } = await import("node:fs/promises");
+    const dir = join(home, ".mcpjam", "computer", "browser", PROJECT, "artifacts");
+    expect((await readdir(dir)).some((n) => n.endsWith(".part"))).toBe(false);
+  });
+
   it("marks EVICTED only when the payload really is gone", async () => {
     // A row whose picture aged out of the ring before anything mirrored it is
     // the genuine loss this flag exists to report, and it must keep reporting

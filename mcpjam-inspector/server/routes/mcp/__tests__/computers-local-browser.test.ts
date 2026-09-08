@@ -85,6 +85,22 @@ const browserState = vi.hoisted(() => ({
   /** Whether the desktop app builds its context with views the pane can show. */
   surface: "native" as "native" | "frames",
 }));
+/** The production key rule, so the mock and the assertions cannot disagree. */
+const browserKeyFor = vi.hoisted(
+  () =>
+    (args: {
+      projectId: string;
+      contextMode?: string;
+      ownerKey?: string;
+      captureTypedText?: boolean;
+    }) =>
+      args.contextMode === "ephemeral"
+        ? `${args.projectId}:ephemeral:${
+            args.captureTypedText ? "typed" : "redacted"
+          }:${args.ownerKey}`
+        : `${args.projectId}:persistent`,
+);
+
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   // The session store derives every path from this, and `homedir` is already
   // pointed at the scratch tree — so the real rule, not a stub, keeps the
@@ -101,18 +117,15 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
   // The real rule, kept in one place here as it is there: a persistent context
-  // is the project's, an ephemeral one belongs to the run that owns it.
-  localBrowserKeyFor: (args: {
-    projectId: string;
-    contextMode?: string;
-    ownerKey?: string;
-    captureTypedText?: boolean;
-  }) =>
-    args.contextMode === "ephemeral"
-      ? `${args.projectId}:ephemeral:${args.ownerKey}${
-          args.captureTypedText ? ":typed" : ""
-        }`
-      : `${args.projectId}:persistent`,
+  // is the project's, an ephemeral one belongs to the run that owns it, and the
+  // capture mode precedes the owner so an owner key cannot forge it.
+  //
+  // ONE HELPER, used by `ensureLocalBrowserSession` below too. A mock that
+  // derived the key a second way drifted from production the moment the format
+  // changed — and a test asserting a production-format key was then asserting
+  // about a key this mock had never minted, which passes for the worst reason
+  // there is.
+  localBrowserKeyFor: browserKeyFor,
   findLocalBrowserSessionByKey: (key: string) => {
     const bootId = browserState.byKey.get(key);
     return bootId ? browserState.sessions.get(bootId) : undefined;
@@ -151,12 +164,7 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     captureTypedText?: boolean;
   }) => {
     browserState.launched.push({ ...args });
-    const key =
-      args.contextMode === "ephemeral"
-        ? `${args.projectId}:ephemeral:${args.ownerKey}${
-            args.captureTypedText ? ":typed" : ""
-          }`
-        : `${args.projectId}:persistent`;
+    const key = browserKeyFor(args);
     const { buildBrowserdStack } =
       await import("../../../services/browserd/daemon/server.js");
     const { ChromiumDriver } =
@@ -950,6 +958,67 @@ describe("the agent door's session routes", () => {
     expect(browserState.byKey.has("proj:persistent")).toBe(true);
   });
 
+  it("does not keep writing history into a session that has CLOSED", async () => {
+    // A closed session's trace still reads — that is what durable means — but
+    // it must stop GROWING. The project's next session gets the same
+    // `proj:persistent` browser, so a closed session that still mirrors would
+    // absorb the next person's browsing under a name that had already left.
+    const token = await grantConsent();
+    const opened = await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const person = (await opened.json()) as any;
+    await createApp().request("/api/mcp/computers/local-browser/close", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({
+        projectId: "proj",
+        sessionId: person.session.sessionId,
+        terminate: true,
+      }),
+    });
+
+    // Somebody else opens the project's browser and uses it.
+    await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const boot = browserState.byKey.get("proj:persistent")!;
+    browserState.sessions.get(boot).ledger.record({
+      command: {
+        commandId: "after-1",
+        source: "manual",
+        action: { kind: "navigate", url: "https://after.example/private" },
+      },
+      actor: { kind: "human", id: "pane:u" },
+      ts: Date.now(),
+      durationMs: 1,
+      outcome: "executed",
+      ok: true,
+    });
+
+    const trace = await createApp().request(
+      "/api/mcp/computers/local-browser/trace",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({
+          projectId: "proj",
+          sessionId: person.session.sessionId,
+        }),
+      },
+    );
+    expect(trace.status).toBe(200);
+    expect(JSON.stringify(await trace.json())).not.toContain("after.example");
+  });
+
   it("does not leave a browser behind when the attach race is lost", async () => {
     // `require` pre-checks for an open session, then starts a browser. A close
     // landing in between means the claim fails — and a browser this request
@@ -1042,6 +1111,6 @@ describe("the agent door's session routes", () => {
     expect(closed.status).toBe(200);
     expect((await closed.json()) as any).toMatchObject({ terminated: true });
     // The run's own browser is untouched by the person's session ending.
-    expect(browserState.byKey.has("proj:ephemeral:run-9")).toBe(true);
+    expect(browserState.byKey.has("proj:ephemeral:redacted:run-9")).toBe(true);
   });
 });

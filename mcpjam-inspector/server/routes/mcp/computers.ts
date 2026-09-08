@@ -1046,7 +1046,11 @@ computers.post("/local-browser/trace", async (c) => {
 
   let session = stored;
   let historyWarning: string | undefined;
-  const live = liveBrowserFor(stored);
+  // A CLOSED session's history is FINISHED. Its trace still reads — that is
+  // the point of a durable record — but mirroring into it would append rows
+  // for commands issued after it ended, by whoever is using the browser now,
+  // filing somebody else's browsing under a session that had already left.
+  const live = stored.closedAt ? undefined : liveBrowserFor(stored);
   if (live) {
     try {
       const mirrored = await mirrorLedger({

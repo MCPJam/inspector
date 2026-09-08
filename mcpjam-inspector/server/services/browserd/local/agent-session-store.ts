@@ -32,6 +32,8 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -616,13 +618,29 @@ async function drainArtifact(
       .catch(() => false);
   }
   await ensureDir(artifactsDir);
-  await writeFile(
-    file,
-    payload.encoding === "base64"
-      ? Buffer.from(payload.data, "base64")
-      : payload.data,
-    { mode: 0o600 },
-  );
+  // WRITTEN ASIDE, THEN RENAMED. The store is the PROJECT's, but the mirror
+  // serializes per SESSION — so two sessions copying the same unclaimed row
+  // hold different locks and can both reach this line for the same id, each
+  // having read the payload before either released it. `writeFile` truncates
+  // first, so a reader landing in that window gets a short buffer for a
+  // screenshot that is perfectly intact. A rename within one directory is
+  // atomic: a reader sees the old file or the whole new one, never a half.
+  const staging = `${file}.${randomUUID()}.part`;
+  try {
+    await writeFile(
+      staging,
+      payload.encoding === "base64"
+        ? Buffer.from(payload.data, "base64")
+        : payload.data,
+      { mode: 0o600 },
+    );
+    await rename(staging, file);
+  } catch (error) {
+    // A staging file left behind would be a permanent 0600 orphan nothing ever
+    // reads; the write's own failure is what the caller needs to hear.
+    await rm(staging, { force: true }).catch(() => {});
+    throw error;
+  }
   ledger.releaseArtifact(artifactId);
   return true;
 }
