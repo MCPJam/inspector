@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { openSettingsRow, renderSettingsSheet, baseSuite } from "./settings-sheet-harness";
+import {
+  ciOwnedSuite,
+  openSettingsRow,
+  renderSettingsSheet,
+  baseSuite,
+} from "./settings-sheet-harness";
 
 /**
  * The settings sheet as a DRAFT (S1).
@@ -381,5 +386,36 @@ describe("degrading and refusing", () => {
   it("a read-only suite offers no bar to save from", () => {
     renderSettingsSheet({ readOnlyConfig: true } as never);
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+  });
+});
+
+/**
+ * A CI-managed suite renders the sheet as a viewer.
+ *
+ * The lock's whole point is that a person can still SEE what the suite is
+ * configured to do — the settings are the documentation — while the app stops
+ * offering to change something the backend will refuse.
+ */
+describe("a suite managed by CI", () => {
+  it("shows the settings without a way to commit them", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // Reading is the point; only writing is refused.
+    expect(screen.getByText(baseSuite.name)).toBeTruthy();
+    // No commit bar, because there is nothing a commit could do.
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+  });
+
+  it("writes nothing even if a control is driven directly", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
+    expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  });
+
+  it("still commits for an app-authored suite", () => {
+    // The guard against over-locking: the same sheet, unlocked, is unchanged.
+    renderSettingsSheet();
+    editName("Renamed");
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
   });
 });

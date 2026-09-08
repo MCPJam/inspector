@@ -100,6 +100,7 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -1163,6 +1164,18 @@ function EvaluateTabContent({
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
           aggregate={suiteAggregate}
+          /*
+           * The suite's configuration lives in a repository (a committed suite
+           * file, or SDK ingest), so this surface offers no edits for it.
+           *
+           * Read from the SUITE ROW, which this page already holds. The
+           * backend's own answer (`getSuiteCapabilities.ownership`) is ORed in
+           * inside `SuiteIterationsView`, which is where capabilities are read
+           * — and is absent on a deployment that predates the lock, which is
+           * exactly why this row-derived answer has to exist too.
+           */
+          configLocked={isCiOwnedSuite(selectedSuite)}
+          onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
             playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {

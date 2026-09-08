@@ -131,3 +131,53 @@ describe("hasJudgeSeverityCapability", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * Ownership arrives beside the role matrix, and an absent `ownership` block
+ * must NOT be read as "this suite is editable".
+ *
+ * The two repos release independently, so a client can talk to a backend that
+ * predates the CI-owned lock — one that still REFUSES the write. A client that
+ * treated the missing field as permission would offer an Edit button whose only
+ * possible outcome is an error, which is the exact failure mode the lock's UI
+ * exists to replace.
+ */
+describe("useSuiteCapabilities — suite ownership", () => {
+  it("passes the ownership block through when the backend sends one", async () => {
+    queryMock.mockResolvedValue({
+      suiteId: "suite-1",
+      permissions: { "suite.edit": true },
+      ownership: {
+        ciOwned: true,
+        declaredSuiteId: "s_from_file",
+        lockedActions: ["suite.edit", "case.create"],
+      },
+    });
+    const { result } = renderHook(() => useSuiteCapabilities("suite-1"));
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+
+    expect(result.current.capabilities?.ownership?.ciOwned).toBe(true);
+    expect(result.current.capabilities?.ownership?.declaredSuiteId).toBe(
+      "s_from_file",
+    );
+    // `permissions` still answers by ROLE — an org owner holds `suite.edit` on
+    // a CI-owned suite and still cannot use it. Folding ownership in would make
+    // the matrix report something other than roles.
+    expect(result.current.capabilities?.permissions["suite.edit"]).toBe(true);
+  });
+
+  it("leaves ownership undefined on a backend that predates the lock", async () => {
+    queryMock.mockResolvedValue({
+      suiteId: "suite-1",
+      permissions: { "suite.edit": true },
+    });
+    const { result } = renderHook(() => useSuiteCapabilities("suite-1"));
+    await waitFor(() => expect(result.current.state).toBe("ready"));
+
+    // Undefined, NOT `{ ciOwned: false }`: callers must fall back to
+    // `isCiOwnedSuite(suite)` over the suite row rather than reading absence as
+    // permission. The suite row carries both `declaredSuiteId` and `source`, so
+    // that fallback is complete on its own.
+    expect(result.current.capabilities?.ownership).toBeUndefined();
+  });
+});

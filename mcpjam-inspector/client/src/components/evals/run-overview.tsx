@@ -32,6 +32,7 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { apiKeyTail, resolveRunOrigin } from "@/lib/evals/run-origin";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import {
@@ -66,6 +67,22 @@ type RunResultBadgeKind =
   | "timed_out"
   | "inconclusive"
   | "pending";
+
+/**
+ * The second line of the "Run by" tooltip: which credential, or which agent.
+ *
+ * `null` when neither is known — a run launched from the app by a signed-in
+ * person has nothing to add, and a backend that predates run provenance sends
+ * neither field.
+ */
+function runCredentialLabel(run: EvalSuiteRun): string | null {
+  const origin = resolveRunOrigin(run);
+  if (origin === "mcp" && run.launcher?.client) {
+    return `via ${run.launcher.client}`;
+  }
+  const tail = apiKeyTail(run.attribution?.apiKeyId);
+  return tail ? `via API key ${tail}` : null;
+}
 
 function runResultBadge(result: RunResultBadgeKind) {
   switch (result) {
@@ -827,6 +844,21 @@ export function RunOverview({
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     <p className="text-xs">{creator.name}</p>
+                                    {/*
+                                      WHICH CREDENTIAL, not just which person.
+                                      A run made with an API key is attributed
+                                      to the key's owner, so an automated launch
+                                      and that person clicking Run showed the
+                                      same avatar and the same name. The key id
+                                      is minted by the backend from the
+                                      credential the request authenticated with
+                                      — a fact, not a claim.
+                                    */}
+                                    {runCredentialLabel(run) ? (
+                                      <p className="text-[10px] opacity-70">
+                                        {runCredentialLabel(run)}
+                                      </p>
+                                    ) : null}
                                   </TooltipContent>
                                 </Tooltip>
                               );

@@ -93,6 +93,7 @@ import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import {
   CAPABILITY_REASON_COPY,
+  CI_OWNED_REASON_COPY,
   DEPLOYMENT_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
@@ -352,6 +353,8 @@ export function SuiteIterationsView({
   canDeleteRuns = true,
   canDeleteRun,
   readOnlyConfig = false,
+  configLocked = false,
+  onDuplicateSuite,
   hideRunActions = false,
   casesSidebarHidden,
   onShowCasesSidebar,
@@ -423,6 +426,28 @@ export function SuiteIterationsView({
   canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
+  /**
+   * The suite's configuration lives in a repository (a committed suite file, or
+   * SDK ingest), so the app refuses to edit it — see `isCiOwnedSuite`.
+   *
+   * DELIBERATELY NOT `readOnlyConfig`. That prop also hides Run, because it
+   * means "this surface does not offer suite controls" (desktop CI). This one
+   * means "this suite refuses edits", and running it is exactly what stays —
+   * merging the two would take Run away from every CI-owned suite, which is the
+   * thing the lock exists to keep working.
+   *
+   * The backend refuses these writes itself; this only decides whether a
+   * control is offered, so a client that races an ownership change still meets
+   * a clean refusal at the mutation.
+   */
+  configLocked?: boolean;
+  /**
+   * Take an editable copy of this suite. Rendered only when
+   * {@link configLocked} — a suite the app refuses to edit needs a way
+   * forward, and `duplicateTestSuite` produces one that is app-owned
+   * (`source: 'ui'`, no declared id).
+   */
+  onDuplicateSuite?: () => void;
   /** When true, suppress suite-level run/replay entry points in shared chrome. */
   hideRunActions?: boolean;
   casesSidebarHidden?: boolean;
@@ -483,7 +508,23 @@ export function SuiteIterationsView({
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
-  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
+  // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
+  // read-only in exactly the same way, but keeps its Run controls.
+  //
+  // Derived from the SUITE ROW (`isCiOwnedSuite`, resolved by the caller), NOT
+  // from `getSuiteCapabilities.ownership`. Two reasons, and the second is the
+  // hard one:
+  //
+  //   * the row is complete — `declaredSuiteId` and `source` are both on it,
+  //     so the capabilities read would confirm what is already known;
+  //   * `useSuiteCapabilities` below is called with `isEditMode ? … : null`,
+  //     and `isEditMode` is computed HERE. Feeding capabilities back into it
+  //     would make edit mode depend on a query that only runs in edit mode.
+  //
+  // The backend refuses the write regardless; the settings sheet still uses
+  // `capabilities.ownership` for its per-row reason, where it is already read.
+  const editingDisabled = readOnlyConfig || configLocked;
+  const isEditMode = route.type === "suite-edit" && !editingDisabled;
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -494,7 +535,7 @@ export function SuiteIterationsView({
       ? "run-detail"
       : route.type === "test-detail"
         ? "test-detail"
-        : route.type === "test-edit" && !readOnlyConfig
+        : route.type === "test-edit" && !editingDisabled
           ? "test-edit"
           : route.type === "test-edit"
             ? "test-detail"
@@ -1096,7 +1137,7 @@ export function SuiteIterationsView({
       return;
     }
     const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
-    if (readOnlyConfig) {
+    if (editingDisabled) {
       navigation.toRunDetail(route.suiteId, route.runId, iterationId, {
         testCaseId: selectedRunTestCaseId ?? iter?.testCaseId ?? undefined,
       });
@@ -1189,23 +1230,40 @@ export function SuiteIterationsView({
   const computerEnvironmentRowVisible = capabilitiesReady
     ? Boolean(projectId)
     : computersEnabled && Boolean(projectId);
-  const computerEnvironmentDisabledReason = !capabilitiesReady
-    ? undefined
-    : (featureDisabledReason(capabilities.features?.computers) ??
-      (capabilities.permissions?.["suite.configure"] === false
-        ? PERMISSION_REASON_COPY
-        : undefined));
-  const scheduleDisabledReason = !capabilitiesReady
-    ? undefined
-    : capabilities.features?.scheduledEvals?.enabled === false
-      ? DEPLOYMENT_REASON_COPY
-      : capabilities.permissions?.["suite.schedule"] === false
-        ? PERMISSION_REASON_COPY
-        : undefined;
-  const deleteDisabledReason =
-    capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
-      ? PERMISSION_REASON_COPY
+  //
+  // CI OWNERSHIP IS CHECKED FIRST, ahead of every feature flag and every
+  // permission. It has to be: a role change cannot unlock these rows, so
+  // "you don't have permission to change this" would send the reader to ask an
+  // admin for access they already hold. It is also the only reason here that
+  // stands without a capabilities read — the suite row says it — which is what
+  // keeps the sheet honest against a backend that predates the lock.
+  const ciOwnedReason = configLocked
+    ? CI_OWNED_REASON_COPY
+    : capabilitiesReady && capabilities.ownership?.ciOwned
+      ? CI_OWNED_REASON_COPY
       : undefined;
+  const computerEnvironmentDisabledReason =
+    ciOwnedReason ??
+    (!capabilitiesReady
+      ? undefined
+      : (featureDisabledReason(capabilities.features?.computers) ??
+        (capabilities.permissions?.["suite.configure"] === false
+          ? PERMISSION_REASON_COPY
+          : undefined)));
+  const scheduleDisabledReason =
+    ciOwnedReason ??
+    (!capabilitiesReady
+      ? undefined
+      : capabilities.features?.scheduledEvals?.enabled === false
+        ? DEPLOYMENT_REASON_COPY
+        : capabilities.permissions?.["suite.schedule"] === false
+          ? PERMISSION_REASON_COPY
+          : undefined);
+  const deleteDisabledReason =
+    ciOwnedReason ??
+    (capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
+      ? PERMISSION_REASON_COPY
+      : undefined);
 
   const visibleSettingsGroups = useMemo(
     () =>
@@ -1641,6 +1699,7 @@ export function SuiteIterationsView({
             onSetupCi={onSetupCi}
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
+            configLocked={configLocked}
             hideRunActions={hideRunActions}
             unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
             casesSidebarHidden={casesSidebarHidden}
@@ -1869,6 +1928,8 @@ export function SuiteIterationsView({
                   runningTestCaseId={runningTestCaseId}
                   evalRunsDisabledReason={evalRunsDisabledReason}
                   readOnlyConfig={readOnlyConfig}
+                  configLocked={configLocked}
+                  onDuplicateSuite={onDuplicateSuite}
                   projectId={projectId}
                   decisionSummaryEnabled={evaluateDecisionSummary}
                 />
@@ -2543,7 +2604,7 @@ export function SuiteIterationsView({
                   </section>
                 ) : null}
 
-                {readOnlyConfig ? null : (
+                {editingDisabled ? null : (
                   <SuiteSettingsCommitBar
                     changeCount={draftChanges.length}
                     conflictCount={draft.conflicts.length}

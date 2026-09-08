@@ -139,7 +139,7 @@ export function SuiteSwitcher({
                         <span className="truncate text-[13px] font-medium text-foreground">
                           {name}
                         </span>
-                        <SuiteSourceBadge source={entry.suite.source} />
+                        <SuiteSourceBadge suite={entry.suite} />
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {entry.latestRun

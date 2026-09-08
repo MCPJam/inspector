@@ -45,6 +45,7 @@ import {
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /**
  * Source-agnostic identity of the session being promoted. `sessionId` is the
@@ -221,7 +222,7 @@ export function ConvertSessionDialogCore({
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
     [suitesOverview]
   );
 

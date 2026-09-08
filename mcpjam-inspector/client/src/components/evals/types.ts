@@ -244,8 +244,20 @@ export type EvalSuite = {
   latestRunId?: string;
   source?: "ui" | "sdk";
   /**
+   * The suite's DECLARED identity — the `suite.id` an author committed in a
+   * versioned suite file. Present IS ownership: a suite with one is managed by
+   * that file and refuses configuration edits from the app.
+   *
+   * Absent on every UI-authored suite, and absent from what an older backend
+   * sends — so read it through `isCiOwnedSuite`, never on its own.
+   */
+  declaredSuiteId?: string;
+  /**
    * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
    * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
+   *
+   * NOT an ownership signal. A UI-authored suite that CI merely reports into
+   * has this set and stays fully editable; see `isCiOwnedSuite`.
    */
   lastSdkRunAt?: number;
   runCounter?: number;

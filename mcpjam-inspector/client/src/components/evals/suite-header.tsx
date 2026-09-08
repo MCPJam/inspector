@@ -89,6 +89,17 @@ interface SuiteHeaderProps {
   aggregate?: SuiteAggregate | null;
   testCases?: EvalCase[];
   readOnlyConfig?: boolean;
+  /**
+   * The suite's configuration lives in a repository, so it cannot be edited
+   * here — see `isCiOwnedSuite`.
+   *
+   * DISTINCT FROM `readOnlyConfig`, which also hides Run: that prop means "this
+   * surface does not offer suite controls at all" (desktop CI), while this one
+   * means "this suite refuses edits, and running it is the point". Merging them
+   * would take Run away from every CI-owned suite — exactly the thing the lock
+   * is supposed to keep working.
+   */
+  configLocked?: boolean;
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
@@ -156,6 +167,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runs = [],
     testCases = [],
     readOnlyConfig = false,
+    configLocked = false,
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
@@ -647,7 +659,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (casesSidebarHidden &&
       Boolean(onShowCasesSidebar) &&
       runsViewMode === "runs") ||
-    Boolean(onSetupCi && !readOnlyConfig);
+    Boolean(onSetupCi && !readOnlyConfig && !configLocked);
 
   const overviewHasCaseTools =
     overviewRunAllCta != null ||
@@ -669,7 +681,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Cases
           </Button>
         ) : null}
-        {onSetupCi && !readOnlyConfig ? (
+        {onSetupCi && !readOnlyConfig && !configLocked ? (
           <Button
             size="sm"
             variant="outline"
@@ -798,7 +810,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && hasServersConfigured ? (
+        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -917,7 +929,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 autoFocus
                 className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
               />
-            ) : readOnlyConfig ? (
+            ) : readOnlyConfig || configLocked ? (
               <h2
                 className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
                 title={suite.name}

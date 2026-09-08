@@ -154,6 +154,26 @@ export type SuiteCapabilities = {
     /** Reserved previous-run baseline. A client constant cannot authorize it. */
     previousRunBaseline?: boolean;
   };
+  /**
+   * WHERE THE SUITE'S CONFIGURATION LIVES — a sibling of `permissions`, never a
+   * modifier of it.
+   *
+   * `permissions` answers "does this caller's ROLE allow the action". Ownership
+   * is a different question with a different answer for the same caller: an org
+   * owner holds `suite.edit` on a CI-owned suite and still cannot edit it.
+   * Folding one into the other would make the role matrix report something
+   * other than roles, and a client could no longer tell "you may not" from "not
+   * here".
+   *
+   * Absent on a backend that predates the CI-owned lock. Callers must fall back
+   * to `isCiOwnedSuite(suite)` over the suite row they already hold rather than
+   * treating absence as "not CI-owned" — the LOCK still applies on the server.
+   */
+  ownership?: {
+    ciOwned: boolean;
+    declaredSuiteId: string | null;
+    lockedActions: string[];
+  };
   revisionNumber: number | null;
 };
 
