@@ -134,10 +134,15 @@ export function guardStaleness(
       // The fresh look is taken in the shape the act asked for, so a model
       // that wanted a tree gets a tree back rather than a screenshot it did
       // not ask for.
-      const fresh = await driver.observeForRefusal?.(
-        command,
-        wantsFor(action.observe),
-      );
+      // BEST EFFORT, and a rejection must not cost the refusal. The recovery
+      // read touches the page (a CDP attach, an AX walk, a DOM evaluate) and
+      // the very thing that made this act stale — a navigation, a closing tab
+      // — is what makes those reads throw. Letting that escape would turn
+      // "the page moved, here it is" into a generic command failure, which is
+      // strictly worse than the bare token refusal this had before.
+      const fresh = await Promise.resolve(
+        driver.observeForRefusal?.(command, wantsFor(action.observe)),
+      ).catch(() => undefined);
       // A person took the browser DURING the recovery read: that refusal wins,
       // by the same rule as the check above — nothing was run and nothing was
       // observed, and saying "stale" here would send the model to re-read a

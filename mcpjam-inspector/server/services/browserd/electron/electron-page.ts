@@ -527,22 +527,45 @@ export function createElectronPage(
       await deadline(
         (async () => {
           const cdp = await needCdp();
-          // BEFORE the click. This engine fills by clicking, selecting all and
-          // inserting text, and on a `<select>` that sequence silently does
-          // NOTHING — no error, no change, and a caller looking for the
-          // refusal that says "this is not a text field" never sees one. The
-          // driver's `fill_form` falls back to `selectOption` on exactly that
-          // refusal, so without this check the fallback would never fire here
-          // while firing correctly on Playwright.
-          const tagName = await wc.executeJavaScript(
-            `(() => {
-              const el = document.querySelector(${JSON.stringify(selector)});
-              return el ? el.tagName : null;
-            })()`,
-          );
-          if (typeof tagName === "string" && tagName.toUpperCase() === "SELECT") {
+          // BEFORE the click, and MIRRORING PLAYWRIGHT'S TWO REFUSALS. This
+          // engine fills by clicking, selecting all and inserting text, and on
+          // anything that is not a text field that sequence silently does
+          // NOTHING — no error, no change, and on a button it also CLICKS the
+          // button, which is a side effect nobody asked for. Playwright
+          // refuses both, and its two messages differ by one item in the list
+          // (measured, not guessed — see `fillOneField` in the driver):
+          // a `<select>` gets a message that does NOT offer `<select>` as an
+          // alternative, and that is the one the driver falls back to
+          // `selectOption` on. Anything else gets the message that DOES, so
+          // the fallback stays out of it.
+          //
+          // `.catch` because a MALFORMED selector must keep failing the way it
+          // always has: this preflight would reject with the page's own
+          // `querySelector` prose, which the driver classifies as a daemon
+          // fault, where `pointFor` below normalizes it to "no element" and
+          // the model is told its selector was wrong.
+          const kind = await wc
+            .executeJavaScript(
+              `(() => {
+                const el = document.querySelector(${JSON.stringify(selector)});
+                if (!el) return null;
+                if (el.isContentEditable) return "FILLABLE";
+                const tag = el.tagName.toUpperCase();
+                if (tag === "INPUT" || tag === "TEXTAREA") return "FILLABLE";
+                return tag === "SELECT" ? "SELECT" : "OTHER";
+              })()`,
+            )
+            .catch(() => undefined);
+          if (kind === "SELECT") {
             throw new Error(
-              `${selector} is not an <input> or <textarea>; use select instead`,
+              `${selector}: Element is not an <input>, <textarea> or ` +
+                `[contenteditable] element`,
+            );
+          }
+          if (kind === "OTHER") {
+            throw new Error(
+              `${selector}: Element is not an <input>, <textarea>, <select> ` +
+                `or [contenteditable] element`,
             );
           }
           const point = await pointFor(selector);

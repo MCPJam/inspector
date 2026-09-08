@@ -55,14 +55,21 @@ export interface DriverPage {
   /**
    * Type into a specific element, replacing its current value.
    *
-   * CONTRACT: a selector naming a `<select>` must REJECT, with a message
-   * containing "not an <input>". Playwright says exactly that of its own
-   * accord; an engine that fills by synthesising keystrokes must check,
-   * because those keystrokes land on a `<select>` and change nothing at all.
-   * The driver's `fill_form` reads that refusal as "this field wanted
-   * `selectOption`" — the model should not have to know what kind of control
-   * it is filling — so an engine that fails silently instead makes the
-   * fallback unreachable on that engine only.
+   * CONTRACT, in Playwright's own words because it is the reference engine:
+   *
+   *   - a `<select>` REJECTS with "not an `<input>`, `<textarea>` or
+   *     `[contenteditable]`" — a list that does NOT offer `<select>`;
+   *   - anything else unfillable REJECTS with a list that DOES.
+   *
+   * The one-item difference is load-bearing: `fill_form` falls back to
+   * `selectOption` on the first and must not on the second, or a `fill` aimed
+   * at a button is answered with whatever `selectOption` then fails for.
+   *
+   * An engine that fills by synthesising keystrokes has to check for itself,
+   * because those keystrokes land on a `<select>` and change nothing at all —
+   * and on a button they land after a CLICK, which is a side effect nobody
+   * asked for. An engine that fails silently makes the fallback unreachable
+   * there while it works everywhere else.
    */
   fillSelector(selector: string, text: string): Promise<void>;
   /** Press one key or chord ("Enter", "Control+A"). */

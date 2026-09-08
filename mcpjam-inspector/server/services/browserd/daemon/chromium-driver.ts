@@ -90,6 +90,17 @@ class ActError extends Error {
   }
 }
 
+/**
+ * Did `fillSelector` refuse because the target is a `<select>`?
+ *
+ * See `fillOneField` for the two real messages this separates. The engines
+ * agree on the wording by contract (`DriverPage.fillSelector`), so the test is
+ * on the text rather than on a per-engine flag.
+ */
+function isNotAnInputRefusal(message: string): boolean {
+  return /not an <input>/i.test(message) && !/<select>/i.test(message);
+}
+
 interface TabEntry {
   page: DriverPage;
   /** Bumps on every navigation so back/forward to the same URL yield distinct
@@ -498,7 +509,10 @@ export class ChromiumDriver implements BrowserDriver {
     );
     // `settled` describes the page the act ran on. A refusal describes no page
     // at all, and stapling a load flag to it would suggest one was looked at.
-    return observed.ok ? { ...observed, settled } : observed;
+    // `observed` is spread LAST so an observation that could not be taken keeps
+    // its own `settled: false` rather than being overwritten with the settle
+    // result of a page it never managed to read.
+    return observed.ok ? { settled, ...observed } : observed;
   }
 
   /** Map an act verb onto the page primitives. */
@@ -642,11 +656,24 @@ export class ChromiumDriver implements BrowserDriver {
    * One field of a `fill_form`, with the `<select>` fallback.
    *
    * A model should not have to know what KIND of control it is filling: it
-   * read "Size" off a tree or a screenshot and wants "L" in it. Playwright's
-   * `fill` refuses a `<select>` with a message naming `<input>`, which is the
-   * one reliable signal that this field wanted `selectOption` instead — so the
-   * fallback is driven by that refusal rather than by a per-field hint the
-   * model would have to get right.
+   * read "Size" off a tree or a screenshot and wants "L" in it, so the
+   * fallback is driven by Playwright's own refusal rather than by a per-field
+   * hint the model would have to get right.
+   *
+   * WHICH refusal, measured against a real Chromium rather than guessed —
+   * the two messages differ by one item in the same list:
+   *
+   *   <select>  "Element is not an <input>, <textarea> or [contenteditable]
+   *              element"
+   *   <button>  "Element is not an <input>, <textarea>, <select> or
+   *              [contenteditable] and does not have a role allowing
+   *              [aria-readonly]"
+   *
+   * So "names <input>" alone is NOT the discriminator: it matches both, and
+   * matching the second sent a `fill` at a button off to `selectOption`, which
+   * failed for its own unrelated reason and reported that instead of "this
+   * element cannot be filled". The `<select>` case is the one whose message
+   * does not offer `<select>` as an alternative.
    *
    * Any OTHER failure stops the form. Half a filled form is a state the page
    * is in and the model cannot see, so the error names the field that failed
@@ -662,7 +689,7 @@ export class ChromiumDriver implements BrowserDriver {
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!/not an <input>/i.test(message)) {
+      if (!isNotAnInputRefusal(message)) {
         throw new ActError(
           "fill_form_failed",
           `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` +
@@ -1491,9 +1518,13 @@ export class ChromiumDriver implements BrowserDriver {
     let a11yFields: Record<string, unknown> = {};
     let refMap: Map<string, RefEntry> | undefined;
     if (wants.a11y) {
+      // `.catch` as well as the `ok:false` arm: `renderA11y` READS the page
+      // (a CDP attach, an AX tree walk), and a navigation or a closing tab
+      // rejects rather than answering. An act that RAN must not come back as
+      // a command failure because the aftermath could not be described.
       const rendered = await this.renderA11y(tabId, entry, {
         filter: "interactive",
-      });
+      }).catch(() => ({ ok: false as const, error: undefined }));
       if (rendered.ok) {
         a11yFields = rendered.fields;
         refMap = rendered.refMap;
@@ -1511,7 +1542,36 @@ export class ChromiumDriver implements BrowserDriver {
     // AFTER both reads: the token must describe the state the output was
     // captured against, and a snapshot taken first would describe the page as
     // it was before a tree walk that can take a moment.
-    const frame = await this.snapshot(page);
+    //
+    // AND IT CAN REJECT. `domStructureSignal` is an in-page evaluate, and a
+    // navigation destroys the execution context it runs in — which a submitted
+    // form does as a matter of course. Letting that escape would report a
+    // COMPLETED act as a failed command, and the obvious next move for a model
+    // reading a failure is to try again: the form gets submitted twice.
+    const frame = await this.snapshot(page).catch(() => undefined);
+    if (!frame) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ??
+            "a person has taken control of this browser; nothing was observed",
+        );
+      }
+      // The act ran; we cannot say what it produced. NO STATE TOKEN, which is
+      // the honest answer and also the safe one: the tool layer keeps the
+      // token it already had, the next act pins to that, and `guardStaleness`
+      // refuses it with a fresh look rather than acting on a page nobody has
+      // seen. `settled: false` tells the model to look again.
+      return {
+        ok: true,
+        output: this.withHandoffNote({
+          url: safeUrl(page),
+          ...a11yFields,
+          ...(screenshot ? { screenshot } : {}),
+          observationFailed: true,
+        }),
+        settled: false,
+      };
+    }
     const output = {
       // Only when it MOVED. `url` is on every observation already; a
       // `previousUrl` equal to it teaches the model nothing and costs a line

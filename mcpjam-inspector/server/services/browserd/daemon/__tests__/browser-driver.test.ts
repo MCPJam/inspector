@@ -186,6 +186,30 @@ describe("guardStaleness", () => {
     expect(driver.execute).not.toHaveBeenCalled();
   });
 
+  it("still refuses with the bare token when the recovery read THROWS", async () => {
+    // The very thing that made this act stale — a navigation, a closing tab —
+    // is what makes the recovery read throw, so this is the common case rather
+    // than the exotic one. A generic command failure here is strictly worse
+    // than the bare token refusal the guard gave before it could observe.
+    const fresh = token({ navCounter: 9, domHash: "moved" });
+    const driver = fakeDriver({
+      currentStateToken: vi.fn(async () => fresh),
+      observeForRefusal: vi.fn(async () => {
+        throw new Error("Execution context was destroyed");
+      }),
+    });
+
+    const result = await guardStaleness(driver)(actCmd(token()));
+
+    expect(result).toEqual({
+      ok: false,
+      staleObservation: true,
+      error: "stale_observation",
+      stateToken: fresh,
+    });
+    expect(driver.execute).not.toHaveBeenCalled();
+  });
+
   it("still refuses with the bare token when the driver cannot observe", async () => {
     // `observeForRefusal` is optional — a unit fake, an engine with no such
     // read — and a driver without it degrades to today's shape rather than

@@ -146,18 +146,59 @@ describe("electron page — the keyboard", () => {
     // `<input>`, so without this check the fallback fires on Playwright and
     // never here, and the model's form is quietly half-filled.
     const contents = new FakeBrowserWebContents({
-      evaluate: (code) => (code.includes("tagName") ? "SELECT" : undefined),
+      evaluate: (code) => (code.includes("isContentEditable") ? "SELECT" : undefined),
     });
     for (const [method, reply] of elementAt(5, 5)) {
       contents.debugger.replies.set(method, reply);
     }
     const { page, dbg } = makePage(contents);
 
-    await expect(page.fillSelector("#size", "L")).rejects.toThrow(
-      /not an <input>/i,
-    );
+    const refusal = await page
+      .fillSelector("#size", "L")
+      .then(() => null, (error: Error) => error.message);
+    // The list must NOT offer `<select>`: that one-item difference is how the
+    // driver tells "use selectOption" from "this cannot be filled at all".
+    expect(refusal).toMatch(/not an <input>/i);
+    expect(refusal).not.toMatch(/<select>/);
     // And nothing was typed at it: a half-applied fill is worse than a refusal.
     expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
+  it("refuses a target that cannot be filled, WITHOUT clicking it", async () => {
+    // The keystrokes land on a button and change nothing — but the click that
+    // precedes them presses it, which is a side effect nobody asked for. The
+    // message names `<select>` among the alternatives, which is what keeps the
+    // driver's `fill_form` from falling back to `selectOption` here.
+    const contents = new FakeBrowserWebContents({
+      evaluate: (code) => (code.includes("isContentEditable") ? "OTHER" : undefined),
+    });
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await expect(page.fillSelector("#go", "x")).rejects.toThrow(/<select>/);
+    expect(mouseEvents(dbg)).toHaveLength(0);
+  });
+
+  it("lets a MALFORMED selector fail the way it always has", async () => {
+    // The preflight would reject with the page's own `querySelector` prose,
+    // which the driver reads as a daemon fault; the box lookup below it
+    // normalizes the same failure to "no element", which the model is told is
+    // its own selector's problem.
+    const contents = new FakeBrowserWebContents({
+      evaluate: () => {
+        throw new Error("SyntaxError: '[[[' is not a valid selector");
+      },
+    });
+    for (const [method, reply] of noElement()) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("[[[", "x")).rejects.toThrow(
+      /timeout|not found|no element|strict mode/i,
+    );
   });
 
   it("replaces a field's value rather than appending to it", async () => {

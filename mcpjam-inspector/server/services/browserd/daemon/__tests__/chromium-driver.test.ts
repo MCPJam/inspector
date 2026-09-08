@@ -1063,6 +1063,92 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     ]);
   });
 
+  it("does NOT fall back to selectOption for a field that is merely unfillable", async () => {
+    // Playwright's two refusals differ by one item in the same list, and both
+    // say "not an <input>". Falling back on the second sent a `fill` aimed at
+    // a button off to `selectOption`, which then failed for its own unrelated
+    // reason — so the model was told about a missing option rather than about
+    // an element that cannot be filled.
+    const { res, page } = await acted(
+      {
+        kind: "act",
+        verb: "fill_form",
+        fields: [{ selector: "#go", value: "x" }],
+      },
+      {
+        actErrorFor: (entry) =>
+          entry === "fill:#go:x"
+            ? new Error(
+                "page.fill: Error: Element is not an <input>, <textarea>, " +
+                  "<select> or [contenteditable] and does not have a role " +
+                  "allowing [aria-readonly]",
+              )
+            : undefined,
+      },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("fill_form_failed");
+    expect(res.error).toContain("not an <input>");
+    // The point: no `selectOption` was attempted on it.
+    expect(page.calls.acts).toEqual(["fill:#go:x"]);
+  });
+
+  it("keeps a completed act successful when the page cannot be read afterwards", async () => {
+    // `domStructureSignal` is an in-page evaluate and a navigation destroys the
+    // context it runs in — which is what a submitted form does. Reported as a
+    // command failure, the obvious next move for a model is to try again, and
+    // the form is submitted twice.
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    let acted = false;
+    page.onAct = () => {
+      acted = true;
+    };
+    const original = page.domStructureSignal.bind(page);
+    page.domStructureSignal = async () => {
+      // The PRE-act read still works; only the post-act one is destroyed.
+      if (!acted) return original();
+      throw new Error("Execution context was destroyed, most likely because of a navigation");
+    };
+
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { selector: "#submit" } }),
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({ observationFailed: true });
+    // NO TOKEN: the tool layer keeps the one it had, the next act pins to that,
+    // and the guard refuses it with a fresh look rather than acting blind.
+    expect(res.stateToken).toBeUndefined();
+    expect(res.settled).toBe(false);
+  });
+
+  it("does not fail an act because the TREE could not be read", async () => {
+    // Same rule one read earlier: `renderA11y` attaches CDP and walks a tree,
+    // and a closing tab rejects rather than answering.
+    const page = fakePage({ url: "https://x.test/" });
+    page.cdp = async () => {
+      throw new Error("Target closed");
+    };
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "a11y",
+      }),
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({ a11yUnavailable: true });
+  });
+
   it("stops at the first real failure and says which fields went in", async () => {
     // Half a filled form is a state the page is in and the model cannot see.
     const { res, page } = await acted(

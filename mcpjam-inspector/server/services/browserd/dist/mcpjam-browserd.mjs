@@ -1545,10 +1545,9 @@ function guardStaleness(driver, lease) {
     const refusal = lease && leaseRefusalFor(lease.state(), command);
     if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
-      const fresh = await driver.observeForRefusal?.(
-        command,
-        wantsFor(action.observe)
-      );
+      const fresh = await Promise.resolve(
+        driver.observeForRefusal?.(command, wantsFor(action.observe))
+      ).catch(() => void 0);
       if (fresh?.leaseBlocked) return fresh;
       return {
         ok: false,
@@ -3275,6 +3274,9 @@ var ActError = class extends Error {
     this.name = "ActError";
   }
 };
+function isNotAnInputRefusal(message) {
+  return /not an <input>/i.test(message) && !/<select>/i.test(message);
+}
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3503,7 +3505,7 @@ var ChromiumDriver = class {
       before,
       "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
     );
-    return observed.ok ? { ...observed, settled } : observed;
+    return observed.ok ? { settled, ...observed } : observed;
   }
   /** Map an act verb onto the page primitives. */
   async dispatchVerb(page, action) {
@@ -3594,11 +3596,24 @@ var ChromiumDriver = class {
    * One field of a `fill_form`, with the `<select>` fallback.
    *
    * A model should not have to know what KIND of control it is filling: it
-   * read "Size" off a tree or a screenshot and wants "L" in it. Playwright's
-   * `fill` refuses a `<select>` with a message naming `<input>`, which is the
-   * one reliable signal that this field wanted `selectOption` instead — so the
-   * fallback is driven by that refusal rather than by a per-field hint the
-   * model would have to get right.
+   * read "Size" off a tree or a screenshot and wants "L" in it, so the
+   * fallback is driven by Playwright's own refusal rather than by a per-field
+   * hint the model would have to get right.
+   *
+   * WHICH refusal, measured against a real Chromium rather than guessed —
+   * the two messages differ by one item in the same list:
+   *
+   *   <select>  "Element is not an <input>, <textarea> or [contenteditable]
+   *              element"
+   *   <button>  "Element is not an <input>, <textarea>, <select> or
+   *              [contenteditable] and does not have a role allowing
+   *              [aria-readonly]"
+   *
+   * So "names <input>" alone is NOT the discriminator: it matches both, and
+   * matching the second sent a `fill` at a button off to `selectOption`, which
+   * failed for its own unrelated reason and reported that instead of "this
+   * element cannot be filled". The `<select>` case is the one whose message
+   * does not offer `<select>` as an alternative.
    *
    * Any OTHER failure stops the form. Half a filled form is a state the page
    * is in and the model cannot see, so the error names the field that failed
@@ -3610,7 +3625,7 @@ var ChromiumDriver = class {
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!/not an <input>/i.test(message)) {
+      if (!isNotAnInputRefusal(message)) {
         throw new ActError(
           "fill_form_failed",
           `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
@@ -4229,7 +4244,7 @@ var ChromiumDriver = class {
     if (wants.a11y) {
       const rendered = await this.renderA11y(tabId, entry, {
         filter: "interactive"
-      });
+      }).catch(() => ({ ok: false, error: void 0 }));
       if (rendered.ok) {
         a11yFields = rendered.fields;
         refMap = rendered.refMap;
@@ -4238,7 +4253,24 @@ var ChromiumDriver = class {
       }
     }
     const screenshot = wants.screenshot ? await page.screenshotBase64().catch(() => void 0) : void 0;
-    const frame = await this.snapshot(page);
+    const frame = await this.snapshot(page).catch(() => void 0);
+    if (!frame) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          blockedDetail ?? "a person has taken control of this browser; nothing was observed"
+        );
+      }
+      return {
+        ok: true,
+        output: this.withHandoffNote({
+          url: safeUrl(page),
+          ...a11yFields,
+          ...screenshot ? { screenshot } : {},
+          observationFailed: true
+        }),
+        settled: false
+      };
+    }
     const output = {
       // Only when it MOVED. `url` is on every observation already; a
       // `previousUrl` equal to it teaches the model nothing and costs a line
