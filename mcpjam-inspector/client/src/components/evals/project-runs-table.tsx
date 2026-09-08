@@ -21,6 +21,12 @@ import { cn } from "@/lib/utils";
 import { formatDuration, formatRunId, formatTime } from "./helpers";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { RunSourceBadge } from "./run-source-badge";
+import {
+  apiKeyTail,
+  originsForFilters,
+  runAgentName,
+  RUN_ORIGIN_FILTERS,
+} from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
 import {
   RunDecisionVerdictBadge,
@@ -63,6 +69,14 @@ export interface ProjectRunRow {
     passRate: number;
   } | null;
   source: EvalSuiteRun["source"] | null;
+  /**
+   * The DECLARED launcher and the VERIFIED attribution. Both `| null` AND
+   * optional: a backend that predates run provenance sends neither key, so a
+   * reader that assumed the field existed would crash the whole table against
+   * an older deployment.
+   */
+  launcher?: EvalSuiteRun["launcher"] | null;
+  attribution?: EvalSuiteRun["attribution"] | null;
   ciMetadata: EvalSuiteRun["ciMetadata"] | null;
   createdBy: string;
   createdByName: string | null;
@@ -71,17 +85,6 @@ export interface ProjectRunRow {
   completedAt: number | null;
   durationMs: number | null;
 }
-
-const SOURCE_FILTERS: Array<{
-  value: NonNullable<EvalSuiteRun["source"]>;
-  label: string;
-}> = [
-  { value: "sdk", label: "SDK" },
-  { value: "ui", label: "UI" },
-  { value: "api", label: "API" },
-  { value: "schedule", label: "Scheduled" },
-  { value: "github_check", label: "GitHub" },
-];
 
 const ALL_SUITES = "__all__";
 
@@ -167,9 +170,27 @@ export function ProjectRunsTable({
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [suiteFilter, setSuiteFilter] = useState<string>(ALL_SUITES);
 
+  /**
+   * The chip selection, as the backend's `origins` argument.
+   *
+   * SENT TO THE QUERY, not applied to the rows it returns. Filtering the
+   * loaded page was a false negative with real consequences: a suite whose only
+   * GitHub runs were older than the first 50 rows answered "No runs match these
+   * filters", which reads as "we never ran this from CI" rather than "they are
+   * further down". An empty selection sends no argument at all, so an older
+   * backend that does not know it is unaffected.
+   */
+  const origins = useMemo(
+    () => originsForFilters([...sourceFilter]),
+    [sourceFilter],
+  );
+
   const { results, status, loadMore } = usePaginatedQuery(
     "testSuites:listProjectRuns" as any,
-    { projectId } as any,
+    ({
+      projectId,
+      ...(origins.length > 0 ? { origins } : {}),
+    }) as any,
     { initialNumItems: PROJECT_RUNS_PAGE_SIZE },
   );
 
@@ -187,14 +208,13 @@ export function ProjectRunsTable({
 
   const filtered = useMemo(
     () =>
-      rows.filter((row) => {
-        if (suiteFilter !== ALL_SUITES && row.suiteId !== suiteFilter) {
-          return false;
-        }
-        if (sourceFilter.size === 0) return true;
-        return sourceFilter.has(row.source ?? "ui");
-      }),
-    [rows, sourceFilter, suiteFilter],
+      // Suite only. Origin is decided by the query above, so a row that got
+      // here already matches the chips — re-checking it client-side would be a
+      // second predicate free to disagree with the one that chose the page.
+      rows.filter(
+        (row) => suiteFilter === ALL_SUITES || row.suiteId === suiteFilter,
+      ),
+    [rows, suiteFilter],
   );
 
   const isLoadingFirstPage = status === "LoadingFirstPage";
@@ -218,7 +238,11 @@ export function ProjectRunsTable({
     );
   }
 
-  if (rows.length === 0) {
+  // The project has no runs AT ALL — not "no runs matched". Now that the
+  // origin chips are a query argument, an empty page can also mean the filter
+  // matched nothing, and showing this instead would both lie about the project
+  // and take away the chips the user needs to undo it.
+  if (rows.length === 0 && !isFiltering) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="mx-auto max-w-md p-6 text-center">
@@ -243,7 +267,7 @@ export function ProjectRunsTable({
         <span className="text-xs font-medium text-muted-foreground">
           Source
         </span>
-        {SOURCE_FILTERS.map((filter) => {
+        {RUN_ORIGIN_FILTERS.map((filter) => {
           const active = sourceFilter.has(filter.value);
           return (
             <button
@@ -287,17 +311,13 @@ export function ProjectRunsTable({
       </div>
 
       {/*
-        Say what the filters actually cover. They run over the pages loaded
-        so far, so with more pages outstanding "no SDK runs" would otherwise
-        read as a fact about the project rather than about this page.
+        The "filtering the N runs loaded so far" caveat is GONE, because the
+        limitation it described is: the origin chips are a query argument now,
+        so an empty result really does mean the project has no such runs. The
+        suite dropdown still filters the loaded page — it is built from the
+        rows in hand — which is why `isFiltering` survives below for the empty
+        state's wording.
       */}
-      {isFiltering && canLoadMore ? (
-        <p className="text-[11px] text-muted-foreground">
-          Filtering the {rows.length} most recent runs loaded so far — load more
-          below to widen the search.
-        </p>
-      ) : null}
-
       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/60">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
@@ -326,7 +346,18 @@ export function ProjectRunsTable({
                   colSpan={9}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
-                  No runs match these filters.
+                  {/*
+                    Three different facts, said differently. "No runs match
+                    these filters" was printed for all three, which is how an
+                    unfiltered empty project read as a filtering problem — and,
+                    before the chips became a query argument, how a project WITH
+                    matching runs further down read as having none.
+                  */}
+                  {!isFiltering
+                    ? "No runs yet."
+                    : canLoadMore
+                      ? "No matches on this page — load more to keep looking."
+                      : "No runs match these filters."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -379,6 +410,37 @@ export function ProjectRunsTable({
  * always showed — this never invents an aggregate for a row it could not read,
  * including the fan-out rows whose stored numbers describe one leg.
  */
+/**
+ * WHO started this run — the person, and the credential they used.
+ *
+ * The name alone was ambiguous in the one case that matters: a run made with an
+ * API key is attributed to the key's owner, so an automated launch and that
+ * person clicking Run read identically. `attribution.apiKeyId` is minted by the
+ * backend from the credential the request authenticated with — a fact, not a
+ * claim — so the second line can say which key without guessing.
+ *
+ * An MCP run names the calling agent instead, which is the more useful answer
+ * there: "claude-code" tells you what to look at; "via API key ····3f9a" tells
+ * you which key to rotate.
+ */
+function RunByCell({ row }: { row: ProjectRunRow }) {
+  const name = row.createdByName ?? "—";
+  const agent = runAgentName(row);
+  const keyTail = agent ? null : apiKeyTail(row.attribution?.apiKeyId);
+  return (
+    <span className="flex flex-col leading-tight">
+      <span className="truncate">{name}</span>
+      {agent ? (
+        <span className="truncate text-[10px] opacity-70" title={agent}>
+          via {agent}
+        </span>
+      ) : keyTail ? (
+        <span className="text-[10px] opacity-70">via API key {keyTail}</span>
+      ) : null}
+    </span>
+  );
+}
+
 function ProjectRunTableRow({
   row,
   projectId,
@@ -451,7 +513,7 @@ function ProjectRunTableRow({
         )}
       </TableCell>
       <TableCell>
-        <RunSourceBadge source={row.source ?? undefined} />
+        <RunSourceBadge run={row} />
       </TableCell>
       <TableCell>
         {summary ? (
@@ -517,8 +579,8 @@ function ProjectRunTableRow({
       <TableCell className="text-xs text-muted-foreground">
         {row.durationMs != null ? formatDuration(row.durationMs) : "—"}
       </TableCell>
-      <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
-        {row.createdByName ?? "—"}
+      <TableCell className="max-w-[140px] text-xs text-muted-foreground">
+        <RunByCell row={row} />
       </TableCell>
       <TableCell>
         {row.ciMetadata ? (

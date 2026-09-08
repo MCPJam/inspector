@@ -614,6 +614,57 @@ describe("compose server selectors", () => {
     expect(bodyOf(fetchMock, /eval-runs$/)).toBeUndefined();
   });
 
+  /**
+   * A composed stack runs AS a client. `compose.host` was REQUIRED before
+   * `compose.client` existed, so the pair is "exactly one" rather than "at
+   * most one" — a stack with neither has nothing to stamp its run with, and
+   * the schema can no longer say so alone now that either spelling satisfies
+   * it.
+   */
+  it("composes on `compose.client` exactly as on `compose.host`", async () => {
+    const { client, fetchMock } = makeClient();
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", compose: { client: "Claude Code", hostServers: true } },
+      { client },
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toEqual({
+      hostId: "host-claude",
+    });
+  });
+
+  it("refuses compose.client and compose.host together", async () => {
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          compose: {
+            client: "Claude Code",
+            host: "Claude Code",
+            hostServers: true,
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain("not both");
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("refuses a composed run that names neither spelling of the client", async () => {
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", compose: { hostServers: true } },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(String((error as Error).message)).toContain(
+      "compose.client is required",
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
   it("follows the host's live list only when asked out loud", async () => {
     const { client, fetchMock } = makeClient();
     await runEvalSuiteOperation.execute(

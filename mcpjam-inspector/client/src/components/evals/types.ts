@@ -244,8 +244,20 @@ export type EvalSuite = {
   latestRunId?: string;
   source?: "ui" | "sdk";
   /**
+   * The suite's DECLARED identity — the `suite.id` an author committed in a
+   * versioned suite file. Present IS ownership: a suite with one is managed by
+   * that file and refuses configuration edits from the app.
+   *
+   * Absent on every UI-authored suite, and absent from what an older backend
+   * sends — so read it through `isCiOwnedSuite`, never on its own.
+   */
+  declaredSuiteId?: string;
+  /**
    * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
    * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
+   *
+   * NOT an ownership signal. A UI-authored suite that CI merely reports into
+   * has this set and stays fully editable; see `isCiOwnedSuite`.
    */
   lastSdkRunAt?: number;
   runCounter?: number;
@@ -626,7 +638,13 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
+  | "scorecard"
+  | "timeline"
+  | "chat"
+  | "raw"
+  | "tools"
+  | "browser"
+  | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -718,6 +736,7 @@ export type CompareRunRecord = {
    * payload at launch. Overlay matching reads this for a live attempt.
    */
   launchSnapshot?: {
+    isNegativeTest?: boolean;
     steps?: TestStep[];
     predicates?: CasePredicates | Predicate[];
     matchOptions?: EvalMatchOptions;
@@ -936,7 +955,35 @@ export type EvalSuiteRun = {
   stoppedAt?: number;
   stopReason?:
     "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
+  /**
+   * Run origin, STAMPED by the backend. Every launch that arrives over `/v1` —
+   * the CLI, a GitHub Actions job, an MCP agent — is `"api"`, because from the
+   * server's side all three are API calls. Read `launcher` for which of them
+   * it actually was; `resolveRunOrigin` composes the two.
+   */
   source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
+  /**
+   * The run's DECLARED launcher: what the launching process said it was.
+   *
+   * Optional in the wire sense as well as the type sense — a backend that
+   * predates run provenance never sends it, so every reader has to work with
+   * it absent. Absence means "no declared launcher", never "the app did it".
+   */
+  launcher?: {
+    kind: "cli" | "mcp" | "github_action";
+    client?: string;
+    version?: string;
+  };
+  /**
+   * VERIFIED attribution, minted by the backend from the credential the run
+   * authenticated with. `apiKeyId` is what lets the Runs table say "via API
+   * key ····last4" as a fact rather than a guess. Narrowed by the backend
+   * projection to these two fields.
+   */
+  attribution?: {
+    surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+    apiKeyId?: string | null;
+  };
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

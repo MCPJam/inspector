@@ -241,6 +241,17 @@ export function classifyPageToolApprovals(
 }
 
 /**
+ * The catalog id a host attaches to get the browser — the ONE id that maps to
+ * the six tool names below (the deliberate 1:N in the built-in catalog).
+ *
+ * Shared because both sides read it and must not disagree: the server suppresses
+ * or builds the toolset from it, and the client decides from the same id whether
+ * to offer a Browser pane and list the tools. It lived only on the server, so
+ * every client site that needed it wrote the string `"browser"` by hand.
+ */
+export const BROWSER_BUILT_IN_TOOL_ID = "browser";
+
+/**
  * The six hosted-browser tool names, split by what they DO to the page.
  *
  * Verbs rather than one `browser` mega-tool precisely so this split can
