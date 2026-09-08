@@ -20,11 +20,10 @@ import { launchRuns } from "./run-results-matrix-model";
 import {
   ArrowUpRight,
   Copy,
-  GitCompareArrows,
   Play,
   Download,
   MoreHorizontal,
-  Info,
+  TrendingUp,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
@@ -33,19 +32,21 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
 } from "@mcpjam/design-system/dropdown-menu";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@mcpjam/design-system/sheet";
 import { formatRunId } from "../evals/helpers";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
-import { RunLaunchContext } from "./run-launch-context";
+import { resolveHostLogoByName } from "@/lib/host-logo";
+import { compactModelIdTail } from "@/lib/environment-label";
+import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
+
+/** Hidden until we are ready to expose report export on this page. */
+const SHOW_EXPORT_REPORT = false;
 
 export type EvaluateRunPageHeaderActions = {
   onImprove?: () => void;
@@ -102,7 +103,6 @@ export function EvaluateRunPage({
   defaultCompareRunId,
   onCompareWithRun,
   onExport,
-  iterations,
   launchReview,
   children,
 }: {
@@ -120,17 +120,13 @@ export function EvaluateRunPage({
 }) {
   const [comparing, setComparing] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
   useEffect(() => {
     setReviewing(false);
-    setShowDetails(false);
   }, [run._id]);
   const targets = launchRuns(run, relatedRuns ?? otherRuns);
   const [headerActions, setHeaderActions] =
     useState<EvaluateRunPageHeaderActions | null>(null);
-  const [headerVerdict, setHeaderVerdict] = useState<HeaderVerdict | null>(
-    null,
-  );
+  const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
 
   return (
@@ -144,42 +140,21 @@ export function EvaluateRunPage({
             className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-4"
             data-testid="evaluate-run-header"
           >
-            <div className="flex min-w-0 items-center gap-2">
-              <h2 className="text-base font-semibold tracking-tight text-foreground">
+            <div className="flex min-w-0 items-center gap-3">
+              <h2 className="text-2xl font-bold leading-8 tracking-tight text-foreground">
                 Run{" "}
                 {targets[0].runNumber
                   ? `#${targets[0].runNumber}`
                   : formatRunId(targets[0]._id)}{" "}
                 Results
               </h2>
-              {headerVerdict && (
-                <span
-                  data-testid="run-header-verdict"
-                  title={headerVerdict.undecidedLine ?? undefined}
-                  className={cn(
-                    "rounded border px-2 py-0.5 text-[11px] font-medium",
-                    headerVerdict.tone === "passed"
-                      ? "border-success/30 bg-success/10"
-                      : headerVerdict.tone === "failed"
-                      ? "border-destructive/30 bg-destructive/10"
-                      : headerVerdict.tone === "caution"
-                      ? "border-warning/30 bg-warning/10"
-                      : "border-border bg-muted/40",
-                  )}
-                >
-                  {headerVerdict.word}
-                </span>
-              )}
-              {targets.length === 1 && !headerVerdict ? (
-                <RunOutcomeBadge run={run} />
-              ) : targets.length > 1 ? (
-                <span className="text-xs text-muted-foreground">
-                  {targets.length} client/model pairings
-                </span>
-              ) : null}
+              <RunPairingDecisions
+                targets={targets}
+                hostNamesById={hostNamesById}
+              />
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {onExport && (
+              {SHOW_EXPORT_REPORT && onExport && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -190,62 +165,66 @@ export function EvaluateRunPage({
                   Export report
                 </Button>
               )}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8"
-                    aria-label="Run actions"
-                  >
-                    <MoreHorizontal className="size-4" aria-hidden />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {launchReview && (
-                    <DropdownMenuItem
-                      disabled={Boolean(launchReview.disabledReason)}
-                      title={launchReview.disabledReason ?? undefined}
-                      onSelect={() => setReviewing(true)}
+              {launchReview && (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  disabled={Boolean(launchReview.disabledReason)}
+                  title={launchReview.disabledReason ?? undefined}
+                  onClick={() => setReviewing(true)}
+                >
+                  <Play className="size-3.5" aria-hidden />
+                  Run again
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!canCompare}
+                title={
+                  canCompare ? "Compare two runs" : "Need at least two runs"
+                }
+                onClick={() => setComparing(true)}
+                data-testid="evaluate-run-compare-open"
+              >
+                <TrendingUp className="size-3.5" aria-hidden />
+                Compare runs
+              </Button>
+              {(headerActions?.onImprove ||
+                headerActions?.onOpenFailingTrace) && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      aria-label="Run actions"
                     >
-                      <Play aria-hidden /> New run
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem
-                    disabled={!canCompare}
-                    title={
-                      canCompare ? "Compare two runs" : "Need at least two runs"
-                    }
-                    onSelect={() => setComparing(true)}
-                    data-testid="evaluate-run-compare-open"
-                  >
-                    <GitCompareArrows aria-hidden /> Compare runs
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setShowDetails(true)}>
-                    <Info aria-hidden /> Run details
-                  </DropdownMenuItem>
-                  {(headerActions?.onImprove ||
-                    headerActions?.onOpenFailingTrace) && (
-                    <DropdownMenuSeparator />
-                  )}
-                  {headerActions?.onImprove && (
-                    <DropdownMenuItem
-                      onSelect={headerActions.onImprove}
-                      data-testid="run-verdict-improve"
-                    >
-                      <Copy aria-hidden /> Prompt to improve
-                    </DropdownMenuItem>
-                  )}
-                  {headerActions?.onOpenFailingTrace && (
-                    <DropdownMenuItem
-                      onSelect={headerActions.onOpenFailingTrace}
-                      data-testid="run-verdict-open-trace"
-                    >
-                      <ArrowUpRight aria-hidden /> Open failing trace
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                      <MoreHorizontal className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {headerActions.onImprove && (
+                      <DropdownMenuItem
+                        onSelect={headerActions.onImprove}
+                        data-testid="run-verdict-improve"
+                      >
+                        <Copy aria-hidden /> Prompt to improve
+                      </DropdownMenuItem>
+                    )}
+                    {headerActions.onOpenFailingTrace && (
+                      <DropdownMenuItem
+                        onSelect={headerActions.onOpenFailingTrace}
+                        data-testid="run-verdict-open-trace"
+                      >
+                        <ArrowUpRight aria-hidden /> Open failing trace
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
           </header>
 
@@ -266,30 +245,6 @@ export function EvaluateRunPage({
               children
             )}
           </div>
-          <Sheet open={showDetails} onOpenChange={setShowDetails}>
-            <SheetContent>
-              <SheetHeader>
-                <SheetTitle>Run details</SheetTitle>
-                <SheetDescription>
-                  The client, models, and servers used for this report.
-                </SheetDescription>
-              </SheetHeader>
-              <div className="px-4 py-5">
-                <div className="space-y-5">
-                  {targets.map((target) => (
-                    <RunLaunchContext
-                      key={target._id}
-                      run={target}
-                      hostNamesById={hostNamesById}
-                      iterations={iterations?.filter(
-                        (item) => item.suiteRunId === target._id,
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
           {reviewing && launchReview && (
             <SuiteRunReview
               {...launchReview}
@@ -302,38 +257,159 @@ export function EvaluateRunPage({
   );
 }
 
-function RunOutcomeBadge({ run }: { run: EvalSuiteRun }) {
-  const outcome = ["pending", "running", "grading"].includes(run.status)
+function pairingClientName(
+  target: EvalSuiteRun,
+  hostNamesById: Map<string, string | null>,
+): string {
+  if (!target.namedHostId) return "Suite client";
+  return (
+    hostNamesById.get(target.namedHostId) ??
+    `Client …${target.namedHostId.slice(-6)}`
+  );
+}
+
+const IN_FLIGHT_STATUSES = new Set(["pending", "running", "grading"]);
+
+export type PairingDecisionTone = "ship" | "hold" | "pending";
+
+export type PairingDecision = {
+  word: string;
+  tone: PairingDecisionTone;
+};
+
+/**
+ * Per-client decision for the run header. Uses the run's own stored verdict —
+ * the same result the page already settled for that pairing — and never
+ * invents Hold/Ship while the run is still in flight.
+ */
+export function pairingDecision(run: EvalSuiteRun): PairingDecision {
+  const outcome = IN_FLIGHT_STATUSES.has(run.status)
     ? run.status
     : run.result && run.result !== "pending"
-    ? run.result
-    : run.status;
+      ? run.result
+      : run.status;
+  if (outcome === "passed") return { word: "Ship", tone: "ship" };
+  if (outcome === "failed" || outcome === "timed_out") {
+    return { word: "Hold", tone: "hold" };
+  }
   const labels: Record<string, string> = {
-    passed: "Passed",
-    failed: "Failed",
-    inconclusive: "Inconclusive",
-    completed: "Completed",
     running: "Running",
     grading: "Grading",
-    cancelled: "Cancelled",
-    timed_out: "Timed out",
     pending: "Pending",
+    cancelled: "Cancelled",
+    inconclusive: "Inconclusive",
+    completed: "Completed",
   };
-  const label = labels[outcome] ?? "Unknown";
-  const tone =
-    outcome === "passed"
-      ? "bg-success/10 text-success"
-      : outcome === "failed"
-      ? "bg-destructive/10 text-destructive"
-      : "bg-muted text-muted-foreground";
+  return { word: labels[outcome] ?? "Pending", tone: "pending" };
+}
+
+function pairingPillClass(tone: PairingDecisionTone): string {
+  if (tone === "ship") return "border-success/30 bg-success/10 text-success";
+  if (tone === "hold") return "border-warning/30 bg-warning/10 text-warning";
+  return "border-border bg-muted/40 text-muted-foreground";
+}
+
+function pairingPillLabel(word: string, tone: PairingDecisionTone): string {
+  return tone === "pending" ? word : word.toUpperCase();
+}
+
+const DECISION_PILL_ORDER: PairingDecisionTone[] = ["hold", "ship", "pending"];
+
+type PairingMark = {
+  key: string;
+  label: string;
+  client: string;
+};
+
+function groupPairingsByDecision(
+  targets: readonly EvalSuiteRun[],
+  hostNamesById: Map<string, string | null>,
+): Array<{
+  tone: PairingDecisionTone;
+  word: string;
+  marks: PairingMark[];
+}> {
+  const buckets = new Map<
+    PairingDecisionTone,
+    { word: string; marks: PairingMark[] }
+  >();
+  for (const target of targets) {
+    const decision = pairingDecision(target);
+    const client = pairingClientName(target, hostNamesById);
+    const model = compactModelIdTail(
+      target.effectiveModelId ?? "Client default",
+    );
+    const mark = {
+      key: target._id,
+      label: `${client} · ${model}`,
+      client,
+    };
+    const bucket = buckets.get(decision.tone);
+    if (!bucket) {
+      buckets.set(decision.tone, { word: decision.word, marks: [mark] });
+      continue;
+    }
+    bucket.marks.push(mark);
+    if (decision.tone === "pending" && bucket.word !== decision.word) {
+      bucket.word = "Pending";
+    }
+  }
+  return DECISION_PILL_ORDER.flatMap((tone) => {
+    const bucket = buckets.get(tone);
+    return bucket ? [{ tone, ...bucket }] : [];
+  });
+}
+
+function RunPairingDecisions({
+  targets,
+  hostNamesById,
+}: {
+  targets: readonly EvalSuiteRun[];
+  hostNamesById: Map<string, string | null>;
+}) {
+  const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
+  const groups = groupPairingsByDecision(targets, hostNamesById);
+  if (!groups.length) return null;
   return (
     <span
-      className={cn(
-        "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        tone,
-      )}
+      className="flex min-w-0 flex-wrap items-center gap-2"
+      data-testid="run-header-pairings"
     >
-      {label}
+      {groups.map((group) => (
+        <span
+          key={group.tone}
+          data-testid="run-header-decision-pill"
+          data-decision={group.tone}
+          className={cn(
+            "inline-flex h-8 items-center gap-1.5 rounded-full border py-0 pl-2.5 pr-1.5 text-[12px] font-medium",
+            pairingPillClass(group.tone),
+          )}
+        >
+          <span data-testid="run-header-pairing-decision">
+            {pairingPillLabel(group.word, group.tone)}
+          </span>
+          <span className="flex items-center -space-x-1.5">
+            {group.marks.map((mark) => (
+              <Tooltip key={mark.key}>
+                <TooltipTrigger asChild>
+                  <span
+                    title={mark.label}
+                    tabIndex={0}
+                    className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-background"
+                  >
+                    <img
+                      src={resolveHostLogoByName(mark.client, theme)}
+                      alt={mark.label}
+                      className="size-3.5 object-contain"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent variant="muted">{mark.label}</TooltipContent>
+              </Tooltip>
+            ))}
+          </span>
+        </span>
+      ))}
     </span>
   );
 }

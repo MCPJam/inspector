@@ -314,6 +314,26 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "Draw and share a diagram broke at Selection: an expected tool call was never made.",
     );
+    const pairings = screen.getByTestId("run-verdict-pairings");
+    expect(within(pairings).getAllByTestId("run-verdict-pairing")).toHaveLength(
+      1,
+    );
+    expect(within(pairings).getByText("1 passed")).toBeVisible();
+    expect(within(pairings).getByText("1 failed")).toBeVisible();
+    expect(within(pairings).getByTestId("result-count-bar")).toBeVisible();
+    expect(within(pairings).queryByText("1 of 2")).toBeNull();
+    expect(
+      pairings.compareDocumentPosition(
+        screen.getByRole("heading", { name: "What broke" }),
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getByRole("heading", { name: "What broke" })).toHaveClass(
+      "text-sm",
+      "font-semibold",
+    );
+    expect(
+      screen.getByRole("heading", { name: /How to fix|Next step/ }),
+    ).toHaveClass("text-sm", "font-semibold");
     expect(screen.queryByTestId("run-grading-peek")).toBeNull();
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
   });

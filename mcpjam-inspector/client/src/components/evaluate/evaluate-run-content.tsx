@@ -24,6 +24,7 @@ import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
+import { compactModelIdTail } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
@@ -80,6 +81,10 @@ import {
 import { remedyForDiagnostic } from "./stage-remedy";
 import { RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
+import {
+  buildHeroPairings,
+  previousCompletedRunOf,
+} from "./run-verdict-hero-deltas";
 import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
 
@@ -137,9 +142,52 @@ export function SingleRunContent({
     revision: evalRunDecisionRevision(run),
   });
 
+  const previousIterations = useMemo(() => {
+    if (!previousRunId || !allIterations) return null;
+    const rows = allIterations.filter(
+      (iteration) => iteration.suiteRunId === previousRunId,
+    );
+    return rows.length > 0 ? rows : null;
+  }, [allIterations, previousRunId]);
+
+  const pairings = useMemo(() => {
+    const names = hostNamesById ?? new Map();
+    const modelId = run.effectiveModelId ?? "Client default";
+    const previousLaunch = previousRunId
+      ? siblingRuns.filter((candidate) => candidate._id === previousRunId)
+      : (() => {
+          const previous = previousCompletedRunOf(run, siblingRuns);
+          return previous ? [previous] : [];
+        })();
+    return buildHeroPairings({
+      targets: [
+        {
+          key: run._id,
+          run,
+          client: run.namedHostId
+            ? (names.get(run.namedHostId) ??
+              `Client …${run.namedHostId.slice(-6)}`)
+            : "Suite client",
+          modelId,
+          model: compactModelIdTail(modelId),
+          iterations,
+        },
+      ],
+      previousLaunch: previousLaunch.length > 0 ? previousLaunch : null,
+      previousIterations,
+    });
+  }, [
+    run,
+    iterations,
+    hostNamesById,
+    previousRunId,
+    siblingRuns,
+    previousIterations,
+  ]);
+
   const view = useMemo(
-    () =>
-      buildRunVerdictHero({
+    () => ({
+      ...buildRunVerdictHero({
         run,
         iterations,
         decision: {
@@ -147,8 +195,21 @@ export function SingleRunContent({
           summary: detail.summary,
           diagnostics: detail.diagnostics,
         },
+        previous: previousIterations
+          ? { iterations: previousIterations }
+          : null,
       }),
-    [run, iterations, detail.status, detail.summary, detail.diagnostics],
+      pairings,
+    }),
+    [
+      run,
+      iterations,
+      detail.status,
+      detail.summary,
+      detail.diagnostics,
+      previousIterations,
+      pairings,
+    ],
   );
 
   // Chains for the iterations D9 does not describe. Diagnostics cover the

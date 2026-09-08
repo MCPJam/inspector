@@ -49,6 +49,13 @@ describe("suite run review", () => {
     );
     // Seeded from the suite floor (minIterations 5), not the flat default.
     expect(screen.getByRole("spinbutton")).toHaveValue(5);
+    expect(screen.getByLabelText("Iterations per case")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Fewer iterations" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "More iterations" })).toBeVisible();
+    expect(screen.queryByText("1–10 repetitions")).toBeNull();
+    expect(
+      screen.queryByText("Repeat every case to check consistency."),
+    ).toBeNull();
     expect(screen.getByText("80%")).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Claude · sonnet" }));
     await user.clear(screen.getByRole("spinbutton"));
@@ -109,5 +116,28 @@ describe("suite run review", () => {
     expect(
       screen.getByRole("checkbox", { name: "Claude · opus" }),
     ).toBeChecked();
+  });
+
+  it("opens suite settings from the grading policy action", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onEditSettings = vi.fn();
+    render(
+      <SuiteRunReview
+        suite={suite}
+        cases={cases}
+        environments={environments}
+        hostNamesById={names}
+        onStart={vi.fn()}
+        onClose={onClose}
+        onEditSettings={onEditSettings}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "Edit suite settings" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Edit suite settings" }),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onEditSettings).toHaveBeenCalledOnce();
   });
 });

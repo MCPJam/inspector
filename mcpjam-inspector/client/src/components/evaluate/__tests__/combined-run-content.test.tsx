@@ -33,7 +33,12 @@ vi.mock("@/hooks/use-eval-run-iteration-chains", () => ({
   useEvalRunIterationChains: () => ({ chains: new Map(), status: "ready" }),
 }));
 
-function run(id: string, client: string, model: string): EvalSuiteRun {
+function run(
+  id: string,
+  client: string,
+  model: string,
+  overrides: Partial<EvalSuiteRun> = {},
+): EvalSuiteRun {
   return {
     _id: id,
     suiteId: "suite",
@@ -41,9 +46,11 @@ function run(id: string, client: string, model: string): EvalSuiteRun {
     namedHostId: client,
     effectiveModelId: model,
     runNumber: Number(id),
+    createdAt: Number(id) * 1000,
     status: "completed",
     result: "passed",
     configSnapshot: { tests: [], environment: { servers: [] } },
+    ...overrides,
   } as EvalSuiteRun;
 }
 function iteration(id: string, runId: string, result: string): EvalIteration {
@@ -121,16 +128,76 @@ describe("combined run report", () => {
       </EvaluateRunPage>,
     );
     expect(
-      await screen.findByText("All 3 client/model pairings"),
+      await screen.findByRole("textbox", { name: "Find a test case" }),
     ).toBeVisible();
-    const hero = screen.getByTestId("run-verdict-hero");
+    expect(screen.queryByText(/All \d+ client\/model pairings/)).toBeNull();
+    expect(screen.queryByText(/\d+ of \d+ client\/model pairings/)).toBeNull();
+    const matrix = screen.getByTestId("run-results-matrix");
+    const toolbar = within(matrix).getByTestId("run-results-toolbar");
+    const toolbarControls = [
+      within(toolbar).getByRole("textbox", { name: "Find a test case" }),
+      within(toolbar).getByRole("combobox", { name: "Filter by status" }),
+      within(toolbar).getByRole("combobox", { name: "Filter by client" }),
+      within(toolbar).getByRole("combobox", { name: "Filter by model" }),
+    ];
     expect(
-      screen.getByRole("button", { name: "Clear filters" }),
-    ).toBeDisabled();
+      toolbarControls.map((control) =>
+        toolbarControls[0].compareDocumentPosition(control),
+      ),
+    ).toEqual([
+      0,
+      Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    ]);
+    expect(toolbarControls[1].compareDocumentPosition(toolbarControls[2])).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(
+      within(matrix).queryByRole("button", { name: "Clear filters" }),
+    ).toBeNull();
+    const hero = screen.getByTestId("run-verdict-hero");
+    expect(within(hero).queryByTestId("run-verdict-stat-delta")).toBeNull();
     expect(screen.queryByTestId("run-verdict-word")).toBeNull();
-    const verdict = screen.getByTestId("run-header-verdict").textContent;
-    expect(within(hero).getByText("1 of 3")).toBeVisible();
+    expect(screen.queryByTestId("run-header-verdict")).toBeNull();
+    const pairingDecisions = screen
+      .getAllByTestId("run-header-pairing-decision")
+      .map((node) => node.textContent);
+    expect(pairingDecisions).toEqual(["SHIP"]);
+    const shipPill = screen.getByTestId("run-header-decision-pill");
+    expect(shipPill).toHaveAttribute("data-decision", "ship");
+    expect(within(shipPill).getAllByRole("img")).toHaveLength(3);
+    const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
+    expect(pairingRows).toHaveLength(3);
+    expect(pairingRows[0]).toHaveTextContent("Cursor");
+    expect(pairingRows[0]).toHaveTextContent("1 passed");
+    expect(pairingRows[0]).toHaveTextContent("0 failed");
+    expect(within(pairingRows[0]).getByTestId("result-count-bar")).toBeVisible();
+    expect(pairingRows[1]).toHaveTextContent("0 passed");
+    expect(pairingRows[1]).toHaveTextContent("1 failed");
+    expect(pairingRows[2]).toHaveTextContent("ChatGPT");
+    expect(pairingRows[2]).toHaveTextContent("0 passed");
+    expect(pairingRows[2]).toHaveTextContent("1 failed");
+    expect(within(hero).queryByText("1 of 3")).toBeNull();
+    expect(within(hero).queryByText(/ of /)).toBeNull();
+    expect(
+      within(hero).getByTestId("run-verdict-stats").textContent,
+    ).not.toMatch(/Passed/i);
+    expect(
+      pairingRows[0].compareDocumentPosition(
+        within(hero).getByTestId("run-verdict-stats"),
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
+    expect(screen.getByRole("heading", { name: /Test cases/ })).toBeVisible();
+    expect(screen.queryByText("Run results")).toBeNull();
+    expect(
+      screen.queryByText(
+        /Cases down the rows. Clients and models across the columns/,
+      ),
+    ).toBeNull();
+    expect(within(matrix).queryByLabelText(/loaded iterations/)).toBeNull();
+    expect(within(matrix).queryByTestId("result-count-bar")).toBeNull();
     for (const run of runs)
       expect(mocks.decision).toHaveBeenCalledWith(
         expect.objectContaining({ runId: run._id, enabled: true }),
@@ -141,24 +208,41 @@ describe("combined run report", () => {
     await user.click(
       screen.getByRole("option", { name: "Cursor", exact: true }),
     );
-    expect(screen.getByText("2 of 3 client/model pairings")).toBeVisible();
-    expect(within(hero).getByText("1 of 2")).toBeVisible();
+    expect(
+      within(matrix).getByRole("button", { name: "Clear filters" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/client\/model pairing/)).toBeNull();
+    expect(within(hero).getAllByTestId("run-verdict-pairing")).toHaveLength(2);
+    expect(within(hero).queryByText("1 of 2")).toBeNull();
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
     await user.click(screen.getByRole("combobox", { name: "Filter by model" }));
     await user.click(
       screen.getByRole("option", { name: "gpt-5.1", exact: true }),
     );
-    expect(within(hero).getByText("0 of 1")).toBeVisible();
-    expect(screen.getByTestId("run-header-verdict")).toHaveTextContent(
-      verdict!,
-    );
+    const filteredPairing = within(hero).getByTestId("run-verdict-pairing");
+    expect(filteredPairing).toHaveTextContent("0 passed");
+    expect(filteredPairing).toHaveTextContent("1 failed");
+    expect(
+      screen
+        .getAllByTestId("run-header-pairing-decision")
+        .map((node) => node.textContent),
+    ).toEqual(pairingDecisions);
+    expect(
+      within(screen.getByTestId("run-header-decision-pill")).getAllByRole(
+        "img",
+      ),
+    ).toHaveLength(3);
     expect(
       screen.queryByRole("heading", { name: "Filtered results" }),
     ).toBeNull();
     expect(screen.getAllByRole("columnheader")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: /Client report/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(within(hero).getByText("1 of 3")).toBeVisible();
+    expect(
+      within(matrix).queryByRole("button", { name: "Clear filters" }),
+    ).toBeNull();
+    expect(within(hero).getAllByTestId("run-verdict-pairing")).toHaveLength(3);
+    expect(within(hero).queryByText("1 of 3")).toBeNull();
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
   });
 
@@ -183,6 +267,62 @@ describe("combined run report", () => {
       screen.getByRole("button", { name: "Retry results" }),
     );
     expect(mocks.history.retry).toHaveBeenCalled();
+  });
+
+  it("shows metric deltas against the previous combined launch", () => {
+    const previousLaunch = [
+      run("p1", "cursor", "anthropic/sonnet", {
+        runGroupId: "prev",
+        runNumber: 1,
+        createdAt: 1000,
+      }),
+      run("p2", "cursor", "gpt-5.1", {
+        runGroupId: "prev",
+        runNumber: 1,
+        createdAt: 1100,
+      }),
+      run("p3", "chatgpt", "gpt-5.1", {
+        runGroupId: "prev",
+        runNumber: 1,
+        createdAt: 1200,
+      }),
+    ];
+    const previousIterations = previousLaunch.map((member, index) => ({
+      ...iteration(`prev-${index}`, member._id, "passed"),
+      tokensUsed: 100,
+      startedAt: 1000,
+      updatedAt: 1500,
+    }));
+    render(
+      <EvaluateRunPage
+        run={runs[0]}
+        otherRuns={runs}
+        hostNamesById={names}
+        defaultCompareRunId={null}
+        onCompareWithRun={vi.fn()}
+      >
+        <CombinedRunContent
+          {...props}
+          siblingRuns={[...previousLaunch, ...runs]}
+          allIterations={[...previousIterations, ...iterations]}
+          previousRunId="p1"
+        />
+      </EvaluateRunPage>,
+    );
+    const hero = screen.getByTestId("run-verdict-hero");
+    const pairingRows = within(hero).getAllByTestId("run-verdict-pairing");
+    expect(within(pairingRows[0]).queryByTestId("run-verdict-stat-delta")).toBeNull();
+    expect(within(pairingRows[0]).queryByText("=")).toBeNull();
+    const pairingDeltas = pairingRows.flatMap((row) =>
+      within(row).queryAllByTestId("run-verdict-stat-delta"),
+    );
+    expect(pairingDeltas.map((node) => node.textContent)).toEqual([
+      "−1",
+      "−1",
+    ]);
+    expect(pairingDeltas[0]).toHaveClass("text-destructive");
+    expect(pairingDeltas[1]).toHaveClass("text-destructive");
+    expect(within(hero).queryByLabelText("−2 vs previous run")).toBeNull();
   });
 
   it("does not turn mixed or unreadable member decisions into a passing run", () => {

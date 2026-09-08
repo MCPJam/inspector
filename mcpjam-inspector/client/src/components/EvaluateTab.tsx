@@ -454,6 +454,10 @@ function EvaluateTabContent({
   const [createSuitePrefillServerId, setCreateSuitePrefillServerId] = useState<
     string | null
   >(null);
+  const existingSuiteNames = useMemo(
+    () => visibleSuites.map((entry) => entry.suite.name),
+    [visibleSuites],
+  );
 
   const emptyHeroServers = useMemo(
     () =>
@@ -471,10 +475,9 @@ function EvaluateTabContent({
 
   const handleEvalServer = useCallback(
     (server: { id: string; name: string }) => {
-      navigatePlaygroundEvalsRoute({
-        type: "eval-server",
-        serverId: server.id,
-      });
+      setCreateSuitePrefillName(server.name);
+      setCreateSuitePrefillServerId(server.id);
+      navigatePlaygroundEvalsRoute({ type: "create" });
     },
     [],
   );
@@ -1283,6 +1286,37 @@ function EvaluateTabContent({
     }
 
     const isLandingList = route.type === "list";
+    const landingLoading = (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+          <p className="mt-4 text-sm text-muted-foreground">
+            Loading suites...
+          </p>
+        </div>
+      </div>
+    );
+    // First-run is the same on Runs and Suites: nothing has been authored
+    // yet, so the next step is create / eval-my-server, not an empty table.
+    const landingEmpty = (
+      <EvalsEmptyHero
+        onCreateSuite={handleOpenCreateSuite}
+        onEvalServer={handleEvalServer}
+        onQuickstart={() => void handleExcalidrawQuickstart()}
+        isQuickstartRunning={isQuickstartRunning}
+        showQuickstart={showQuickstart}
+        servers={emptyHeroServers}
+        serversLoading={isProjectServersLoading}
+      />
+    );
+
+    if (isLandingList && overviewQueries.isOverviewLoading) {
+      return landingLoading;
+    }
+
+    if (isLandingList && visibleSuites.length === 0) {
+      return landingEmpty;
+    }
 
     if (isLandingList && landingView === "runs") {
       return projectId && shouldQueryProjectId(projectId) ? (
@@ -1295,6 +1329,7 @@ function EvaluateTabContent({
             projectId={projectId}
             onSelectRun={handleSelectRunFromAllRuns}
             decisionSummaryEnabled={decisionSummaryEnabled}
+            emptyState={landingEmpty}
           />
         </div>
       ) : (
@@ -1307,30 +1342,11 @@ function EvaluateTabContent({
     }
 
     if (overviewQueries.isOverviewLoading) {
-      return (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-            <p className="mt-4 text-sm text-muted-foreground">
-              Loading suites...
-            </p>
-          </div>
-        </div>
-      );
+      return landingLoading;
     }
 
     if (visibleSuites.length === 0) {
-      return (
-        <EvalsEmptyHero
-          onCreateSuite={handleOpenCreateSuite}
-          onEvalServer={handleEvalServer}
-          onQuickstart={() => void handleExcalidrawQuickstart()}
-          isQuickstartRunning={isQuickstartRunning}
-          showQuickstart={showQuickstart}
-          servers={emptyHeroServers}
-          serversLoading={isProjectServersLoading}
-        />
-      );
+      return landingEmpty;
     }
 
     if (hasDetailRoute) {
@@ -1558,6 +1574,7 @@ function EvaluateTabContent({
               projectId={projectId}
               initialName={createSuitePrefillName}
               initialServerId={createSuitePrefillServerId}
+              existingSuiteNames={existingSuiteNames}
             />
           </div>
         ) : (
