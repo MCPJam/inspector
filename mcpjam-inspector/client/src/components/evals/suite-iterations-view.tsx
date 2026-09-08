@@ -538,15 +538,51 @@ export function SuiteIterationsView({
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
+  //
+  // `isEditMode` is whether the settings SHEET renders, and it deliberately
+  // does NOT include the CI lock — see the long note further down. It is
+  // computed here, ahead of the lock, because the capabilities query below is
+  // scoped to it and the lock reads that query's answer.
+  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
+
+  // WHAT THE SUITE IS, asked twice, and both answers count.
+  //
+  // Re-asked on the suite's revision number: a save that changes what someone
+  // may do next (acknowledging a judge gate, upgrading the verdict policy)
+  // should change the rows, not leave them describing the suite as it was when
+  // the page loaded. Bumped by an acknowledgement, which changes what the gate
+  // switch may do WITHOUT changing the suite's revision — the acknowledgement
+  // is stored on the suite but is not a settings edit, so nothing else would
+  // re-ask.
+  const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
+  const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
+    isEditMode ? suite._id : null,
+    `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
+  );
+  // The ONE rule every row below shares: when capabilities could not be read,
+  // behave exactly as the page did before they existed. Capabilities make a
+  // page more honest; they must never make it less usable than the page that
+  // had none.
+  const capabilitiesReady = capabilitiesState === "ready" && capabilities;
+
   // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
   // read-only in exactly the same way, but keeps its Run controls.
   //
-  // Derived from the SUITE ROW (`isCiOwnedSuite`, resolved by the caller), NOT
-  // from `getSuiteCapabilities.ownership` — the row is complete
-  // (`declaredSuiteId` and `source` both live on it), and it is available
-  // before any query resolves. The settings sheet still reads
-  // `capabilities.ownership` for its per-row reason, where it is loaded anyway.
-  const editingDisabled = readOnlyConfig || configLocked;
+  // TWO SOURCES, OR-ed, because they fail in opposite directions. The SUITE ROW
+  // (`isCiOwnedSuite`, resolved by the caller) is complete — `declaredSuiteId`
+  // and `source` both live on it — and answers before any query resolves, which
+  // is why it cannot simply be replaced. `getSuiteCapabilities.ownership` is the
+  // backend's own answer, from the same predicate that will refuse the write,
+  // and it is the one that stays right if the cached row is stale. Neither
+  // alone; a lock that disagrees with the server is the bug this whole change
+  // exists to remove.
+  //
+  // No cycle: `isEditMode` above is derived from the route and `readOnlyConfig`
+  // only, so it never reads this.
+  const editingDisabled =
+    readOnlyConfig ||
+    configLocked ||
+    (capabilitiesReady && capabilities.ownership?.ciOwned === true);
 
   // ── CASE AUTHORING, WITHHELD RATHER THAN GATED ────────────────────────────
   //
@@ -572,8 +608,7 @@ export function SuiteIterationsView({
   const onDeleteTestCasesBatch = configLocked
     ? undefined
     : onDeleteTestCasesBatchProp;
-  // `isEditMode` is whether the settings SHEET renders, and it deliberately
-  // does NOT include `configLocked`.
+  // WHY `isEditMode` ABOVE DOES NOT INCLUDE THE LOCK.
   //
   // A CI-owned suite's settings are its documentation: they are exactly what a
   // person needs to read to understand what CI is running, and the sheet is the
@@ -586,7 +621,6 @@ export function SuiteIterationsView({
   // What the lock does instead is make the sheet a VIEWER: `editingDisabled`
   // hides the commit bar and `settingsLockedReason` disables every control
   // inside, so nothing there can be typed into and then silently dropped.
-  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -743,16 +777,6 @@ export function SuiteIterationsView({
   // Bumped by an acknowledgement, which changes what the gate switch may do
   // WITHOUT changing the suite's revision — the acknowledgement is stored on
   // the suite but is not a settings edit, so nothing else would re-ask.
-  const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
-  const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
-    isEditMode ? suite._id : null,
-    `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
-  );
-  // The ONE rule every row below shares: when capabilities could not be read,
-  // behave exactly as the page did before they existed. Capabilities make a
-  // page more honest; they must never make it less usable than the page that
-  // had none.
-  const capabilitiesReady = capabilitiesState === "ready" && capabilities;
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;

@@ -331,7 +331,13 @@ either a suite file committed to a repository (`mcpjam cloud eval run --file`), 
 suite the MCPJam SDK created when it reported a run. Those suites are
 **read-only here**: name, settings, environments, schedule, models, skills,
 execution config and cases all refuse edits, in the app and through the API
-alike.
+alike, with `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`.
+
+One caller is exempt, and only one: the suite file itself. A write that sends
+the suite's own `suite.id` as `declaredSuiteId` is the file syncing what it
+already declares, so it is allowed through — which is how `mcpjam cloud eval
+run --file` keeps working. Naming any other id refuses exactly as loudly as
+naming none, so it is not a way in.
 
 That is not a permission problem, and no role change lifts it. The reason is
 that an edit made here would not survive: the file sync deletes any case the
