@@ -703,19 +703,23 @@ describe("one mechanism", () => {
       const label = flag ? "on" : "off";
 
       it(`${row.family} · switch ${label} → both engines answer the same`, async () => {
-        const tools = row.tools(flag);
+        // A FRESH toolset per engine, as production gives each turn. Sharing
+        // one would hand the same function-form declaration to two readers
+        // under the same `toolCallId`, and a second evaluation of the SEP-2640
+        // gate re-fetches the manifest and can overwrite the binding it exists
+        // to check — the hazard the memoisation test next door is about.
         const [mcpjam, byok] = [
           await mcpjamVerdict({
             name: row.name,
             input: row.input ?? {},
-            tools,
+            tools: row.tools(flag),
             requireToolApproval: flag,
             progressivePlan: row.progressivePlan,
           }),
           await byokVerdict({
             name: row.name,
             input: row.input ?? {},
-            tools,
+            tools: row.tools(flag),
           }),
         ];
         expect(mcpjam, `${row.family}: mcpjam vs byok`).toBe(byok);

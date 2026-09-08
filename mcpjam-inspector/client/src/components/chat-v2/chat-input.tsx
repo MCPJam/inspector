@@ -1884,9 +1884,10 @@ export function ChatInput({
                             id="tool-approval-floor-note"
                             className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
                           >
-                            Pause before tool calls. Browser, page and
-                            local-machine actions always pause; searches and
-                            read-only lookups never do.
+                            Pause before tool calls. Browser, page,
+                            local-machine and destructive UI actions always
+                            pause; built-in searches and read-only lookups
+                            never do.
                           </p>
                         </div>
                       )}

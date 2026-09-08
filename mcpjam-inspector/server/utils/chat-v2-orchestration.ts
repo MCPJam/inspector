@@ -1416,8 +1416,11 @@ export async function prepareChatV2(
   //
   // Returns its input UNCHANGED when no selected server declares the
   // extension, which is what keeps every pre-existing turn byte-identical.
-  // The wrapper applies its own always-on approval to server-origin loads —
-  // see `server-skill-tools.ts` — regardless of `requireToolApproval`.
+  // What the wrapper adds unconditionally to a server-origin load is ORIGIN
+  // TAGGING and the manifest digest binding — not a prompt. Its approval
+  // declaration delegates to the base skill tool (`hostWantsApproval` in
+  // `server-skill-tools.ts`), so whether the user is asked follows the switch
+  // like any other tool on the turn.
   // A LIVE turn composes server skills whether or not it also carries an
   // explicit source; a captured or frozen one never does. `skillsSource ===
   // undefined` is the legacy live shape (no caller passes it once every surface
