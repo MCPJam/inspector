@@ -159,7 +159,7 @@ export function SuiteSwitcher({
                           ? "text-success"
                           : counts.passed === 0
                             ? "text-destructive"
-                            : "text-amber-600 dark:text-amber-400",
+                            : "text-warning",
                       )}
                     >
                       {counts.passed}/{counts.total}

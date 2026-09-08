@@ -1371,7 +1371,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByTestId("route-rollup-card")).toBeInTheDocument();
     });
     const card = screen.getByTestId("route-rollup-card");
-    expect(card).toHaveTextContent("Across 3 trials");
+    expect(card).toHaveTextContent("Across 3 iterations");
     expect(card).toHaveTextContent("same route in 2 of 3");
     expect(card).toHaveTextContent("Observational");
     expect(card).not.toHaveTextContent(/pass|fail|verdict/i);

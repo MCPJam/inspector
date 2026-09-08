@@ -171,6 +171,24 @@ describe("runPlatformLabel", () => {
 });
 
 describe("buildSuiteRunHistoryRows", () => {
+  it("uses launch time consistently with global Runs, even when an older run finishes later", () => {
+    const rows = buildSuiteRunHistoryRows([
+      makeRun({ _id: "older", createdAt: 100, completedAt: 900 }),
+      makeRun({ _id: "newer", createdAt: 200, completedAt: 300 }),
+    ], [], makeSuite(), new Map(), false);
+    expect(rows.map(row => row.runId)).toEqual(["newer", "older"]);
+    expect(rows[0].date).toBe(200);
+  });
+
+  it("shows the frozen client model before any iterations arrive", () => {
+    const rows = buildSuiteRunHistoryRows(
+      [makeRun({ _id: "pending", effectiveModelId: "claude-sonnet", status: "pending" })],
+      [], makeSuite(), new Map(), false,
+    );
+    expect(rows[0].models).toEqual(["claude-sonnet"]);
+    expect(rows[0].latencyMs).toBeNull();
+  });
+
   it("builds newest-first rows with real pass rate, platform, and models", () => {
     const rows = buildSuiteRunHistoryRows(
       [
@@ -456,6 +474,16 @@ describe("suiteRunBlockedReason", () => {
         runningTestCase: false,
       }),
     ).toBe("Add a test case first.");
+  });
+
+  it("explains unsaved drafts without treating them as runnable cases", () => {
+    const options = {
+      caseCount: 0, draftCount: 8, hasServersConfigured: true,
+      isEnvironmentSuite: false, isRerunning: false, isReplaying: false,
+      runningTestCase: false,
+    };
+    expect(suiteRunBlockedReason(options)).toContain("8 generated drafts are waiting to be added");
+    expect(suiteRunBlockedReason({ ...options, caseCount: 1 })).toBeNull();
   });
 
   it("does not require local servers for environment suites", () => {

@@ -2643,7 +2643,7 @@ test("eval status renders an actionable decision summary for failed runs", async
     // claim about the same numbers.
     assert.match(
       run.stdout,
-      /Decision summary: failed \(legacy percent-threshold run\) — 0\/1 trial passed/
+      /Decision summary: failed \(legacy percent-threshold run\) — 0\/1 iteration passed/
     );
     assert.match(run.stdout, /First failed stage: Tool call/);
     assert.match(run.stdout, /Failure category: call arguments/);
@@ -2696,7 +2696,7 @@ test("eval status reports a crashed run as undecided, not as a regression", asyn
     // Not a failure, and no counts: the numbers it recorded describe a decision
     // nobody took.
     assert.doesNotMatch(run.stdout, /Decision summary: failed/);
-    assert.doesNotMatch(run.stdout, /trials passed/);
+    assert.doesNotMatch(run.stdout, /iterations passed/);
     // The diagnostics still render — evidence under a withheld verdict is
     // still evidence.
     assert.match(run.stdout, /First failed stage: Tool call/);
@@ -3115,7 +3115,7 @@ test("eval status leads with the first break, and expands the chain on --stages"
     // an enrichment behind a flag, and it sits above the per-trial detail.
     assert.match(
       compact.stdout,
-      /First break: Tool call — the call arguments did not match what the case expects \(1 of 1 measured trial\)/
+      /First break: Tool call — the call arguments did not match what the case expects \(1 of 1 measured iteration\)/
     );
     // The six rows are the DETAILED layer and stay off by default, so an
     // existing caller's output volume does not grow underneath it.
@@ -4505,10 +4505,10 @@ test("eval compare prints the compare side's decision summary to stderr", async 
     // `verdictSummary` at all, so a summary assembled from it would both quote
     // the wrong population and label a policy-v2 run "legacy". The detail's own
     // (much smaller) counts are the proof of which source was read.
-    assert.doesNotMatch(run.stderr, /\/80 trials passed/);
+    assert.doesNotMatch(run.stderr, /\/80 iterations passed/);
     assert.match(
       run.stderr,
-      /Decision summary: failed \(legacy percent-threshold run\) — 1\/2 trials passed/
+      /Decision summary: failed \(legacy percent-threshold run\) — 1\/2 iterations passed/
     );
     // One parseable document on stdout, as every `--format human` command
     // promises.

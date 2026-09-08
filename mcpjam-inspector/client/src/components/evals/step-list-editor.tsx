@@ -139,7 +139,7 @@ const STEP_META: Record<
   interact: {
     label: "Interact",
     Icon: MousePointerClick,
-    tint: "text-amber-600 dark:text-amber-400",
+    tint: "text-warning",
   },
   assert: {
     // A neutral "ruling" icon — NOT a green check. The check shape + emerald
@@ -165,7 +165,7 @@ function StepStatusBadge({ status }: { status: EvalStepStatus }) {
   if (status === "ok") {
     return (
       <CheckCircle2
-        className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+        className="h-3.5 w-3.5 shrink-0 text-success"
         aria-label="Step passed"
       />
     );

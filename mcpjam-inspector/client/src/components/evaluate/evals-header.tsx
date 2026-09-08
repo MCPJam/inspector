@@ -18,8 +18,8 @@ const EVALUATE_HEADER_DESCRIPTION =
   "The manual pass you'd do before a ship, automated and run whenever the server changes.";
 
 export const EVAL_LANDING_VIEW_OPTIONS = [
-  { value: "suites", label: "Suites" },
   { value: "runs", label: "Runs" },
+  { value: "suites", label: "Suites" },
 ] as const satisfies readonly ViewModeSelectorOption<"suites" | "runs">[];
 
 export type EvalLandingView = (typeof EVAL_LANDING_VIEW_OPTIONS)[number]["value"];

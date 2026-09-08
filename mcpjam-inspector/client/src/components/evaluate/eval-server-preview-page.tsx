@@ -1,12 +1,14 @@
-/**
- * First-run screen after "Eval my server".
- *
- * Two steps: review the suites we'd run, then confirm clients. Suites,
- * cases, and findings are a preview until generation and discovery are
- * wired. Case clicks use today's case editor and return here.
- */
+/** Review saved generated cases, persist edits, and confirm the first run. */
 import { useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Info, Plus, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -19,17 +21,12 @@ import {
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { resolveHostLogoByName } from "@/lib/host-logo";
-import { toast } from "@/lib/toast";
-import {
-  SUITE_IMPORT_UNAVAILABLE_MESSAGE,
-  SuiteEmptyCasesHero,
-} from "./suite-detail-overview";
+import { SuiteEmptyCasesHero } from "./suite-detail-overview";
 import {
   ADDABLE_FIRST_RUN_CLIENTS,
   DEFAULT_FIRST_RUN_CLIENTS,
   DEFAULT_FIRST_RUN_ITERATIONS,
   addPreviewCase,
-  buildEvalServerPreview,
   createDraftPreviewCase,
   createDraftPreviewSuite,
   previewCaseCount,
@@ -45,6 +42,7 @@ import {
   readEvalServerPreviewDraft,
   writeEvalServerPreviewDraft,
   type EvalServerPreviewStep,
+  type EvalServerPreviewDraft,
 } from "./eval-server-preview-state";
 
 export type EvalServerPreviewCaseTarget = {
@@ -60,10 +58,17 @@ const FLOW_STEPS = [
 
 interface EvalServerPreviewPageProps {
   server: { id: string; name: string };
-  /** Override the fixture. Engineering will pass generated data here. */
+  /** Saved LLM-generated revision. No fixture fallback in production. */
   preview?: EvalServerPreview;
   onOpenCase: (target: EvalServerPreviewCaseTarget) => void;
-  onRunFirstEvals: (input: { iterationsPerCase: number }) => void;
+  initialDraft?: EvalServerPreviewDraft | null;
+  availableClients?: FirstRunClient[];
+  onDraftChange?: (draft: EvalServerPreviewDraft) => void;
+  onRunFirstEvals: (input: {
+    iterationsPerCase: number;
+    suites: PreviewSuite[];
+    clients: FirstRunClient[];
+  }) => void;
 }
 
 export function EvalServerPreviewPage({
@@ -71,9 +76,17 @@ export function EvalServerPreviewPage({
   preview: previewProp,
   onOpenCase,
   onRunFirstEvals,
+  initialDraft,
+  availableClients,
+  onDraftChange,
 }: EvalServerPreviewPageProps) {
-  const initial = previewProp ?? buildEvalServerPreview(server);
-  const stored = previewProp ? null : readEvalServerPreviewDraft(server.id);
+  const initial = previewProp ?? {
+    serverId: server.id,
+    serverName: server.name,
+    suites: [],
+    findings: [],
+  };
+  const stored = initialDraft ?? readEvalServerPreviewDraft(server.id);
 
   const [suites, setSuites] = useState(stored?.suites ?? initial.suites);
   const [step, setStep] = useState<EvalServerPreviewStep>(
@@ -97,13 +110,19 @@ export function EvalServerPreviewPage({
     clients?: FirstRunClient[];
     iterationsPerCase?: number;
   }) => {
-    writeEvalServerPreviewDraft(server.id, {
+    const draft: EvalServerPreviewDraft = {
+      version: 1,
+      serverId: server.id,
+      generationHash: stored?.generationHash,
+      chatHistory: stored?.chatHistory,
       suites: next.suites ?? suites,
       openSuiteIds: next.openSuiteIds ?? openSuiteIds,
       step: next.step ?? step,
       clients: next.clients ?? clients,
       iterationsPerCase: next.iterationsPerCase ?? iterationsPerCase,
-    });
+    };
+    writeEvalServerPreviewDraft(server.id, draft);
+    onDraftChange?.(draft);
   };
 
   const preview: EvalServerPreview = useMemo(
@@ -111,6 +130,30 @@ export function EvalServerPreviewPage({
     [initial, suites],
   );
   const caseCount = previewCaseCount(preview);
+  const selectedSuites = suites.map((suite) => ({
+    ...suite,
+    cases: suite.cases.filter((test) => test.selected !== false),
+  }));
+  const selectedCount = selectedSuites.reduce(
+    (sum, suite) => sum + suite.cases.length,
+    0,
+  );
+  const toggleCase = (suiteId: string, caseId: string) => {
+    const next = suites.map((suite) =>
+      suite.id !== suiteId
+        ? suite
+        : {
+            ...suite,
+            cases: suite.cases.map((test) =>
+              test.id !== caseId
+                ? test
+                : { ...test, selected: test.selected === false },
+            ),
+          },
+    );
+    setSuites(next);
+    persist({ suites: next });
+  };
   const addCasesSuite = suites.find((suite) => suite.id === addCasesSuiteId);
   const activeIndex = step === "confirm" ? 1 : 0;
 
@@ -141,7 +184,13 @@ export function EvalServerPreviewPage({
   };
 
   const openCase = (target: EvalServerPreviewCaseTarget) => {
-    persist({ suites, openSuiteIds, step: "suites", clients, iterationsPerCase });
+    persist({
+      suites,
+      openSuiteIds,
+      step: "suites",
+      clients,
+      iterationsPerCase,
+    });
     onOpenCase(target);
   };
 
@@ -199,7 +248,9 @@ export function EvalServerPreviewPage({
           <ChevronLeft className="size-4" aria-hidden />
           Back
         </button>
-        <p className="mt-4 text-sm text-muted-foreground">{addCasesSuite.title}</p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          {addCasesSuite.title}
+        </p>
         <div className="mt-4">
           <SuiteEmptyCasesHero
             readOnly={false}
@@ -208,9 +259,6 @@ export function EvalServerPreviewPage({
             isGenerating={false}
             hideGenerate
             onDescribe={() => describeCase(addCasesSuite.id)}
-            onImport={() => {
-              toast.info(SUITE_IMPORT_UNAVAILABLE_MESSAGE);
-            }}
           />
         </div>
       </PreviewShell>
@@ -221,6 +269,7 @@ export function EvalServerPreviewPage({
     return (
       <ConfirmRunStep
         stepper={stepper}
+        availableClients={availableClients}
         clients={clients}
         iterationsPerCase={iterationsPerCase}
         onBack={() => goToStep("suites")}
@@ -232,7 +281,13 @@ export function EvalServerPreviewPage({
           setIterationsPerCase(next);
           persist({ iterationsPerCase: next });
         }}
-        onRunFirstEvals={() => onRunFirstEvals({ iterationsPerCase })}
+        onRunFirstEvals={() =>
+          onRunFirstEvals({
+            iterationsPerCase,
+            suites: selectedSuites,
+            clients,
+          })
+        }
       />
     );
   }
@@ -266,6 +321,7 @@ export function EvalServerPreviewPage({
             onAddCases={() => setAddCasesSuiteId(suite.id)}
             onRemoveSuite={() => deleteSuite(suite.id)}
             onRemoveCase={(caseId) => deleteCase(suite.id, caseId)}
+            onToggleCase={(caseId) => toggleCase(suite.id, caseId)}
           />
         ))}
       </ol>
@@ -287,8 +343,7 @@ export function EvalServerPreviewPage({
             What else we found so far
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            From connecting and reading the server. These are not eval
-            results.
+            From connecting and reading the server. These are not eval results.
           </p>
           <ul className="mt-4 space-y-3">
             {preview.findings.map((finding) => (
@@ -298,10 +353,15 @@ export function EvalServerPreviewPage({
         </section>
       ) : null}
 
+      <p className="mt-6 text-sm text-muted-foreground">
+        {selectedCount} of {caseCount} cases selected. Cases that may change
+        data are excluded until you select them for a test environment.
+      </p>
       <div className="mt-12 flex justify-end">
         <Button
           type="button"
           onClick={() => goToStep("confirm")}
+          disabled={selectedCount === 0}
           data-testid="eval-server-preview-continue"
         >
           Continue
@@ -341,6 +401,7 @@ function PreviewSuiteRow({
   onAddCases,
   onRemoveSuite,
   onRemoveCase,
+  onToggleCase,
 }: {
   suite: PreviewSuite;
   open: boolean;
@@ -349,12 +410,16 @@ function PreviewSuiteRow({
   onAddCases: () => void;
   onRemoveSuite: () => void;
   onRemoveCase: (caseId: string) => void;
+  onToggleCase: (caseId: string) => void;
 }) {
   const panelId = `${suite.id}-cases`;
   const empty = suite.cases.length === 0;
 
   return (
-    <li className="border-b border-border/40" data-testid="eval-server-preview-suite">
+    <li
+      className="border-b border-border/40"
+      data-testid="eval-server-preview-suite"
+    >
       <div className="flex items-start gap-1">
         <button
           type="button"
@@ -378,7 +443,9 @@ function PreviewSuiteRow({
               <span className="shrink-0 text-sm text-muted-foreground">
                 {empty
                   ? "No cases"
-                  : `${suite.cases.length} ${suite.cases.length === 1 ? "case" : "cases"}`}
+                  : `${suite.cases.length} ${
+                      suite.cases.length === 1 ? "case" : "cases"
+                    }`}
               </span>
             </span>
             {suite.description ? (
@@ -418,6 +485,7 @@ function PreviewSuiteRow({
                   previewCase={previewCase}
                   onOpenCase={onOpenCase}
                   onRemoveCase={() => onRemoveCase(previewCase.id)}
+                  onToggleCase={() => onToggleCase(previewCase.id)}
                 />
               ))}
               <li>
@@ -443,11 +511,13 @@ function PreviewCaseRow({
   previewCase,
   onOpenCase,
   onRemoveCase,
+  onToggleCase,
 }: {
   suiteId: string;
   previewCase: PreviewCase;
   onOpenCase: (target: EvalServerPreviewCaseTarget) => void;
   onRemoveCase: () => void;
+  onToggleCase: () => void;
 }) {
   return (
     <li className="flex items-center gap-1">
@@ -464,7 +534,18 @@ function PreviewCaseRow({
         data-testid="eval-server-preview-case"
       >
         {previewCase.title}
+        {previewCase.requiresSetup && (
+          <span className="ml-2 text-warning-foreground">
+            Needs a test environment · may change data
+          </span>
+        )}
       </button>
+      <input
+        type="checkbox"
+        checked={previewCase.selected !== false}
+        onChange={onToggleCase}
+        aria-label={`Include ${previewCase.title}`}
+      />
       <button
         type="button"
         aria-label={`Remove ${previewCase.title}`}
@@ -524,7 +605,9 @@ function ConfirmRunStep({
   onClientsChange,
   onIterationsChange,
   onRunFirstEvals,
+  availableClients,
 }: {
+  availableClients?: FirstRunClient[];
   stepper: ReactNode;
   clients: FirstRunClient[];
   iterationsPerCase: number;
@@ -533,7 +616,7 @@ function ConfirmRunStep({
   onIterationsChange: (iterations: number) => void;
   onRunFirstEvals: () => void;
 }) {
-  const addable = ADDABLE_FIRST_RUN_CLIENTS.filter(
+  const addable = (availableClients ?? ADDABLE_FIRST_RUN_CLIENTS).filter(
     (client) => !clients.some((selected) => selected.id === client.id),
   );
 
@@ -543,13 +626,13 @@ function ConfirmRunStep({
         Confirm run
       </h1>
       <p className="mt-6 text-sm text-muted-foreground">
-        This first run is exploratory. See how the suites behave across
-        clients before you tighten anything. Later runs can set threshold
-        limits, change iterations, and narrow what counts as a pass.
+        This first run is exploratory. See how the suites behave across clients
+        before you tighten anything. Later runs can set threshold limits, change
+        iterations, and narrow what counts as a pass.
       </p>
       <p className="mt-3 text-sm text-muted-foreground">
-        ChatGPT and Claude are already selected. Add another client if you
-        want a wider first pass.
+        Choose the configured clients for this run. Add another client for a
+        wider first pass.
       </p>
 
       <div
@@ -573,7 +656,9 @@ function ConfirmRunStep({
               type="button"
               aria-label={`Remove ${client.name}`}
               onClick={() =>
-                onClientsChange(clients.filter((entry) => entry.id !== client.id))
+                onClientsChange(
+                  clients.filter((entry) => entry.id !== client.id),
+                )
               }
               className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
             >
@@ -649,6 +734,7 @@ function ConfirmRunStep({
         <Button
           type="button"
           onClick={onRunFirstEvals}
+          disabled={clients.length === 0}
           data-testid="eval-server-preview-run"
         >
           Run first evals

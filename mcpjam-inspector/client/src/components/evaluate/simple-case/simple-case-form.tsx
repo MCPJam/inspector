@@ -435,7 +435,7 @@ export function SimpleCaseForm({
           </ToggleGroup>
           <p className="text-[11px] leading-snug text-muted-foreground">
             {kind === "regression"
-              ? "This case must take one exact route — order and no extra calls."
+              ? "This case must take one exact route: order and no extra calls."
               : "This case should reach the right tool. Extra calls are allowed."}
           </p>
         </div>
@@ -503,7 +503,7 @@ export function SimpleCaseForm({
               data-testid="simple-case-negative-contradiction"
             >
               This case says no tool should be called, but a check that requires
-              a tool call still applies — from the suite, this case, or a step.
+              a tool call still applies: from the suite, this case, or a step.
               Those cannot both hold.
             </p>
           ) : null}

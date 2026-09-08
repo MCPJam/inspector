@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  openSettingsRow,
-  renderSettingsSheet,
-} from "./settings-sheet-harness";
-import { QUALITY_GATE_REASON_HINT } from "../suite-quality-gate-section";
+import { openSettingsRow, renderSettingsSheet } from "./settings-sheet-harness";
 
 const mocks = vi.hoisted(() => ({
   applySuiteSettings: vi.fn(async () => ({ revisionNumber: 4 })),
@@ -25,9 +21,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -144,68 +139,33 @@ function saveButton() {
   return screen.getByRole("button", { name: "Save settings" });
 }
 
-function reviewOpener() {
-  return screen.getByRole("button", { name: "Review and save" });
-}
-
-describe("quality-gate review requires a reason without a deadlock", () => {
-  it("opens Review and save before a reason exists, and only final Save waits", async () => {
+describe("quality-gate direct save", () => {
+  it("saves in one click with an automatic revision note", async () => {
     const user = userEvent.setup();
     const { container } = renderSettingsSheet();
-    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
-    await user.click(
-      screen.getByRole("switch", { name: "Any gating scorer errored" }),
+    openSettingsRow(container, "qualityGateBaseline");
+    await user.selectOptions(
+      screen.getByLabelText("Quality gate baseline"),
+      "run",
     );
-
-    expect(reviewOpener()).toBeEnabled();
-    fireEvent.click(reviewOpener());
-    expect(screen.getByText(QUALITY_GATE_REASON_HINT)).toBeTruthy();
-    expect(saveButton()).toBeDisabled();
-
-    await user.type(
-      screen.getByLabelText("Why you are making this change"),
-      "Tighten the release bar.",
-    );
+    await user.type(screen.getByLabelText("Baseline run id"), "run-1");
     expect(saveButton()).toBeEnabled();
     fireEvent.click(saveButton());
-
-    await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
+    expect(
+      screen.queryByLabelText("Why you are making this change"),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(mocks.applySuiteSettings).toHaveBeenCalledTimes(1),
+    );
     const args = mocks.applySuiteSettings.mock.calls[0][0] as {
       gatePolicy: unknown;
-      revision: { note?: string };
+      revision: { note?: string; source: string };
     };
-    expect(args.gatePolicy).toEqual({ noGatingScoreErrors: true });
-    expect(args.revision.note).toBe("Tighten the release bar.");
-  });
-
-  it("refuses a cleared reason, then still allows entry after close and reopen", async () => {
-    const user = userEvent.setup();
-    const { container } = renderSettingsSheet();
-    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
-    await user.click(
-      screen.getByRole("switch", { name: "Any gating scorer errored" }),
-    );
-    fireEvent.click(reviewOpener());
-    const note = screen.getByLabelText("Why you are making this change");
-    await user.type(note, "A reason");
-    expect(saveButton()).toBeEnabled();
-    await user.clear(note);
-    expect(saveButton()).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(screen.queryByLabelText("Why you are making this change")).toBeNull();
-    expect(reviewOpener()).toBeEnabled();
-    fireEvent.click(reviewOpener());
-    expect(
-      (screen.getByLabelText("Why you are making this change") as HTMLTextAreaElement)
-        .value,
-    ).toBe("");
-    expect(saveButton()).toBeDisabled();
-    await user.type(
-      screen.getByLabelText("Why you are making this change"),
-      "Re-entered after close.",
-    );
-    expect(saveButton()).toBeEnabled();
+    expect(args.gatePolicy).toMatchObject({
+      baseline: { kind: "run", runId: "run-1" },
+    });
+    expect(args.revision.source).toBe("ui");
+    expect(args.revision.note).toMatch(/^Updated suite settings: .+\.$/);
   });
 
   it("keeps the unsaved policy after a revision conflict", async () => {
@@ -216,20 +176,16 @@ describe("quality-gate review requires a reason without a deadlock", () => {
     );
     const user = userEvent.setup();
     const { container } = renderSettingsSheet();
-    openSettingsRow(container, "qualityGateNoGatingScoreErrors");
-    await user.click(
-      screen.getByRole("switch", { name: "Any gating scorer errored" }),
+    openSettingsRow(container, "qualityGateBaseline");
+    await user.selectOptions(
+      screen.getByLabelText("Quality gate baseline"),
+      "run",
     );
-    fireEvent.click(reviewOpener());
-    await user.type(
-      screen.getByLabelText("Why you are making this change"),
-      "Try to save.",
-    );
+    await user.type(screen.getByLabelText("Baseline run id"), "run-1");
     fireEvent.click(saveButton());
-
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
-    expect(reviewOpener()).toBeEnabled();
+    expect(saveButton()).toBeEnabled();
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
   });
 });

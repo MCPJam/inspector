@@ -15,6 +15,7 @@ describe("EvalServerPreviewPage", () => {
     render(
       <EvalServerPreviewPage
         server={server}
+        preview={buildEvalServerPreview(server)}
         onOpenCase={vi.fn()}
         onRunFirstEvals={vi.fn()}
       />,
@@ -34,9 +35,9 @@ describe("EvalServerPreviewPage", () => {
     expect(screen.getByTestId("eval-server-preview-meta")).toHaveTextContent(
       "Asana MCP · 15 cases",
     );
-    expect(screen.getByTestId("eval-server-preview-meta")).not.toHaveTextContent(
-      "no assertions yet",
-    );
+    expect(
+      screen.getByTestId("eval-server-preview-meta"),
+    ).not.toHaveTextContent("no assertions yet");
     expect(screen.getAllByTestId("eval-server-preview-suite")).toHaveLength(3);
     expect(screen.getByTestId("eval-server-preview-findings")).toBeTruthy();
     expect(screen.getByText("What else we found so far")).toBeTruthy();
@@ -85,6 +86,7 @@ describe("EvalServerPreviewPage", () => {
     render(
       <EvalServerPreviewPage
         server={server}
+        preview={buildEvalServerPreview(server)}
         onOpenCase={onOpenCase}
         onRunFirstEvals={vi.fn()}
       />,
@@ -150,6 +152,7 @@ describe("EvalServerPreviewPage", () => {
     render(
       <EvalServerPreviewPage
         server={server}
+        preview={buildEvalServerPreview(server)}
         onOpenCase={vi.fn()}
         onRunFirstEvals={onRunFirstEvals}
       />,
@@ -169,16 +172,16 @@ describe("EvalServerPreviewPage", () => {
     expect(screen.getByTestId("eval-server-preview-clients")).toHaveTextContent(
       "Claude",
     );
-    expect(
-      screen.getByText(/This first run is exploratory/),
-    ).toBeTruthy();
-    expect(screen.getByLabelText("Iterations per case")).toHaveValue(10);
+    expect(screen.getByText(/This first run is exploratory/)).toBeTruthy();
+    expect(screen.getByLabelText("Iterations per case")).toHaveValue(1);
     expect(
       screen.getByText(/Leave it if you are just looking around/),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Run first evals" }));
-    expect(onRunFirstEvals).toHaveBeenCalledWith({ iterationsPerCase: 10 });
+    expect(onRunFirstEvals).toHaveBeenCalledWith(
+      expect.objectContaining({ iterationsPerCase: 1 }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByTestId("eval-server-preview")).toBeTruthy();

@@ -207,9 +207,9 @@ export function CreateSuiteDialog({
     if (canSubmit || isSaving) return null;
     if (name.trim().length === 0) return "Add a suite name first.";
     if (composeMode && !composeHasTarget) {
-      return "Pick an environment or at least one client first.";
+      return "Pick at least one client first.";
     }
-    if (!composerReady) return "Loading this project's environments…";
+    if (!composerReady) return "Loading this project's clients…";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
         ? "Attach a server and at least one client first."
@@ -331,7 +331,7 @@ export function CreateSuiteDialog({
                   Where it runs
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Start from an environment, or build one here. Each client fans
+                  Start from a client, or build one here. Each client fans
                   out into its own run.
                 </p>
               </div>
@@ -345,6 +345,7 @@ export function CreateSuiteDialog({
                 testIdPrefix="create-suite"
                 inModal
                 slots={EVALS_COMPOSER_SLOTS}
+                environmentsVocabulary="client"
                 clientDefaultLabel={
                   (() => {
                     const previewed =

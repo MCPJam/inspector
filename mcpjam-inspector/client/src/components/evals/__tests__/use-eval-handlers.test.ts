@@ -193,6 +193,92 @@ describe("useEvalHandlers", () => {
   });
 
   describe("handleRerun", () => {
+    it.each([false, true])("opens the first accepted environment run without waiting for siblings (later failure: %s)", async (failSibling) => {
+      const slow = createDeferred<Response>();
+      mockAuthFetch.mockImplementation(async (_path: string, init: { body: string }) => {
+        const body = JSON.parse(init.body);
+        return body.environmentId === "env-slow"
+          ? slow.promise
+          : createFetchResponse({ success: true, runId: "accepted-run" });
+      });
+      const { result } = renderHook(() => useEvalHandlers({ ...defaultProps, evalsNavigationContext: "evaluate" }));
+      let launch!: Promise<unknown>;
+      act(() => {
+        launch = result.current.handleRerun({
+          _id: "suite-multi", name: "Suite", environment: { servers: [] },
+          environmentIds: ["env-slow", "env-fast"],
+        } as any);
+      });
+      await waitFor(() => expect(mockNavigateApp).toHaveBeenCalledTimes(1));
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/suite/suite-multi/runs/accepted-run");
+      expect(result.current.rerunningSuiteId).toBe("suite-multi");
+      await act(async () => {
+        slow.resolve(failSibling
+          ? createFetchResponse({ message: "Client unavailable" }, 500)
+          : createFetchResponse({ success: true, runId: "later-run" }));
+        await launch;
+      });
+      expect(mockNavigateApp).toHaveBeenCalledTimes(1);
+      expect(result.current.rerunningSuiteId).toBeNull();
+      if (failSibling) expect(toast.error).toHaveBeenCalled();
+    });
+
+    it.each([false, true])("forwards temporary-environment launch intent (%s) without server overrides", async (ephemeralEnvironment) => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun({ _id: "suite-123", name: "Suite", environment: { servers: [] }, environmentIds: ["temporary-env"] } as any, { ephemeralEnvironment });
+      });
+      const request = mockAuthFetch.mock.calls.find(([url]) => url === "/api/mcp/evals/run");
+      expect(request).toBeDefined();
+      const body = JSON.parse(request![1]!.body as string);
+      expect(body.environmentId).toBe("temporary-env");
+      expect(body.ephemeralEnvironment).toBe(ephemeralEnvironment ? true : undefined);
+      expect(body.serverIds ?? []).toEqual([]);
+    });
+
+    it("returns scoped run ids without navigating away from the editor", async () => {
+      mockAuthFetch.mockResolvedValue(createFetchResponse({ success: true, runId: "run-scoped" }));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      let output: unknown;
+      await act(async () => {
+        output = await result.current.handleRerun({ _id: "suite-123", name: "Suite", environment: { servers: ["server-1"] } } as any, { stayOnPage: true });
+      });
+      expect(output).toMatchObject({ status: "started", runIds: ["run-scoped"] });
+      expect(mockNavigateApp).not.toHaveBeenCalled();
+    });
+
+    it.each(["no servers", "disconnected", "no cases"])(
+      "rejects scoped launches with %s instead of reporting success",
+      async (reason) => {
+        if (reason === "no cases") mockConvexQuery.mockResolvedValue([]);
+        const { result } = renderHook(() => useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: reason === "disconnected" ? new Set<string>() : defaultProps.connectedServerNames,
+        }));
+        await act(async () => {
+          await expect(result.current.handleRerun({
+            _id: "suite-123", name: "Prepared",
+            environment: { servers: reason === "no servers" ? [] : ["server-1"] },
+          } as any, { stayOnPage: true })).rejects.toThrow();
+        });
+        expect(mockAuthFetch).not.toHaveBeenCalled();
+        expect(mockNavigateApp).not.toHaveBeenCalled();
+      },
+    );
+
+    it("keeps a prepared launch idempotent across run retries", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      const suite = { _id: "suite-123", name: "Prepared", environment: { servers: ["server-1"] } };
+      await act(async () => {
+        await result.current.handleRerun(suite as any, { idempotencyKey: "prepared:review:1" });
+        await result.current.handleRerun(suite as any, { idempotencyKey: "prepared:review:1" });
+      });
+      const requests = mockAuthFetch.mock.calls.filter(([url]) => url === "/api/mcp/evals/run");
+      expect(requests).toHaveLength(2);
+      expect(JSON.parse(requests[0][1]!.body as string).idempotencyKey).toBe("prepared:review:1:default");
+      expect(JSON.parse(requests[1][1]!.body as string).idempotencyKey).toBe("prepared:review:1:default");
+    });
+
     it("uses authFetch for /api/mcp/evals/run endpoint", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
@@ -2197,6 +2283,25 @@ describe("useEvalHandlers", () => {
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
         "/evaluate/suite/suite-1/test/draft%3Aprompt/edit",
+      );
+    });
+  });
+
+  describe("handleDescribeTestCase", () => {
+    it("opens the describe workspace on the Evaluate surface", () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          evalsNavigationContext: "evaluate",
+        }),
+      );
+
+      act(() => {
+        result.current.handleDescribeTestCase("suite-1");
+      });
+
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/evaluate/suite/suite-1/test/draft%3Adescribe/edit",
       );
     });
   });

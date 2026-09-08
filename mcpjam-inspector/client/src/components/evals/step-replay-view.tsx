@@ -65,7 +65,7 @@ const KIND_META: Record<
   interact: {
     label: "Interact",
     Icon: MousePointerClick,
-    tint: "text-amber-600 dark:text-amber-400",
+    tint: "text-warning",
   },
   assert: {
     label: "Assertion",
@@ -83,12 +83,12 @@ const STATUS_META: Record<
   ok: {
     label: "Passed",
     Icon: CheckCircle2,
-    cls: "text-emerald-600 dark:text-emerald-400",
+    cls: "text-success",
   },
   fail: {
     label: "Failed",
     Icon: XCircle,
-    cls: "text-red-600 dark:text-red-400",
+    cls: "text-destructive",
   },
   running: {
     label: "Running",
@@ -358,7 +358,7 @@ function StepsVerdictHeader({
         <span className="text-xs text-muted-foreground">
           {checksPassed} of {checkTotal} check{checkTotal === 1 ? "" : "s"} passed
           {checksFailed > 0 ? (
-            <span className="text-red-600 dark:text-red-400">
+            <span className="text-destructive">
               {" "}
               · {checksFailed} failed
             </span>
@@ -470,11 +470,11 @@ function InteractionRow({
           {step.locatorLabel ? ` · ${step.locatorLabel}` : ""}
         </span>
         {ok === false ? (
-          <span className="shrink-0 text-red-600 dark:text-red-400">
+          <span className="shrink-0 text-destructive">
             failed
           </span>
         ) : ok === true ? (
-          <span className="shrink-0 text-emerald-600 dark:text-emerald-400">
+          <span className="shrink-0 text-success">
             ok
           </span>
         ) : null}

@@ -23,7 +23,7 @@ colors:
   muted-foreground: "oklch(0.6059 0.0075 97.4233)"
   accent: "oklch(0.9245 0.0138 92.9892)"
   accent-foreground: "oklch(0.2671 0.0196 98.939)"
-  destructive: "oklch(0.627 0.208 25.331)"
+  destructive: "oklch(0.6261 0.2077 25.2698)"
   destructive-foreground: "oklch(1 0 0)"
   border: "oklch(0.8847 0.0069 97.3627)"
   chrome-control: "oklch(0.8995 0.0191 83.0632)"
@@ -261,7 +261,7 @@ solid fill.
 | `diagram-sandbox` | 3.19 — Large text only | 10.27 — AA, any text |
 | `diagram-server` | 3.39 — Large text only | 9.99 — AA, any text |
 | `info` | 3.75 — Large text only | 3.75 — Large text only |
-| `destructive` | 3.92 — Large text only | 3.76 — Large text only |
+| `destructive` | 3.93 — Large text only | 3.76 — Large text only |
 | `diagram-view` | 3.94 — Large text only | 9.55 — AA, any text |
 | `secondary` | 6.39 — AA, any text | 12.55 — AA, any text |
 | `background` | 10.98 — AA, any text | 8.33 — AA, any text |

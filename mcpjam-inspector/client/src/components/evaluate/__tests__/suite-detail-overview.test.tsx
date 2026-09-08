@@ -1,7 +1,36 @@
-import { describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
+import {
+  SuiteRunReviewContent,
+  type SuiteRunReviewProps,
+} from "../suite-run-review";
+import {
+  useEvalGeneration,
+  evalSuiteKey,
+} from "@/lib/mcpjam-agent/eval-workspace";
+import {
+  openEvalChat,
+  useEvalPromptQueue,
+} from "@/lib/mcpjam-agent/eval-scope";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../../evals/types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../../evals/types";
+
+vi.mock("../suite-run-matrix", () => ({
+  ConfiguredSuiteRunReview: (props: SuiteRunReviewProps) => (
+    <SuiteRunReviewContent {...props} />
+  ),
+}));
+
+vi.mock("@/lib/mcpjam-agent/eval-scope", async (original) => ({
+  ...(await original<object>()),
+  openEvalChat: vi.fn(() => "eval-generation-test"),
+}));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
@@ -82,6 +111,102 @@ function makeIteration(
 const hostNamesById = new Map<string, string | null>([["host-1", "Claude"]]);
 
 describe("SuiteDetailOverview", () => {
+  it("consolidates pairings into one run and filters complete runs and their trends", async () => {
+    const user = userEvent.setup();
+    const onRunClick = vi.fn();
+    const runs = [
+      makeRun({
+        _id: "one",
+        runNumber: 1,
+        runGroupId: "together",
+        namedHostId: "host-1",
+        createdAt: 1000,
+      }),
+      makeRun({
+        _id: "two",
+        runNumber: 2,
+        runGroupId: "together",
+        namedHostId: "host-2",
+        createdAt: 1001,
+      }),
+      makeRun({
+        _id: "solo",
+        runNumber: 3,
+        namedHostId: "host-1",
+        createdAt: 2000,
+      }),
+    ];
+    const iterations = [
+      makeIteration({
+        _id: "pass",
+        suiteRunId: "one",
+        resultSource: "reported",
+      }),
+      ...[1, 2, 3].map((id) =>
+        makeIteration({
+          _id: `fail-${id}`,
+          suiteRunId: "two",
+          result: "failed",
+          resultSource: "reported",
+        }),
+      ),
+      makeIteration({
+        _id: "solo-pass",
+        suiteRunId: "solo",
+        resultSource: "reported",
+      }),
+    ];
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite()}
+        cases={[]}
+        runs={runs}
+        runsLoading={false}
+        allIterations={iterations}
+        hostNamesById={
+          new Map([
+            ["host-1", "Claude"],
+            ["host-2", "Cursor"],
+          ])
+        }
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onRunClick={onRunClick}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+    const table = within(
+      screen.getByRole("table", { name: "Suite run history" }),
+    );
+    expect(table.getAllByRole("button", { name: /^Run #/ })).toHaveLength(2);
+    expect(screen.queryByTestId("suite-run-row-two")).toBeNull();
+    const row = within(screen.getByTestId("suite-run-row-one"));
+    expect(row.getByText("25%")).toBeVisible();
+    expect(row.getByText("1/4 passed")).toBeVisible();
+    expect(
+      row.getByRole("button", { name: /Client model mapping:.*Claude/ }),
+    ).toBeVisible();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "trends across 2 runs",
+    );
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by client" }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "Cursor", exact: true }),
+    );
+    expect(screen.queryByTestId("suite-run-row-solo")).toBeNull();
+    expect(row.getByText("1/4 passed")).toBeVisible();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "1/4 passed",
+    );
+    await user.click(
+      table.getByRole("button", { name: "Run #1", exact: true }),
+    );
+    expect(onRunClick).toHaveBeenCalledWith("one");
+  });
+
   it("renders identity counts, run history, and clickable cases", async () => {
     const user = userEvent.setup();
     const onRerun = vi.fn();
@@ -92,6 +217,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[
           makeCase({ _id: "case-1" }),
@@ -146,12 +272,12 @@ describe("SuiteDetailOverview", () => {
       "2 cases",
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
-    expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
+    expect(screen.queryByLabelText("Filter by verdict")).toBeNull();
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
-      "1 failing",
+      "1 failed iteration",
     );
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
       "0/1 passed",
@@ -159,8 +285,8 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
     expect(screen.queryByText("card declined")).toBeNull();
     expect(screen.queryByText("Top failure signature")).toBeNull();
-    expect(screen.getByText("GitHub #4188")).toBeTruthy();
-    expect(screen.getByText("Hold")).toBeTruthy();
+    expect(screen.getByText("GitHub")).toBeTruthy();
+    expect(screen.getAllByText("Finished").length).toBeGreaterThan(0);
 
     await user.click(screen.getByTestId("suite-run-row-run-1"));
     expect(onRunClick).toHaveBeenCalledWith("run-1");
@@ -182,8 +308,11 @@ describe("SuiteDetailOverview", () => {
     expect(onEditCases).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Run this suite" }));
+    expect(onRerun).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(onRerun).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-1" }),
+      { iterationOverride: 3 },
     );
   });
 
@@ -195,6 +324,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[]}
         runs={[]}
@@ -216,7 +346,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-detail-empty-cases")).toHaveTextContent(
       "No cases yet",
     );
-    expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Test Cases" })).toBeNull();
     // A suite with no cases cannot have run, so it gets the hero alone — not
     // an empty run history stacked on top of an empty case list.
@@ -225,15 +355,64 @@ describe("SuiteDetailOverview", () => {
 
     await user.click(screen.getByTestId("suite-empty-action-describe"));
     expect(onEditCases).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByTestId("suite-empty-action-generate"));
-    expect(onGenerateTestCases).toHaveBeenCalledTimes(1);
     await user.click(screen.getByTestId("suite-empty-action-import"));
     expect(onImportCases).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByTestId("suite-empty-action-generate"));
+    expect(openEvalChat).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project-1", suiteId: "suite-1" }),
+    );
+    expect(onGenerateTestCases).not.toHaveBeenCalled();
+  });
+
+  it("opens the shared scoped chat without a second generation transcript", async () => {
+    const user = userEvent.setup();
+    const onGenerateTestCases = vi.fn().mockResolvedValue(undefined);
+
+    renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite({ name: "Checkout reliability" })}
+        cases={[]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={onGenerateTestCases}
+        canGenerateTestCases
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+
+    await user.click(screen.getByTestId("suite-empty-action-generate"));
+
+    expect(
+      screen.getByTestId("suite-case-generation-workspace"),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId("generating-case-skeleton")).toHaveLength(3);
+    expect(
+      useEvalPromptQueue.getState().pending["eval-generation-test"].text,
+    ).toContain("Generate discovery-backed test cases");
+    expect(
+      screen.queryByRole("heading", { name: "Refine with AI" }),
+    ).not.toBeInTheDocument();
+    expect(openEvalChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        suiteName: "Checkout reliability",
+      }),
+    );
+    expect(onGenerateTestCases).not.toHaveBeenCalled();
   });
 
   it("keeps run history when a suite has runs but no cases", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[]}
         runs={[makeRun({ _id: "run-1" })]}
@@ -251,7 +430,7 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
     expect(screen.getByTestId("suite-detail-empty-cases")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Test Cases" })).toBeNull();
   });
@@ -259,6 +438,7 @@ describe("SuiteDetailOverview", () => {
   it("omits client and model filters when those fields are absent", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[makeRun({ _id: "run-1", namedHostId: undefined })]}
@@ -285,7 +465,7 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
+    expect(screen.queryByLabelText("Filter by verdict")).toBeNull();
     expect(screen.queryByLabelText("Filter by client")).toBeNull();
     expect(screen.queryByLabelText("Filter by model")).toBeNull();
   });
@@ -302,6 +482,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
@@ -327,12 +508,10 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-run-row-run-0")).toBeTruthy();
   });
 
-  it("says a runnable suite has no runs yet instead of hiding run history", () => {
-    // A suite that has cases can be run, so the card is its run surface even
-    // before the first run: "never run" and "runs failed to load" must not
-    // both render as an absent card.
+  it("hides run history until the suite has actual runs", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -348,17 +527,9 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
-    expect(screen.getByTestId("suite-run-history-empty")).toHaveTextContent(
-      "No runs yet.",
-    );
-    // The filtered-to-nothing copy would be a lie here — nothing is filtered.
-    expect(screen.queryByText("No runs match these filters.")).toBeNull();
-    // Nothing to summarize and nothing to filter, so neither chrome appears.
-    expect(screen.queryByTestId("suite-run-history-snapshot")).toBeNull();
-    expect(
-      screen.queryByRole("combobox", { name: "Filter by verdict" }),
-    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    expect(screen.queryByTestId("suite-run-history-empty")).toBeNull();
     expect(screen.getByRole("heading", { name: "Test Cases" })).toBeTruthy();
   });
 
@@ -369,6 +540,7 @@ describe("SuiteDetailOverview", () => {
 
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -390,15 +562,18 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByTestId("suite-empty-action-generate")).toBeNull();
 
     await user.click(screen.getByTestId("suite-detail-generate-cases"));
-    expect(onGenerateTestCases).toHaveBeenCalledTimes(1);
+    expect(openEvalChat).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project-1", suiteId: "suite-1" }),
+    );
+    expect(onGenerateTestCases).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Add case" }));
-    expect(onEditCases).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
   });
 
   it("disables the card's Generate while a generation is already running", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -423,6 +598,7 @@ describe("SuiteDetailOverview", () => {
   it("hides both case-authoring controls on a read-only suite", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={[]}
@@ -448,6 +624,7 @@ describe("SuiteDetailOverview", () => {
   it("disables Generate in the empty state until servers can be discovered", () => {
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite({ environment: { servers: [] } })}
         cases={[]}
         runs={[]}
@@ -467,7 +644,9 @@ describe("SuiteDetailOverview", () => {
     );
 
     expect(screen.getByTestId("suite-empty-action-generate")).toBeDisabled();
-    expect(screen.getByTestId("suite-empty-action-describe")).not.toBeDisabled();
+    expect(
+      screen.getByTestId("suite-empty-action-describe"),
+    ).not.toBeDisabled();
     expect(screen.getByTestId("suite-empty-action-import")).not.toBeDisabled();
   });
 
@@ -481,6 +660,7 @@ describe("SuiteDetailOverview", () => {
     // would pass without testing anything.
     renderWithProviders(
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[]}
         runs={[]}
@@ -496,7 +676,7 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeTruthy();
     expect(screen.getByText("Loading runs\u2026")).toBeTruthy();
     expect(screen.queryByText("No runs match these filters.")).toBeNull();
   });
@@ -517,6 +697,7 @@ describe("SuiteDetailOverview", () => {
     ];
     const view = (runs: EvalSuiteRun[]) => (
       <SuiteDetailOverview
+        projectId="project-1"
         suite={makeSuite()}
         cases={[makeCase({ _id: "case-1" })]}
         runs={runs}
@@ -541,7 +722,7 @@ describe("SuiteDetailOverview", () => {
     await user.click(screen.getByRole("option", { name: "Cursor" }));
 
     // The trigger names the selection, not just the dimension.
-    expect(clientFilter).toHaveTextContent("Client \u00b7 Cursor");
+    expect(clientFilter).toHaveTextContent("Cursor");
     expect(screen.queryByTestId("suite-run-row-run-1")).toBeNull();
     expect(screen.getByTestId("suite-run-row-run-2")).toBeTruthy();
 
@@ -553,10 +734,68 @@ describe("SuiteDetailOverview", () => {
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
     ).toHaveTextContent("Client");
-    expect(
-      screen.queryByText("No runs match these filters."),
-    ).toBeNull();
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
+});
 
+beforeEach(() => useEvalGeneration.setState({ suites: {} }));
+it("shows generated drafts and explains why they cannot run yet", async () => {
+  useEvalGeneration.setState({
+    suites: {
+      [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+        status: "ready",
+        drafts: [
+          {
+            id: "draft-1",
+            revision: "r1",
+            input: {
+              suiteId: "suite-1",
+              title: "Generated flowchart case",
+              steps: [],
+            } as any,
+          },
+        ],
+      },
+    },
+  });
+  renderWithProviders(
+    <SuiteDetailOverview
+      projectId="project-1"
+      suite={makeSuite()}
+      cases={[]}
+      runs={[]}
+      runsLoading={false}
+      allIterations={[]}
+      hostNamesById={hostNamesById}
+      onRerun={vi.fn()}
+      onEditSuite={vi.fn()}
+      onEditCases={vi.fn()}
+      onGenerateTestCases={vi.fn()}
+      canGenerateTestCases
+      onImportCases={vi.fn()}
+      onRunClick={vi.fn()}
+      onTestCaseClick={vi.fn()}
+      rerunningSuiteId={null}
+    />,
+  );
+  expect(screen.getByText("Generated flowchart case")).toBeVisible();
+  expect(screen.queryByText("No cases yet")).toBeNull();
+  expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Describe another case" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Generate", exact: true }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Import cases" })).toBeVisible();
+  await userEvent
+    .setup()
+    .hover(
+      screen.getByRole("button", { name: "Run this suite", exact: true })
+        .parentElement!,
+    );
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "1 generated draft is waiting to be added",
+  );
 });

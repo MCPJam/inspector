@@ -38,6 +38,8 @@
 export type EvalSuiteSettingRow = {
   /** Stable identifier, stamped as `data-setting-key` on the rendered row. */
   key: string;
+  /** Retained API settings that are intentionally absent from the simplified page. */
+  settingsPage?: "hidden";
   /** The row's visible label, so a reader can match manifest to screen. */
   label: string;
 } & (
@@ -64,16 +66,18 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "computerEnvironment",
+    settingsPage: "hidden",
     label: "Computer environment",
     api: "environment.computerEnvironment",
   },
   {
     key: "environments",
-    label: "Environments",
+    label: "Clients",
     api: "environmentIds",
   },
   {
     key: "passOrFail",
+    settingsPage: "hidden",
     label: "Scorers and judges",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
@@ -84,26 +88,37 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "matchOptions",
+    settingsPage: "hidden",
     label: "Edit tool-call matching",
     api: "settings.matchOptions",
   },
   {
     key: "checks",
+    label: "Checks by stage",
+    excluded:
+      "Stage check selection is saved through applySuiteSettings.disabledStageChecks; it has no public PATCH field yet.",
+  },
+  {
+    key: "predicateChecks",
+    settingsPage: "hidden",
     label: "Scorers",
     api: "settings.checks",
   },
   {
     key: "judge",
+    settingsPage: "hidden",
     label: "Judge",
     api: "settings.judge",
   },
   {
     key: "judgeRubric",
+    settingsPage: "hidden",
     label: "Judge criteria",
     api: "settings.judge.rubric",
   },
   {
     key: "judgeGroundedness",
+    settingsPage: "hidden",
     label: "Groundedness",
     // Read-only run evidence until R2-C1 wires execution. A writable sample
     // would claim a PATCH path the schema explicitly refuses.
@@ -132,6 +147,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "validity",
+    settingsPage: "hidden",
     label: "Validity",
     api: "settings.validity",
   },
@@ -147,21 +163,25 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "qualityGateNoDeterministicRegressions",
+    settingsPage: "hidden",
     label: "Deterministic regressions",
     api: "settings.qualityGate.noDeterministicRegressions",
   },
   {
     key: "qualityGateMaximumP95LatencyIncreaseMs",
+    settingsPage: "hidden",
     label: "p95 latency increase",
     api: "settings.qualityGate.maximumP95LatencyIncreaseMs",
   },
   {
     key: "qualityGateNoGatingScoreErrors",
+    settingsPage: "hidden",
     label: "Any gating scorer errored",
     api: "settings.qualityGate.noGatingScoreErrors",
   },
   {
     key: "schedule",
+    settingsPage: "hidden",
     label: "Schedule",
     // Its own route (`PATCH …/eval-suites/{id}/schedule`) because enabling a
     // schedule has to reject a multi-environment suite that names no
@@ -171,6 +191,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "githubChecks",
+    settingsPage: "hidden",
     label: "GitHub Checks",
     // ORG-scoped, not suite-scoped: connecting a repository configures the
     // organization's GitHub App installation, and the suite only decides which
@@ -181,6 +202,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "deleteSuite",
+    settingsPage: "hidden",
     label: "Delete suite",
     op: "delete_eval_suite",
   },

@@ -17,6 +17,7 @@ import {
 import {
   readEvalServerPreviewDraft,
   writeEvalServerPreviewDraft,
+  type EvalServerPreviewDraft,
 } from "./eval-server-preview-state";
 
 interface EvalServerCaseEditPageProps {
@@ -24,6 +25,7 @@ interface EvalServerCaseEditPageProps {
   suiteId: string;
   caseId: string;
   onBack: () => void;
+  onDraftChange?: (draft: EvalServerPreviewDraft) => void;
 }
 
 export function previewCaseTitleFromDraft(
@@ -41,6 +43,7 @@ export function EvalServerCaseEditPage({
   suiteId,
   caseId,
   onBack,
+  onDraftChange,
 }: EvalServerCaseEditPageProps) {
   const initial = useMemo(
     () => loadPreviewCase(server.id, suiteId, caseId),
@@ -49,9 +52,9 @@ export function EvalServerCaseEditPage({
   const [title, setTitle] = useState(initial?.title ?? "Test case");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [steps, setSteps] = useState<TestStep[]>(initial?.steps ?? []);
-  const [matchOptions, setMatchOptions] = useState<EvalMatchOptions | undefined>(
-    initial?.matchOptions,
-  );
+  const [matchOptions, setMatchOptions] = useState<
+    EvalMatchOptions | undefined
+  >(initial?.matchOptions);
   const [expectedOutput, setExpectedOutput] = useState(
     initial?.expectedOutput ?? "",
   );
@@ -62,10 +65,12 @@ export function EvalServerCaseEditPage({
   const persist = (patch: Partial<PreviewCase>) => {
     const draft = readEvalServerPreviewDraft(server.id);
     if (!draft) return;
-    writeEvalServerPreviewDraft(server.id, {
+    const next = {
       ...draft,
       suites: updatePreviewCase(draft.suites, suiteId, caseId, patch),
-    });
+    };
+    writeEvalServerPreviewDraft(server.id, next);
+    onDraftChange?.(next);
   };
 
   if (!initial) {

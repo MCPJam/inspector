@@ -68,6 +68,7 @@ export type RunHistoryVerdict =
 
 export type SuiteRunHistoryRow = {
   runId: string;
+  runLabel?: string;
   date: number;
   dateLabel: string;
   /**
@@ -123,11 +124,11 @@ export type SuiteRunHistoryFilterOptions = {
 };
 
 function runTimestamp(run: EvalSuiteRun): number {
-  return run.completedAt ?? run.createdAt ?? run._creationTime ?? 0;
+  return run.createdAt ?? run._creationTime ?? run.completedAt ?? 0;
 }
 
 export function formatSuiteRunDate(timestamp: number): string {
-  if (!timestamp) return "—";
+  if (!timestamp) return "-";
   const date = new Date(timestamp);
   const now = new Date();
   return date.toLocaleDateString(undefined, {
@@ -244,7 +245,7 @@ export function buildSuiteRunHistoryRows(
   }
 
   return [...runs]
-    .sort((a, b) => runTimestamp(b) - runTimestamp(a))
+    .sort((a, b) => runTimestamp(b) - runTimestamp(a) || (b.runNumber ?? 0) - (a.runNumber ?? 0))
     .map((run) => {
       const iterations = iterationsByRun.get(run._id) ?? [];
       const stats = computeRunEffectiveStats(run, iterations);
@@ -259,6 +260,7 @@ export function buildSuiteRunHistoryRows(
       const toolCalls = sumToolCalls(iterations);
       return {
         runId: run._id,
+        runLabel: run.runNumber ? `#${run.runNumber}` : run._id.slice(0, 8),
         date,
         dateLabel: formatSuiteRunDate(date),
         status: run.status,
@@ -269,7 +271,7 @@ export function buildSuiteRunHistoryRows(
         platform: runPlatformLabel(run),
         source: run.source ?? "ui",
         client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
-        models: runModels(iterations),
+        models: run.effectiveModelId ? [run.effectiveModelId] : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
         tokens: tokens > 0 ? tokens : null,
         toolCalls: toolCalls > 0 ? toolCalls : null,
@@ -339,7 +341,7 @@ export function formatRunHistoryMetric(
   value: number | null,
   kind: "number" | "duration",
 ): string {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (kind === "duration") return formatDurationMs(value);
   return formatCompactNumber(value);
 }
@@ -397,6 +399,7 @@ export function buildSuiteTestCaseRows(
 
 export function suiteRunBlockedReason({
   caseCount,
+  draftCount = 0,
   hasServersConfigured,
   isEnvironmentSuite,
   isRerunning,
@@ -405,6 +408,7 @@ export function suiteRunBlockedReason({
   evalRunsDisabledReason,
 }: {
   caseCount: number;
+  draftCount?: number;
   hasServersConfigured: boolean;
   isEnvironmentSuite: boolean;
   isRerunning: boolean;
@@ -416,7 +420,11 @@ export function suiteRunBlockedReason({
   if (!isEnvironmentSuite && !hasServersConfigured) {
     return "Configure suite servers before running the full suite.";
   }
-  if (caseCount === 0) return "Add a test case first.";
+  if (caseCount === 0) {
+    return draftCount > 0
+      ? `${draftCount} generated ${draftCount === 1 ? "draft is" : "drafts are"} waiting to be added. Use “Add all to suite” on the suite page before running.`
+      : "Add a test case first.";
+  }
   if (isRerunning || isReplaying) {
     return "A suite or replay is already in progress.";
   }

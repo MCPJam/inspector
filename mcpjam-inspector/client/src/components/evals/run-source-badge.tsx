@@ -40,7 +40,7 @@ const SOURCE_META: Record<
     label: "Scheduled",
     title: "Launched by a schedule",
     className:
-      "border-amber-500/50 bg-amber-500/10 text-foreground dark:bg-amber-500/15",
+      "border-warning/50 bg-warning/10 text-foreground dark:bg-warning/15",
   },
   github_check: {
     label: "GitHub",

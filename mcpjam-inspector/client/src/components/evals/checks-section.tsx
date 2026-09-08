@@ -311,7 +311,7 @@ export function CheckRow({
           : cn(
               "rounded-md border p-3",
               error
-                ? "border-red-500/40 bg-red-500/5"
+                ? "border-destructive/40 bg-destructive/5"
                 : "border-border/60 bg-muted/10",
             ),
       )}
@@ -344,7 +344,7 @@ export function CheckRow({
           />
 
           {error ? (
-            <div className="text-[11px] text-red-600 dark:text-red-400">
+            <div className="text-[11px] text-destructive">
               {error}
             </div>
           ) : null}
@@ -1088,7 +1088,7 @@ function RawArgsJsonEditor({
       <textarea
         id={argsId}
         className={`min-h-[80px] w-full rounded-md border bg-background p-2 font-mono text-[11px] leading-tight ${
-          jsonError ? "border-red-500/60" : "border-border/60"
+          jsonError ? "border-destructive/60" : "border-border/60"
         }`}
         value={draftJson}
         onChange={(e) => {
@@ -1114,7 +1114,7 @@ function RawArgsJsonEditor({
         disabled={readOnly}
       />
       {jsonError ? (
-        <div className="text-[11px] text-red-600 dark:text-red-400">
+        <div className="text-[11px] text-destructive">
           {jsonError}
         </div>
       ) : null}
@@ -1200,7 +1200,7 @@ function ResponseMatchesFields({
         disabled={readOnly}
       />
       {regexError ? (
-        <div className="text-[11px] text-red-600 dark:text-red-400">
+        <div className="text-[11px] text-destructive">
           {regexError}
         </div>
       ) : null}
@@ -1474,7 +1474,7 @@ export function CaseChecksSection({
           />
         </div>
         {suiteScenarioAsserts.length > 0 ? (
-          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          <p className="text-[11px] text-warning">
             Suite defaults include {suiteScenarioAsserts.length} scenario check
             {suiteScenarioAsserts.length === 1 ? "" : "s"} — review in Suite
             settings.

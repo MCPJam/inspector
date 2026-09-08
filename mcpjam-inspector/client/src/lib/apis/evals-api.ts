@@ -57,6 +57,7 @@ type ToolListResponse = {
 };
 
 type RunEvalsRequest = EvalRequestWithServers & {
+  idempotencyKey?: string;
   suiteId?: string;
   suiteName?: string;
   suiteDescription?: string;
@@ -81,6 +82,7 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * default is not mutated.
    */
   iterationOverride?: number;
+  ephemeralEnvironment?: boolean;
   /**
    * One-off match-option override applied to every iteration of this run
    * (layered on top of suite default + case override). Does not mutate
@@ -206,6 +208,8 @@ export type CaseMixInput = {
 export type GenerationOptions = {
   caseMix?: CaseMixInput;
   varyUserStyles?: boolean;
+  /** User-authored direction for a follow-up generation pass. */
+  refinement?: string;
 };
 
 type GenerateTestsRequest = EvalRequestWithServers & {
@@ -341,8 +345,8 @@ async function postEvalRequest<TResponse>(
       typeof errorBody?.message === "string"
         ? errorBody.message
         : typeof errorBody?.error === "string"
-        ? errorBody.error
-        : `Request failed (${response.status})`;
+          ? errorBody.error
+          : `Request failed (${response.status})`;
 
     rethrowIfBillingError(errorBody);
 

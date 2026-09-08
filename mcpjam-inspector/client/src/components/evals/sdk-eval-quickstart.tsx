@@ -292,7 +292,7 @@ function CreateApiKeyStep({
             </span>
           ) : null}
           {keyReady ? (
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-success">
               <Check className="size-3.5" aria-hidden />
               API key available
             </span>

@@ -1,10 +1,9 @@
 /**
  * First-run preview after "Eval my server".
  *
- * Frontend-owned for now: the shape is the contract engineering will fill
- * from discovery + generation. `buildEvalServerPreview` is fixture data so
- * the screen can be designed against real copy and counts. Replace that
- * function; keep the types.
+ * Shared review shape populated by background generation.
+ * `buildEvalServerPreview` remains an explicit test fixture only; production
+ * pages load saved preparation records and never fall back to this data.
  */
 
 import type { CasePredicates, EvalMatchOptions } from "@/shared/eval-matching";
@@ -12,6 +11,8 @@ import type { TestStep } from "@/shared/steps";
 import { writeSimpleCase } from "./simple-case/simple-case-model";
 
 export type PreviewCase = {
+  requiresSetup?: boolean;
+  selected?: boolean;
   id: string;
   title: string;
   /** Filled once the user opens today's case editor. */
@@ -32,7 +33,7 @@ export type PreviewSuite = {
 };
 
 /** Exploratory first-run default. Later runs can raise this. */
-export const DEFAULT_FIRST_RUN_ITERATIONS = 10;
+export const DEFAULT_FIRST_RUN_ITERATIONS = 1;
 
 export type PreviewFindingSeverity = "info" | "warning";
 

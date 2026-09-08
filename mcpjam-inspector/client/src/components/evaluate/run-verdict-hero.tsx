@@ -11,7 +11,10 @@
  * Every string comes from {@link buildRunVerdictHero}. The view chooses type
  * and colour; it never decides what is true.
  */
+import { useRunHeaderVerdict } from "./evaluate-run-page";
+import { remedyForDiagnostic } from "./stage-remedy";
 import { ArrowUpRight } from "lucide-react";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 
@@ -98,48 +101,106 @@ function caseStatText(view: RunVerdictHeroView): {
 
 export function RunVerdictHero({
   view,
+  headerVerdict = view.verdict,
   onOpenFailingTrace,
   actions,
 }: {
   view: RunVerdictHeroView;
+  headerVerdict?: RunVerdictHeroView["verdict"];
   onOpenFailingTrace?: () => void;
   /** The primary action slot, so the copy-prompt button can land here later. */
   actions?: React.ReactNode;
 }) {
+  const inHeader = useRunHeaderVerdict(headerVerdict);
+  const showVerdict = !inHeader && view.verdict.word !== "Running";
   const caseStat = caseStatText(view);
-  const hasSentence = view.sentence.text.length > 0;
+  const remedy = view.focus ? remedyForDiagnostic(view.focus.diagnostic) : null;
+  const hasSentence = view.sentence.text.trim().length > 0;
+  const summaryLoading =
+    view.pending ||
+    (!hasSentence &&
+      ["Running", "Pending", "Queued"].includes(view.verdict.word));
   const canOpenTrace = Boolean(onOpenFailingTrace && view.focus);
 
   return (
     <section
-      className="flex flex-col gap-5 px-5 py-5 lg:flex-row lg:items-start lg:justify-between lg:gap-10"
+      className="flex flex-col gap-5 px-5 py-4"
       data-testid="run-verdict-hero"
     >
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3
-            className={cn(
-              "text-[30px] font-bold leading-none tracking-tight",
-              VERDICT_TONE_CLASS[view.verdict.tone],
-            )}
-            data-testid="run-verdict-word"
-          >
-            {view.verdict.word}
-          </h3>
-          {view.verdict.undecidedLine ? (
-            <span className="text-[12.5px] text-muted-foreground">
-              {view.verdict.undecidedLine}
-            </span>
-          ) : null}
-        </div>
+        {showVerdict ? (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h3
+              className={cn(
+                "text-[30px] font-bold leading-none tracking-tight",
+                VERDICT_TONE_CLASS[view.verdict.tone],
+              )}
+              data-testid="run-verdict-word"
+            >
+              {view.verdict.word}
+            </h3>
+            {view.verdict.undecidedLine ? (
+              <span className="text-[12.5px] text-muted-foreground">
+                {view.verdict.undecidedLine}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
-        {hasSentence ? (
-          <p
-            className="mt-3 max-w-[56ch] text-[15px] leading-relaxed text-foreground"
-            data-testid="run-verdict-sentence"
+        {summaryLoading ? (
+          <div
+            className={cn("grid gap-4 lg:grid-cols-2", showVerdict && "mt-5")}
+            role="status"
+            aria-label="Loading run summary"
+            data-testid="run-summary-loading"
           >
-            {view.sentence.text}
-          </p>
+            {[0, 1].map((card) => (
+              <div
+                key={card}
+                className="space-y-3 rounded-lg border border-border p-4"
+                aria-hidden="true"
+              >
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-4/5" />
+              </div>
+            ))}
+          </div>
+        ) : hasSentence ? (
+          <div
+            className={cn("grid gap-4 lg:grid-cols-2", showVerdict && "mt-5")}
+          >
+            <div className="rounded-lg border border-border p-4">
+              <h4 className="text-xs font-semibold">
+                {view.sentence.kind === "noFailure"
+                  ? "What passed"
+                  : view.sentence.kind === "brokeAt"
+                    ? "What broke"
+                    : "What happened"}
+              </h4>
+              {hasSentence ? (
+                <p
+                  className="mt-2 max-w-[72ch] text-sm leading-relaxed text-foreground"
+                  data-testid="run-verdict-sentence"
+                >
+                  {view.sentence.text}
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <h4 className="text-xs font-semibold">
+                {remedy ? "How to fix" : "Next step"}
+              </h4>
+              <p className="mt-2 text-sm leading-relaxed text-foreground">
+                {remedy?.text ??
+                  (view.pending
+                    ? "Results are still arriving. Inspect the live case matrix below as iterations complete."
+                    : view.sentence.kind === "noFailure"
+                      ? "Compare with a previous run to check for regressions, or export this report to share the evidence."
+                      : "Open the case evidence to inspect the recorded result. No specific remediation has been established for this run.")}
+              </p>
+            </div>
+          </div>
         ) : null}
 
         {actions || canOpenTrace ? (
@@ -162,7 +223,7 @@ export function RunVerdictHero({
         ) : null}
       </div>
 
-      <div className="flex shrink-0 flex-wrap divide-x divide-border/40 lg:border-l lg:border-border/40 lg:pl-2">
+      <div className="grid grid-cols-2 divide-x divide-border/40 border-t border-border/60 pt-3 sm:grid-cols-4">
         <Stat label="Passed" value={caseStat.value} detail={caseStat.detail} />
         <Stat
           label="Latency p50"

@@ -1,3 +1,6 @@
+import { promoteEvalDraftChat } from "@/lib/mcpjam-agent/eval-scope";
+import { useEvalAgentDraft } from "@/lib/mcpjam-agent/use-eval-agent-draft";
+import { getEvalDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import {
   useCallback,
   useEffect,
@@ -68,6 +71,11 @@ import {
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
 import type { RemoteServer } from "@/hooks/useProjects";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "@/lib/inspector-command-handlers";
+import type { EditEvalCaseDraftInspectorCommand } from "@/shared/inspector-command.js";
 import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
@@ -225,6 +233,7 @@ import {
   isToolCalledWithAssert,
   readSimpleCase,
   readStepChecks,
+  writeSimpleCase,
   type SimpleCaseTool,
   resolveToolsQuestion,
   UNSET_TOOLS_BLOCK_REASON,
@@ -232,8 +241,8 @@ import {
 } from "../evaluate/simple-case/simple-case-model";
 import { WorkspaceStepsPane } from "../evaluate/simple-case/workspace-steps-pane";
 import { CaseWorkspaceLayout } from "../evaluate/case-workspace/case-workspace-layout";
+import { DescribeCaseWorkspace } from "../evaluate/case-workspace/describe-case-workspace";
 import { InspectStrip } from "../evaluate/case-workspace/inspect-strip";
-import { NextRunSheet } from "../evaluate/case-workspace/next-run-sheet";
 import { TrialHeader } from "../evaluate/case-workspace/trial-header";
 import {
   createAttemptId,
@@ -1035,7 +1044,6 @@ export function TestTemplateEditor({
   const [inspectIterationId, setInspectIterationId] = useState<string | null>(
     null,
   );
-  const [nextRunOpen, setNextRunOpen] = useState(false);
   const [simpleValidationAttempted, setSimpleValidationAttempted] =
     useState(false);
   const [missingAppEvidenceStepId, setMissingAppEvidenceStepId] = useState<
@@ -1188,7 +1196,6 @@ export function TestTemplateEditor({
     setInspectIterationId(null);
     setSimpleValidationAttempted(false);
     setMissingAppEvidenceStepId(null);
-    setNextRunOpen(false);
   }, [selectedTestCaseId]);
 
   useEffect(() => {
@@ -1964,6 +1971,80 @@ export function TestTemplateEditor({
     editFormStepsRef.current = editForm?.steps ?? [];
   }, [editForm?.steps]);
 
+  // Mirrors `editForm` itself (not just its steps) so the agent command
+  // handler below can tell "no case is open" apart from "a case with zero
+  // steps is open" — registered once at mount, so it must read live state
+  // through a ref rather than close over a stale `editForm`.
+  const editFormRef = useRef(editForm);
+  useEffect(() => {
+    editFormRef.current = editForm;
+  }, [editForm]);
+
+  const evalAgent = useEvalAgentDraft({
+    // Evaluate owns the suite bridge used by scoped tools. The legacy editor
+    // continues to use its existing general-agent command bridge below.
+    projectId: simpleCaseEditorEnabled ? projectId : null,
+    suiteId,
+    suiteName: suite?.name ?? "Eval suite",
+    caseId: selectedTestCaseId,
+    draft: editForm,
+    setDraft: setEditForm,
+    tools: availableTools,
+    autoOpen: draftKind === "describe",
+  });
+
+  // `ui_edit_eval_case_draft` (client/src/lib/webmcp/groups/evals.ts): lets
+  // the MCPJam agent write into whatever case this editor currently has
+  // open — the same prompt/tool-assertion shape the Describe workspace and
+  // SimpleCaseForm already write through `writeSimpleCase`. Scoped to this
+  // component's own mount lifecycle (not the shared `useSurfaceAgentBridge`
+  // call, which belongs to EvalsTab for the whole /evals surface) so the
+  // tool only works while a case editor is actually on screen.
+  useEffect(() => {
+    return registerInspectorCommandHandler("editEvalCaseDraft", (command) => {
+      const current = editFormRef.current;
+      if (!current) {
+        throw createInspectorCommandClientError(
+          "unsupported_in_mode",
+          "No test case is currently open for editing. Open or create a case first.",
+        );
+      }
+      const { payload } = command as EditEvalCaseDraftInspectorCommand;
+      const simple = readSimpleCase(current.steps);
+      const nextTools: Array<{
+        id?: string;
+        toolName: string;
+        arguments?: Record<string, unknown>;
+      }> = payload.addToolAssertion
+        ? [
+            ...simple.tools,
+            {
+              toolName: payload.addToolAssertion.toolName,
+              arguments: payload.addToolAssertion.arguments ?? {},
+            },
+          ]
+        : simple.tools;
+      const nextPrompt =
+        payload.prompt !== undefined ? payload.prompt : simple.prompt;
+      const nextNoTool =
+        payload.noTool !== undefined ? payload.noTool : simple.noTool;
+      const nextSteps = writeSimpleCase(current.steps, {
+        prompt: nextPrompt,
+        tools: nextTools,
+        noTool: nextNoTool,
+      });
+      setEditForm((prev) =>
+        prev ? { ...prev, steps: nextSteps } : prev,
+      );
+      return {
+        status: "updated",
+        prompt: nextPrompt,
+        toolAssertionCount: nextTools.length,
+        noTool: nextNoTool,
+      };
+    });
+  }, []);
+
   // Append a recorder-captured widget step (interact or assert) to the END of
   // turn `turnIndex`'s block in the flat step list. The recorder reports a
   // turn-granular `promptIndex`; `stepTurnIndices` maps each step to its
@@ -2193,6 +2274,9 @@ export function TestTemplateEditor({
         num_steps: editForm.steps?.length ?? 0,
       });
       toast.success("Test case created");
+      if (simpleCaseEditorEnabled && projectId) {
+        promoteEvalDraftChat({ projectId, suiteId, suiteName: suite?.name ?? "Eval suite", caseId: selectedTestCaseId }, newTestCaseId);
+      }
       onDraftSaved?.(newTestCaseId);
     } catch (error) {
       console.error("Failed to create test case:", error);
@@ -3398,6 +3482,19 @@ export function TestTemplateEditor({
   // (see `casePinnedOnly` below).
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      {simpleCaseEditorEnabled && editForm && (draftKind !== "describe" || evalAgent.change) && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs">
+          <span className="text-muted-foreground" aria-live="polite">
+            {evalAgent.change ? `Draft updated: ${evalAgent.change.fields.join(", ")}. Review before saving.` : "Edit the case or refine it with Ask MCPJam."}
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            {evalAgent.change && <Button size="sm" variant="ghost" disabled={!evalAgent.canUndo} onClick={() => {
+              try { getEvalDraft(evalAgent.scope).undo(evalAgent.change!.revision); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not undo edit"); }
+            }}>Undo</Button>}
+            <Button size="sm" variant="outline" onClick={evalAgent.open}>Ask MCPJam</Button>
+          </div>
+        </div>
+      )}
       {/* Assert-mode pick chooser: opens when a click is captured in "Add
           checks" mode, builds a widget assertion seeded with the derived
           locator. Portaled, so its position here doesn't affect layout. */}
@@ -3406,7 +3503,35 @@ export function TestTemplateEditor({
         onConfirm={handleAssertPickConfirm}
         onCancel={() => setPendingPick(null)}
       />
-      {editorMode === "config" ? (
+      {draftKind === "describe" && editForm && !deepEditor && !liveRecordMode ? (
+        <DescribeCaseWorkspace
+          title={editForm.title}
+          onTitleChange={(title) =>
+            setEditForm((current) => (current ? { ...current, title } : current))
+          }
+          onAsk={evalAgent.open}
+          onSave={() => void handleSave()}
+          saveDisabled={savePrimaryDisabled}
+          caseForm={
+            <StepListEditor
+              steps={editForm.steps}
+              onStepsChange={setSteps}
+              availableTools={assertableTools}
+              argumentMatching={
+                resolveMatchOptions(
+                  suite?.defaultMatchOptions,
+                  editForm.matchOptions,
+                ).argumentMatching
+              }
+              suiteServers={effectiveSuiteServers}
+              projectServers={projectServers}
+              evalValidationBorderClass={evalValidationBorderClass}
+              syncedStepId={syncedStepId}
+              onHoverStep={setSyncedStepId}
+            />
+          }
+        />
+      ) : editorMode === "config" ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="border-b border-border px-4 py-2.5 sm:px-6">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
@@ -3551,11 +3676,28 @@ export function TestTemplateEditor({
                   <CaseSuiteChips
                     models={selectedModelValues}
                     modelLabelByValue={modelLabelByValue}
+                    availableModels={availableModels}
+                    disabled={isRunningCompare}
+                    onModelChange={(value) => setSelectedModelValues([value])}
                     trials={editForm?.runs ?? 1}
+                    onTrialsChange={(next) =>
+                      setEditForm((current) =>
+                        current ? { ...current, runs: next } : current,
+                      )
+                    }
                     hostLabel={
                       selectedQuickRunHostOption?.label ?? suiteHostLabel
                     }
-                    onOpen={() => setNextRunOpen(true)}
+                    hostValue={
+                      quickRunHostOptions.length > 0
+                        ? (quickRunHostSelection ?? "")
+                        : suiteHostLabel
+                    }
+                    hostOptions={quickRunHostOptions.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
+                    onHostChange={setQuickRunHostSelection}
                     onOpenSuiteSettings={onOpenSuiteSettings}
                   />
                 ) : quickRunHostOptions.length > 0 ? (
@@ -3665,7 +3807,7 @@ export function TestTemplateEditor({
                       <Circle
                         className={
                           "size-3.5" +
-                          (liveRecordMode ? " fill-red-500 text-red-500" : "")
+                          (liveRecordMode ? " fill-destructive text-destructive" : "")
                         }
                       />
                       {liveRecordMode ? "Recording" : "Record"}
@@ -3794,33 +3936,6 @@ export function TestTemplateEditor({
           </div>
           {useWorkspace ? (
             <>
-              <NextRunSheet
-                open={nextRunOpen}
-                onOpenChange={setNextRunOpen}
-                trials={editForm?.runs ?? 1}
-                onTrialsChange={(next) =>
-                  setEditForm((current) =>
-                    current ? { ...current, runs: next } : current,
-                  )
-                }
-                hostValue={
-                  quickRunHostOptions.length > 0
-                    ? (quickRunHostSelection ?? "")
-                    : suiteHostLabel
-                }
-                hostOptions={quickRunHostOptions.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
-                onHostChange={setQuickRunHostSelection}
-                modelValue={selectedModelValues[0] ?? ""}
-                modelOptions={modelOptions.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
-                onModelChange={(value) => setSelectedModelValues([value])}
-                onOpenSuiteSettings={onOpenSuiteSettings}
-              />
               <CaseWorkspaceLayout
                 left={
                   editForm && deepEditor ? (

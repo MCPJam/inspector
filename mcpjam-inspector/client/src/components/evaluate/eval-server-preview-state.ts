@@ -1,10 +1,4 @@
-/**
- * Session draft for the Eval my server first-run flow.
- *
- * The preview is local until generation is wired. Case edit navigates to
- * today's editor, so this keeps suites, deletes, and confirm choices
- * across that round trip.
- */
+/** Session edit buffer; PreparedEvalServerPage persists reviews in Convex. */
 
 import {
   DEFAULT_FIRST_RUN_ITERATIONS,
@@ -21,6 +15,8 @@ export type EvalServerPreviewStep = "suites" | "confirm";
 export type EvalServerPreviewDraft = {
   version: typeof EVAL_SERVER_PREVIEW_DRAFT_VERSION;
   serverId: string;
+  generationHash?: string;
+  chatHistory?: Array<{ id: number; role: "assistant" | "user"; text: string }>;
   suites: PreviewSuite[];
   openSuiteIds: string[];
   step: EvalServerPreviewStep;
@@ -105,6 +101,20 @@ function parseDraft(
   return {
     version: EVAL_SERVER_PREVIEW_DRAFT_VERSION,
     serverId,
+    ...(typeof entry.generationHash === "string"
+      ? { generationHash: entry.generationHash }
+      : {}),
+    ...(Array.isArray(entry.chatHistory)
+      ? {
+          chatHistory: entry.chatHistory.filter(
+            (message) =>
+              message &&
+              typeof message.id === "number" &&
+              (message.role === "user" || message.role === "assistant") &&
+              typeof message.text === "string",
+          ),
+        }
+      : {}),
     suites: entry.suites,
     openSuiteIds: entry.openSuiteIds,
     step: entry.step,

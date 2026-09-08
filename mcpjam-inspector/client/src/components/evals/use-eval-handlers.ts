@@ -174,6 +174,8 @@ export function normalizeSuiteServerRefs(
 
 /** Options for {@link useEvalHandlers} `handleGenerateTests` (playground: connect, generate, run). */
 export type HandleGenerateEvalTestsOptions = {
+  /** Review-first authoring: receive validated cases without persisting them. */
+  stageCase?: (input: import("@/lib/evals/generate-and-persist-tests").CreateEvalTestCaseInput) => Promise<unknown>;
   /** Required when `runNewCasesAfterGenerate` is true (same object passed to `handleRunTestCase`). */
   suite?: EvalSuite;
   /**
@@ -658,12 +660,18 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       options?: {
+        /** Agent authoring keeps the editor visible while the suite runs. */
+        stayOnPage?: boolean;
+        /** Stable key used by the prepared first-run flow across retries. */
+        idempotencyKey?: string;
         /**
          * Transient per-run override applied uniformly to every test in this
          * suite run. Does NOT mutate the persisted `EvalCase.runs` default.
          * Capped server-side at 10 per test.
          */
         iterationOverride?: number;
+        /** Launch temporary project environments without changing suite membership. */
+        ephemeralEnvironment?: boolean;
         /**
          * One-off match-options override for this run only. Applied to every
          * test in the run. Does NOT mutate persisted suite/case records.
@@ -678,7 +686,10 @@ export function useEvalHandlers({
         refreshSnapshot?: boolean;
       }
     ) => {
-      if (rerunningSuiteId) return;
+      if (rerunningSuiteId) {
+        if (options?.stayOnPage) throw new Error("Another suite run is already starting.");
+        return;
+      }
 
       // Environment suites launch through the server's authoritative
       // resolution (P0.1): the browser never knows the environment's closed
@@ -707,9 +718,11 @@ export function useEvalHandlers({
 
       if (!isEnvironmentSuite && suiteServers.length === 0) {
         if (rerunEligibility.replayableLatestRun?._id) {
+          if (options?.stayOnPage) throw new Error("Live suite servers are unavailable. Connect them before running from eval chat.");
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
+        if (options?.stayOnPage) throw new Error("Attach a client to this suite before running it.");
         toast.error("Attach a client to this suite before running it.");
         return;
       }
@@ -720,9 +733,11 @@ export function useEvalHandlers({
           if (!hasUnavailableServers(readiness)) {
             // Continue with the live rerun now that the servers are ready.
           } else if (rerunEligibility.replayableLatestRun?._id) {
+            if (options?.stayOnPage) throw new Error("Live suite servers are unavailable. Connect them before running from eval chat.");
             await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
             return;
           } else {
+            if (options?.stayOnPage) throw new Error(formatEnsureServersReadyError(readiness, "run this suite", projectServers));
             toast.error(
               formatEnsureServersReadyError(
                 readiness,
@@ -733,6 +748,7 @@ export function useEvalHandlers({
             return;
           }
         } else {
+          if (options?.stayOnPage) throw new Error(formatMcpConnectServerPrompt(rerunEligibility.missingServers, { remoteServers: projectServers, kind: "suite" }));
           toast.error(
             formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
               remoteServers: projectServers,
@@ -745,6 +761,7 @@ export function useEvalHandlers({
 
       const executionContext = await getSuiteExecutionContext(suite);
       if (!executionContext) {
+        if (options?.stayOnPage) throw new Error("The suite is not ready to run. Check its cases and client configuration.");
         return;
       }
 
@@ -824,6 +841,9 @@ export function useEvalHandlers({
         // Partial-failure tolerant: a failure on one host shouldn't cancel
         // runs already started against other hosts. We collect failures
         // and toast a summary at the end.
+        // Open live results as soon as any target accepts the launch. Other
+        // targets keep starting independently and join the shared run group.
+        let openedRun = false;
         const settled = await Promise.allSettled(
           runPlans.map((plan) =>
             runEvals({
@@ -841,6 +861,7 @@ export function useEvalHandlers({
               passCriteria: { minimumPassRate },
               notes: criteriaNote,
               suiteRerun: true,
+              ...(options?.idempotencyKey ? { idempotencyKey: `${options.idempotencyKey}:${plan.namedHostId ?? plan.environmentId ?? "default"}` } : {}),
               iterationOverride: options?.iterationOverride,
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
@@ -848,9 +869,24 @@ export function useEvalHandlers({
               // Always sent explicitly on env plans — even single-env
               // suites — so the server's authoritative resolution runs.
               ...(plan.environmentId
-                ? { environmentId: plan.environmentId }
+                ? {
+                    environmentId: plan.environmentId,
+                    ...(options?.ephemeralEnvironment
+                      ? { ephemeralEnvironment: true }
+                      : {}),
+                  }
                 : {}),
               ...(runGroupId ? { runGroupId } : {}),
+            }).then((response) => {
+              const runId = response?.runId;
+              if (!options?.stayOnPage && !openedRun && typeof runId === "string" && runId.length > 0) {
+                openedRun = true;
+                navigateEvalRoute(
+                  { type: "run-detail", suiteId: suite._id, runId },
+                  evalsNavigationContext
+                );
+              }
+              return response;
             })
           )
         );
@@ -916,33 +952,6 @@ export function useEvalHandlers({
               : "Eval run started!"
           );
 
-          // Drop the user on the new run's detail page so they can see
-          // results without hunting through the runs list. Multi-host
-          // fan-outs land on the suite's runs view instead, since there
-          // are multiple sibling runs to pick from.
-          if (runPlans.length === 1) {
-            const firstSettled = settled[0];
-            const newRunId =
-              firstSettled?.status === "fulfilled"
-                ? (firstSettled.value as { runId?: unknown } | null | undefined)
-                    ?.runId
-                : undefined;
-            if (typeof newRunId === "string" && newRunId.length > 0) {
-              navigateEvalRoute(
-                {
-                  type: "run-detail",
-                  suiteId: suite._id,
-                  runId: newRunId,
-                },
-                evalsNavigationContext
-              );
-            }
-          } else {
-            navigateEvalRoute(
-              { type: "suite-overview", suiteId: suite._id, view: "runs" },
-              evalsNavigationContext
-            );
-          }
         } else if (failures.length < runPlans.length) {
           // A cap can reject one target while others launch. This branch never
           // throws, so the outer catch — and the wall with it — would never
@@ -999,6 +1008,14 @@ export function useEvalHandlers({
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
+        if (options?.stayOnPage) return {
+          status: failures.length ? "partially_started" : "started",
+          runIds: settled.flatMap(result => {
+            const id = result.status === "fulfilled" ? (result.value as { runId?: unknown })?.runId : undefined;
+            return typeof id === "string" ? [id] : [];
+          }),
+          failedCount: failures.length,
+        };
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         if (openEvalIterationWall(error)) {
@@ -1007,11 +1024,13 @@ export function useEvalHandlers({
           // the run is on its way.
           toast.dismiss(runStartedToastId);
         } else {
+          if (options?.stayOnPage) throw new Error(formatMcpConnectServerPrompt(rerunEligibility.missingServers, { remoteServers: projectServers, kind: "suite" }));
           toast.error(
             getEnvironmentConflictMessage(error) ??
               getBillingErrorMessage(error, "Failed to start eval run")
           );
         }
+        if (options?.stayOnPage) throw error;
       } finally {
         setRerunningSuiteId(null);
       }
@@ -1499,6 +1518,17 @@ export function useEvalHandlers({
     [navigateAfterTestCaseMutation]
   );
 
+  const handleDescribeTestCase = useCallback(
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("describe"),
+      });
+    },
+    [navigateAfterTestCaseMutation]
+  );
+
   // Record = run-once-then-adopt, not the widget recorder. Same unsaved
   // draft path as Write; the editor focuses the prompt and surfaces adopt
   // after the first Quick Run.
@@ -1642,10 +1672,14 @@ export function useEvalHandlers({
       serverIds: string[],
       postOptions?: HandleGenerateEvalTestsOptions
     ) => {
-      if (isGeneratingTests) return;
+      if (isGeneratingTests) {
+        if (postOptions?.stageCase) throw new Error("Generation is already running.");
+        return;
+      }
 
       const suiteServers = normalizeSuiteServerRefs(serverIds);
       if (suiteServers.length === 0) {
+        if (postOptions?.stageCase) throw new Error("Attach servers to this suite before generating cases.");
         toast.error(
           "Add at least one server to this suite before generating cases."
         );
@@ -1662,6 +1696,7 @@ export function useEvalHandlers({
           if (ensureServersReady != null) {
             const readiness = await ensureServersReady(suiteServers);
             if (hasUnavailableServers(readiness)) {
+              if (postOptions?.stageCase) throw new Error(formatEnsureServersReadyError(readiness, "generate test cases", projectServers));
               toast.error(
                 formatEnsureServersReadyError(
                   readiness,
@@ -1672,6 +1707,7 @@ export function useEvalHandlers({
               return;
             }
           } else {
+            if (postOptions?.stageCase) throw new Error("Connect the suite servers before generating cases.");
             toast.error(
               formatMcpConnectServerPrompt(disconnected, {
                 remoteServers: projectServers,
@@ -1688,7 +1724,7 @@ export function useEvalHandlers({
           projectId,
           suiteId,
           serverIds,
-          createTestCase: mutations.createTestCaseMutation as (
+          createTestCase: (postOptions?.stageCase ?? mutations.createTestCaseMutation) as (
             input: any
           ) => Promise<unknown>,
           skipIfExistingCases: false,
@@ -1704,6 +1740,11 @@ export function useEvalHandlers({
             ? { generationOptions: postOptions.generationOptions }
             : {}),
         });
+
+        if (postOptions?.stageCase) {
+          if (outcome.createdCount !== outcome.apiReturnedTests) throw new Error("Some generated drafts could not be staged. Review the available drafts before trying again.");
+          return;
+        }
 
         if (outcome.apiReturnedTests === 0) {
           track("eval_generate_tests_completed", {
@@ -1785,6 +1826,7 @@ export function useEvalHandlers({
           );
         }
       } catch (error) {
+        if (postOptions?.stageCase) throw error;
         console.error("Failed to generate tests:", error);
         // Cap the raw message at 200 chars so PostHog event cardinality stays
         // bounded when backend errors include user input or random ids.
@@ -1833,6 +1875,7 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
+    handleDescribeTestCase,
     handleRecordTestCase,
     handleDeleteTestCase,
     directDeleteTestCase,
