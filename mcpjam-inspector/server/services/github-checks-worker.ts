@@ -951,18 +951,10 @@ async function runCompleted(
 }
 
 /**
- * Run the selected suite against the just-built server.
- *
- * `prepareEvalRun` turns the `github_check` source plus these server ids into a
- * run-only environment override. That override wins over any project
- * environment attached to the suite, so the run always targets this PR's
- * ephemeral server without rewriting the user's saved suite.
- */
-/**
  * Which check's server this run's frozen environment names.
  *
- * The run-only override removes the former shared-suite rewrite race. This
- * remains a final defense against a malformed or regressed run snapshot. Every check names
+ * The run-only server replacement removes the former shared-suite rewrite
+ * race. This remains a final defense against a malformed or regressed run snapshot. Every check names
  * its server `gh-check-<triggerId>`, so:
  *
  *   - the snapshot mentions OUR trigger → `ours`;
@@ -1057,6 +1049,11 @@ async function abandonPreparedRun(
   }
 }
 
+/**
+ * Run the selected suite against the just-built server. The backend replaces
+ * only the suite's MCP server binding, preserving its environment model,
+ * skills, plugins, host settings, and computer image.
+ */
 async function defaultRunEvalSuite(args: {
   claimed: ClaimedGithubCheck;
   bearer: string;
@@ -1096,12 +1093,9 @@ async function defaultRunEvalSuite(args: {
 
     const client = createConvexClient(args.bearer);
 
-    // The suite is SHARED by every check, and rewriting its environment then
-    // starting the run are two separate mutations. Another check's rewrite can
-    // land in between, so this run's frozen snapshot can name ITS ephemeral
-    // server instead of ours. Verified before anything is evaluated, because a
-    // verdict from a run that tested a different PR's server is worse than no
-    // verdict at all. See `verifyRunSnapshot` for what is provable.
+    // Verify the frozen run points at this check's temporary server before any
+    // case executes. A verdict from another PR's server is worse than no
+    // verdict. See `verifyRunSnapshot` for what is provable.
     const ownership = await verifyRunSnapshot(
       client,
       prepared.runId,

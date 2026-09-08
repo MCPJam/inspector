@@ -12,7 +12,7 @@ import {
   shouldSkipExecution,
   assertTestCaseRunWithinCap,
   authorEvalSuite,
-  buildGithubCheckRunEnvironmentOverride,
+  buildGithubCheckServerOverride,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
@@ -56,35 +56,39 @@ function buildTestCaseRequest(runs?: number): unknown {
   };
 }
 
-describe("GitHub check run environment override", () => {
-  it("targets the ephemeral PR server for an environment-backed suite", () => {
+describe("GitHub check server override", () => {
+  it("pairs the ephemeral PR server name and project row", () => {
     expect(
-      buildGithubCheckRunEnvironmentOverride({
+      buildGithubCheckServerOverride({
         source: "github_check",
-        resolvedServerIds: ["ephemeral-server-id"],
         persistedServerRefs: ["ephemeral-server-id"],
         serverNames: ["gh-check-trigger-1"],
       })
-    ).toEqual({
-      servers: ["gh-check-trigger-1"],
-      serverBindings: [
-        {
-          serverName: "gh-check-trigger-1",
-          projectServerId: "ephemeral-server-id",
-        },
-      ],
-    });
+    ).toEqual([
+      {
+        serverName: "gh-check-trigger-1",
+        projectServerId: "ephemeral-server-id",
+      },
+    ]);
   });
 
   it("does not override ordinary suite runs", () => {
     expect(
-      buildGithubCheckRunEnvironmentOverride({
+      buildGithubCheckServerOverride({
         source: "ui",
-        resolvedServerIds: ["server-id"],
         persistedServerRefs: ["server-id"],
         serverNames: ["server"],
       })
     ).toBeUndefined();
+  });
+
+  it("rejects incomplete PR server identity", () => {
+    expect(() =>
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["server-id"],
+      })
+    ).toThrow(WebRouteError);
   });
 });
 

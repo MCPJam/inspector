@@ -644,23 +644,44 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   launchContext?: LaunchContext;
 } & EvalRunProvenance;
 
-/**
- * GitHub checks must run against the ephemeral server built from the PR.
- *
- * A suite can also be attached to a project environment. Backend environment
- * selection intentionally wins over the suite's legacy `environment` field,
- * so rewriting that field does not redirect an environment-backed suite. A
- * run-only override is the authoritative way to select the verified PR server
- * without mutating the user's saved suite or environment.
- */
-export function buildGithubCheckRunEnvironmentOverride(args: {
+export type GithubCheckServerOverride = Array<{
+  serverName: string;
+  projectServerId: string;
+}>;
+
+/** Pair the temporary PR server's display name with its project server row. */
+export function buildGithubCheckServerOverride(args: {
   source: RunEvalsWithManagerRequest["source"];
-  resolvedServerIds: string[];
   persistedServerRefs: string[];
   serverNames?: string[];
-}) {
+}): GithubCheckServerOverride | undefined {
   if (args.source !== "github_check") return undefined;
-  return buildPersistedSuiteEnvironment(args);
+  if (
+    !args.serverNames?.length ||
+    args.serverNames.length !== args.persistedServerRefs.length
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "GitHub checks require one name for each temporary PR server",
+    );
+  }
+  const names = new Set(args.serverNames.map((name) => name.toLowerCase()));
+  const ids = new Set(args.persistedServerRefs);
+  if (
+    names.size !== args.serverNames.length ||
+    ids.size !== args.persistedServerRefs.length
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "GitHub checks require unique temporary PR server names and ids",
+    );
+  }
+  return args.serverNames.map((serverName, index) => ({
+    serverName,
+    projectServerId: args.persistedServerRefs[index],
+  }));
 }
 
 export const RunTestCaseRequestSchema = z.object({
@@ -2353,9 +2374,8 @@ export async function prepareEvalRun(
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;
 
-  const environmentOverride = buildGithubCheckRunEnvironmentOverride({
+  const githubCheckServerOverride = buildGithubCheckServerOverride({
     source: request.source,
-    resolvedServerIds,
     persistedServerRefs,
     serverNames,
   });
@@ -2384,7 +2404,7 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     environmentId,
-    environmentOverride,
+    ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
     // All three preconditions come from the SAME resolution the tool snapshot
     // was captured against. The revision alone is not enough: an environment
     // pins a `hostId` and optionally an attachment, both dereferenced live, so

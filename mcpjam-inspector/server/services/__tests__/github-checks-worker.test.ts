@@ -389,7 +389,7 @@ describe("executeClaimedCheck — happy path", () => {
     );
   });
 
-  it("targets the run at THIS check's ephemeral server", async () => {
+  it("passes this check's temporary server identity to the suite runner", async () => {
     const prepared: Array<Record<string, unknown>> = [];
     const h = harness({
       runEvalSuite: async (args) => {
@@ -399,8 +399,6 @@ describe("executeClaimedCheck — happy path", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
-    // `prepareEvalRun` converts this server into a run-only environment
-    // override for the `github_check` source.
     expect(prepared[0]).toMatchObject({
       serverId: "server-1",
       serverName: "gh-check-trig-1",
