@@ -22,6 +22,9 @@ const { BrowserActivityList, actorLabel, describe: describeRow } = await import(
 );
 import type { LocalBrowserTraceRow } from "@/lib/local-browser/client";
 
+/** The pane's own poll interval, so a test waits exactly one tick. */
+const POLL_MS = 2_000;
+
 function row(over: Partial<LocalBrowserTraceRow> = {}): LocalBrowserTraceRow {
   return {
     kind: "command",
@@ -159,6 +162,87 @@ describe("BrowserActivityList", () => {
           sessionId: "bs_b",
           afterSeq: 0,
         }),
+        "cap",
+      ),
+    );
+  });
+
+  it("clears 'history unavailable' once the lookup works again", async () => {
+    // The warning was set on a failure and never on a success, so a project
+    // with no open session wore "history unavailable" for as long as it had
+    // none — long after looking had started working.
+    vi.useFakeTimers();
+    listSessions.mockRejectedValueOnce(new Error("offline"));
+    listSessions.mockResolvedValue({ sessions: [] });
+    mount();
+    await vi.waitFor(() =>
+      expect(screen.queryByText(/history unavailable/i)).toBeTruthy(),
+    );
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await vi.waitFor(() =>
+      expect(screen.queryByText(/history unavailable/i)).toBeNull(),
+    );
+  });
+
+  it("does not let a poll for the OLD project unlatch the new one", async () => {
+    // The latch is what keeps two polls from reading one cursor and appending
+    // the same rows twice. A poll left over from a project we have switched
+    // away from used to clear it on its way out — releasing the latch the
+    // current poll was holding, so the next tick started a second one beside
+    // it and one click appeared in the list twice.
+    vi.useFakeTimers();
+    let releaseOld: (value: unknown) => void = () => {};
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_a" }] });
+    readTrace.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseOld = resolve)),
+    );
+    const { rerender } = mount({ projectId: "proj-a" });
+    await vi.waitFor(() => expect(readTrace).toHaveBeenCalledTimes(1));
+
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_b" }] });
+    let releaseNew: (value: unknown) => void = () => {};
+    readTrace.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseNew = resolve)),
+    );
+    rerender(
+      <BrowserActivityList projectId="proj-b" consentToken="cap" active />,
+    );
+    await vi.waitFor(() => expect(readTrace).toHaveBeenCalledTimes(2));
+
+    // The abandoned poll answers while the new one is still out…
+    releaseOld({ entries: [], headSeq: 0 });
+    // …and a tick arrives to find out whether it took the latch with it.
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+
+    // No third poll may start: the second is still holding the latch.
+    expect(readTrace).toHaveBeenCalledTimes(2);
+    releaseNew({ entries: [], headSeq: 0 });
+  });
+
+  it("notices when a NEWER session takes over the browser", async () => {
+    // It resolves a session once and follows it, which is right until that
+    // session ends — a closed session's trace still reads perfectly, so the
+    // pane sat on a history that had simply stopped moving.
+    vi.useFakeTimers();
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_a" }] });
+    readTrace.mockResolvedValue({ entries: [], headSeq: 0 });
+    mount();
+    await vi.waitFor(() =>
+      expect(readTrace).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "bs_a" }),
+        "cap",
+      ),
+    );
+
+    listSessions.mockResolvedValue({ sessions: [{ sessionId: "bs_b" }] });
+    // Quiet ticks, until the pane thinks to ask again.
+    for (let tick = 0; tick <= 16; tick += 1) {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    }
+    await vi.waitFor(() =>
+      expect(readTrace).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionId: "bs_b", afterSeq: 0 }),
         "cap",
       ),
     );

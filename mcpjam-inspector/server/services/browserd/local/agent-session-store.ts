@@ -27,13 +27,14 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  access,
   appendFile,
   mkdir,
   readFile,
   readdir,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { validateLocalProjectKey } from "../../../utils/computers/local-machine.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { logger } from "../../../utils/logger.js";
@@ -59,6 +60,20 @@ export type StoredLedgerEntry = (
 };
 
 export interface AgentSessionRecord extends BrowserAgentSession {
+  /**
+   * WHICH live browser this session drives.
+   *
+   * A project does not name one. An ephemeral context is keyed by the run that
+   * owns it, so resolving a session's commands by project alone reached the
+   * project's persistent browser — a person's real logged-in Chromium, driven
+   * under a policy they never agreed to. The key survives a relaunch, which a
+   * boot id does not, so it is what a session stores to find its way back.
+   *
+   * Optional because sessions written before this field exist on disk; a
+   * persistent one falls back to the project's browser, and an ephemeral one
+   * without it refuses rather than guessing.
+   */
+  browserKey?: string;
   /** The durable seq the last mirror wrote. The next one continues from here. */
   lastSeq: number;
   /** The daemon boot the last mirror read, and how far into its ring it got. */
@@ -107,6 +122,23 @@ function sessionDir(projectId: string, sessionId: string): string {
   return join(sessionsRoot(projectId), validateSessionId(sessionId));
 }
 
+/**
+ * Where a project's artifact payloads live — ONE store, not one per session.
+ *
+ * Two logical sessions can share a browser, and a command nobody claimed is
+ * mirrored into both of their histories. With a store per session the first
+ * mirror wrote the bytes into its own directory and released the daemon's only
+ * copy, so the second session recorded the very same screenshot as `evicted`
+ * and could never fetch it. The payload is the browser's, not a session's.
+ *
+ * Authorization does not live here and never did: a caller may fetch an
+ * artifact only if the id appears in ITS OWN session's ledger, which the route
+ * checks by reading the descriptor before it reads a byte.
+ */
+function artifactsRoot(projectId: string): string {
+  return join(dirname(sessionsRoot(projectId)), ARTIFACTS_DIR);
+}
+
 async function ensureDir(dir: string): Promise<void> {
   // 0700 throughout: these files hold a browsing history and the screenshots
   // that go with it, on a machine whose browser is signed into things.
@@ -129,6 +161,8 @@ export interface OpenSessionArgs {
   createdBy: string;
   actor: { actorId: string; kind: string };
   bootId: string;
+  /** The live browser this session drives; see `AgentSessionRecord`. */
+  browserKey?: string;
   /**
    * `prefer` (default) joins a live session for this project, else creates one.
    * `never` always creates. `require` refuses when there is nothing to join.
@@ -218,6 +252,7 @@ async function openAgentSessionLocked(
     engine: args.engine,
     profile: args.profile,
     policy: args.policy,
+    ...(args.browserKey ? { browserKey: args.browserKey } : {}),
     createdBy: args.createdBy,
     createdAt: now(),
     participants: [{ ...args.actor, joinedAt: now() }],
@@ -387,6 +422,7 @@ async function mirrorLedgerLocked(args: {
   )) ?? args.session;
   const dir = sessionDir(session.projectId, session.sessionId);
   await ensureDir(dir);
+  const artifactsDir = artifactsRoot(session.projectId);
 
   const continuing = session.lastBootId === bootId;
   const restarted = session.lastBootId !== undefined && !continuing;
@@ -444,38 +480,33 @@ async function mirrorLedgerLocked(args: {
   for (const entry of entries) {
     seq += 1;
     bootSeq = Math.max(bootSeq, entry.seq);
-    // ARTIFACTS FIRST, then serialize. Draining can mark a descriptor
+    // ARTIFACTS FIRST, then serialize. Draining decides whether a descriptor is
     // `evicted` — a session that asked for no screenshots, or a payload that
     // could not be written — and a row stringified beforehand would claim on
     // disk that a picture is retrievable when it is not.
-    if (entry.kind === "command" && entry.artifacts) {
-      for (const ref of Object.values(entry.artifacts)) {
-        if (!ref || ref.evicted) continue;
-        if (
-          args.captureScreenshots === false &&
-          ref.mediaType.startsWith("image/")
-        ) {
-          // A session that wanted a ledger without pictures still gets the row
-          // and the descriptor; the payload is dropped from the daemon rather
-          // than written to disk.
-          ledger.releaseArtifact(ref.id);
-          ref.evicted = true;
-          continue;
-        }
-        const saved = await drainArtifact(dir, ledger, ref.id).catch((error) => {
-          logger.warn("[browser-ledger] artifact could not be saved", {
-            artifactId: ref.id,
-            detail: error instanceof Error ? error.message : String(error),
-          });
-          return false;
-        });
-        // A payload we could not save is marked on the row rather than left
-        // looking retrievable: "there was a screenshot and it is gone" is a
-        // different and more useful statement than a dangling id.
-        if (!saved) ref.evicted = true;
-      }
-    }
-    const stored: StoredLedgerEntry = { ...entry, seq, bootSeq: entry.seq };
+    //
+    // COPIED, NEVER MUTATED IN PLACE. These descriptors belong to the daemon's
+    // ring, which two logical sessions mirror from. Writing `evicted` onto them
+    // made one session's answer the other's premise: the session that wanted no
+    // screenshots marked the shared row, and the next session skipped a payload
+    // that was sitting right there — recording somebody else's preference as
+    // its own missing picture.
+    const artifacts =
+      entry.kind === "command" && entry.artifacts
+        ? await drainArtifacts(entry.artifacts, {
+            artifactsDir,
+            ledger,
+            ...(args.captureScreenshots === false
+              ? { captureScreenshots: false }
+              : {}),
+          })
+        : undefined;
+    const stored: StoredLedgerEntry = {
+      ...entry,
+      ...(artifacts ? { artifacts } : {}),
+      seq,
+      bootSeq: entry.seq,
+    };
     lines.push(JSON.stringify(stored));
   }
 
@@ -507,24 +538,84 @@ async function mirrorLedgerLocked(args: {
 }
 
 /**
- * Move one artifact payload from the daemon's buffer onto disk.
+ * This session's copy of one row's artifact descriptors, payloads saved.
+ *
+ * @see the call site for why a copy rather than the ring's own objects.
+ */
+async function drainArtifacts(
+  refs: NonNullable<BrowserLedgerRow["artifacts"]>,
+  args: {
+    artifactsDir: string;
+    ledger: Pick<CommandLedger, "artifact" | "releaseArtifact">;
+    captureScreenshots?: boolean;
+  },
+): Promise<NonNullable<BrowserLedgerRow["artifacts"]>> {
+  const copy: NonNullable<BrowserLedgerRow["artifacts"]> = {};
+  for (const slot of ARTIFACT_SLOTS) {
+    const ref = refs[slot];
+    if (!ref) continue;
+    if (ref.evicted) {
+      copy[slot] = { ...ref };
+      continue;
+    }
+    if (
+      args.captureScreenshots === false &&
+      ref.mediaType.startsWith("image/")
+    ) {
+      // A session that wanted a ledger without pictures still gets the row and
+      // the descriptor; the payload is simply not written to disk.
+      //
+      // NOT released from the daemon, either. This session's preference is
+      // about its own history, and another session sharing this browser may
+      // still be about to mirror the same command. The ring's own cap frees it.
+      copy[slot] = { ...ref, evicted: true };
+      continue;
+    }
+    const saved = await drainArtifact(args.artifactsDir, args.ledger, ref.id)
+      .catch((error) => {
+        logger.warn("[browser-ledger] artifact could not be saved", {
+          artifactId: ref.id,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      });
+    // A payload we could not save is marked on the row rather than left looking
+    // retrievable: "there was a screenshot and it is gone" is a different and
+    // more useful statement than a dangling id.
+    copy[slot] = saved ? { ...ref } : { ...ref, evicted: true };
+  }
+  return copy;
+}
+
+/** The row's artifact slots, so a copy cannot silently miss one. */
+const ARTIFACT_SLOTS = ["screenshot", "a11y", "text"] as const satisfies ReadonlyArray<
+  keyof NonNullable<BrowserLedgerRow["artifacts"]>
+>;
+
+/**
+ * Move one artifact payload from the daemon's buffer into the project's store.
  *
  * Released from the daemon afterwards, because its store is a hand-off buffer
  * and not a second copy: holding megabytes of pictures that already exist as
  * files is how a long session runs a laptop out of memory.
  */
 async function drainArtifact(
-  dir: string,
+  artifactsDir: string,
   ledger: Pick<CommandLedger, "artifact" | "releaseArtifact">,
   artifactId: string,
 ): Promise<boolean> {
-  const payload = ledger.artifact(artifactId);
-  // Already gone from the daemon's buffer — it aged out before anything
-  // mirrored it. Nothing to save, and the caller marks the row accordingly.
-  if (!payload) return false;
-  const artifactsDir = join(dir, ARTIFACTS_DIR);
-  await ensureDir(artifactsDir);
   const file = join(artifactsDir, artifactFileName(artifactId));
+  const payload = ledger.artifact(artifactId);
+  if (!payload) {
+    // Gone from the daemon's buffer. Either a peer session already drained it
+    // into the shared store — in which case this row's descriptor is perfectly
+    // good and marking it `evicted` would be a lie — or it aged out before
+    // anything mirrored it, which is the genuine loss.
+    return await access(file)
+      .then(() => true)
+      .catch(() => false);
+  }
+  await ensureDir(artifactsDir);
   await writeFile(
     file,
     payload.encoding === "base64"
@@ -559,12 +650,17 @@ export async function readArtifact(args: {
   sessionId: string;
   artifactId: string;
 }): Promise<Buffer | undefined> {
-  const file = join(
-    sessionDir(args.projectId, args.sessionId),
-    ARTIFACTS_DIR,
-    artifactFileName(args.artifactId),
-  );
-  return readFile(file).catch(() => undefined);
+  const name = artifactFileName(args.artifactId);
+  const shared = await readFile(
+    join(artifactsRoot(args.projectId), name),
+  ).catch(() => undefined);
+  if (shared) return shared;
+  // Payloads written before the store moved up to the project still sit under
+  // the session that mirrored them, and a trace a person is reading today is
+  // not worth breaking to tidy a path.
+  return readFile(
+    join(sessionDir(args.projectId, args.sessionId), ARTIFACTS_DIR, name),
+  ).catch(() => undefined);
 }
 
 /**
@@ -579,18 +675,46 @@ export async function artifactMediaType(args: {
   sessionId: string;
   artifactId: string;
 }): Promise<string | undefined> {
-  const { entries } = await readLedger({
-    projectId: args.projectId,
-    sessionId: args.sessionId,
-    limit: 1000,
-  });
-  for (const entry of entries) {
+  // THE WHOLE LEDGER, not a page of it. `readLedger` is the paged reader a
+  // cursor walks; asking it for the first thousand rows answered "no such
+  // artifact" for every artifact after the thousandth, and the route served a
+  // perfectly good screenshot as an octet-stream. This is a lookup by id, not a
+  // page, so it has no business having a page size.
+  //
+  // NEWEST FIRST: a caller fetching an artifact has almost always just been
+  // handed it, and a long session should not be scanned from the beginning to
+  // find the row it made a moment ago.
+  const entries = await readLedgerFile(args.projectId, args.sessionId);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
     if (entry.kind !== "command" || !entry.artifacts) continue;
     for (const ref of Object.values(entry.artifacts)) {
       if (ref?.id === args.artifactId) return ref.mediaType;
     }
   }
   return undefined;
+}
+
+/** Every row in a session's ledger file, in order. One unreadable line is skipped. */
+async function readLedgerFile(
+  projectId: string,
+  sessionId: string,
+): Promise<StoredLedgerEntry[]> {
+  const raw = await readFile(
+    join(sessionDir(projectId, sessionId), LEDGER_FILE),
+    "utf8",
+  ).catch(() => "");
+  const all: StoredLedgerEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      all.push(JSON.parse(line) as StoredLedgerEntry);
+    } catch {
+      // One unreadable line does not make the rest of the history unreadable.
+      // It is skipped rather than fatal, and the seq gap it leaves is visible.
+    }
+  }
+  return all;
 }
 
 /**
@@ -608,22 +732,8 @@ export async function readLedger(args: {
   commandId?: string;
   limit?: number;
 }): Promise<{ entries: StoredLedgerEntry[]; headSeq: number }> {
-  const file = join(
-    sessionDir(args.projectId, args.sessionId),
-    LEDGER_FILE,
-  );
-  const raw = await readFile(file, "utf8").catch(() => "");
   const limit = Math.max(1, Math.min(args.limit ?? 100, 1000));
-  const all: StoredLedgerEntry[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      all.push(JSON.parse(line) as StoredLedgerEntry);
-    } catch {
-      // One unreadable line does not make the rest of the history unreadable.
-      // It is skipped rather than fatal, and the seq gap it leaves is visible.
-    }
-  }
+  const all = await readLedgerFile(args.projectId, args.sessionId);
   const headSeq = all.length ? all[all.length - 1].seq : 0;
   let matched: StoredLedgerEntry[] = all;
   if (args.commandId !== undefined) {

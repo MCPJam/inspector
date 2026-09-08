@@ -44,7 +44,9 @@ import {
 import {
   ensureLocalBrowserSession,
   findLocalBrowserSession,
+  findLocalBrowserSessionByKey,
   findLocalBrowserSessionForProject,
+  localBrowserKeyFor,
   closeLocalBrowserSession,
   listLocalBrowserSessions,
   LocalBrowserUnavailableError,
@@ -639,11 +641,29 @@ async function resolveAgentSession(
   }
   if (!stored) return { ok: false, status: 404, error: "no_such_session" };
   if (stored.closedAt) return { ok: false, status: 409, error: "session_closed" };
+  // THE SESSION'S OWN BROWSER, not the project's. An ephemeral context is keyed
+  // by the run that owns it, so looking one up by project found the persistent
+  // browser instead — the person's real logged-in Chromium, driven under an
+  // ephemeral session's policy and written into its ledger. A record from
+  // before `browserKey` existed has only its profile to go on: a persistent one
+  // is the project's browser by definition, and an ephemeral one is refused
+  // rather than resolved to a browser that is not it.
+  //
   // READS, NEVER STARTS. Launching a Chromium because an agent sent a command
   // to a session whose browser has gone would put a window on someone's desk
   // for a session they may have finished with; the caller re-opens explicitly.
-  const live = findLocalBrowserSessionForProject(projectId);
+  const live = stored.browserKey
+    ? findLocalBrowserSessionByKey(stored.browserKey)
+    : stored.profile === "persistent"
+      ? findLocalBrowserSessionForProject(projectId)
+      : undefined;
   if (!live) return { ok: false, status: 409, error: "no_browser_session" };
+  // The key is stored, not parsed, so this is the one place that can still
+  // catch a record pointing at another project's browser. `stored.projectId` is
+  // the validated key the session was opened under.
+  if (live.projectKey !== stored.projectId) {
+    return { ok: false, status: 409, error: "no_browser_session" };
+  }
   return { ok: true, session: stored, live };
 }
 
@@ -709,15 +729,28 @@ computers.post("/local-browser/session", async (c) => {
   // starting a Chromium and then answering `nothing_to_attach` leaves a browser
   // on somebody's desk that no session owns and nothing will close until the
   // idle reaper notices.
+  //
+  // An EPHEMERAL profile has nothing to attach to by construction — a throwaway
+  // context belongs to one run — so `require` is unsatisfiable there whatever
+  // else is open. Checking only for a live persistent session let that pair
+  // through whenever the project happened to have one, and the store's refusal
+  // then arrived one launched browser too late.
   if (attach === "require") {
-    const live = await findOpenSession(projectId).catch(() => undefined);
+    const live =
+      profile === "persistent"
+        ? await findOpenSession(projectId).catch(() => undefined)
+        : undefined;
     if (!live) {
       return c.json(
         {
           error: "nothing_to_attach",
           detail:
-            "attach: 'require' was asked for and this project has no open " +
-            "persistent browser session",
+            profile === "ephemeral"
+              ? "attach: 'require' cannot be satisfied by an ephemeral " +
+                "profile, which is never shared; ask for a persistent " +
+                "profile or pass attach: 'never'"
+              : "attach: 'require' was asked for and this project has no open " +
+                "persistent browser session",
         },
         409,
       );
@@ -732,14 +765,20 @@ computers.post("/local-browser/session", async (c) => {
     typeof body?.runKey === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(body.runKey)
       ? body.runKey
       : `agent-${randomUUID()}`;
+  // ONE description of the browser, used to start it AND to name it on the
+  // session record, so the two cannot drift into a session pointing at a
+  // browser nobody opened.
+  const browserArgs = {
+    projectId,
+    contextMode: profile,
+    ...(profile === "ephemeral" ? { ownerKey: runKey } : {}),
+    ...(captureTypedText ? { captureTypedText: true } : {}),
+  } as const;
   let handle;
+  let browserKey: string;
   try {
-    handle = await ensureLocalBrowserSession({
-      projectId,
-      contextMode: profile,
-      ...(profile === "ephemeral" ? { ownerKey: runKey } : {}),
-      ...(captureTypedText ? { captureTypedText: true } : {}),
-    });
+    browserKey = localBrowserKeyFor(browserArgs);
+    handle = await ensureLocalBrowserSession(browserArgs);
   } catch (error) {
     if (error instanceof LocalBrowserUnavailableError) {
       return c.json({ error: error.code, detail: error.message }, 409);
@@ -759,6 +798,7 @@ computers.post("/local-browser/session", async (c) => {
     createdBy: actor.label ?? "anonymous",
     actor: { actorId: actor.id, kind: actor.kind },
     bootId: handle.bootId,
+    browserKey,
     attach,
     ...(captureTypedText ? { captureTypedText: true } : {}),
     ...(body?.captureScreenshots === false ? { captureScreenshots: false } : {}),
@@ -1134,8 +1174,28 @@ computers.post("/local-browser/close", async (c) => {
     // And only when no OTHER open logical session is still using it. Two
     // sessions can share one project browser, so closing on the first one's
     // terminate would take the browser out from under the second.
+    //
+    // THE SAME browser, though: a project's ephemeral runs each have their own
+    // Chromium, so counting every open session in the project let an unrelated
+    // throwaway run keep a persistent browser alive — and reported that as the
+    // reason. Sessions written before `browserKey` existed are matched by
+    // profile, which is what the key encoded for them.
+    //
+    // A record we could not read leaves us unable to say WHICH browser this
+    // session was on, so every other open session counts and the browser is
+    // left running. Erring the other way closes somebody's window on a guess.
+    const closing = session;
+    const sameBrowser = (other: AgentSessionRecord) =>
+      closing === undefined
+        ? true
+        : other.browserKey && closing.browserKey
+          ? other.browserKey === closing.browserKey
+          : other.profile === closing.profile;
     const others = (await listAgentSessions(projectId).catch(() => [])).filter(
-      (other) => !other.closedAt && other.sessionId !== sessionId,
+      (other) =>
+        !other.closedAt &&
+        other.sessionId !== sessionId &&
+        sameBrowser(other),
     );
     if (others.length > 0) {
       return c.json({

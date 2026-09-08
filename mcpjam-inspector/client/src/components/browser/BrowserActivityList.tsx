@@ -28,6 +28,18 @@ import {
  * lag a slow client out of a broadcast the way the frame stream can.
  */
 const POLL_INTERVAL_MS = 2_000;
+/**
+ * How many quiet ticks before the pane asks which session it should be reading.
+ *
+ * It resolves a session once and then follows it, which is right while that
+ * session is the live one and wrong the moment it ends: a closed session's
+ * trace still reads perfectly, so an agent that closed one and opened another
+ * left the pane showing a history that had stopped moving, with nothing on
+ * screen to say it was watching the wrong browser. Asking again is one small
+ * request, and only when nothing is arriving — a session that is producing
+ * rows is self-evidently the one to read.
+ */
+const REDISCOVER_AFTER_QUIET_TICKS = 15;
 /** How many rows the pane keeps. Older ones stay in the trace on disk. */
 const MAX_ROWS = 200;
 
@@ -69,6 +81,8 @@ export function BrowserActivityList({
    */
   const inFlight = useRef(false);
   const generation = useRef(0);
+  /** Consecutive polls that brought nothing. @see REDISCOVER_AFTER_QUIET_TICKS */
+  const quietTicks = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   // Whether the reader is at the bottom. A list that auto-scrolled while
   // somebody was reading three rows up would be a list they cannot read.
@@ -95,6 +109,7 @@ export function BrowserActivityList({
     generation.current += 1;
     inFlight.current = false;
     cursor.current = 0;
+    quietTicks.current = 0;
     setEntries([]);
     setWarning(null);
   }, [readingKey]);
@@ -105,20 +120,47 @@ export function BrowserActivityList({
     const mine = generation.current;
     try {
       let currentSession = sessionId;
+      // A session that has gone quiet may have ended. Ask before assuming it is
+      // simply idle; a different open session means we are watching the wrong
+      // one, and switching resets the list through `readingKey`.
+      if (currentSession && quietTicks.current >= REDISCOVER_AFTER_QUIET_TICKS) {
+        quietTicks.current = 0;
+        const live = await listLocalBrowserSessions(projectId, consentToken)
+          .then((r) => r.sessions.find((s) => !s.closedAt)?.sessionId ?? null)
+          .catch(() => null);
+        if (generation.current !== mine) return;
+        if (live && live !== currentSession) {
+          setReading({ projectId, sessionId: live });
+          return;
+        }
+      }
       if (!currentSession) {
+        let lookupFailed = false;
         const found = await listLocalBrowserSessions(projectId, consentToken)
           .then((r) => r.sessions.find((s) => !s.closedAt)?.sessionId ?? null)
           .catch(() => {
             // A failure to LOOK is not an absence of history, and a pane that
             // showed "nothing has driven this browser" either way would be
             // telling a reader something it does not know.
-            setWarning(
-              "this session's history could not be read just now; retrying",
-            );
+            lookupFailed = true;
             return null;
           });
-        if (!found) return;
+        // Applied only if we are still the current reader — this is the same
+        // late answer the rows below are dropped for, and a warning is no more
+        // this pane's to show for a project it has left than a row is.
         if (generation.current !== mine) return;
+        if (!found) {
+          // A LOOK THAT SUCCEEDED AND FOUND NOTHING CLEARS THE WARNING. Only
+          // setting it on failure left "history unavailable" on screen for as
+          // long as the project had no open session, long after the lookup had
+          // started working again.
+          setWarning(
+            lookupFailed
+              ? "this session's history could not be read just now; retrying"
+              : null,
+          );
+          return;
+        }
         currentSession = found;
         setReading({ projectId, sessionId: found });
       }
@@ -141,14 +183,23 @@ export function BrowserActivityList({
       // Never silent: a hole in the history is the pane's to report, not
       // something a reader should have to notice for themselves.
       setWarning(page.historyWarning ?? null);
-      if (page.entries.length === 0) return;
+      if (page.entries.length === 0) {
+        quietTicks.current += 1;
+        return;
+      }
+      quietTicks.current = 0;
       cursor.current = Math.max(
         cursor.current,
         ...page.entries.map((entry) => entry.seq),
       );
       setEntries((previous) => [...previous, ...page.entries].slice(-MAX_ROWS));
     } finally {
-      inFlight.current = false;
+      // ONLY THIS GENERATION'S LATCH. A poll left over from a project we have
+      // since switched away from would otherwise clear the latch that the
+      // CURRENT poll is holding, and the next tick would start a second poll
+      // beside it — both reading the same cursor and appending the same rows,
+      // which is precisely the duplication this latch exists to prevent.
+      if (generation.current === mine) inFlight.current = false;
     }
   }, [projectId, sessionId, consentToken]);
 

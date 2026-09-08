@@ -185,6 +185,15 @@ history and a permalink cannot hang off it. Locally it is a JSON file beside
 the profile, written only by the inspector server; the CLI reaches it through
 these routes, so there is no two-process locking story to invent.
 
+It records **which browser** it drives (`browserKey`), not just which project.
+A project can have a person's persistent Chromium and several ephemeral run
+browsers at once, so resolving a session by project alone would send an
+unattended run's commands to the logged-in browser. The key survives a
+relaunch, which a boot id does not. Artifact payloads are stored **per project**
+rather than per session, because two sessions sharing one browser both mirror
+the same unclaimed command and the daemon holds one copy of its screenshot;
+what a session may fetch is still decided by its own ledger.
+
 ```bash
 mcpjam browser consent --token <capability>   # granted once, in the UI
 mcpjam browser open --mode allow_all --profile persistent

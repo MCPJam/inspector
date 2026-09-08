@@ -462,15 +462,27 @@ async function recordOnlyRefusal(
   command: BrowserCommand,
   refusal: ContractRefusal,
 ): Promise<RunAgentCommandOutput> {
-  await args.client
+  // A refusal that could not be RECORDED is reported, not merely logged. The
+  // row never reaches the ring, so the mirror has nothing to copy and the
+  // caller would otherwise be told "refused" by a trace that never mentions it
+  // — the silent hole §9 forbids, and the one hardest to notice, because the
+  // refusal itself arrives looking perfectly complete.
+  const recordFailure = await args.client
     .recordRefusal({ command, errorCode: refusal.code })
-    .catch((error) => {
-      logger.warn("[browser-agent] refusal could not be recorded", {
-        detail: error instanceof Error ? error.message : String(error),
-      });
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.warn("[browser-agent] refusal could not be recorded", { detail });
+      return (
+        "this command was refused, but the refusal could not be written to " +
+        `the session's history (${detail}); the trace will not show it`
+      );
     });
   const mirrored = await mirror(args);
   const row = await findDurableRow(mirrored.session, commandId);
+  // The recording failure first: it explains why there is no row at all, which
+  // is the more specific of the two complaints.
+  const historyWarning = recordFailure ?? mirrored.historyWarning;
   // 400 for a command the caller can fix by correcting its input; 403 for one
   // the session's policy excludes. Different problems, different fixes — and
   // reporting a bad coordinate as a policy denial tells an agent to give up on
@@ -487,9 +499,7 @@ async function recordOnlyRefusal(
       ...(row
         ? { ledger: { sessionId: args.session.sessionId, seq: row.seq } }
         : {}),
-      ...(mirrored.historyWarning
-        ? { historyWarning: mirrored.historyWarning }
-        : {}),
+      ...(historyWarning ? { historyWarning } : {}),
     }),
   };
 }

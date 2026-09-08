@@ -72,9 +72,17 @@ function cmd(commandId: string, over: Partial<BrowserCommand> = {}): BrowserComm
   };
 }
 
-function ledgerWith(bootId: string, rows: Array<{ id: string; output?: unknown }>) {
+function ledgerWith(
+  bootId: string,
+  rows: Array<{ id: string; output?: unknown }>,
+  options: { maxRows?: number } = {},
+) {
   let n = 0;
-  const ledger = new CommandLedger({ bootId, mintId: () => `art-${++n}` });
+  const ledger = new CommandLedger({
+    bootId,
+    mintId: () => `art-${++n}`,
+    ...(options.maxRows ? { maxRows: options.maxRows } : {}),
+  });
   for (const row of rows) {
     ledger.record({
       command: cmd(row.id),
@@ -358,6 +366,101 @@ describe("the durable ledger sink", () => {
     expect(ledger.artifact(artifactId!)).toBeUndefined();
   });
 
+  it("keeps a SHARED command's artifact readable from both sessions", async () => {
+    // Two logical sessions can share one browser, and a command nobody claimed
+    // is mirrored into both histories. The payload lives in the daemon once, so
+    // the first mirror used to write it into its own directory and release it —
+    // and the second recorded the very same screenshot as `evicted`, with no
+    // way to fetch a picture that was sitting on disk.
+    const a = await open();
+    const b = await open({ attach: "never" });
+    if (!a.ok || !b.ok) throw new Error("no session");
+    const ledger = ledgerWith("boot-1", [
+      { id: "c1", output: { screenshot: Buffer.from("SHARED").toString("base64") } },
+    ]);
+    await mirrorLedger({ session: a.session, ledger, bootId: "boot-1" });
+    await mirrorLedger({ session: b.session, ledger, bootId: "boot-1" });
+    for (const sessionId of [a.session.sessionId, b.session.sessionId]) {
+      const trace = await readLedger({ projectId: PROJECT, sessionId });
+      const row = trace.entries[0];
+      const ref = row.kind === "command" ? row.artifacts?.screenshot : undefined;
+      expect(ref?.evicted).toBeUndefined();
+      const bytes = await readArtifact({
+        projectId: PROJECT,
+        sessionId,
+        artifactId: ref!.id,
+      });
+      expect(bytes?.toString()).toBe("SHARED");
+    }
+  });
+
+  it("marks EVICTED only when the payload really is gone", async () => {
+    // A row whose picture aged out of the ring before anything mirrored it is
+    // the genuine loss this flag exists to report, and it must keep reporting
+    // it — "there was a screenshot and it is gone" is a more useful statement
+    // than a dangling id.
+    const created = await open();
+    if (!created.ok) throw new Error("no session");
+    const ledger = ledgerWith("boot-1", [
+      { id: "c1", output: { screenshot: "AAAA" } },
+    ]);
+    const id = ledger.read({ limit: 1 }).entries[0];
+    const artifactId =
+      id.kind === "command" ? id.artifacts!.screenshot!.id : "";
+    ledger.releaseArtifact(artifactId);
+    await mirrorLedger({ session: created.session, ledger, bootId: "boot-1" });
+    const trace = await readLedger({
+      projectId: PROJECT,
+      sessionId: created.session.sessionId,
+    });
+    const row = trace.entries[0];
+    expect(row.kind === "command" && row.artifacts?.screenshot?.evicted).toBe(
+      true,
+    );
+  });
+
+  it("one session's captureScreenshots: false does not empty another's", async () => {
+    // The setting is about THIS session's history. Dropping the daemon's only
+    // copy on a peer's behalf is the same lost-screenshot bug wearing a
+    // preference as a disguise — and the quieter one, because the session that
+    // asked for no pictures gets exactly what it asked for.
+    const quiet = await open({ captureScreenshots: false });
+    const watching = await open({ attach: "never" });
+    if (!quiet.ok || !watching.ok) throw new Error("no session");
+    const ledger = ledgerWith("boot-1", [
+      { id: "c1", output: { screenshot: Buffer.from("KEPT").toString("base64") } },
+    ]);
+    await mirrorLedger({
+      session: quiet.session,
+      ledger,
+      bootId: "boot-1",
+      captureScreenshots: false,
+    });
+    await mirrorLedger({
+      session: watching.session,
+      ledger,
+      bootId: "boot-1",
+    });
+    const trace = await readLedger({
+      projectId: PROJECT,
+      sessionId: watching.session.sessionId,
+    });
+    const ref =
+      trace.entries[0].kind === "command"
+        ? trace.entries[0].artifacts?.screenshot
+        : undefined;
+    expect(ref?.evicted).toBeUndefined();
+    expect(
+      (
+        await readArtifact({
+          projectId: PROJECT,
+          sessionId: watching.session.sessionId,
+          artifactId: ref!.id,
+        })
+      )?.toString(),
+    ).toBe("KEPT");
+  });
+
   it("honours captureScreenshots: false without losing the row", async () => {
     const created = await open({ captureScreenshots: false });
     const session = created.ok ? created.session : null;
@@ -386,6 +489,65 @@ describe("the durable ledger sink", () => {
           row.kind === "command" ? row.artifacts!.screenshot!.id : "",
       }),
     ).toBeUndefined();
+  });
+
+  it("resolves the media type of an artifact past the trace's page size", async () => {
+    // `readLedger` is the PAGED reader a cursor walks, capped at 1000 rows.
+    // Looking a media type up through it answered "no such artifact" for every
+    // artifact after the thousandth, and the route served a perfectly good
+    // screenshot as an octet-stream. A lookup by id is not a page.
+    const created = await open();
+    if (!created.ok) throw new Error("no session");
+    // Cheap filler rows, then the one that matters — past where a page ends.
+    const rows: Array<{ id: string; output?: unknown }> = Array.from(
+      { length: 1100 },
+      (_, n) => ({ id: `c${n}` }),
+    );
+    rows.push({
+      id: "late",
+      output: { screenshot: Buffer.from("X").toString("base64") },
+    });
+    const ledger = ledgerWith("boot-1", rows, { maxRows: 2000 });
+    // One mirror copies at most a thousand rows, so this takes two.
+    const first = await mirrorLedger({
+      session: created.session,
+      ledger,
+      bootId: "boot-1",
+    });
+    const { session } = await mirrorLedger({
+      session: first.session,
+      ledger,
+      bootId: "boot-1",
+    });
+    const { entries, headSeq } = await readLedger({
+      projectId: PROJECT,
+      sessionId: session.sessionId,
+      afterSeq: 1100,
+    });
+    expect(headSeq).toBeGreaterThan(1000);
+    const ref = entries.find(
+      (e) => e.kind === "command" && e.artifacts?.screenshot,
+    );
+    const id =
+      ref?.kind === "command" ? ref.artifacts!.screenshot!.id : undefined;
+    expect(id).toBeDefined();
+    // The paged reader genuinely cannot see it, which is why this exists.
+    expect(
+      (
+        await readLedger({
+          projectId: PROJECT,
+          sessionId: session.sessionId,
+          limit: 1000,
+        })
+      ).entries.some((e) => e.kind === "command" && e.artifacts?.screenshot),
+    ).toBe(false);
+    expect(
+      await artifactMediaType({
+        projectId: PROJECT,
+        sessionId: session.sessionId,
+        artifactId: id!,
+      }),
+    ).toBe("image/jpeg");
   });
 
   it("finds a TEXT artifact without being told its media type", async () => {

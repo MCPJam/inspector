@@ -277,7 +277,15 @@ function sessionKey(args: EnsureLocalBrowserArgs): string {
   // this, a run that asked for recording and a later run on the same owner key
   // that did not would share a browser whose ledger records typed values — the
   // quieter direction of that mistake, and the one nobody would notice.
-  return `${project}:ephemeral:${owner}${args.captureTypedText ? ":typed" : ""}`;
+  //
+  // BEFORE the owner, not after. An owner key may contain colons, so a suffix
+  // let one forge the other's key: owner `run:typed` with recording off and
+  // owner `run` with it on produced the same string, and the two runs shared a
+  // browser under whichever policy booted first — the exact leak this is here
+  // to prevent, reachable by naming a run. The owner is the free-form part, so
+  // it goes last, where nothing follows it to be confused with.
+  const capture = args.captureTypedText ? "typed" : "redacted";
+  return `${project}:ephemeral:${capture}:${owner}`;
 }
 
 /**
@@ -601,15 +609,35 @@ export function findLocalBrowserSession(bootId: string):
  * ensure path does, so a route can answer 400 rather than 404.
  */
 export function findLocalBrowserSessionForProject(projectId: string):
-  | {
-      client: InProcessBrowserdClient;
-      handle: LocalBrowserSessionHandle;
-      ledger: BrowserdStack["ledger"];
-      projectKey: string;
-    }
+  | LiveLocalBrowser
   | undefined {
   const project = validateLocalProjectKey(projectId);
-  const session = sessions.get(`${project}:persistent`);
+  return findLocalBrowserSessionByKey(`${project}:persistent`);
+}
+
+/** What a caller gets when it has found the browser it may reach. */
+export interface LiveLocalBrowser {
+  client: InProcessBrowserdClient;
+  handle: LocalBrowserSessionHandle;
+  ledger: BrowserdStack["ledger"];
+  projectKey: string;
+}
+
+/**
+ * The browser one key names, for a caller that knows WHICH browser it means.
+ *
+ * A project does not identify a browser. An ephemeral context is keyed by the
+ * run that owns it, so a project can have a person's persistent browser and
+ * several throwaway ones at once — and resolving an ephemeral session's
+ * commands by project alone found the persistent one, which is somebody's real
+ * logged-in browser being driven under another session's policy and recorded in
+ * another session's ledger. A logical session stores the key it opened, and
+ * this is how it gets back to it across a relaunch: the key outlives a boot id.
+ */
+export function findLocalBrowserSessionByKey(
+  key: string,
+): LiveLocalBrowser | undefined {
+  const session = sessions.get(key);
   if (!session) return undefined;
   return {
     client: session.inProcessClient,
@@ -617,6 +645,17 @@ export function findLocalBrowserSessionForProject(projectId: string):
     ledger: session.stack.ledger,
     projectKey: session.projectKey,
   };
+}
+
+/**
+ * The key `ensureLocalBrowserSession` would use for these arguments.
+ *
+ * Exported so a caller can record which browser a logical session belongs to
+ * without duplicating the derivation — the ephemeral shape includes the owner
+ * key and the typed-text setting, and a second copy of that rule would drift.
+ */
+export function localBrowserKeyFor(args: EnsureLocalBrowserArgs): string {
+  return sessionKey(args);
 }
 
 /** Every live local browser, for status routes and the reap. */

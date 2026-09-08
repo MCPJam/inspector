@@ -70,6 +70,10 @@ vi.mock("../../../utils/browser-rendering-setup.js", () => ({
  */
 const browserState = vi.hoisted(() => ({
   sessions: new Map<string, any>(),
+  /** browser key → bootId, so a lookup can distinguish two live browsers. */
+  byKey: new Map<string, string>(),
+  /** Every set of arguments a route actually asked to launch a browser with. */
+  launched: [] as Array<Record<string, unknown>>,
   /** Everything the pane's input actually reached CDP as. */
   cdpSent: [] as Array<{ method: string }>,
   /** Which Chromium this machine has: a downloaded one, or Electron's own. */
@@ -80,6 +84,11 @@ const browserState = vi.hoisted(() => ({
   surface: "native" as "native" | "frames",
 }));
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
+  // The session store derives every path from this, and `homedir` is already
+  // pointed at the scratch tree — so the real rule, not a stub, keeps the
+  // store's own path checks doing their job.
+  getLocalBrowserRoot: () =>
+    join(scratch, ".mcpjam", "computer", "browser"),
   listLocalBrowserSessions: () =>
     [...browserState.sessions.values()].map((s: any) => ({
       key: "proj",
@@ -89,6 +98,35 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     })),
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
+  // The real rule, kept in one place here as it is there: a persistent context
+  // is the project's, an ephemeral one belongs to the run that owns it.
+  localBrowserKeyFor: (args: {
+    projectId: string;
+    contextMode?: string;
+    ownerKey?: string;
+    captureTypedText?: boolean;
+  }) =>
+    args.contextMode === "ephemeral"
+      ? `${args.projectId}:ephemeral:${args.ownerKey}${
+          args.captureTypedText ? ":typed" : ""
+        }`
+      : `${args.projectId}:persistent`,
+  findLocalBrowserSessionByKey: (key: string) => {
+    const bootId = browserState.byKey.get(key);
+    return bootId ? browserState.sessions.get(bootId) : undefined;
+  },
+  closeLocalBrowserSession: async (bootId: string) => {
+    const session = browserState.sessions.get(bootId);
+    if (!session) return { closed: false, reason: "not_found" } as const;
+    if (session.lease.isBlocking()) {
+      return { closed: false, reason: "lease_held" } as const;
+    }
+    browserState.sessions.delete(bootId);
+    for (const [key, id] of browserState.byKey) {
+      if (id === bootId) browserState.byKey.delete(key);
+    }
+    return { closed: true } as const;
+  },
   // The read-only lookup the Tools pane uses. Deliberately NOT the ensure
   // path: it answers `undefined` when nothing is running rather than launching
   // a Chromium, and this fake models exactly that.
@@ -104,7 +142,19 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     _env: NodeJS.ProcessEnv,
     runtime: "playwright" | "electron",
   ) => (runtime === "electron" ? browserState.surface : "frames"),
-  ensureLocalBrowserSession: async () => {
+  ensureLocalBrowserSession: async (args: {
+    projectId: string;
+    contextMode?: string;
+    ownerKey?: string;
+    captureTypedText?: boolean;
+  }) => {
+    browserState.launched.push({ ...args });
+    const key =
+      args.contextMode === "ephemeral"
+        ? `${args.projectId}:ephemeral:${args.ownerKey}${
+            args.captureTypedText ? ":typed" : ""
+          }`
+        : `${args.projectId}:persistent`;
     const { buildBrowserdStack } =
       await import("../../../services/browserd/daemon/server.js");
     const { ChromiumDriver } =
@@ -115,7 +165,10 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
       await import("../../../services/browserd/in-process-client.js");
     const { fakeContext, fakePage, fakeCdpSession } =
       await import("../../../services/browserd/daemon/__tests__/fake-page.js");
-    const existing = [...browserState.sessions.values()][0];
+    const existingId = browserState.byKey.get(key);
+    const existing = existingId
+      ? browserState.sessions.get(existingId)
+      : undefined;
     if (existing) return existing.handle;
 
     const lease = new HandoffLease();
@@ -136,7 +189,11 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
       contextMode: "persistent" as const,
       reused: false,
     };
+    browserState.byKey.set(key, stack.bootId);
     browserState.sessions.set(stack.bootId, {
+      key,
+      projectKey: args.projectId,
+      ledger: stack.ledger,
       client,
       handler: stack.handler,
       handle,
@@ -178,6 +235,8 @@ beforeEach(() => {
   // held over from a previous test is the kind of shared state that makes a
   // suite pass in isolation and fail in order.
   browserState.sessions.clear();
+  browserState.byKey.clear();
+  browserState.launched = [];
   authState.verified = true;
   authState.guest = false;
   configState.browserEnabled = true;
@@ -673,5 +732,151 @@ describe("POST /local-browser/page-tools", () => {
     await pageTools({ projectId: "proj" }, token);
 
     expect(browserState.touched).toEqual([]);
+  });
+});
+
+/**
+ * WHICH BROWSER a logical session drives.
+ *
+ * A project does not name one. An ephemeral context belongs to the run that
+ * owns it, so a project can have a person's persistent browser and several
+ * throwaway ones at once — and resolving a session by project alone reached the
+ * persistent one, which is somebody's real logged-in Chromium being driven
+ * under a policy they never agreed to.
+ */
+describe("the agent door's session routes", () => {
+  const openSession = (body: unknown, token: string) =>
+    createApp().request("/api/mcp/computers/local-browser/session", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify(body),
+    });
+
+  const command = (body: unknown, token: string) =>
+    createApp().request("/api/mcp/computers/local-browser/command", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("drives the EPHEMERAL session's own browser, not the project's", async () => {
+    const token = await grantConsent();
+    // The person's browser first, so there is a wrong answer available.
+    const persistent = await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    expect(persistent.status).toBe(200);
+    const personBoot = ((await persistent.json()) as any).bootId;
+
+    const ephemeral = await openSession(
+      {
+        projectId: "proj",
+        profile: "ephemeral",
+        runKey: "run-7",
+        policy: { mode: "allow_all" },
+        observe: "none",
+      },
+      token,
+    );
+    expect(ephemeral.status).toBe(200);
+    const run = (await ephemeral.json()) as any;
+    expect(run.bootId).not.toBe(personBoot);
+
+    const ran = await command(
+      {
+        projectId: "proj",
+        sessionId: run.session.sessionId,
+        command: { op: "observe", mode: "a11y" },
+      },
+      token,
+    );
+    expect(ran.status).toBe(200);
+    // The row lands in the throwaway browser's ledger. Landing in the other
+    // one would mean the command RAN there.
+    const ephemeralLedger = browserState.sessions.get(run.bootId).ledger;
+    const personLedger = browserState.sessions.get(personBoot).ledger;
+    expect(ephemeralLedger.read({}).entries.length).toBeGreaterThan(0);
+    expect(personLedger.read({}).entries).toHaveLength(0);
+  });
+
+  it("refuses ephemeral + attach: require BEFORE launching anything", async () => {
+    // `require` can never be satisfied by a throwaway context, which is never
+    // shared. Checking only for a live persistent session let the pair through
+    // whenever the project happened to have one — and the store's refusal then
+    // arrived one launched Chromium too late, leaving a browser on somebody's
+    // desk that no session owns.
+    const token = await grantConsent();
+    await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    browserState.launched = [];
+
+    const res = await openSession(
+      {
+        projectId: "proj",
+        profile: "ephemeral",
+        runKey: "run-8",
+        attach: "require",
+        policy: { mode: "allow_all" },
+      },
+      token,
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()) as any).toMatchObject({
+      error: "nothing_to_attach",
+    });
+    expect(browserState.launched).toEqual([]);
+  });
+
+  it("an unrelated run does not keep somebody's browser open", async () => {
+    // Two sessions can share one browser, so terminate waits on the others —
+    // but an ephemeral run has its own Chromium, and counting it made a
+    // throwaway box the stated reason a person's browser stayed up.
+    const token = await grantConsent();
+    const persistent = await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const person = (await persistent.json()) as any;
+    await openSession(
+      {
+        projectId: "proj",
+        profile: "ephemeral",
+        runKey: "run-9",
+        policy: { mode: "allow_all" },
+        observe: "none",
+      },
+      token,
+    );
+
+    const closed = await createApp().request(
+      "/api/mcp/computers/local-browser/close",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({
+          projectId: "proj",
+          sessionId: person.session.sessionId,
+          terminate: true,
+        }),
+      },
+    );
+
+    expect(closed.status).toBe(200);
+    expect((await closed.json()) as any).toMatchObject({ terminated: true });
+    // The run's own browser is untouched by the person's session ending.
+    expect(browserState.byKey.has("proj:ephemeral:run-9")).toBe(true);
   });
 });

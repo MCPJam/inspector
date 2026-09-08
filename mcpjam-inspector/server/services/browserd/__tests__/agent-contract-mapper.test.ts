@@ -212,6 +212,49 @@ describe("toAgentPage — the untrusted fence on the structured half", () => {
     expect(page).not.toHaveProperty("refs");
   });
 
+  it("treats a page tool's own result as an observation", () => {
+    // `invoke_page_tool` answers with the tool's output and, when the page did
+    // not otherwise change, nothing else. Reading that as "nothing was looked
+    // at" threw away the very value the command ran to get — the caller got a
+    // successful command and no payload.
+    const page = toAgentPage({
+      output: { invocationId: "inv-1", result: { rows: 3 } },
+    });
+    expect(page).toBeDefined();
+    expect(page!.pageContent.invocation).toEqual({ rows: 3 });
+    expect(page!.pageContent.untrusted).toBe(true);
+  });
+
+  it("keeps refs whose entries are the shape the type promises", () => {
+    // The map is written by the page. Checking only the wrapper and asserting
+    // the entries' type is not a check, it is the claim a reader then trusts.
+    const bad = toAgentPage({
+      output: { a11y: "tree", refs: { e1: { role: 7 } } },
+    })!;
+    expect(bad.pageContent).not.toHaveProperty("refs");
+    const missingRole = toAgentPage({
+      output: { a11y: "tree", refs: { e1: { name: "Save" } } },
+    })!;
+    expect(missingRole.pageContent).not.toHaveProperty("refs");
+    const nested = toAgentPage({
+      output: { a11y: "tree", refs: { e1: null } },
+    })!;
+    expect(nested.pageContent).not.toHaveProperty("refs");
+    // One bad entry disqualifies the map: half a ref map is worse than none,
+    // because a caller cannot tell which half it got.
+    const mixed = toAgentPage({
+      output: {
+        a11y: "tree",
+        refs: { e1: { role: "button" }, e2: { role: 7 } },
+      },
+    })!;
+    expect(mixed.pageContent).not.toHaveProperty("refs");
+    const good = toAgentPage({
+      output: { a11y: "tree", refs: { e1: { role: "button" } } },
+    })!;
+    expect(good.pageContent.refs).toEqual({ e1: { role: "button" } });
+  });
+
   it("is undefined for a command that did not observe anything", () => {
     // `close_tab` and `cancel_page_tool` answer with an action record and no
     // token; a page built from that would imply something was looked at.

@@ -226,6 +226,35 @@ test("the consent capability is never sent to a cleartext remote Inspector", asy
   assert.doesNotMatch(local.stderr + local.stdout, /cleartext/i);
 });
 
+test("a loopback URL still has to be http or https", async () => {
+  // The exception is for cleartext HTTP on localhost, not for any scheme at
+  // all: `ws://localhost` is not an Inspector this can talk to, and failing
+  // inside a fetch says less than failing on the argument that was typed.
+  const file = await stateFile({
+    version: 1,
+    consent: "cap",
+    sessions: { p: "bs_00000000-0000-4000-8000-000000000000" },
+  });
+  for (const url of ["ws://localhost:6274", "ftp://localhost"]) {
+    const result = await runCli(
+      [
+        "--format",
+        "json",
+        "browser",
+        "observe",
+        "--project",
+        "p",
+        "--inspector-url",
+        url,
+      ],
+      undefined,
+      { env: env(file) },
+    );
+    assert.notEqual(result.exitCode, 0);
+    assert.match(result.stderr + result.stdout, /cleartext/i);
+  }
+});
+
 test("act and navigate default to folding in an a11y observation", async () => {
   // One round trip, one ledger row, and refs for the next act — a screenshot
   // carries none.

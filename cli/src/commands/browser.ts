@@ -146,7 +146,12 @@ function browserBaseUrl(options: CommonOptions): string {
     parsed.hostname === "127.0.0.1" ||
     parsed.hostname === "[::1]" ||
     parsed.hostname === "::1";
-  if (parsed.protocol !== "https:" && !loopback) {
+  // The loopback exception is for `http:` ALONE. Written as "https, or
+  // anything at all on localhost", it also admitted `ftp://localhost` and
+  // `ws://localhost` — not a cleartext risk, but a URL this cannot talk to,
+  // failing later inside a fetch instead of here where the message is about
+  // the argument the caller actually typed.
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
     throw usageError(
       `Refusing to send the local computer consent capability to ${baseUrl} in cleartext.`,
       "Use https:// for a remote Inspector; http:// is allowed for localhost only.",

@@ -640,4 +640,44 @@ describe("runAgentCommand", () => {
     // discovering it later where it was looking.
     expect(ran.result.historyWarning).toContain("could not be written");
   });
+
+  it("warns when a REFUSAL could not be recorded either", async () => {
+    // The hardest hole to notice. A refusal the ring never took leaves nothing
+    // for the mirror to copy, so the caller gets a perfectly complete-looking
+    // `refused` answer about a command its trace will never mention.
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    const ran = await runAgentCommand({
+      session: await session({ mode: "read_only" }),
+      client: {
+        ...fake.client,
+        async recordRefusal() {
+          throw new Error("ring unavailable");
+        },
+      },
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      // Refused by the policy, so nothing reaches the browser.
+      command: { op: "act", verb: "click", target: { coordinates: [10, 10] } },
+    });
+    expect(ran.result.status).toBe("refused");
+    expect(ran.result.historyWarning).toContain("could not be written");
+    expect(ran.result.historyWarning).toContain("ring unavailable");
+    expect(ran.result).not.toHaveProperty("ledger");
+  });
+
+  it("says nothing about history when the refusal WAS recorded", async () => {
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    const ran = await runAgentCommand({
+      session: await session({ mode: "read_only" }),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "act", verb: "click", target: { coordinates: [10, 10] } },
+    });
+    expect(ran.result.status).toBe("refused");
+    expect(ran.result.historyWarning).toBeUndefined();
+    expect(ran.result).toHaveProperty("ledger");
+  });
 });

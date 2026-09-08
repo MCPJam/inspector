@@ -59,7 +59,16 @@ if (
   );
 }
 
-/** Output keys that mean the page was actually looked at. @see toAgentPage */
+/**
+ * Output keys that mean the page was actually looked at. @see toAgentPage
+ *
+ * EVERY KEY `toAgentPage` COPIES BELONGS HERE. The two are one decision read
+ * twice — "was anything observed" and "what do we hand back" — and a key
+ * missing from this list is a value copied into a page that is never built.
+ * `result` was: an `invoke_page_tool` reply that carried only the tool's own
+ * output looked like nothing had been looked at, so the caller got no page and
+ * lost the very value the command ran to get.
+ */
 const OBSERVATION_KEYS = [
   "url",
   "title",
@@ -69,6 +78,8 @@ const OBSERVATION_KEYS = [
   "console",
   "tools",
   "screenshot",
+  "result",
+  "refs",
 ] as const;
 
 /** A command the contract will not hand to the daemon. */
@@ -492,5 +503,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function isRefMap(
   value: unknown,
 ): value is Record<string, { role: string; name?: string }> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  // EVERY ENTRY, not just the wrapper. This map is written by the page, and the
+  // shape is a promise made to whoever reads `page.refs` — checking only that
+  // something object-ish arrived and then asserting the entries' type is not a
+  // check at all, it is the assertion a caller then trusts. The fence keeps the
+  // page's WORDS out of trust; it cannot keep its SHAPES out of a type.
+  return Object.values(value as Record<string, unknown>).every((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return false;
+    }
+    const ref = entry as { role?: unknown; name?: unknown };
+    return (
+      typeof ref.role === "string" &&
+      (ref.name === undefined || typeof ref.name === "string")
+    );
+  });
 }
