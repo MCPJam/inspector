@@ -228,7 +228,6 @@ export function GithubChecksRoute({
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
-    startInstallation,
     startDirectClaim,
     unbindInstallation,
   } = useGithubChecksSettings(activeOrganizationId);
@@ -499,20 +498,26 @@ export function GithubChecksRoute({
     suiteOptions.find((s) => s._id === suiteId);
 
   /**
-   * Send the admin to GitHub to install, or to authorize a claim.
+   * Send the admin to GitHub to sign in, for every case.
    *
-   * Both start server-side — the URL carries a one-time state whose hash the
+   * There used to be a second button here that went straight to GitHub's
+   * install URL. It could not work: GitHub redirects that URL into an existing
+   * installation whenever the signed-in user administers one, so it silently
+   * dead-ended for anyone who already had the app somewhere — and made
+   * installing on a SECOND account impossible. Signing in first and reading the
+   * user's real installation list is the only approach that does not depend on
+   * GitHub's redirect behaviour. Installing is driven from the picker that
+   * comes back.
+   *
+   * Starts server-side — the URL carries a one-time state whose hash the
    * backend stored — so this only follows what it is handed, through a helper
    * that refuses anything not on github.com.
    */
-  const beginBindingFlow = async (kind: "install" | "claim") => {
+  const beginBindingFlow = async () => {
     setBindingBusy(true);
     try {
-      const { url } =
-        kind === "install"
-          ? await startInstallation().then((r) => ({ url: r.installUrl }))
-          : await startDirectClaim().then((r) => ({ url: r.authorizeUrl }));
-      redirectToGithub(url);
+      const { authorizeUrl } = await startDirectClaim();
+      redirectToGithub(authorizeUrl);
     } catch (error) {
       handleWriteError(error);
       // Only cleared on failure: on success the browser is already leaving, and
@@ -797,10 +802,9 @@ export function GithubChecksRoute({
         ) : bindingRows.length === 0 ? (
           <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
             <p>
-              No GitHub accounts connected yet. Install the MCPJam app on the
-              account whose repositories you want checked — or, if somebody has
-              already installed it from GitHub, claim that installation for this
-              workspace.
+              No GitHub accounts connected yet. Connect the account whose
+              repositories you want checked — an organization, or your own
+              account.
             </p>
           </div>
         ) : (
@@ -817,24 +821,17 @@ export function GithubChecksRoute({
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <Button
             disabled={bindingBusy || !canManage}
-            onClick={() => void beginBindingFlow("install")}
+            onClick={() => void beginBindingFlow()}
           >
-            <Github className="mr-2 size-4" aria-hidden /> Install on a GitHub
+            <Github className="mr-2 size-4" aria-hidden /> Connect a GitHub
             account
-          </Button>
-          <Button
-            variant="outline"
-            disabled={bindingBusy || !canManage}
-            onClick={() => void beginBindingFlow("claim")}
-          >
-            Claim an existing installation
           </Button>
         </div>
         <p className="px-4 pb-3 text-xs text-muted-foreground">
-          Claiming is for an installation somebody already added from GitHub's
-          side. You will be asked to sign in to GitHub so we can confirm you
-          administer that account — installing the app is not on its own proof
-          that it is yours to connect here.
+          You will be asked to sign in to GitHub so we can confirm which
+          accounts you administer, then pick one — installing the app is not on
+          its own proof that it is yours to connect here. Accounts without the
+          app yet can be installed from that same list.
         </p>
       </SettingsSection>
 

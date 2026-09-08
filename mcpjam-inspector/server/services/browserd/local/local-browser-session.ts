@@ -541,6 +541,36 @@ export function findLocalBrowserSession(bootId: string):
   return undefined;
 }
 
+/**
+ * The PERSISTENT browser a project has open on this machine, if any — for a
+ * caller that wants to read it without starting one.
+ *
+ * `ensureLocalBrowserSession` is the wrong tool for that: it launches a
+ * Chromium when none is running, and the Tools pane listing a page's tools
+ * must never be what opens a browser window on somebody's desk. Only the
+ * persistent profile is considered: ephemeral contexts belong to unattended
+ * runs, which no pane is watching.
+ *
+ * Throws (from the key validator) on a malformed project id, exactly as the
+ * ensure path does, so a route can answer 400 rather than 404.
+ */
+export function findLocalBrowserSessionForProject(projectId: string):
+  | {
+      client: LocalBrowserSessionHandle["client"];
+      handle: LocalBrowserSessionHandle;
+      projectKey: string;
+    }
+  | undefined {
+  const project = validateLocalProjectKey(projectId);
+  const session = sessions.get(`${project}:persistent`);
+  if (!session) return undefined;
+  return {
+    client: session.handle.client,
+    handle: session.handle,
+    projectKey: session.projectKey,
+  };
+}
+
 /** Every live local browser, for status routes and the reap. */
 export function listLocalBrowserSessions(): Array<{
   key: string;

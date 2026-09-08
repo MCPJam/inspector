@@ -37,6 +37,7 @@ import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
 import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
 import {
   humanizeSwarmAttemptErrorMessage,
+  isAccountLimit,
   MAX_ATTEMPT_ERROR_CHARS,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
@@ -296,15 +297,6 @@ function terminalForOutcome(
   };
 }
 
-/** Backend denial codes whose limit belongs to the ACCOUNT, not to one host's
- * provider key. Kept separate from `USER_OWNED_DENIAL_CODES` in
- * `server/utils/mcpjam-stream-handler.ts` — that list answers who is at fault,
- * this one whether another host could escape the limit, and they already
- * disagree on `mcpjam_rate_limit`. A parity test pins the overlap so a code
- * added there is not silently missed here. Exported for that test. */
-export const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included|spend_budget_reached)\b/i;
-
 /**
  * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
  * shared core's `rate_limited` bucket and the `failed` attempts whose message
@@ -313,21 +305,24 @@ export const ACCOUNT_LIMIT_CODE =
  * host's own key is a per-HOST stop. A missing message defaults to the narrower
  * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * The backend's denial code decides it. `runner.ts` concatenates that code into
- * the message ("<sentence> (<code>, HTTP <status>)"), and it is the only
- * reliable signal: no MCPJam limit sentence — "Daily credit limit reached.",
- * "Daily MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ * The backend's denial code decides it, via the shared {@link isAccountLimit}
+ * the run screen also renders from. `runner.ts` concatenates that code into the
+ * message ("<sentence> (<code>, HTTP <status>)"), and it is the only reliable
+ * signal: no MCPJam limit sentence — "Daily credit limit reached.", "Daily
+ * MCPJam model limit reached." — contains spend/cap/quota/budget wording.
  *
  * The prose check is kept as a second signal for a backend that words a cap
- * without a code. `cap`/`quota`/`budget` stay word-anchored so "capacity" /
- * "recap" / "escape" remain a per-host provider rate-limit.
+ * without a code. `cap`/`quota`/`budget`/`spend` stay word-anchored so
+ * "capacity" / "recap" / "escape" — and "su`spend`ed", which is an account
+ * SUSPENSION and not a cap — remain a per-host provider rate-limit.
+ * `spend_budget_reached` still escalates: `isAccountLimit` matches its code.
  */
-function classifyRateLimit(
+export function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
   if (!message) return "provider_rate_limit";
-  if (ACCOUNT_LIMIT_CODE.test(message)) return "org_spend_cap";
-  if (/spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+  if (isAccountLimit(message)) return "org_spend_cap";
+  if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
@@ -1302,7 +1297,7 @@ async function runJourneyFanOut(
           const accountLimitFailure =
             outcome === "failed" &&
             !abortedBySpendCap &&
-            ACCOUNT_LIMIT_CODE.test(errorMessage ?? "");
+            isAccountLimit(errorMessage, errorReason);
           if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage);
             if (cause === "org_spend_cap") {

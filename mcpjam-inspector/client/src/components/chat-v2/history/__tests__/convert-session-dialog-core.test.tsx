@@ -399,3 +399,79 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     );
   });
 });
+
+describe("ConvertSessionDialogCore — a suite CI owns", () => {
+  // The suite already carries the session's server, so `missingServers` is
+  // empty and the only thing left to decide submit is the lock.
+  const SUITE_ENVIRONMENT = { servers: ["Excalidraw"] };
+  const APP_SUITE = {
+    suite: {
+      _id: "suite-app",
+      name: "Checkout",
+      source: "ui",
+      environment: SUITE_ENVIRONMENT,
+    },
+  };
+  const CI_SUITE = {
+    suite: {
+      _id: "suite-app",
+      name: "Checkout",
+      source: "sdk",
+      environment: SUITE_ENVIRONMENT,
+    },
+  };
+
+  function fillTitle() {
+    fireEvent.change(screen.getByLabelText(/case title/i), {
+      target: { value: "Promoted case" },
+    });
+  }
+
+  function submitButton() {
+    return screen.getByRole("button", { name: /promote to test case/i });
+  }
+
+  it("keeps it out of the destination picker", async () => {
+    const user = userEvent.setup();
+    mocks.useQuery.mockReturnValue([CI_SUITE]);
+    renderCore();
+
+    // Nothing to pick means nothing to pick INTO: the platform refuses a case
+    // write to a CI-owned suite, so offering it is offering a 409.
+    expect(
+      screen.getByRole("button", { name: /use existing suite/i }),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /create new suite/i }));
+    expect(screen.getByLabelText(/suite name/i)).toBeInTheDocument();
+  });
+
+  it("cannot be submitted when a selected suite BECOMES CI-owned", async () => {
+    const user = userEvent.setup();
+    mocks.useQuery.mockReturnValue([APP_SUITE]);
+    const { rerender } = renderCore();
+
+    fillTitle();
+    await user.click(screen.getByRole("button", { name: /use existing suite/i }));
+    await user.click(screen.getByLabelText(/existing suite/i));
+    await user.click(await screen.findByRole("option", { name: "Checkout" }));
+    expect(submitButton()).toBeEnabled();
+
+    // The suite is re-reported as SDK-owned — a CI run landed while the dialog
+    // sat open. The filter drops it from the picker, but `selectedSuiteId`
+    // still names it, and submitting sent a write the backend refuses.
+    mocks.useQuery.mockReturnValue([CI_SUITE]);
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(submitButton()).toBeDisabled());
+    expect(importAction).not.toHaveBeenCalled();
+  });
+});

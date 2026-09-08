@@ -49,6 +49,7 @@ import {
 import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
 import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
+import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -99,6 +100,7 @@ export function SuiteDetailOverview({
   hostNamesById,
   onRerun,
   onEditSuite,
+  onDuplicateSuite,
   onEditCases,
   onGenerateTestCases,
   canGenerateTestCases = false,
@@ -112,6 +114,7 @@ export function SuiteDetailOverview({
   runningTestCaseId = null,
   evalRunsDisabledReason = null,
   readOnlyConfig = false,
+  configLocked = false,
   projectId = null,
   decisionSummaryEnabled = false,
 }: {
@@ -123,6 +126,12 @@ export function SuiteDetailOverview({
   hostNamesById: Map<string, string | null>;
   onRerun: (suite: EvalSuite) => void;
   onEditSuite: () => void;
+  /**
+   * Take an editable copy. Offered only when {@link configLocked} — it is the
+   * one way forward for a suite the app refuses to edit, and offering it beside
+   * an ordinary Edit button would just be a second, worse Edit.
+   */
+  onDuplicateSuite?: () => void;
   onEditCases?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
@@ -136,6 +145,12 @@ export function SuiteDetailOverview({
   runningTestCaseId?: string | null;
   evalRunsDisabledReason?: string | null;
   readOnlyConfig?: boolean;
+  /**
+   * The suite is managed by CI: its configuration lives in a repository, so the
+   * app refuses to edit it. Run and replay stay — see
+   * `SuiteIterationsView.configLocked` on why this is not `readOnlyConfig`.
+   */
+  configLocked?: boolean;
   /** Threaded from `EvaluateTab`; never resolved in the browser. */
   projectId?: string | null;
   /**
@@ -276,7 +291,17 @@ export function SuiteDetailOverview({
           </h2>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!readOnlyConfig ? (
+          {configLocked ? (
+            // The reason and the way out, together. A disabled Edit button with
+            // a tooltip would make the remedy discoverable only by hovering the
+            // thing that does not work.
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid="suite-detail-ci-owned"
+            >
+              {CI_OWNED_REASON_COPY}
+            </span>
+          ) : !readOnlyConfig ? (
             <Button
               type="button"
               variant="outline"
@@ -285,6 +310,18 @@ export function SuiteDetailOverview({
               onClick={onEditSuite}
             >
               Edit
+            </Button>
+          ) : null}
+          {configLocked && onDuplicateSuite ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={onDuplicateSuite}
+              data-testid="suite-detail-duplicate-to-edit"
+            >
+              Duplicate to edit
             </Button>
           ) : null}
           {runDisabled && runBlockedReason ? (
@@ -510,7 +547,7 @@ export function SuiteDetailOverview({
 
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
-          readOnly={readOnlyConfig}
+          readOnly={readOnlyConfig || configLocked}
           onDescribe={onEditCases}
           onGenerate={onGenerateTestCases}
           canGenerate={canGenerateTestCases}
@@ -531,7 +568,7 @@ export function SuiteDetailOverview({
           )}
         >
           <h3 className="text-sm font-semibold text-foreground">Test Cases</h3>
-          {!readOnlyConfig ? (
+          {!readOnlyConfig && !configLocked ? (
             <div className="flex shrink-0 items-center gap-2">
               {/* Generate lives here as well as in the empty hero. Reaching it
                   only through the hero would mean a suite loses the affordance

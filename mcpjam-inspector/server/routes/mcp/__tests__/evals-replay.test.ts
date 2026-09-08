@@ -177,4 +177,59 @@ describe("mcp replay route", () => {
     expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledTimes(1);
     expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
   });
+
+  // `passCriteria` here was a bare, unbounded `z.object({ minimumPassRate:
+  // z.number() })`: it STRIPPED the canonical `minimumPassRatePercent` — a
+  // replay silently losing the one override it was sent to apply — and
+  // accepted any number, so `0.8` meant 0.8% and produced a gate that could
+  // not fail. Both are the defects this PR fixes on the other write surfaces.
+  describe("the pass-criteria override", () => {
+    async function replay(passCriteria: unknown): Promise<Response> {
+      return createApp().request("/api/mcp/evals/replay-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "source-run",
+          convexAuthToken: "token-123",
+          passCriteria,
+        }),
+      });
+    }
+
+    it("carries the canonical spelling through instead of dropping it", async () => {
+      const response = await replay({ minimumPassRatePercent: 80 });
+
+      expect(response.status).toBe(200);
+      expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // Normalized to the stored name, and PRESENT — a strip would leave
+          // this undefined and the replay would run on the suite default.
+          passCriteria: { minimumPassRate: 80 },
+        }),
+      );
+    });
+
+    it("still carries the deprecated spelling", async () => {
+      const response = await replay({ minimumPassRate: 80 });
+
+      expect(response.status).toBe(200);
+      expect(startSuiteRunWithRecorderMock).toHaveBeenCalledWith(
+        expect.objectContaining({ passCriteria: { minimumPassRate: 80 } }),
+      );
+    });
+
+    it("refuses a fraction, which would make the replay's gate unfailable", async () => {
+      const response = await replay({ minimumPassRate: 0.8 });
+
+      expect(response.status).toBe(400);
+      expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a percent above 100", async () => {
+      const response = await replay({ minimumPassRate: 8000 });
+
+      expect(response.status).toBe(400);
+      expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
+    });
+  });
 });
