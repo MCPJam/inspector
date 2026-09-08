@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
-var BROWSERD_PROTOCOL_VERSION = 1;
+var BROWSERD_PROTOCOL_VERSION = 2;
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -3468,6 +3468,11 @@ var ChromiumDriver = class {
     }
     const wants = wantsFor(action.observe);
     const before = await this.snapshot(page).catch(() => void 0);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
+    }
     try {
       await this.dispatchVerb(page, action);
     } catch (error) {
@@ -3577,6 +3582,11 @@ var ChromiumDriver = class {
       case "close_tab":
       case "activate_tab":
         return;
+      default:
+        throw new ActError(
+          "act_failed",
+          `this browser daemon does not support the "${action.verb}" verb; it is running an older build`
+        );
     }
   }
   /**

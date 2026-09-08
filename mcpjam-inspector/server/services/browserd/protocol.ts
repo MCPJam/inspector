@@ -53,8 +53,16 @@ export const DEFAULT_QUEUE_KEY = "@session";
  *
  * History:
  *   1 — the wire as of the viewport-fidelity wave (V-4a).
+ *   2 — `act` gained the `fill_form` VERB (and `submit`). Additive on the
+ *       wire and not additive in meaning: a daemon at 1 has no case for
+ *       `fill_form`, so it falls through its verb switch and answers `ok`
+ *       for a form it never touched, and it drops `submit` so a login is
+ *       typed and never sent. Both are commands whose SEMANTICS an older
+ *       daemon cannot honour while reporting success, which is exactly the
+ *       bump condition above — unlike `act`'s `observe` field, which an old
+ *       daemon ignores to produce the screenshot-only result it always did.
  */
-export const BROWSERD_PROTOCOL_VERSION = 1;
+export const BROWSERD_PROTOCOL_VERSION = 2;
 
 /**
  * The canonical model-facing coordinate space (L5), and part of the WIRE

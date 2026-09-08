@@ -1092,6 +1092,23 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(page.calls.acts).toEqual(["fill:#a:1", "fill:#b:2"]);
   });
 
+  it("refuses a verb it does not know instead of answering ok for nothing", async () => {
+    // A newer inspector can reach an older daemon — the lazy-upgrade path
+    // reuses a running one — and a verb with no case in the switch used to
+    // fall straight through and be reported as a successful act. A form
+    // "filled" with every field still empty is the worst kind of wrong answer:
+    // the model believes it and moves on.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "teleport" as never,
+      target: { selector: "#x" },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("act_failed");
+    expect(res.error).toContain("older build");
+    expect(page.calls.acts).toHaveLength(0);
+  });
+
   it("refuses malformed fill_form fields without touching the page", async () => {
     // The handler validates the ENVELOPE and passes the action through
     // untouched, so this is the only layer that can refuse it.
@@ -1765,6 +1782,40 @@ describe("ChromiumDriver — a handoff that happens MID-command (W4/L6)", () => 
     expect(page.calls.shots).toBe(shotsBefore);
     expect(result.output).toBeUndefined();
     expect(result.stateToken).toBeUndefined();
+  });
+
+  it("does not dispatch the verb when the handoff lands during the PRE-ACT read", async () => {
+    // The post-act observation is the easy half: `afterAct` can decline to
+    // LOOK at the page. The act itself cannot be taken back — a password typed
+    // into a person's browser is typed — so the permit is re-asked after the
+    // one await that now sits between `execute`'s check and the dispatch.
+    const lease = new HandoffLease();
+    const page = fakePage({ url: "https://example.com/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://example.com/" }));
+
+    // The person clicks "Take control" while the pre-act snapshot evaluates.
+    const original = page.domStructureSignal.bind(page);
+    page.domStructureSignal = async () => {
+      lease.acquire("rail-1", 60_000);
+      return original();
+    };
+
+    const result = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "type",
+        target: { selector: "#password" },
+        value: "hunter2",
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.leaseBlocked).toBe(true);
+    // NOTHING was typed into the browser the person is now holding.
+    expect(page.calls.acts).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain("hunter2");
   });
 
   it("still serves the holder's own commands while they hold it", async () => {

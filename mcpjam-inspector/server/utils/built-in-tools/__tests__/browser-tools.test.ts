@@ -364,6 +364,7 @@ describe("a token pin survives an approval resume", () => {
     memory: BrowserTokenMemory,
     commands: any[],
     bootId = "boot-1",
+    runKey = "chat-1",
   ) {
     const fake = fakeSession(async (command: any) => {
       commands.push(command);
@@ -375,6 +376,7 @@ describe("a token pin survives an approval resume", () => {
       approvalDelivery: { kind: "attested" },
       ensureSession: fake.ensureSession,
       tokenMemory: memory,
+      runKey,
     })!;
   }
 
@@ -456,6 +458,84 @@ describe("a token pin survives an approval resume", () => {
     });
 
     expect(commands.at(-1).action.expectedState).toBeUndefined();
+  });
+
+  it("does not let ANOTHER chat's observation stand in for the pinned page", async () => {
+    // One project has ONE browser, and every chat the member has open drives
+    // it. Chat A observes, asks to click, and pauses for approval; chat B then
+    // observes the same tab. Keyed on the boot alone, B's newer token would
+    // overwrite A's — and A would resume pinned to a page it never saw, which
+    // the daemon happily accepts. A pin that looks like protection and is not
+    // is worse than none, because nothing downstream can tell the difference.
+    const memory = new BrowserTokenMemory();
+    const commandsA: any[] = [];
+    const commandsB: any[] = [];
+
+    // Chat A looks at the page. Its act is gated, so this request ends.
+    await run(
+      requestOn(memory, commandsA, "boot-1", "chat-A").tools,
+      "browser_observe",
+      {},
+    );
+    // Chat B looks at the same browser and gets a DIFFERENT token.
+    const fakeB = fakeSession(async (command: any) => {
+      commandsB.push(command);
+      return {
+        ...OK,
+        result: {
+          ...OK.result!,
+          stateToken: {
+            tabId: "@session",
+            navCounter: 99,
+            urlHash: "u9",
+            domHash: "d9",
+          },
+        },
+      };
+    }, "boot-1");
+    await run(
+      buildBrowserTools({
+        authHeader: "Bearer user",
+        projectId: "project-1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession: fakeB.ensureSession,
+        tokenMemory: memory,
+        runKey: "chat-B",
+      })!.tools,
+      "browser_observe",
+      {},
+    );
+
+    // A resumes. It must pin to what A saw, not to what B saw.
+    await run(
+      requestOn(memory, commandsA, "boot-1", "chat-A").tools,
+      "browser_act",
+      { verb: "click", x: 1, y: 2 },
+    );
+
+    expect(commandsA.at(-1).action.expectedState).toMatchObject({
+      navCounter: 1,
+    });
+    expect(commandsA.at(-1).action.expectedState.navCounter).not.toBe(99);
+  });
+
+  it("still forgets across EVERY chat when a person takes the browser", () => {
+    // A handoff is a fact about the browser, not about the conversation that
+    // noticed it: every chat holding a token for that boot is describing the
+    // page as it was before somebody started typing into it.
+    const memory = new BrowserTokenMemory();
+    const token = { tabId: "@session", navCounter: 1, urlHash: "u", domHash: "d" };
+    memory.remember("boot-1", undefined, token, "chat-A");
+    memory.remember("boot-1", undefined, token, "chat-B");
+    memory.remember("boot-2", undefined, token, "chat-A");
+
+    memory.forget("boot-1");
+
+    expect(memory.recall("boot-1", undefined, "chat-A")).toBeUndefined();
+    expect(memory.recall("boot-1", undefined, "chat-B")).toBeUndefined();
+    expect(memory.recall("boot-2", undefined, "chat-A")).toMatchObject({
+      navCounter: 1,
+    });
   });
 
   it("evicts the oldest entry rather than growing without bound", () => {

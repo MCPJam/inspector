@@ -421,6 +421,20 @@ export class ChromiumDriver implements BrowserDriver {
     // say whether the act moved the page. Read before the verb runs, because
     // afterwards there is nothing left that remembers where the page was.
     const before = await this.snapshot(page).catch(() => undefined);
+    // AND THE LEASE AGAIN, because the line above is an AWAIT.
+    //
+    // `execute` checks the permit and, on this path, used to reach
+    // `dispatchVerb` with nothing to yield on in between — so its check was
+    // the last word right up to the click. The snapshot changed that: it
+    // evaluates in the page, and a person taking control while it runs would
+    // otherwise get the agent's click or keystroke in their own browser a beat
+    // later. Discarding the observation afterwards does not help; `afterAct`
+    // can decline to LOOK at the page, it cannot un-type a password into it.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed",
+      );
+    }
     try {
       await this.dispatchVerb(page, action);
     } catch (error) {
@@ -595,6 +609,21 @@ export class ChromiumDriver implements BrowserDriver {
       case "activate_tab":
         // Handled by the caller before dispatch.
         return;
+      default:
+        // UNREACHABLE for this build's own union, and the reason it is here
+        // anyway: a verb arrives off the WIRE. A newer inspector talking to
+        // this daemon (the lazy-upgrade path reuses a running one) would send
+        // a verb this switch has no case for, fall straight through, and be
+        // told `ok: true` for something that never happened — a form reported
+        // filled with every field still empty. `BROWSERD_PROTOCOL_VERSION`
+        // exists to stop that pairing; this is what it costs if one slips
+        // through.
+        throw new ActError(
+          "act_failed",
+          `this browser daemon does not support the "${
+            (action as { verb: string }).verb
+          }" verb; it is running an older build`,
+        );
     }
   }
 

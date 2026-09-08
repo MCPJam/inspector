@@ -291,9 +291,20 @@ function transportError(status: string): string {
  * L3 stale-targeting protection was, in practice, working only for unattended
  * evals.
  *
- * KEYED BY `bootId`, not by session: `LocalBrowserSessionHandle` has no session
- * id at all, and the boot id is the thing that rotates exactly when every token
- * must be dropped — a daemon that restarted is a browser whose pages are gone.
+ * KEYED BY THE APPROVAL FLOW AND THE `bootId`. The boot id is the thing that
+ * rotates exactly when every token must be dropped — a daemon that restarted
+ * is a browser whose pages are gone — but it is not enough on its own: one
+ * project's browser serves every chat the member has open on it, so an
+ * observation in conversation B would overwrite the token conversation A's
+ * pending approved act was decided from. A would then resume and pin to B's
+ * NEWER token, and the daemon would accept an act chosen from A's older page
+ * — a pin that looks like protection and is not. The flow is the chat session
+ * (`runKey`), which is the identity that spans the approval pause.
+ *
+ * A caller that names no flow falls back to the boot alone, which is where
+ * every act sat before this existed: two flows may then share an entry, and a
+ * shared entry can only ever REFUSE an act the unpinned path would have run,
+ * never permit one it would have refused.
  *
  * PER PROCESS, deliberately not shared. A resume served by another replica
  * finds nothing and runs unpinned, which is today's behaviour for every act:
@@ -304,7 +315,7 @@ function transportError(status: string): string {
 export class BrowserTokenMemory {
   private readonly entries = new Map<
     string,
-    { token: ObservationStateToken; at: number }
+    { token: ObservationStateToken; at: number; bootId: string }
   >();
 
   constructor(
@@ -317,13 +328,14 @@ export class BrowserTokenMemory {
     bootId: string | undefined,
     tabId: string | undefined,
     token: ObservationStateToken,
+    flow?: string,
   ): void {
     if (!bootId) return;
-    const key = memoryKey(bootId, tabId);
+    const key = memoryKey(bootId, tabId, flow);
     // Re-inserted rather than updated in place, so the insertion order Map
     // keeps is a true LRU-by-write and the eviction below drops the oldest.
     this.entries.delete(key);
-    this.entries.set(key, { token, at: this.now() });
+    this.entries.set(key, { token, at: this.now(), bootId });
     while (this.entries.size > this.max) {
       const oldest = this.entries.keys().next();
       if (oldest.done) break;
@@ -334,9 +346,10 @@ export class BrowserTokenMemory {
   recall(
     bootId: string | undefined,
     tabId: string | undefined,
+    flow?: string,
   ): ObservationStateToken | undefined {
     if (!bootId) return undefined;
-    const key = memoryKey(bootId, tabId);
+    const key = memoryKey(bootId, tabId, flow);
     const found = this.entries.get(key);
     if (!found) return undefined;
     // EXPIRED IS FORGOTTEN, not merely ignored. A token minted ten minutes ago
@@ -350,17 +363,22 @@ export class BrowserTokenMemory {
   }
 
   /**
-   * Drop every token for one boot.
+   * Drop every token for one boot — ACROSS FLOWS, deliberately.
    *
    * A handoff seen in request N must not let request N+1 pin to a pre-handoff
    * page: the tokens are internally consistent, they are simply about the
    * wrong moment — which is the one staleness the daemon cannot detect for us.
+   * And a person taking the browser is a fact about the BROWSER, not about the
+   * conversation that noticed: every chat holding a token for that boot is
+   * describing the page as it was before somebody else started typing into it.
+   *
+   * Matched on the stored `bootId` rather than a key prefix, so the key format
+   * stays free to change without silently turning this into a no-op.
    */
   forget(bootId: string | undefined): void {
     if (!bootId) return;
-    const prefix = `${bootId}:`;
-    for (const key of [...this.entries.keys()]) {
-      if (key.startsWith(prefix)) this.entries.delete(key);
+    for (const [key, entry] of [...this.entries]) {
+      if (entry.bootId === bootId) this.entries.delete(key);
     }
   }
 }
@@ -371,8 +389,12 @@ const BROWSER_TOKEN_MEMORY_TTL_MS = 10 * 60 * 1000;
 /** A ceiling, not a target — one entry per (boot, tab) a process has seen. */
 const BROWSER_TOKEN_MEMORY_MAX = 512;
 
-function memoryKey(bootId: string, tabId: string | undefined): string {
-  return `${bootId}:${tabId ?? "@session"}`;
+function memoryKey(
+  bootId: string,
+  tabId: string | undefined,
+  flow: string | undefined,
+): string {
+  return `${flow ?? "@unscoped"}\u0000${bootId}\u0000${tabId ?? "@session"}`;
 }
 
 /** The process-wide default. Tests inject their own via `tokenMemory`. */
@@ -392,6 +414,20 @@ class BrowserTurnState {
     private readonly ownerKey: string | undefined,
     private readonly memory: BrowserTokenMemory,
   ) {}
+
+  /**
+   * WHICH conversation this turn belongs to, for the cross-request memory.
+   *
+   * The chat session: the identity that spans an approval pause, and the only
+   * thing that keeps one chat's observation out of another chat's pending act
+   * when both drive the project's single browser. `runKey` carries it — the
+   * registry threads `ctx.runKey ?? ctx.chatSessionId` on every turn, attended
+   * or not — and it doubles as the unattended profile key, which is the same
+   * "one run" identity read for a different purpose.
+   */
+  private get flow(): string | undefined {
+    return this.opts.runKey?.trim() || undefined;
+  }
 
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
   handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
@@ -418,7 +454,7 @@ class BrowserTurnState {
     // AND ACROSS REQUESTS. An attended act pauses for approval and resumes in
     // a NEW request whose per-turn map is empty; without this the act a person
     // most carefully decided is the one that runs unpinned.
-    this.memory.remember(bootId, tabId, token);
+    this.memory.remember(bootId, tabId, token, this.flow);
     // A token minted AFTER the handoff describes the page as it is now, so the
     // turn is caught up. Leaving the flag set would disable L3 for the rest of
     // the turn — the opposite of what the loud resume is for.
@@ -440,7 +476,8 @@ class BrowserTurnState {
     // observed yet — the resume after an approval — and a token this turn
     // minted is always the more recent of the two.
     return (
-      this.tokens.get(tabId ?? "@session") ?? this.memory.recall(bootId, tabId)
+      this.tokens.get(tabId ?? "@session") ??
+      this.memory.recall(bootId, tabId, this.flow)
     );
   }
 
