@@ -792,6 +792,42 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     }
   });
 
+  /*
+   * A CAPABILITY THAT ARRIVES WITHOUT `verdictPolicyV2` MUST NOT TAKE THE PAGE
+   * DOWN.
+   *
+   * Every capability read in this component is optional except one, which
+   * dereferenced `capabilities.verdictPolicyV2.canUpgrade` directly — so a
+   * backend answering without that block threw during render.
+   *
+   * It matters more since this component started asking for capabilities on
+   * EVERY suite view rather than only in edit mode: the same response now
+   * breaks the page for anyone looking at a suite, not just someone editing
+   * one. The hook's own contract is that a partial or failed answer costs
+   * nothing.
+   */
+  it("survives a capabilities answer with no verdictPolicyV2 block", () => {
+    capabilitiesResult.current = {
+      state: "ready",
+      capabilities: {
+        suiteId: "suite-1",
+        organizationId: "org-1",
+        permissions: {},
+        features: {},
+        ownership: { ciOwned: false },
+      },
+    };
+    try {
+      renderOverview();
+      expect(mocks.suiteHeader).toHaveBeenCalled();
+    } finally {
+      capabilitiesResult.current = {
+        state: "unavailable",
+        capabilities: null,
+      };
+    }
+  });
+
   it("withholds case authoring on the legacy dashboard when CI owns the suite", () => {
     // The legacy Evals surface never renders `suite-detail-overview`, so a
     // lock that lived only on the opted-in overview missed it entirely — Add

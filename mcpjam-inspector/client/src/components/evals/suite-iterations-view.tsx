@@ -1529,9 +1529,22 @@ export function SuiteIterationsView({
         capabilitiesState === "unavailable"
         ? CAPABILITY_REASON_COPY.flag_unavailable
         : "Checking whether this deployment allows verdict policy v2…"
-      : capabilities.verdictPolicyV2.canUpgrade
+      : // OPTIONAL, like every other capability read around it. This block was
+        // the one place that dereferenced a nested capability without `?.`, so
+        // a backend answering without `verdictPolicyV2` threw during render
+        // and took the whole suite view down.
+        //
+        // That used to be confined to edit mode. It is not any more: this
+        // component now asks for capabilities on EVERY suite view, so the same
+        // response would break the page for everyone looking at a suite rather
+        // than only for someone editing one. A widened blast radius is the
+        // change's to fix.
+        //
+        // Absent reads as "cannot upgrade", which is what an older deployment
+        // means by not answering — never as permission.
+        capabilities.verdictPolicyV2?.canUpgrade
         ? undefined
-        : capabilities.verdictPolicyV2.deploymentMode === "off"
+        : capabilities.verdictPolicyV2?.deploymentMode === "off"
           ? DEPLOYMENT_REASON_COPY
           : "This suite is already on verdict policy v2";
 
