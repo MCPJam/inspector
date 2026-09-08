@@ -16,9 +16,11 @@
  * project and a host config, and reads one answer.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
 import { useHost } from "@/hooks/useClients";
+import { resolveEffectiveHost } from "@/lib/effective-client";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 import {
   createBrowserTokenCache,
@@ -61,19 +63,38 @@ export interface BrowserToolsState {
 export function useBrowserTools(args: {
   projectId: string | null;
   /**
-   * The previewed host. Resolved HERE rather than taken as a list of ids, so a
-   * caller needs one hook rather than a Convex subscription plus a host lookup
-   * plus this — the browser is one capability, and asking about it should be
-   * one question. `useHost` short-circuits on a null id, so this is cheap when
-   * no host is picked.
+   * The EXPLICITLY previewed host, or null when the user has not picked one.
+   *
+   * Resolved here rather than taken as a list of ids, so a caller needs one
+   * hook rather than a Convex subscription plus a host lookup plus this — the
+   * browser is one capability, and asking about it should be one question.
+   * `useHost` short-circuits on a null id, so this is cheap when nothing is
+   * picked.
    */
   hostId: string | null;
 }): BrowserToolsState {
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({ isAuthenticated, hostId: args.hostId });
+  // THE PROJECT DEFAULT, and the reason this hook cannot key on the previewed
+  // id alone. "Which host is this surface operating under" is explicit-pick
+  // ELSE project-default everywhere else in the app (`resolveEffectiveHost`),
+  // and the Browser pane in the right rail resolves it that way — so a hook
+  // that stopped at the explicit pick reported "no browser" for a project
+  // whose DEFAULT host has one, which is the common case: the pane offered a
+  // live browser while the Tools panel beside it said no server was connected.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as never,
+    isAuthenticated && args.projectId
+      ? ({ projectId: args.projectId } as never)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+  const hostConfig = resolveEffectiveHost({
+    explicitHostConfig: host?.config ?? null,
+    projectDefaultHostConfig: projectDefaultHostConfig ?? null,
+  });
   const engineState = useComputerEngine(args.projectId);
   const mintToken = useMintBrowserToken();
-  const attached = (host?.config?.builtInToolIds ?? []).includes(
+  const attached = (hostConfig?.builtInToolIds ?? []).includes(
     BROWSER_BUILT_IN_TOOL_ID,
   );
   // The BODY-side engine choice, exactly as the Browser pane resolves it, so
@@ -100,6 +121,21 @@ export function useBrowserTools(args: {
     const mint: MintBrowserToken = () => mintToken({ projectId });
     return createBrowserTokenCache(mint);
   }, [engine, args.projectId, isAuthenticated, mintToken]);
+  /**
+   * The cache, readable from the page effect WITHOUT being one of its
+   * dependencies.
+   *
+   * `tokens` is derived, so its identity is only as stable as `mintToken`'s —
+   * and an effect that re-runs on a new cache object also re-reads the page,
+   * which sets state, which renders again. One unstable dependency upstream
+   * turns a tool list into an unbounded request loop against a metered box.
+   * The effect keys on the stable facts instead (project, engine, consent,
+   * and an explicit refresh), and reaches the cache through here.
+   */
+  const tokensRef = useRef(tokens);
+  tokensRef.current = tokens;
+  /** Whether a hosted read is possible at all — a boolean, so it can be a dep. */
+  const hostedReadable = tokens !== null;
 
   // Definitions. Cached per engine for the session; a failure leaves the list
   // empty rather than surfacing an error, because a pane that cannot describe
@@ -149,7 +185,8 @@ export function useBrowserTools(args: {
       setPage({ ok: false, error: "no_browser_session" });
       return;
     }
-    if (engine === "hosted" && !tokens) {
+    const cache = tokensRef.current;
+    if (engine === "hosted" && !cache) {
       setPage(null);
       return;
     }
@@ -157,8 +194,8 @@ export function useBrowserTools(args: {
     const serial = (latestRead.current += 1);
     const projectId = args.projectId;
     const read =
-      engine === "hosted" && tokens
-        ? fetchHostedPageTools(tokens, controller.signal)
+      engine === "hosted" && cache
+        ? fetchHostedPageTools(cache, controller.signal)
         : fetchLocalPageTools({ projectId }, consentToken, controller.signal);
     read
       .then((answer) => {
@@ -172,7 +209,17 @@ export function useBrowserTools(args: {
         }
       });
     return () => controller.abort();
-  }, [attached, args.projectId, engine, consentToken, tokens, pageNonce]);
+    // `hostedReadable` rather than `tokens`: the boolean changes only when a
+    // hosted read becomes possible or stops being, while the object it stands
+    // for can churn on every render. See `tokensRef`.
+  }, [
+    attached,
+    args.projectId,
+    engine,
+    consentToken,
+    hostedReadable,
+    pageNonce,
+  ]);
 
   return { attached, engine, tools, page, refreshPage };
 }
