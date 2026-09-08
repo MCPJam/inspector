@@ -149,6 +149,11 @@ export function SuiteDashboard({
   // they ship on different clocks — a schedule answers to `scheduled-evals-
   // enabled` (dark until Schedule is tested), a widget probe case to
   // `synthetic-monitors`. One shared flag would make hiding either hide both.
+  //
+  // The OR opens the pane; it does NOT say what the pane may show. Both flags
+  // travel on so each section answers to its own — otherwise a suite with a
+  // schedule AND a probe case would earn the pane from `synthetic-monitors`
+  // alone and then render the "Scheduled runs" strip inside it.
   const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
@@ -263,6 +268,8 @@ export function SuiteDashboard({
         onOpenCaseIteration={onOpenCaseIteration}
         onRunClick={onRunClick}
         showMonitoring={showMonitoring}
+        showScheduledRuns={scheduledEvalsEnabled}
+        showProbeLatency={syntheticMonitorsEnabled}
         selectedRunId={selectedRunId}
         runDetailPane={runDetailPane}
         onExitRun={onExitRun}

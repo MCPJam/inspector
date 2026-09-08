@@ -71,12 +71,19 @@ export const LOCAL_HARNESS_ENABLED =
  * proposal execution all self-dispatch through it. One switch here is what
  * makes "not yet tested" true for every writer instead of only the screen.
  *
- * GATES ENABLING ONLY — `enabled: false` passes through untouched, and the
- * agent policy makes the same exception in the opposite direction (see
- * `org-agent-policy.ts`). Precedent is the `trace-destinations` flag: delete,
- * pause and disable stay ungated so an org that loses the feature can still
- * switch a live one off. A gate that strands a running schedule with no way to
- * stop it is the worse failure.
+ * GATES ENABLING ONLY, ON THE ROUTE — `enabled: false` passes through
+ * untouched. Precedent is the `trace-destinations` flag: delete, pause and
+ * disable stay ungated so an org that loses the feature can still switch a
+ * live one off. A gate that strands a running schedule with no way to stop it
+ * is the worse failure.
+ *
+ * THE AGENT IS STRICTER, and it is worth being plain about the asymmetry: the
+ * org policy withholds `set_eval_suite_schedule` outright (see
+ * `org-agent-policy.ts`), so the agent loses DISABLE as well as enable. That
+ * set gates by operation name and cannot read an argument, so the choice there
+ * is between an agent that can still enable and one that can do neither. The
+ * route above is what keeps a live schedule stoppable — by a person, through
+ * the API or the CLI.
  *
  * NOT the only gate, and not the one that stops a schedule already running:
  * `SCHEDULED_EVALS_ENABLED` on the Convex deployment refuses every writer

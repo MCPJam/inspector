@@ -2039,11 +2039,6 @@ Permanently delete an eval suite (and its cases and runs).
 
 Enable or disable scheduled runs for a suite.
 
-`--enable` answers `404` unless the deployment sets
-`MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED=true` — scheduled runs are off by default
-while the feature is being tested. `--disable` is deliberately ungated, so a
-schedule already firing can always be switched off.
-
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |

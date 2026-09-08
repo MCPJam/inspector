@@ -13,7 +13,12 @@ import { showSettingsGroup, withDataRouter } from "./settings-sheet-harness";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 
-const flagState = { scheduledEvals: false, syntheticMonitors: false };
+// `vi.hoisted` so the state exists before the hoisted `vi.mock` factory can
+// read it — the repo convention for a mutable flag mock.
+const flagState = vi.hoisted(() => ({
+  scheduledEvals: false,
+  syntheticMonitors: false,
+}));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => {
     if (key === "scheduled-evals-enabled") return flagState.scheduledEvals;

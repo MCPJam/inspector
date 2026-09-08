@@ -11,7 +11,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { SuiteDashboard } from "../suite-dashboard";
 import type { EvalCase, EvalSuite } from "../types";
 
-const flagState = { syntheticMonitors: false, scheduledEvals: false };
+const flagState = vi.hoisted(() => ({
+  syntheticMonitors: false,
+  scheduledEvals: false,
+}));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => {
     if (key === "synthetic-monitors") return flagState.syntheticMonitors;
