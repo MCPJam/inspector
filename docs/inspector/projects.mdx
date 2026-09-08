@@ -43,6 +43,29 @@ If you were invited to a paid-seat organization but the seat hasn't been paid fo
 After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
 </Info>
 
+## Creating and deleting projects
+
+### Creating a project
+
+Click **Create project** at the bottom of the switcher's projects view. A dialog opens with:
+
+- **Name** — prefilled with a free name (e.g. "Project 3"). Edit it before confirming.
+- **Organization** — a dropdown to choose which organization the project belongs to. Organizations where you don't have permission to create projects, or where your seat is still pending, are not shown.
+
+Click **Create** (or press Enter) to create the project and switch to it automatically.
+
+### Deleting a project
+
+Hover over any project row in the switcher to reveal the **trash icon**. Clicking it opens a confirmation dialog showing the project name. Click **Delete** to confirm — this removes the project and all its servers permanently.
+
+<Warning>
+Deleting a project is irreversible. All servers, sessions, and eval suites in the project are removed.
+</Warning>
+
+## Credits
+
+A **See credits** row in the sidebar footer shows your organization's credit usage. Clicking it opens the organization billing page where you can see the full breakdown, your plan, and reset timing. The row is only visible when you are signed in and belong to an organization.
+
 <iframe
   className="w-full aspect-video rounded-xl"
   src="https://www.youtube.com/embed/p27gp_OuyMA"
