@@ -951,25 +951,18 @@ async function runCompleted(
 }
 
 /**
- * Run the dedicated suite against the just-built server.
+ * Run the selected suite against the just-built server.
  *
- * The `serverIds` override is what makes this work at all: the suite is a
- * persisted `[github-checks] …` suite whose own saved server refs point at some
- * previous check's (now deleted) ephemeral row. Overriding on every run means
- * the suite's stored binding is never consulted — which is also why this suite
- * must never be launched from the UI.
+ * `prepareEvalRun` turns the `github_check` source plus these server ids into a
+ * run-only environment override. That override wins over any project
+ * environment attached to the suite, so the run always targets this PR's
+ * ephemeral server without rewriting the user's saved suite.
  */
 /**
  * Which check's server this run's frozen environment names.
  *
- * The dedicated suite is shared, and `refreshSnapshot: true` rewrites its stored
- * environment before the run-start mutation freezes it — two mutations, no
- * atomicity. Two checks running at once (two workers, or two replicas of one) can
- * therefore interleave as: A rewrites → B rewrites → A starts and freezes B's
- * server. A would then evaluate the wrong PR's server, or fail when B deletes it,
- * and either way report a verdict about somebody else's code.
- *
- * This does not fix that race — it detects the case it can prove. Every check names
+ * The run-only override removes the former shared-suite rewrite race. This
+ * remains a final defense against a malformed or regressed run snapshot. Every check names
  * its server `gh-check-<triggerId>`, so:
  *
  *   - the snapshot mentions OUR trigger → `ours`;
@@ -1093,21 +1086,6 @@ async function defaultRunEvalSuite(args: {
       serverIds: [args.serverId],
       serverNames: [args.serverName],
       suiteRerun: true,
-      // REQUIRED, not incidental. `serverIds` is honored by the manager and by
-      // cap math, but it is NOT forwarded to the run-start mutation — the run's
-      // `configSnapshot.environment` comes from the suite's PERSISTED
-      // environment, and `suiteRerun: true` alone suppresses updating it
-      // (`authorEvalSuite`: `shouldUpdateSnapshot = !suiteRerun ||
-      // refreshSnapshot`). Without this flag the snapshot keeps naming the
-      // previous check's ephemeral server, which no longer exists, and the
-      // runner fails against a dead reference instead of testing the PR.
-      //
-      // This is the "suite binding rewrite" the design already called out as
-      // expected: the dedicated suite's stored server ref is rewritten every
-      // run. Harmless because we always override `serverIds` too — and the
-      // reason this suite is named `[github-checks] …` and must never be
-      // launched from the UI.
-      refreshSnapshot: true,
       // Distinguishes check-triggered runs from real /api/v1 calls in run
       // history and heartbeat accounting (backend union accepts this value).
       source: "github_check",

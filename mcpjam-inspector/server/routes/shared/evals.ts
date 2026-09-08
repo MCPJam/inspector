@@ -644,6 +644,25 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   launchContext?: LaunchContext;
 } & EvalRunProvenance;
 
+/**
+ * GitHub checks must run against the ephemeral server built from the PR.
+ *
+ * A suite can also be attached to a project environment. Backend environment
+ * selection intentionally wins over the suite's legacy `environment` field,
+ * so rewriting that field does not redirect an environment-backed suite. A
+ * run-only override is the authoritative way to select the verified PR server
+ * without mutating the user's saved suite or environment.
+ */
+export function buildGithubCheckRunEnvironmentOverride(args: {
+  source: RunEvalsWithManagerRequest["source"];
+  resolvedServerIds: string[];
+  persistedServerRefs: string[];
+  serverNames?: string[];
+}) {
+  if (args.source !== "github_check") return undefined;
+  return buildPersistedSuiteEnvironment(args);
+}
+
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
@@ -2334,6 +2353,13 @@ export async function prepareEvalRun(
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;
 
+  const environmentOverride = buildGithubCheckRunEnvironmentOverride({
+    source: request.source,
+    resolvedServerIds,
+    persistedServerRefs,
+    serverNames,
+  });
+
   const {
     runId,
     config,
@@ -2358,6 +2384,7 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     environmentId,
+    environmentOverride,
     // All three preconditions come from the SAME resolution the tool snapshot
     // was captured against. The revision alone is not enough: an environment
     // pins a `hostId` and optionally an attachment, both dereferenced live, so

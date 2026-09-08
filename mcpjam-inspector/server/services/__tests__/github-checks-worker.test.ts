@@ -389,12 +389,7 @@ describe("executeClaimedCheck — happy path", () => {
     );
   });
 
-  it("targets the run at THIS check's server and refreshes the suite snapshot", async () => {
-    // `serverIds` alone is not enough: it never reaches the run-start mutation,
-    // so the run's configSnapshot.environment comes from the suite's persisted
-    // environment — which names the PREVIOUS check's deleted server unless the
-    // snapshot is refreshed. Without this the runner fails on a dead reference
-    // instead of testing the PR.
+  it("targets the run at THIS check's ephemeral server", async () => {
     const prepared: Array<Record<string, unknown>> = [];
     const h = harness({
       runEvalSuite: async (args) => {
@@ -404,10 +399,8 @@ describe("executeClaimedCheck — happy path", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
-    // The suite-snapshot refresh itself lives in `defaultRunEvalSuite`, which
-    // needs a live Convex + connected manager and is covered by the end-to-end
-    // pass; what is checkable here is that the run is handed THIS check's
-    // freshly-created server rather than anything the suite has stored.
+    // `prepareEvalRun` converts this server into a run-only environment
+    // override for the `github_check` source.
     expect(prepared[0]).toMatchObject({
       serverId: "server-1",
       serverName: "gh-check-trig-1",
@@ -1337,11 +1330,8 @@ describe("startGithubChecksWorker loop", () => {
 });
 
 describe("verifyRunSnapshot", () => {
-  // The dedicated suite is shared and `refreshSnapshot` rewrites its environment
-  // before the run freezes it, so two concurrent checks can interleave and one can
-  // end up evaluating the other's server. This cannot prevent that; it decides when
-  // the theft is PROVEN, and when we simply could not look — a verdict about
-  // somebody else's PR being worse than no verdict.
+  // The run-only environment override prevents the former shared-suite rewrite
+  // race. This remains a final defense against a malformed or regressed snapshot.
   const clientWith = (snapshot: unknown) =>
     ({
       query: async () => ({ configSnapshot: { environment: snapshot } }),
