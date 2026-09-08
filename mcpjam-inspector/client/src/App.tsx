@@ -5120,6 +5120,7 @@ export default function App() {
       {/* The inset is the linen shell: the sidebar and top bar read as one
           continuous outer chrome and the off-white panel below is the working
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
       <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
@@ -5157,6 +5158,7 @@ export default function App() {
         organizationId={activeOrganizationId ?? null}
         activeTab={activeTab}
       />
+      </div>
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {

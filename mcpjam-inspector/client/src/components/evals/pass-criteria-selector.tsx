@@ -11,12 +11,15 @@ interface PassCriteriaSelectorProps {
    * label/control split).
    */
   hideLabel?: boolean;
+  /** Align with the suite settings control column; keep the unit outside it. */
+  aligned?: boolean;
 }
 
 export function PassCriteriaSelector({
   minimumPassRate,
   onMinimumPassRateChange,
   hideLabel = false,
+  aligned = false,
 }: PassCriteriaSelectorProps) {
   const [editedValue, setEditedValue] = useState(minimumPassRate.toString());
 
@@ -94,7 +97,7 @@ export function PassCriteriaSelector({
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="relative flex shrink-0 items-center gap-2">
       {hideLabel ? null : (
         <Label
           htmlFor="pass-criteria"
@@ -115,9 +118,9 @@ export function PassCriteriaSelector({
         }}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
-        className="w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className={`${aligned ? "h-8 w-40" : "w-16"} text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
       />
-      <span className="text-sm text-muted-foreground">%</span>
+      <span className={`${aligned ? "absolute left-full ml-2" : ""} text-sm text-muted-foreground`}>%</span>
     </div>
   );
 }
