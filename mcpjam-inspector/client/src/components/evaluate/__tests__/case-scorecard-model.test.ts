@@ -748,3 +748,9 @@ describe("onlyToolsCalled is offered on the spine and nowhere else", () => {
     });
   });
 });
+
+it("removing the last replacement scorer keeps suite defaults excluded", () => {
+  expect(
+    removeCaseScorer({ mode: "replace", list: [{ type: "noToolErrors" }] }, 0),
+  ).toEqual({ mode: "replace", list: [] });
+});

@@ -216,7 +216,7 @@ function existingCriterionIds(
       continue;
     }
     ids.add(hostedCriterionId(assertion, stepScope(steps, step.id)));
-    kinds.add(assertion.type);
+    // A step-scoped check does not replace a whole-run claim.
   }
   if (casePredicates && casePredicates.mode !== "inherit") {
     for (const predicate of casePredicates.list) {
@@ -497,6 +497,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
             .find((call) => call.authoredStepId === step.id)?.widgetToolName ??
           (step as { toolName?: string }).toolName ??
           "";
+        if (!widgetToolName.trim()) continue;
         const label =
           trials
             .flatMap((trial) => trial.clickCalls ?? [])
@@ -572,7 +573,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
 
   // ── R10 / R11: budgets. Reports, from any observed batch. ─────────────────
   if (knows("tokenBudgetUnder") && !existingKinds.has("tokenBudgetUnder")) {
-    const totals = trials.map((trial) => trial.tokensTotal);
+    const totals = observed.map((trial) => trial.tokensTotal);
     if (
       observed.length > 0 &&
       totals.every((n) => typeof n === "number" && n > 0)
@@ -598,14 +599,14 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         predicate,
         placement: { kind: "wholeRun" },
         role: "report",
-        stability: { held: of, of, unread: 0 },
+        stability: { held: observed.length, of: observed.length, unread: 0 },
         stage: stageOfPredicate(predicate),
       });
     }
   }
 
   if (knows("turnCountUnder") && !existingKinds.has("turnCountUnder")) {
-    const counts = trials.map((trial) => trial.turnCount);
+    const counts = observed.map((trial) => trial.turnCount);
     if (
       observed.length > 0 &&
       counts.every((n) => typeof n === "number") &&
@@ -631,7 +632,7 @@ export function suggestScorers(input: SuggestInput): SuggestOutput {
         predicate,
         placement: { kind: "wholeRun" },
         role: "report",
-        stability: { held: of, of, unread: 0 },
+        stability: { held: observed.length, of: observed.length, unread: 0 },
         stage: stageOfPredicate(predicate),
       });
     }

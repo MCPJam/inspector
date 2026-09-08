@@ -197,20 +197,21 @@ export function ActionRow({
             projectServers={projectServers}
             availableTools={invokableTools(availableTools)}
             readOnly={readOnly}
-            onChange={(cfg) =>
+            onChange={(cfg) => {
+              if (readOnly) return;
               onUpdate({
                 ...step,
-                ...(cfg.serverId
-                  ? { serverId: cfg.serverId }
-                  : { serverId: undefined }),
+                serverId:
+                  cfg.serverId ??
+                  (cfg.serverName === step.serverName
+                    ? step.serverId
+                    : undefined),
                 serverName: cfg.serverName,
                 toolName: cfg.toolName,
                 arguments: cfg.arguments as Record<string, unknown>,
-                ...(cfg.renderTimeoutMs
-                  ? { renderTimeoutMs: cfg.renderTimeoutMs }
-                  : {}),
-              })
-            }
+                renderTimeoutMs: cfg.renderTimeoutMs,
+              });
+            }}
           />
         ) : null}
 

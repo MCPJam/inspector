@@ -177,7 +177,7 @@ describe("a claim must hold in every trial", () => {
 });
 
 describe("dedupe against what the case already grades", () => {
-  it("drops a check an authored step already makes", () => {
+  it("keeps the whole-run check distinct from an authored step check", () => {
     const out = suggestScorers(
       input({
         steps: [
@@ -186,7 +186,7 @@ describe("dedupe against what the case already grades", () => {
         ],
       }),
     );
-    expect(kinds(out)).not.toContain("noToolErrors");
+    expect(kinds(out)).toContain("noToolErrors");
   });
 
   it("drops a check the case envelope already makes", () => {
@@ -514,4 +514,77 @@ describe("a placeholder route is not a success signal", () => {
       ),
     ).toBe(false);
   });
+});
+
+it("budget reports use only observed trials and count their actual population", () => {
+  const out = suggestScorers(
+    input({
+      trials: [
+        facts({ tokensTotal: 1000, turnCount: 3 }),
+        facts({
+          observed: false,
+          status: "cancelled",
+          tokensTotal: undefined,
+          turnCount: undefined,
+        }),
+      ],
+    }),
+  );
+  const budgets = out.suggestions.filter((s) =>
+    ["tokenBudgetUnder", "turnCountUnder"].includes(s.predicate?.type ?? ""),
+  );
+  expect(budgets).toHaveLength(2);
+  for (const row of budgets)
+    expect(row.stability).toEqual({ held: 1, of: 1, unread: 0 });
+});
+
+it("does not suggest an unscoped widget assertion when no widget tool is known", () => {
+  const out = suggestScorers(
+    input({
+      steps: [
+        prompt,
+        {
+          id: "click",
+          kind: "interact",
+          toolName: "",
+          action: { kind: "click", target: { testId: "submit" } },
+        },
+      ],
+      trials: [
+        facts({
+          clickCalls: [
+            {
+              authoredStepId: "click",
+              widgetToolName: "",
+              calledTools: ["submit"],
+              label: "Submit",
+            },
+          ],
+        }),
+      ],
+    }),
+  );
+  expect(out.suggestions.some((s) => s.kind === "widgetAssertion")).toBe(false);
+});
+
+it("keeps a whole-run error check available beside a scoped check", () => {
+  const out = suggestScorers(
+    input({
+      steps: [
+        prompt,
+        {
+          id: "early",
+          kind: "assert",
+          assertion: { type: "noToolErrors" },
+        },
+        { id: "later", kind: "prompt", prompt: "Continue" },
+      ],
+    }),
+  );
+  expect(
+    out.suggestions.some(
+      (s) =>
+        s.predicate?.type === "noToolErrors" && s.placement.kind === "wholeRun",
+    ),
+  ).toBe(true);
 });

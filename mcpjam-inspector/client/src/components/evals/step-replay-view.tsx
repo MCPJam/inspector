@@ -75,7 +75,7 @@ const KIND_META: Record<
   interact: {
     label: "Interact",
     Icon: MousePointerClick,
-    tint: "text-amber-600 dark:text-amber-400",
+    tint: "text-warning",
   },
   assert: {
     label: "Assertion",
@@ -201,7 +201,7 @@ function describeAssert(
   }
   if (presentation === "scorecard") {
     const kind = a.type as PredicateKind;
-    if (kind in PREDICATE_KIND_LABELS) {
+    if (Object.prototype.hasOwnProperty.call(PREDICATE_KIND_LABELS, kind)) {
       return INLINE_ASSERT_LABELS[kind] ?? formatCriterion({ predicate: a });
     }
   }
@@ -493,9 +493,12 @@ function StepsVerdictHeader({
               · {checksFailed} failed
             </span>
           ) : null}
-          {warned > 0 ? (
-            <span className={EVAL_WARN_BADGE_STRONG_CLASS}> · {warned} warn</span>
-          ) : null}
+        </span>
+      ) : null}
+      {warned > 0 ? (
+        <span className={cn("text-xs", EVAL_WARN_BADGE_STRONG_CLASS)}>
+          {checkTotal > 0 ? " · " : ""}
+          {warned} warn
         </span>
       ) : null}
     </div>

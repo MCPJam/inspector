@@ -1048,6 +1048,11 @@ export function TestTemplateEditor({
   // Left↔right Steps sync: the step hovered in either the left step list or the
   // right replay pane; highlights the matching card/row in both.
   const [syncedStepId, setSyncedStepId] = useState<string | null>(null);
+  const [trialTabRequest, setTrialTabRequest] = useState<{
+    iterationId: string;
+    mode: "steps";
+  } | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
   const [mobileVisibleModelValue, setMobileVisibleModelValue] = useState<
     string | null
   >(null);
@@ -1417,6 +1422,49 @@ export function TestTemplateEditor({
    * run id, so the same projection + assembler runs locally on the doc
    * the client already holds.
    */
+  const nextQuestionForTrial = (iteration: EvalIteration | null) => {
+    return useSpine && iteration ? (
+      <NextQuestionLine
+        state={{
+          hasTrial: true,
+          judgedPass: Boolean(
+            iteration.suiteRunId &&
+              resolveIterationJudge(iteration, suiteRuns)?.passed,
+          ),
+          hasFailure: iteration.result === "failed",
+          trials: suggestionBatch?.iterations.length ?? 1,
+          hasChecks:
+            Boolean(editForm?.predicates?.list?.length) ||
+            (editForm?.steps ?? []).some((step) => step.kind === "assert"),
+          hasSuggestions: chainSuggestions.output.suggestions.length > 0,
+          suiteHasGate: Boolean(
+            suite?.defaultPredicates?.some(
+              (p: Predicate) => p.role !== "advisory",
+            ),
+          ),
+        }}
+        onAct={(action) => {
+          if (action === "trials" || action === "models") {
+            if (action === "trials") {
+              setEditForm((current) =>
+                current ? { ...current, runs: 3 } : current,
+              );
+            }
+            setNextRunOpen(true);
+          } else if (action === "gate") onOpenSuiteSettings?.();
+          else if (action === "failure") {
+            setTrialTabRequest({ iterationId: iteration._id, mode: "steps" });
+          } else if (action === "harden") {
+            suggestionsRef.current?.scrollIntoView?.({
+              block: "nearest",
+              behavior: "smooth",
+            });
+          }
+        }}
+      />
+    ) : null;
+  };
+
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
     let chain: ReactNode = null;
     // On the spine the chain lives INSIDE the Scorecard as a chip strip: the
@@ -1474,34 +1522,9 @@ export function TestTemplateEditor({
         ? expectedPathKeyFromSteps(editForm.steps)
         : undefined;
 
-    const nextQuestion =
-      useSpine && iteration ? (
-        <NextQuestionLine
-          state={{
-            hasTrial: true,
-            judgedPass: Boolean(
-              iteration.suiteRunId &&
-              resolveIterationJudge(iteration, suiteRuns)?.passed,
-            ),
-            hasFailure: iteration.result === "failed",
-            trials: suggestionBatch?.iterations.length ?? 1,
-            hasChecks: (editForm?.steps ?? []).some(
-              (step) => step.kind === "assert",
-            ),
-            hasSuggestions: chainSuggestions.output.suggestions.length > 0,
-            suiteHasGate: Boolean(suite?.defaultPredicates?.length),
-          }}
-          onAct={(action) => {
-            if (action === "trials") setNextRunOpen(true);
-            else if (action === "gate") onOpenSuiteSettings?.();
-          }}
-        />
-      ) : null;
-
     return (
       <div className="space-y-2">
         {chain}
-        {nextQuestion}
         {rollup && (showRollup || showRecordAdopt) ? (
           <RouteRollupCard
             rollup={rollup}
@@ -2631,6 +2654,7 @@ export function TestTemplateEditor({
             // previously-persisted case-level matchOptions override.
             matchOptions: savePayload.matchOptions ?? null,
             predicates: savePayload.predicates ?? null,
+            judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -3716,6 +3740,7 @@ export function TestTemplateEditor({
 
   /** What the LEFT pane is showing, as the scorecard model's input. */
   const workspaceDraftScorecardInput = {
+    numbering: useSpine ? ("action" as const) : ("flat" as const),
     steps: editForm?.steps ?? [],
     toolsChoice: simpleToolsChoice,
     kind: editForm?.kind,
@@ -4390,7 +4415,7 @@ export function TestTemplateEditor({
                             <p className="text-[11px] text-muted-foreground">
                               {isDraft
                                 ? "Save this case to run it."
-                                : "Runs the prompt once and asks whether the answer accomplished this. One model call."}
+                                : "Runs this case using the selected models and trial count, then judges the results."}
                             </p>
                           </div>
                         ) : null
@@ -4642,6 +4667,7 @@ export function TestTemplateEditor({
                     ) : workspacePersistedIteration ? (
                       <IterationDetails
                         iteration={workspacePersistedIteration}
+                        requestedTab={trialTabRequest}
                         testCase={currentTestCase}
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
@@ -4684,50 +4710,57 @@ export function TestTemplateEditor({
                                 workspacePersistedIteration,
                                 suiteRuns,
                               )}
+                              nextQuestionSlot={nextQuestionForTrial(
+                                workspacePersistedIteration,
+                              )}
                               envelope={ctx.envelope}
                               judgeHidden={ctx.reviewActive && ctx.judgeHidden}
                               suggestionsSlot={
                                 useSpine ? (
-                                  <SuggestedFromRunSection
-                                    enabled
-                                    batch={suggestionBatch}
-                                    authored={
-                                      authoredForTrial({
-                                        trial: workspaceSelectedTrial,
-                                        draft: workspaceDraftScorecardInput,
-                                        run: workspaceTrialRun ?? null,
-                                      }).authored
-                                    }
-                                    judgeFor={(iteration) =>
-                                      resolveIterationJudge(
-                                        iteration,
-                                        suiteRuns,
-                                      )
-                                    }
-                                    selectedBlob={
-                                      ctx.envelope
-                                        ? {
-                                            iterationId:
-                                              workspacePersistedIteration._id,
-                                            blob: ctx.envelope as never,
-                                          }
-                                        : null
-                                    }
-                                    prompts={(editForm?.steps ?? [])
-                                      .filter((step) => step.kind === "prompt")
-                                      .map((step) =>
-                                        "prompt" in step ? step.prompt : "",
-                                      )}
-                                    dismissed={dismissedSuggestions}
-                                    accepted={acceptedSuggestions}
-                                    onAccept={(suggestion) =>
-                                      acceptSuggestions([suggestion], "row")
-                                    }
-                                    onAcceptAll={(all) =>
-                                      acceptSuggestions(all, "all")
-                                    }
-                                    onDismiss={dismissSuggestion}
-                                  />
+                                  <div ref={suggestionsRef}>
+                                    <SuggestedFromRunSection
+                                      enabled
+                                      batch={suggestionBatch}
+                                      authored={
+                                        authoredForTrial({
+                                          trial: workspaceSelectedTrial,
+                                          draft: workspaceDraftScorecardInput,
+                                          run: workspaceTrialRun ?? null,
+                                        }).authored
+                                      }
+                                      judgeFor={(iteration) =>
+                                        resolveIterationJudge(
+                                          iteration,
+                                          suiteRuns,
+                                        )
+                                      }
+                                      selectedBlob={
+                                        ctx.envelope
+                                          ? {
+                                              iterationId:
+                                                workspacePersistedIteration._id,
+                                              blob: ctx.envelope as never,
+                                            }
+                                          : null
+                                      }
+                                      prompts={(editForm?.steps ?? [])
+                                        .filter(
+                                          (step) => step.kind === "prompt",
+                                        )
+                                        .map((step) =>
+                                          "prompt" in step ? step.prompt : "",
+                                        )}
+                                      dismissed={dismissedSuggestions}
+                                      accepted={acceptedSuggestions}
+                                      onAccept={(suggestion) =>
+                                        acceptSuggestions([suggestion], "row")
+                                      }
+                                      onAcceptAll={(all) =>
+                                        acceptSuggestions(all, "all")
+                                      }
+                                      onDismiss={dismissSuggestion}
+                                    />
+                                  </div>
                                 ) : null
                               }
                               judgeSlot={
@@ -4749,7 +4782,11 @@ export function TestTemplateEditor({
                                     )}
                                     onOpenSuiteSettings={onOpenSuiteSettings}
                                   >
-                                    {ctx.reviewActive ? (
+                                    {ctx.reviewActive &&
+                                    resolveIterationJudge(
+                                      workspacePersistedIteration,
+                                      suiteRuns,
+                                    ) ? (
                                       <TrialJudgeReviewPanel
                                         key={workspacePersistedIteration._id}
                                         iterationId={
@@ -4765,7 +4802,11 @@ export function TestTemplateEditor({
                                       />
                                     ) : null}
                                   </CaseJudgeAnswer>
-                                ) : ctx.reviewActive ? (
+                                ) : ctx.reviewActive &&
+                                  resolveIterationJudge(
+                                    workspacePersistedIteration,
+                                    suiteRuns,
+                                  ) ? (
                                   // Keyed by trial: a switch remounts the
                                   // panel, so no read or label state from the
                                   // previous trial survives into this one.

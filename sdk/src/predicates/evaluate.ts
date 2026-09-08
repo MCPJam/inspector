@@ -310,10 +310,25 @@ export function evaluatePredicate(
     case "onlyToolsCalled": {
       // A non-array would make `includes` throw or silently allow substrings,
       // so fail closed rather than grade a malformed predicate.
-      if (!Array.isArray(predicate.toolNames)) {
+      if (
+        !Array.isArray(predicate.toolNames) ||
+        predicate.toolNames.some(
+          (name) => typeof name !== "string" || !name.trim()
+        )
+      ) {
         return fail(
           predicate,
           `onlyToolsCalled requires toolNames (array of tool names)`
+        );
+      }
+      if (
+        (transcript.toolCalls ?? []).some(
+          (call) => typeof call.toolName !== "string" || !call.toolName.trim()
+        )
+      ) {
+        return fail(
+          predicate,
+          "a tool call has no tool name; the allowed set cannot be verified"
         );
       }
       const allowed = new Set(predicate.toolNames);

@@ -1,7 +1,7 @@
 import type { Predicate } from "@/shared/eval-matching";
 import { isTurnScopablePredicateKind } from "@mcpjam/sdk/predicates";
 import { blankPredicate, type PredicateKind } from "@/shared/predicate-kinds";
-import { insertStepAfter, newStepId } from "@/shared/steps";
+import { newStepId } from "@/shared/steps";
 import type { AssertStep, TestStep } from "@/shared/steps";
 
 /** Split predicates into global gates vs scenario asserts for migration UX. */
@@ -36,15 +36,17 @@ export function appendScenarioPredicatesAsAssertSteps(
   idKind = "assert",
 ): TestStep[] {
   if (scenarioAsserts.length === 0) return steps;
-  let next = steps;
-  for (const assertion of scenarioAsserts) {
-    next = insertStepAfter(next, next[next.length - 1]?.id ?? null, {
-      id: newStepId(idKind),
-      kind: "assert",
-      assertion,
-    } satisfies AssertStep);
-  }
-  return next;
+  return [
+    ...steps,
+    ...scenarioAsserts.map(
+      (assertion) =>
+        ({
+          id: newStepId(idKind),
+          kind: "assert",
+          assertion,
+        } satisfies AssertStep),
+    ),
+  ];
 }
 
 /** Remove scenario predicates from a list, keeping global gates only. */

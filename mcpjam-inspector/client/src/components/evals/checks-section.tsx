@@ -389,9 +389,17 @@ function OnlyToolsField({
   availableTools?: string[];
   readOnly: boolean;
 }) {
+  const [toolName, setToolName] = useState("");
   const options = (availableTools ?? []).filter(
     (tool) => !value.includes(tool),
   );
+  const addTool = () => {
+    const name = toolName.trim();
+    if (!readOnly && name && !value.includes(name)) {
+      onChange([...value, name]);
+      setToolName("");
+    }
+  };
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] text-muted-foreground">
@@ -416,6 +424,33 @@ function OnlyToolsField({
             </li>
           ))}
         </ul>
+      ) : null}
+      {!readOnly && !availableTools?.length ? (
+        <div className="flex items-center gap-1.5">
+          <Input
+            aria-label="Allowed tool name"
+            value={toolName}
+            onChange={(event) => setToolName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTool();
+              }
+            }}
+            className="h-7 text-xs"
+            placeholder="Tool name"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={!toolName.trim() || value.includes(toolName.trim())}
+            onClick={addTool}
+          >
+            Allow tool
+          </Button>
+        </div>
       ) : null}
       {readOnly || options.length === 0 ? null : (
         <select

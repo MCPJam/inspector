@@ -909,12 +909,12 @@ export function updateCaseScorer(
   return { mode: current?.mode === "replace" ? "replace" : "extend", list };
 }
 
-/** Removing the last one clears the envelope, matching today's behaviour. */
+/** An empty replace list deliberately keeps suite defaults excluded. */
 export function removeCaseScorer(
   current: CasePredicates | undefined,
   index: number,
 ): CasePredicates | undefined {
   const list = (current?.list ?? []).filter((_, i) => i !== index);
-  if (list.length === 0) return undefined;
+  if (list.length === 0 && current?.mode !== "replace") return undefined;
   return { mode: current?.mode === "replace" ? "replace" : "extend", list };
 }

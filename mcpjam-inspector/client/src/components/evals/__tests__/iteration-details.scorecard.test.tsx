@@ -6,7 +6,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { IterationDetails } from "../iteration-details";
 import type { EvalCase, EvalIteration } from "../types";
 
@@ -201,4 +201,59 @@ describe("IterationDetails — the scorecard layout", () => {
     expect(withProp).toContain("iteration-predicates-section");
     expect(withProp).not.toContain("trace-viewer-scorecard-tab");
   });
+});
+
+it("clears the previous trial's envelope during a switch and after a failed read", async () => {
+  const oldEnvelope = { messages: [], stepResults: [{ stepId: "old" }] };
+  mockGetBlob.mockResolvedValueOnce(oldEnvelope);
+  const renderScorecard = vi.fn(() => <div data-testid="envelope-scorecard" />);
+  const props = {
+    testCase,
+    layoutMode: "full" as const,
+    scorecard: { render: renderScorecard },
+  };
+  const { rerender } = render(
+    <IterationDetails {...props} iteration={iteration} />,
+  );
+  await waitFor(() =>
+    expect(renderScorecard.mock.lastCall?.[0].envelope).toEqual(oldEnvelope),
+  );
+  let reject!: (e: Error) => void;
+  mockGetBlob.mockImplementationOnce(
+    () =>
+      new Promise((_, rej) => {
+        reject = rej;
+      }),
+  );
+  const next = { ...iteration, _id: "iter-2", blob: "trace-2" };
+  rerender(<IterationDetails {...props} iteration={next} />);
+  expect(renderScorecard.mock.lastCall?.[0].envelope).toBeNull();
+  await act(async () => reject(new Error("read failed")));
+  expect(renderScorecard.mock.lastCall?.[0].envelope).toBeNull();
+});
+
+it("shows the scorecard for a model-free pinned tool trial", () => {
+  render(
+    <IterationDetails
+      iteration={{
+        ...iteration,
+        testCaseSnapshot: {
+          ...iteration.testCaseSnapshot!,
+          steps: [
+            {
+              id: "call",
+              kind: "toolCall",
+              serverName: "srv",
+              toolName: "view",
+              arguments: {},
+            },
+          ],
+        },
+      }}
+      testCase={testCase}
+      layoutMode="full"
+      scorecard={scorecard}
+    />,
+  );
+  expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
 });

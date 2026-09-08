@@ -70,3 +70,18 @@ describe("stripScenarioPredicatesFromList", () => {
     ]);
   });
 });
+
+it("appends at the end even when a legacy case has duplicate step ids", () => {
+  const steps = [
+    { id: "duplicate", kind: "prompt" as const, prompt: "first" },
+    { id: "duplicate", kind: "prompt" as const, prompt: "last" },
+  ];
+  const result = appendScenarioPredicatesAsAssertSteps(steps, [
+    { type: "noToolErrors" },
+  ]);
+  expect(result.slice(0, 2)).toEqual(steps);
+  expect(result[2]).toMatchObject({
+    kind: "assert",
+    assertion: { type: "noToolErrors" },
+  });
+});

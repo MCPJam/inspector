@@ -47,7 +47,9 @@ export function CaseJudgeAnswer({
   const judgeConfig = run?.configSnapshot?.judgeConfig?.goalCompletion;
   const enabled = judgeConfig?.enabled !== false;
   const threshold =
-    judgeConfig?.threshold ?? GOAL_COMPLETION_DEFAULTS.threshold;
+    run?.goalCompletion?.threshold ??
+    judgeConfig?.threshold ??
+    GOAL_COMPLETION_DEFAULTS.threshold;
   const gating = judgeConfig?.role === "gating";
   const status = run?.goalCompletionStatus;
 

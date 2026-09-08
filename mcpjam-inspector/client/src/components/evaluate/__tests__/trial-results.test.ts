@@ -506,3 +506,17 @@ describe("honest states", () => {
     }
   });
 });
+
+it.each([
+  ["ok", "passed"],
+  ["fail", "failed"],
+] as const)(
+  "shows live %s before a step result is persisted",
+  (status, state) => {
+    const rows = join(authored, {
+      iteration: { ...iteration({}), status: "running" },
+      liveStepStatusById: new Map([["a1", status]]),
+    });
+    expect(rowByKey(rows, "step:a1").result.state).toBe(state);
+  },
+);

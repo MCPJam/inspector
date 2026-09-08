@@ -188,3 +188,20 @@ describe("TraceViewModeTabs — the Scorecard tab", () => {
     expect(onSelectScorecard).toHaveBeenCalled();
   });
 });
+
+it("does not highlight Chat while the Scorecard tab is selected", () => {
+  render(
+    <TraceViewModeTabs
+      mode="chat"
+      onModeChange={vi.fn()}
+      showScorecardTab
+      scorecardActive
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Scorecard" })).toHaveClass(
+    "bg-accent",
+  );
+  expect(screen.getByRole("button", { name: "Chat" })).not.toHaveClass(
+    "bg-accent",
+  );
+});

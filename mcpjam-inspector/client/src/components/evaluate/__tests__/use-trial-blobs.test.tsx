@@ -138,3 +138,62 @@ describe("useTrialBlobs", () => {
     expect(action).not.toHaveBeenCalled();
   });
 });
+
+it("uses a selected trace outside the first five while keeping the cap", async () => {
+  const iterations = Array.from({ length: 8 }, (_, i) =>
+    iteration(`i${i}`, i + 1),
+  );
+  const { result } = renderHook(() =>
+    useTrialBlobs({
+      iterations,
+      seed: { iterationId: "i7", blob: { seeded: true } as never },
+      enabled: true,
+    }),
+  );
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(action).toHaveBeenCalledTimes(4);
+  expect(result.current.capped).toBe(3);
+  expect(result.current.reads.get("i7")).toMatchObject({
+    state: "ok",
+    blob: { seeded: true },
+  });
+});
+
+it("refreshes skipped rows when the population grows past the cap", async () => {
+  const initial = Array.from({ length: 5 }, (_, i) =>
+    iteration(`i${i}`, i + 1),
+  );
+  const { result, rerender } = renderHook(
+    ({ iterations }) => useTrialBlobs({ iterations, enabled: true }),
+    {
+      initialProps: { iterations: initial },
+    },
+  );
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  rerender({ iterations: [...initial, iteration("new", 6)] });
+  await waitFor(() =>
+    expect(result.current.reads.get("new")).toEqual({ state: "skipped" }),
+  );
+  expect(action).toHaveBeenCalledTimes(5);
+});
+
+it("does not reuse a cached trace after its source changes", async () => {
+  const { result, rerender } = renderHook(
+    ({ blob }) =>
+      useTrialBlobs({
+        iterations: [{ ...iteration("a", 1), blob }],
+        enabled: true,
+      }),
+    { initialProps: { blob: "first" } },
+  );
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  action.mockResolvedValueOnce({ updated: true });
+  rerender({ blob: "second" });
+  await waitFor(() =>
+    expect(result.current.reads.get("a")).toMatchObject({
+      state: "ok",
+      blob: { updated: true },
+    }),
+  );
+  expect(action).toHaveBeenCalledTimes(2);
+});

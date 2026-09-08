@@ -962,6 +962,34 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("offers failure evidence after the first trial and opens Steps", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
+    const trial = {
+      ...baseIteration,
+      _id: "failed-first",
+      blob: "failed-blob",
+      suiteRunId: undefined,
+      result: "failed" as const,
+      testCaseSnapshot: {
+        ...baseIteration.testCaseSnapshot,
+        steps: goldenCaseDoc.steps,
+      },
+    };
+    renderGoldenCase({ observeFirst: true, suiteIterations: [trial] });
+    const button = await screen.findByRole("button", {
+      name: "Open the failed step",
+    });
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.queryByTestId("trial-scorecard")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("mock-trace-viewer")).toHaveAttribute(
+      "data-view-mode",
+      "steps",
+    );
+  });
+
   it("Run test saves the latest keystrokes", async () => {
     activeCaseDoc = goldenCaseDoc;
     const onRunCase = vi.fn();

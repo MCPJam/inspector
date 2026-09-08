@@ -323,7 +323,12 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
     const evidence = replay?.evidence
       ? { step: replay.evidence }
       : undefined;
-    if (fromStep) {
+    const live = !ctx.terminal
+      ? ctx.liveStepStatusById?.get(join.stepId)
+      : undefined;
+    // A synthesized pending replay row carries no result yet. The live event
+    // can already know this step passed or failed while later steps run.
+    if (fromStep && (fromStep.state !== "pending" || !live)) {
       return { ...row, result: fromStep, ...(evidence ? { evidence } : {}) };
     }
     // Older runs recorded no per-step verdict; the predicate row still carries
@@ -342,7 +347,6 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
         };
       }
     }
-    const live = ctx.liveStepStatusById?.get(join.stepId);
     if (live) {
       return {
         ...row,
@@ -350,7 +354,11 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
         ...(evidence ? { evidence } : {}),
       };
     }
-    return { ...row, result: NOT_MEASURED, ...(evidence ? { evidence } : {}) };
+    return {
+      ...row,
+      result: fromStep ?? NOT_MEASURED,
+      ...(evidence ? { evidence } : {}),
+    };
   }
 
   if (join.kind === "predicate") {

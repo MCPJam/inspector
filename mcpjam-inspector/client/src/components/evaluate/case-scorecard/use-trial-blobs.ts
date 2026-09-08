@@ -7,8 +7,7 @@
  * is a page that silently fires a dozen calls, or one that silently offers
  * fewer checks without explaining why.
  *
- * A terminal iteration's blob never changes, so the cache is keyed by id
- * alone and survives tab switches. Failed promises are evicted so a retry can
+ * The cache is keyed by trial and trace source and survives tab switches. Failed promises are evicted so a retry can
  * happen the next time the identity changes.
  */
 
@@ -70,13 +69,20 @@ export function useTrialBlobs({
     () => iterations.filter((it) => it.blob || it.chatSessionId),
     [iterations],
   );
+  const seedId = seed?.iterationId;
   const fetchIds = useMemo(
     () =>
       [...eligible]
-        .sort((a, b) => a.iterationNumber - b.iterationNumber)
+        .sort((a, b) =>
+          a._id === seedId
+            ? -1
+            : b._id === seedId
+            ? 1
+            : a.iterationNumber - b.iterationNumber,
+        )
         .slice(0, max)
         .map((it) => it._id),
-    [eligible, max],
+    [eligible, max, seedId],
   );
   const skipped = useMemo(
     () =>
@@ -89,8 +95,20 @@ export function useTrialBlobs({
 
   const getBlobRef = useRef(getBlob);
   getBlobRef.current = getBlob;
-  const identity = fetchIds.join("|");
-  const seedId = seed?.iterationId;
+  const sourceKey = (id: string) => {
+    const it = iterations.find((it) => it._id === id);
+    return JSON.stringify([id, it?.blob, it?.chatSessionId]);
+  };
+  // Include skipped trials too: the population can grow beyond the cap.
+  const identity = JSON.stringify([
+    iterations.map((it) => [
+      it._id,
+      it.blob,
+      it.chatSessionId,
+      it.iterationNumber,
+    ]),
+    max,
+  ]);
   /**
    * The seeded blob rides a ref, never the effect's deps.
    *
@@ -104,7 +122,7 @@ export function useTrialBlobs({
   seedBlobRef.current = seed?.blob;
 
   useEffect(() => {
-    if (!enabled || fetchIds.length === 0) {
+    if (!enabled) {
       setReads(new Map());
       setLoading(false);
       return;
@@ -112,8 +130,8 @@ export function useTrialBlobs({
     let cancelled = false;
 
     const seeded = seedBlobRef.current;
-    if (seedId && seeded && fetchIds.includes(seedId) && !CACHE.has(seedId)) {
-      remember(seedId, Promise.resolve(seeded));
+    if (seedId && seeded && fetchIds.includes(seedId)) {
+      remember(sourceKey(seedId), Promise.resolve(seeded));
     }
 
     const initial = new Map<string, TrialBlobRead>();
@@ -124,14 +142,15 @@ export function useTrialBlobs({
 
     void Promise.allSettled(
       fetchIds.map((id) => {
-        const cached = CACHE.get(id);
+        const key = sourceKey(id);
+        const cached = CACHE.get(key);
         if (cached) return cached;
         const promise = getBlobRef.current({ iterationId: id });
-        remember(id, promise);
+        remember(key, promise);
         // A rejected promise must not stick in the cache, or the retry the
         // next identity change would have made is answered from the failure.
         promise.catch(() => {
-          if (CACHE.get(id) === promise) CACHE.delete(id);
+          if (CACHE.get(key) === promise) CACHE.delete(key);
         });
         return promise;
       }),

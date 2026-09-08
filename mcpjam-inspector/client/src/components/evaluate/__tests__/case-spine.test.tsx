@@ -552,3 +552,33 @@ function StatefulForm(props: {
     />
   );
 }
+
+it("allows typing an allow-list tool without a connected tool catalog", async () => {
+  const onStepsChange = vi.fn();
+  render(
+    <StatefulSpine
+      steps={[
+        ...promptOnly,
+        {
+          id: "only",
+          kind: "assert",
+          assertion: { type: "onlyToolsCalled", toolNames: [] },
+        },
+      ]}
+      availableTools={[]}
+      onStepsChange={onStepsChange}
+    />,
+  );
+  const row = screen.getByTestId("case-scorecard-row");
+  await userEvent
+    .setup()
+    .click(within(row).getByRole("button", { name: /^Edit / }));
+  const input = screen.getByLabelText("Allowed tool name");
+  await userEvent.setup().type(input, "search");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Allow tool" }));
+  expect(onStepsChange.mock.lastCall?.[0][1].assertion.toolNames).toEqual([
+    "search",
+  ]);
+});

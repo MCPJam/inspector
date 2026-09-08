@@ -78,6 +78,7 @@ export function TrialScorecard({
   judgeSlot,
   scoresSection,
   suggestionsSlot,
+  nextQuestionSlot,
   judgeHidden = false,
   syncedStepId,
   onSyncStep,
@@ -100,6 +101,7 @@ export function TrialScorecard({
    * belong to the editor, and `RunColumn` mounts this component too.
    */
   suggestionsSlot?: ReactNode;
+  nextQuestionSlot?: ReactNode;
   /**
    * True while a reviewer is labelling this trial and has not revealed the
    * judge. The judge row then withholds its score, glyph and rationale — a
@@ -125,6 +127,7 @@ export function TrialScorecard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     authored.steps,
+    authored.numbering,
     authored.toolsChoice,
     authored.kind,
     authored.matchOptions,
@@ -199,6 +202,8 @@ export function TrialScorecard({
       >
         {summaryLine(summary)}
       </p>
+
+      {!judgeHidden ? nextQuestionSlot : null}
 
       {groups.map((group) => (
         <ScorecardGroupSection

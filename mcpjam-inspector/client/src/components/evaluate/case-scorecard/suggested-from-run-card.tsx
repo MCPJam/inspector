@@ -46,7 +46,8 @@ export function SuggestedFromRunCard({
   const [confirmAll, setConfirmAll] = useState(false);
   const visible = showAll ? suggestions : suggestions.slice(0, VISIBLE);
   const hidden = suggestions.length - visible.length;
-  const requirements = suggestions.filter((s) => s.role === "gate").length;
+  const pending = suggestions.filter((s) => !accepted.has(s.key));
+  const requirements = pending.filter((s) => s.role === "gate").length;
 
   const groups = new Map<string, Suggestion[]>();
   for (const suggestion of visible) {
@@ -73,17 +74,17 @@ export function SuggestedFromRunCard({
               : `Held in every trial of the newest batch${of > 0 ? `, and every trial accomplished the goal` : ""}.`}
           </p>
         </div>
-        {suggestions.length >= 2 ? (
+        {pending.length >= 2 ? (
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-7 text-xs"
             onClick={() =>
-              requirements > 0 ? setConfirmAll(true) : onAcceptAll(suggestions)
+              requirements > 0 ? setConfirmAll(true) : onAcceptAll(pending)
             }
           >
-            Add all {suggestions.length}
+            Add all {pending.length}
           </Button>
         ) : null}
       </div>
@@ -127,8 +128,8 @@ export function SuggestedFromRunCard({
           <p className="text-foreground">
             Add {requirements}{" "}
             {requirements === 1 ? "requirement" : "requirements"} and{" "}
-            {suggestions.length - requirements}{" "}
-            {suggestions.length - requirements === 1 ? "report" : "reports"}?
+            {pending.length - requirements}{" "}
+            {pending.length - requirements === 1 ? "report" : "reports"}?
             Requirements fail this case on future runs when they are not met.
           </p>
           <div className="flex gap-1.5">
@@ -138,7 +139,7 @@ export function SuggestedFromRunCard({
               className="h-7 text-xs"
               onClick={() => {
                 setConfirmAll(false);
-                onAcceptAll(suggestions);
+                onAcceptAll(pending);
               }}
             >
               Add all

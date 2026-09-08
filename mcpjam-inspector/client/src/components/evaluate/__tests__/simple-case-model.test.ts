@@ -810,3 +810,24 @@ describe("writeSimpleCase on an empty draft", () => {
     expect(next[0]).toMatchObject({ kind: "prompt", prompt: "hi" });
   });
 });
+
+it("no-tool authoring removes advisory toolCalledWith assertions too", () => {
+  const steps = [
+    prompt("p", "hi"),
+    toolCalledWith("gate", "search"),
+    {
+      id: "report",
+      kind: "assert" as const,
+      assertion: {
+        type: "toolCalledWith" as const,
+        toolName: "search",
+        args: { args: {} },
+        role: "advisory" as const,
+        severity: "info" as const,
+      },
+    },
+  ];
+  expect(
+    writeSimpleCase(steps, { prompt: "hi", tools: [], noTool: true }),
+  ).toEqual([steps[0]]);
+});

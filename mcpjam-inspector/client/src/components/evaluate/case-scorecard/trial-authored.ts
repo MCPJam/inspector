@@ -34,7 +34,7 @@ import type {
 } from "@/components/evals/types";
 import type { SelectedTrial } from "../case-workspace/selected-trial";
 import { trialMatchesDraft } from "../case-workspace/selected-trial";
-import type { TestStep } from "@/shared/steps";
+import { promptTurnsToSteps, type TestStep } from "@/shared/steps";
 import { isToolCalledWithAssert } from "../simple-case/simple-case-model";
 import type { CaseScorecardInput } from "./case-scorecard-model";
 
@@ -118,13 +118,18 @@ export function authoredForTrial(input: {
 
   const iteration = trial.iteration;
   const snapshot = iteration.testCaseSnapshot;
+  const frozenSteps =
+    snapshot?.steps ??
+    (snapshot?.promptTurns
+      ? promptTurnsToSteps(snapshot.promptTurns)
+      : undefined);
   const frozenJudge: EvalJudgeConfig | undefined =
     input.run?.configSnapshot?.judgeConfig ?? input.draft.suiteJudgeConfig;
 
   return {
     authored: {
       ...input.draft,
-      steps: snapshot?.steps ?? input.draft.steps,
+      steps: frozenSteps ?? input.draft.steps,
       matchOptions: snapshot?.matchOptions ?? input.draft.matchOptions,
       /**
        * The tool question as the TRIAL froze it, not as the case reads today.
@@ -138,9 +143,9 @@ export function authoredForTrial(input: {
       toolsChoice: snapshot
         ? snapshot.isNegativeTest
           ? "noTool"
-          : snapshotHasRouteTools(snapshot.steps)
-            ? "tools"
-            : "unset"
+          : snapshotHasRouteTools(frozenSteps)
+          ? "tools"
+          : "unset"
         : input.draft.toolsChoice,
       expectedOutput: snapshot?.expectedOutput ?? undefined,
       // Both are superseded by the resolved list; passing it as

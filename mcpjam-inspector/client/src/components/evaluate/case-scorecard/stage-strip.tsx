@@ -70,6 +70,7 @@ export function StageStrip({
                 data-testid={`stage-chip-${stage}`}
                 data-state={state}
                 aria-pressed={active}
+                aria-label={`${USER_VALUE_STAGE_LABELS[stage]}: ${STAGE_STATE_LABELS[state]}`}
                 onClick={() => setOpenStage(active ? null : stage)}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]",

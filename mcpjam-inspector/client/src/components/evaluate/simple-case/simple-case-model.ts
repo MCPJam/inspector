@@ -437,7 +437,17 @@ export function writeSimpleCase(
   if (view.noTool) {
     // Negative applies to every model turn (and the backend rejects a negative
     // case that kept any `toolCalledWith`), so this drops them list-wide.
-    return [...lead, ...rest.filter((step) => !isToolCalledWithAssert(step))];
+    return [
+      ...lead,
+      ...rest.filter(
+        (step) =>
+          !(
+            step.kind === "assert" &&
+            "type" in step.assertion &&
+            step.assertion.type === "toolCalledWith"
+          ),
+      ),
+    ];
   }
 
   const prevTools = rest.filter(isToolCalledWithAssert);

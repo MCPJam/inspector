@@ -73,7 +73,7 @@ export function TraceViewModeTabs({
   const segment = appearance === "segment";
   // When the App or Steps tab is active no standard tab is highlighted.
   const standardActive = (m: TraceViewMode) =>
-    !browserActive && !stepsActive && mode === m;
+    !browserActive && !stepsActive && !scorecardActive && mode === m;
 
   const handleModeChange = (nextMode: TraceViewMode) => {
     track("trace_view_mode_changed", {

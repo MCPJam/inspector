@@ -241,6 +241,7 @@ export function IterationDetails({
   trialChainSlot,
   scorecard,
   trialVerdictWord,
+  requestedTab,
   syncedStepId,
   onSyncStep,
 }: {
@@ -291,6 +292,7 @@ export function IterationDetails({
    * the same screen.
    */
   trialVerdictWord?: string;
+  requestedTab?: { iterationId: string; mode: "steps" | "scorecard" } | null;
   /**
    * Step cursor shared with a host that lists the authored steps beside this
    * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
@@ -313,7 +315,17 @@ export function IterationDetails({
     "testSuites:getTestIterationBlob" as any,
   ) as unknown as (args: { iterationId: string }) => Promise<any>;
 
-  const [blob, setBlob] = useState<any>(null);
+  const traceIdentity = JSON.stringify([
+    iteration._id,
+    iteration.blob,
+    iteration.chatSessionId,
+  ]);
+  const [loadedBlob, setLoadedBlob] = useState<{
+    identity: string;
+    data: any;
+  } | null>(null);
+  // Gate on identity during render, before the fetching effect can run.
+  const blob = loadedBlob?.identity === traceIdentity ? loadedBlob.data : null;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blobRetryTick, setBlobRetryTick] = useState(0);
@@ -379,6 +391,16 @@ export function IterationDetails({
   }, [iteration.testCaseSnapshot]);
   const hasSteps = snapshotSteps.length > 0;
 
+  useEffect(() => {
+    if (requestedTab?.iterationId === iteration._id) {
+      setPreviewTraceMode(
+        requestedTab.mode === "steps" && !hasSteps
+          ? "scorecard"
+          : requestedTab.mode,
+      );
+    }
+  }, [requestedTab, iteration._id, hasSteps]);
+
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
   // either being present and re-runs when either changes.
@@ -389,7 +411,7 @@ export function IterationDetails({
     async function run() {
       if (!traceSourceKey) {
         prevBlobIdRef.current = undefined;
-        setBlob(null);
+        setLoadedBlob(null);
         setLoading(false);
         setError(null);
         return;
@@ -398,6 +420,7 @@ export function IterationDetails({
         prevBlobIdRef.current = traceSourceKey;
         setIsBlobErrorDetailsOpen(false);
       }
+      setLoadedBlob(null);
       setLoading(true);
       setError(null);
       try {
@@ -406,7 +429,7 @@ export function IterationDetails({
         // otherwise reads from `iteration.blob`. Both paths return the
         // same envelope shape to `TraceViewer`.
         const data = await getBlob({ iterationId: iteration._id });
-        if (!cancelled) setBlob(data);
+        if (!cancelled) setLoadedBlob({ identity: traceIdentity, data });
       } catch (e: any) {
         if (!cancelled) {
           setError(e?.message || "Failed to load blob");
@@ -420,7 +443,7 @@ export function IterationDetails({
     return () => {
       cancelled = true;
     };
-  }, [traceSourceKey, getBlob, blobRetryTick]);
+  }, [traceSourceKey, traceIdentity, getBlob, blobRetryTick]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -1221,7 +1244,7 @@ export function IterationDetails({
 
       {caseInsightFallback}
 
-      {isProbe ? (
+      {isProbe && !scorecard ? (
         <>
           {predicatesSection}
           {scoresSection}

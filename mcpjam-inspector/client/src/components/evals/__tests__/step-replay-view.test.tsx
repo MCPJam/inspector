@@ -364,3 +364,31 @@ describe("StepReplayView — scorecard presentation", () => {
     ).toContain("1 of 2 checks passed");
   });
 });
+
+it("reports advisory misses when the trial has no gating checks", () => {
+  render(
+    <StepReplayView
+      steps={[
+        steps[0],
+        {
+          id: "warn",
+          kind: "assert",
+          assertion: {
+            type: "noToolErrors",
+            role: "advisory",
+            severity: "warn",
+          },
+        },
+      ]}
+      presentation="scorecard"
+      verdict="passed"
+      stepStatusById={new Map([["warn", "fail"]])}
+    />,
+  );
+  expect(screen.getByTestId("steps-verdict-header")).toHaveTextContent(
+    "1 warn",
+  );
+  expect(screen.getByTestId("steps-verdict-header")).not.toHaveTextContent(
+    "check passed",
+  );
+});

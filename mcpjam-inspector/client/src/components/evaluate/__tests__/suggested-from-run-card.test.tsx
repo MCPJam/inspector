@@ -251,3 +251,19 @@ describe("always", () => {
     ).toBeTruthy();
   });
 });
+
+it("Add all excludes already accepted checks from counts and payload", async () => {
+  const pending = [
+    suggestion({ key: "k2" }),
+    suggestion({ key: "k3", role: "report" }),
+  ];
+  const { onAcceptAll } = renderCard({
+    suggestions: [suggestion(), ...pending],
+    accepted: new Set(["k1"]),
+  });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Add all 2" }));
+  expect(screen.getByText(/1 requirement and 1 report/)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Add all" }));
+  expect(onAcceptAll).toHaveBeenCalledWith(pending);
+});

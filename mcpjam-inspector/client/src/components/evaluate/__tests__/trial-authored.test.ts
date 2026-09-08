@@ -215,3 +215,18 @@ describe("a frozen trial keeps the route it was graded against", () => {
     expect(authored.toolsChoice).toBe("unset");
   });
 });
+
+it("reads frozen promptTurns when a historical trial predates steps", () => {
+  const result = authoredForTrial({
+    trial: persisted({
+      promptTurns: [{ prompt: "original question", expectedToolCalls: [] }],
+    }),
+    draft,
+    run: null,
+    forceSnapshot: true,
+  });
+  expect(result.authored.steps[0]).toMatchObject({
+    kind: "prompt",
+    prompt: "original question",
+  });
+});
