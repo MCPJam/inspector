@@ -18,6 +18,7 @@ import type { Predicate } from "@mcpjam/sdk/predicates";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import { SYNTHETIC_MONITOR_KINDS } from "./predicate-kind-meta";
 import {
+  LEGACY_PREDICATE_KINDS,
   NEW_SCORER_KINDS,
   scorerLibraryCategories,
   type ScorerLibraryCategory,
@@ -25,11 +26,18 @@ import {
 
 export function SuiteScorerLibraryMenu({
   onAdd,
+  authorableKinds,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
+  /**
+   * The kinds this deployment accepts (`authorablePredicateKinds`). Offering
+   * a kind the backend rejects turns "Add scorer" into a failed save, and one
+   * an older runner cannot evaluate fails closed on every trial.
+   */
+  authorableKinds?: readonly Predicate["type"][];
 }) {
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
-  const categories = scorerLibraryCategories().map((category) => ({
+  const categories = scorerLibraryCategories(authorableKinds ?? LEGACY_PREDICATE_KINDS).map((category) => ({
     ...category,
     kinds: category.kinds.filter(
       (kind) =>

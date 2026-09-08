@@ -102,6 +102,45 @@ function resolveFinalMessage(transcript: IterationTranscript): string {
 }
 
 /**
+ * Does the final assistant message end by asking the user something?
+ *
+ * Reads the LAST NON-EMPTY LINE and asks whether it ends in `?`. Trailing
+ * blank lines and a trailing citation block are common enough that testing the
+ * raw string's last character would miss real questions; going line-by-line
+ * from the end is the cheapest rule that survives both.
+ *
+ * An empty message is `false` — there is no question in nothing. That keeps
+ * this honest as the producer of the run-level `endedWithQuestion` fact, which
+ * is written for EVERY trial whether or not anybody authored the check, so the
+ * route-facts rate stops being permanently `notMeasured`.
+ *
+ * It cannot tell an offer from a request for missing input. That is the whole
+ * reason `noEndingQuestion` is an observation.
+ */
+export function finalMessageEndsWithQuestion(
+  message: string | undefined | null
+): boolean {
+  if (typeof message !== "string") return false;
+  const lines = message.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim() ?? "";
+    if (line.length === 0) continue;
+    return line.endsWith("?");
+  }
+  return false;
+}
+
+/** The last non-empty line, capped, for a reason string. */
+function lastNonEmptyLine(message: string): string {
+  const lines = message.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim() ?? "";
+    if (line.length > 0) return line;
+  }
+  return "";
+}
+
+/**
  * The render observations a `widget*` predicate evaluates over: all of the
  * iteration's observations, narrowed to `toolName` when the predicate sets it.
  * Every `widget*` predicate fails closed on an empty scope — no observations
@@ -554,6 +593,25 @@ export function evaluatePredicate(
       return fail(
         predicate,
         `${totalErrors} console error(s) across ${offenders.length}/${scope.length} observation(s); first: ${first}`
+      );
+    }
+
+    case "noEndingQuestion": {
+      const message = resolveFinalMessage(transcript);
+      if (!finalMessageEndsWithQuestion(message)) {
+        return pass(predicate, "final message did not end with a question");
+      }
+      // The reason quotes what was seen and stops there. It does NOT say
+      // "clarifying question" or "incomplete answer": this check cannot tell
+      // an offer from a request for missing input, and a reason that claimed
+      // otherwise would put a judgement on the author's screen that the
+      // evidence does not carry.
+      return fail(
+        predicate,
+        `final message ended with a question: "${truncate(
+          lastNonEmptyLine(message),
+          MAX_VALUE_CHARS
+        )}"`
       );
     }
 

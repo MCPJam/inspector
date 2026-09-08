@@ -443,6 +443,15 @@ function CheckFields({
           Passes when the final assistant message contains non-whitespace text.
         </div>
       );
+    case "noEndingQuestion":
+      return (
+        <div className="text-xs text-muted-foreground">
+          Notices answers whose last non-empty line ends with a question mark.
+          It cannot tell an offer ("Would you like a breakdown?") from a request
+          for something missing, so it reports what it saw and never fails a
+          trial.
+        </div>
+      );
     case "tokenBudgetUnder":
       return (
         <TokenBudgetField

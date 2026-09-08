@@ -355,6 +355,8 @@ export function summarizePredicate(predicate: Predicate): string {
         return `no widget console errors${
           predicate.toolName ? ` for "${predicate.toolName}"` : ""
         }`;
+      case "noEndingQuestion":
+        return "final message does not end with a question";
     }
   } catch {
     // A row whose `type` is valid but whose payload is missing/wrong (corruption,

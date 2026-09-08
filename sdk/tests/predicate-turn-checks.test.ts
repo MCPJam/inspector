@@ -8,6 +8,7 @@ import {
   isTurnScopablePredicateKind,
   TURN_SCOPABLE_PREDICATE_KINDS,
 } from "../src/predicates/types";
+import { PREDICATE_KINDS } from "../src/contract/grader-stage";
 
 // Per-turn checks reuse the whole-iteration evaluator against a turn-scoped
 // slice. These tests prove the slice makes positional checks resolve to the
@@ -115,7 +116,17 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
     expect(isTurnScopablePredicateKind("noToolErrors")).toBe(true);
     expect(isTurnScopablePredicateKind("tokenBudgetUnder")).toBe(false);
     expect(TURN_SCOPABLE_PREDICATE_KINDS).not.toContain("tokenBudgetUnder");
-    // 12 predicate kinds total, exactly one (tokenBudgetUnder) is case-only.
-    expect(TURN_SCOPABLE_PREDICATE_KINDS).toHaveLength(11);
+    expect(isTurnScopablePredicateKind("noEndingQuestion")).toBe(true);
+    // Pinned as the COMPLEMENT of the case-only kinds rather than as a count:
+    // a bare number went stale the moment the union grew past 12, and said
+    // nothing about which kinds it was counting. Case-only means the claim is
+    // meaningless against a single turn's slice — a per-turn token total is
+    // not captured, and a turn's own turn count is always 1.
+    expect([...TURN_SCOPABLE_PREDICATE_KINDS].sort()).toEqual(
+      (PREDICATE_KINDS as readonly string[])
+        .filter((kind) => !["tokenBudgetUnder", "turnCountUnder"].includes(kind))
+        .slice()
+        .sort(),
+    );
   });
 });

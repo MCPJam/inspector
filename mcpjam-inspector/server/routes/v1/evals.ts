@@ -65,6 +65,7 @@ import {
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
   parseSuiteGatePolicyForAuthoring,
+  PREDICATE_KINDS,
   suiteGatePolicySchema,
   suiteGateReportSchema,
 } from "@mcpjam/sdk/contract";
@@ -1904,7 +1905,27 @@ function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
 
 // Public "checks" are whole-run global gates (`defaultPredicates` / case
 // `predicates` envelope). Scenario checks belong in `steps` as assert steps.
-const publicCheckSchema = z.object({ type: z.string().min(1) }).passthrough();
+//
+// `type` is CLOSED against the kinds this build can evaluate. It used to be
+// any non-empty string, which meant a typo or a kind from a newer client was
+// accepted, persisted, and then failed closed as "unknown predicate type" on
+// every trial of every run of that suite — a red suite whose cause is three
+// layers away from the mistake. A 400 at the write boundary names it where it
+// happened. The rest of the object stays `passthrough`: the per-kind fields
+// are validated by the Convex mutation's own `assertValidPredicate`, and
+// restating them here is a second copy that will drift.
+const publicCheckSchema = z
+  .object({
+    type: z
+      .string()
+      .min(1)
+      .refine((type) => (PREDICATE_KINDS as readonly string[]).includes(type), {
+        message:
+          "unknown check type; this deployment evaluates: " +
+          [...PREDICATE_KINDS].sort().join(", "),
+      }),
+  })
+  .passthrough();
 
 // ── Case DTO ─────────────────────────────────────────────────────────
 

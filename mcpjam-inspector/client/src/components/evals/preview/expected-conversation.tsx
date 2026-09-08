@@ -47,6 +47,8 @@ export function describeCheck(p: Predicate): string {
       return `renders < ${p.ms}ms`;
     case "widgetNoConsoleErrors":
       return "no console errors";
+    case "noEndingQuestion":
+      return "no ending question";
     default:
       return (p as { type: string }).type;
   }

@@ -4,11 +4,31 @@
 
 import type { Predicate } from "@/shared/eval-matching";
 import {
+  isObservationPredicateKind,
   isTurnScopablePredicateKind,
+  OBSERVATION_PREDICATE_KINDS,
   TURN_SCOPABLE_PREDICATE_KINDS,
 } from "@mcpjam/sdk/predicates";
 
+export { isObservationPredicateKind, OBSERVATION_PREDICATE_KINDS };
+
 export type PredicateKind = Predicate["type"];
+
+/**
+ * The roles this kind's authoring control may offer.
+ *
+ * An observation is a heuristic, and a heuristic must not decide a release —
+ * so Gate is not a segment it can reach. The schema refuses a gating
+ * observation on save; withholding the segment means an author never gets to
+ * click a control that is going to be rejected.
+ */
+export function rolesForPredicateKind(
+  kind: PredicateKind,
+): readonly ("gate" | "warn" | "report")[] {
+  return isObservationPredicateKind(kind)
+    ? (["warn", "report"] as const)
+    : (["gate", "warn", "report"] as const);
+}
 
 export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   toolCalledWith: "Tool was called with…",
@@ -27,6 +47,10 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   // `turnCountUnder: 3` passes at 2 turns and fails at 3. "Maximum 3" would
   // read as inclusive and mislead every author who set it.
   turnCountUnder: "Fewer than N user turns",
+  // Says what was SEEN, not what it means. "Ended by asking the user
+  // something" is true of an offer and of a request for a missing parameter,
+  // and this label must not pick one — the check cannot tell them apart.
+  noEndingQuestion: "Final message does not end with a question",
 };
 
 /**
@@ -67,6 +91,7 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "widgetRendered",
   "widgetRenderLatencyUnder",
   "widgetNoConsoleErrors",
+  "noEndingQuestion",
 ];
 
 export const SYNTHETIC_MONITOR_KINDS: ReadonlySet<PredicateKind> = new Set([
@@ -192,6 +217,11 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "widgetRenderLatencyUnder", ms: 3000 };
     case "widgetNoConsoleErrors":
       return { type: "widgetNoConsoleErrors" };
+    // Observations seed advisory because that is the only role they may
+    // carry — the schema refuses a gating one, so a blank that omitted the
+    // role would fail the very first save.
+    case "noEndingQuestion":
+      return { type: "noEndingQuestion", role: "advisory" };
   }
 }
 

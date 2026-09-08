@@ -850,6 +850,21 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   },
                                   required: ["type", "turns"],
                                 },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
+                                      const: "noEndingQuestion",
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type"],
+                                },
                               ],
                             },
                             {
@@ -1037,6 +1052,15 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   },
                   required: ["type", "turns"],
                 },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noEndingQuestion" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
+                },
               ],
             },
           },
@@ -1209,6 +1233,15 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "turns"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "noEndingQuestion" },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type"],
                 },
               ],
             },

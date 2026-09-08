@@ -485,6 +485,8 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 | `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
 | `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
 | `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
+| `turnCountUnder` | `turns` | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
+| `noEndingQuestion` | — | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Warn/Report only — `role: "advisory"` is required and a gating one is refused. |
 
 #### ArgMatcher
 

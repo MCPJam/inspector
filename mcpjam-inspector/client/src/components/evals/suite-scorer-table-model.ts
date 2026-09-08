@@ -38,7 +38,57 @@ import {
 } from "./suite-grading-model";
 
 /** Kinds the library may advertise as new. Empty until a later release. */
-export const NEW_SCORER_KINDS: readonly PredicateKind[] = [];
+/**
+ * Kinds a "New" chip marks in the scorer library.
+ *
+ * Not a changelog — the chip earns its place only while a kind is new enough
+ * that an author who knows the library would not expect it. Prune it.
+ */
+export const NEW_SCORER_KINDS: readonly PredicateKind[] = ["noEndingQuestion"];
+
+/**
+ * The kinds every deployment has accepted since before `scorers.predicateKinds`
+ * existed.
+ *
+ * The fallback when a backend does not advertise its accepted set: offering a
+ * kind an older validator rejects turns "Add scorer" into a save that fails,
+ * and offering one an older RUNNER cannot evaluate is worse — it fails closed
+ * as "unknown predicate type" on every trial of the run.
+ *
+ * Frozen by definition. New kinds are advertised, never added here.
+ */
+export const LEGACY_PREDICATE_KINDS: readonly PredicateKind[] = [
+  "toolCalledWith",
+  "toolCalledAtLeastOnce",
+  "toolNeverCalled",
+  "firstToolWas",
+  "responseContains",
+  "responseMatches",
+  "noToolErrors",
+  "finalAssistantMessageNonEmpty",
+  "tokenBudgetUnder",
+  "turnCountUnder",
+  "widgetRendered",
+  "widgetRenderLatencyUnder",
+  "widgetNoConsoleErrors",
+];
+
+/**
+ * The kinds to offer, given what the backend said it accepts.
+ *
+ * `undefined` (an older deployment, or capabilities that failed to load) ⇒ the
+ * legacy set. A kind the client does not know is dropped: advertising it does
+ * not teach this build how to author it.
+ */
+export function authorablePredicateKinds(
+  advertised: readonly string[] | undefined,
+): readonly PredicateKind[] {
+  if (!advertised) return LEGACY_PREDICATE_KINDS;
+  const accepted = new Set(advertised);
+  return (PREDICATE_KINDS as readonly PredicateKind[]).filter((kind) =>
+    accepted.has(kind),
+  );
+}
 
 export type ScorerUiRole = "gate" | "warn" | "report";
 

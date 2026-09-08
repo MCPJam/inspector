@@ -29,6 +29,7 @@ import {
 } from "./suite-judge-card";
 import {
   ROLE_LEGEND,
+  authorablePredicateKinds,
   buildScorerTable,
   withGoalCompletionRole,
   withPredicateRole,
@@ -36,6 +37,7 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { groupGradersByStage } from "./suite-grading-model";
+import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig } from "./types";
 
 export function SuiteScorerTable({
@@ -95,6 +97,9 @@ export function SuiteScorerTable({
   );
   const [matchEditorOpen, setMatchEditorOpen] = useState(false);
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
+  const authorableKinds = authorablePredicateKinds(
+    capabilities?.scorers?.predicateKinds,
+  );
   const judgeDisabledReason = gateSwitchDisabledReason(
     capabilities?.judge,
     unavailableReason,
@@ -139,6 +144,7 @@ export function SuiteScorerTable({
             <p className="text-sm text-muted-foreground">{passOrFailHint}</p>
           </div>
           <SuiteScorerLibraryMenu
+            authorableKinds={authorableKinds}
             onAdd={(kind) =>
               onPredicatesChange((previous) => [
                 ...previous,
@@ -601,13 +607,16 @@ function RoleCell({
     if (!checkPolicy) {
       return <RoleChip role="gate" />;
     }
+    // Observations get two segments, the same way groundedness does: a
+    // heuristic must not decide a release, and offering a Gate the schema is
+    // going to refuse is a control that lies.
     return (
       <div
         role="group"
         aria-label="Check role"
         className="inline-flex rounded-md border border-border/60"
       >
-        {(["gate", "warn", "report"] as const).map((role) => (
+        {rolesForPredicateKind(predicate.type).map((role) => (
           <RoleSegment
             key={role}
             pressed={row.role === role}

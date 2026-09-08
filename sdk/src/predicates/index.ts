@@ -9,6 +9,7 @@ export {
   evaluatePredicates,
   allPredicatesPassed,
   evaluateTurnChecks,
+  finalMessageEndsWithQuestion,
   type TurnChecksInput,
 } from "./evaluate.js";
 export { argMatch } from "./argMatcher.js";
@@ -48,6 +49,8 @@ export {
   PREDICATE_PLACEHOLDER_STRINGS,
   TURN_SCOPABLE_PREDICATE_KINDS,
   isTurnScopablePredicateKind,
+  OBSERVATION_PREDICATE_KINDS,
+  isObservationPredicateKind,
 } from "./types.js";
 export {
   CHECK_POLICY_KEYS,

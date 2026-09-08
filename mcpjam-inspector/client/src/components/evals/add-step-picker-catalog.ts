@@ -242,6 +242,15 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
     keywords: ["tool", "error", "mcp", "transport"],
     choice: { kind: "check", predicateKind: "noToolErrors" },
   },
+  {
+    key: "check:noEndingQuestion",
+    group: "health",
+    tier: "secondary",
+    label: labelForInlineAssert("noEndingQuestion"),
+    hint: "Reports; never fails a trial",
+    keywords: ["question", "clarify", "ask", "answer", "ending"],
+    choice: { kind: "check", predicateKind: "noEndingQuestion" },
+  },
 ];
 
 export function primaryItems(): PickerCatalogEntry[] {

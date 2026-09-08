@@ -7,8 +7,11 @@
  * the property a CI release gate requires and a stochastic LLM judge cannot
  * provide. The `serverQuality` LLM judge remains the advisory **insight** layer.
  *
- * The union is intentionally small (12 types). It grows only when a real corpus
- * task demands a new one — not speculatively.
+ * The union grows only when a real corpus task demands a new kind — not
+ * speculatively. Kinds split three ways by METHOD, and the method decides
+ * what a kind may claim: measurement against an author-set threshold,
+ * deterministic validation, or a heuristic. Heuristics are named in
+ * {@link OBSERVATION_PREDICATE_KINDS} and may never gate.
  *
  * Hosted in `@mcpjam/sdk` (browser-safe; reuses the `../matchers` argument
  * engine) so the inspector GUI runner and the `mcpjam cloud eval` CLI share one
@@ -105,6 +108,17 @@ export type Predicate = (
    * met budget.
    */
   | { type: "turnCountUnder"; turns: number }
+  /**
+   * OBSERVATION. The final assistant message does not end with a question.
+   *
+   * What it sees is exactly what it says: the last non-empty line of the final
+   * message, and whether it ends in `?`. It does NOT distinguish an answer that
+   * stopped to ask for a missing parameter from a complete answer that ends by
+   * offering more ("Would you like a breakdown?"), and the label must never
+   * call it "clarifying". Report-only for that reason; the corpus holds both
+   * shapes.
+   */
+  | { type: "noEndingQuestion" }
 ) & CheckPolicy;
 
 /** The `type` discriminants of {@link Predicate}, for validators. */
@@ -133,6 +147,7 @@ export const TURN_SCOPABLE_PREDICATE_KINDS = [
   "widgetRendered",
   "widgetRenderLatencyUnder",
   "widgetNoConsoleErrors",
+  "noEndingQuestion",
 ] as const satisfies readonly PredicateType[];
 
 export function isTurnScopablePredicateKind(kind: string): boolean {
@@ -158,6 +173,32 @@ export function requiresRenderObservations(kind: string): boolean {
   return (RENDER_OBSERVATION_PREDICATE_KINDS as readonly string[]).includes(
     kind
   );
+}
+
+/**
+ * OBSERVATION kinds — heuristics, not objective quality tests.
+ *
+ * Each of these is a pattern that can be right about what it saw and still be
+ * wrong about what it means. "Ends with a question" is true of "Would you like
+ * a breakdown?"; an identical repeat is what a poll loop looks like; a full
+ * page is not proof that more results exist. A deterministic implementation
+ * does not make any of that an objective grade.
+ *
+ * So the policy is one rule carried through validation and presentation:
+ * an observation kind is **Warn or Report only**. It is refused as gating at
+ * the write boundary (here, and in the backend's `assertValidPredicate`), it
+ * is not offered a Gate segment in the UI, it is never promoted into
+ * `expectedToolCalls`, and it never enters `allGatingScorersPassed`.
+ *
+ * Mirrored in `mcpjam-backend/convex/lib/predicates.ts`
+ * (`OBSERVATION_PREDICATE_KINDS`) and proven by the shared parity fixtures.
+ */
+export const OBSERVATION_PREDICATE_KINDS = [
+  "noEndingQuestion",
+] as const satisfies readonly PredicateType[];
+
+export function isObservationPredicateKind(kind: string): boolean {
+  return (OBSERVATION_PREDICATE_KINDS as readonly string[]).includes(kind);
 }
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────
@@ -294,6 +335,10 @@ export const predicateUnion = z.discriminatedUnion("type", [
     turns: z.number().int().positive(),
     ...checkPolicyShape,
   }),
+  z.object({
+    type: z.literal("noEndingQuestion"),
+    ...checkPolicyShape,
+  }),
 ]);
 
 /**
@@ -307,6 +352,18 @@ export const predicateSchema = predicateUnion.superRefine((value, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ["severity"],
       message: 'severity requires role: "advisory"',
+    });
+  }
+  // An observation kind is a heuristic; a heuristic must not decide a release.
+  // Refused at the schema rather than only hidden in the UI, so a CLI author,
+  // a suite file and an API caller all hit the same rule.
+  if (isObservationPredicateKind(value.type) && value.role !== "advisory") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["role"],
+      message:
+        `"${value.type}" is an observation (a heuristic) and cannot gate; ` +
+        'set role: "advisory"',
     });
   }
 });

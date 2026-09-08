@@ -80,6 +80,12 @@ export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
   widgetRendered: "userValue",
   widgetRenderLatencyUnder: "userValue",
   widgetNoConsoleErrors: "userValue",
+  // An answer that ends by asking the user something is a statement about
+  // what the person walked away with, so it files here — as an OBSERVATION,
+  // which is a policy fact (`OBSERVATION_PREDICATE_KINDS`) rather than a
+  // routing one. Advisory rows never decide a stage, so this entry places the
+  // grader on the settings page and nothing more.
+  noEndingQuestion: "userValue",
 };
 
 /**
