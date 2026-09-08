@@ -4,6 +4,7 @@ import {
   captureAppSignInReturnPath,
   clearAppSignInReturnPath,
   consumeAppSignInReturnPath,
+  queueProjectSignInReturnPath,
   readAppSignInReturnPath,
   writeAppSignInReturnPath,
 } from "../app-signin-return-path";
@@ -21,7 +22,7 @@ describe("generic app sign-in return path", () => {
     // not to the app's front door with a project resolved from storage.
     writeAppSignInReturnPath(`/p/${A}/evals/suite/s1?view=runs#case-3`, NOW);
     expect(readAppSignInReturnPath(NOW)).toBe(
-      `/p/${A}/evals/suite/s1?view=runs#case-3`
+      `/p/${A}/evals/suite/s1?view=runs#case-3`,
     );
   });
 
@@ -29,6 +30,16 @@ describe("generic app sign-in return path", () => {
     window.history.replaceState({}, "", `/p/${A}/servers?a=1#b`);
     captureAppSignInReturnPath();
     expect(readAppSignInReturnPath()).toBe(`/p/${A}/servers?a=1#b`);
+  });
+
+  it("queues scoped AuthKit returns but leaves unscoped returns immediate", () => {
+    const path = `/p/${A}/evals?view=runs#case-3`;
+    expect(queueProjectSignInReturnPath(path)).toBe(true);
+    expect(readAppSignInReturnPath()).toBe(path);
+
+    clearAppSignInReturnPath();
+    expect(queueProjectSignInReturnPath("/servers")).toBe(false);
+    expect(readAppSignInReturnPath()).toBeNull();
   });
 
   it("is consumed exactly once", () => {
@@ -40,11 +51,11 @@ describe("generic app sign-in return path", () => {
 
   it("expires", () => {
     writeAppSignInReturnPath("/servers", NOW);
-    expect(readAppSignInReturnPath(NOW + APP_SIGN_IN_RETURN_PATH_TTL_MS - 1)).toBe(
-      "/servers"
-    );
     expect(
-      readAppSignInReturnPath(NOW + APP_SIGN_IN_RETURN_PATH_TTL_MS + 1)
+      readAppSignInReturnPath(NOW + APP_SIGN_IN_RETURN_PATH_TTL_MS - 1),
+    ).toBe("/servers");
+    expect(
+      readAppSignInReturnPath(NOW + APP_SIGN_IN_RETURN_PATH_TTL_MS + 1),
     ).toBeNull();
   });
 
@@ -66,7 +77,7 @@ describe("generic app sign-in return path", () => {
     writeAppSignInReturnPath("/servers", NOW);
     sessionStorage.setItem(
       "mcpjam_app_signin_return_path_v1",
-      JSON.stringify({ path: "https://evil.example", storedAt: NOW })
+      JSON.stringify({ path: "https://evil.example", storedAt: NOW }),
     );
     expect(readAppSignInReturnPath(NOW)).toBeNull();
   });
@@ -74,7 +85,13 @@ describe("generic app sign-in return path", () => {
   it("does not store the sign-in entry points themselves", () => {
     // Restoring one of these would loop the user back into the flow they
     // just completed.
-    for (const path of ["/callback", "/login", "/oauth/callback/debug", "/", "/?x=1"]) {
+    for (const path of [
+      "/callback",
+      "/login",
+      "/oauth/callback/debug",
+      "/",
+      "/?x=1",
+    ]) {
       writeAppSignInReturnPath(path, NOW);
       expect(readAppSignInReturnPath(NOW), path).toBeNull();
     }

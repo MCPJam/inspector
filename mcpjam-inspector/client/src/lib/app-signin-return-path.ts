@@ -21,7 +21,7 @@
  *     hijack an unrelated sign-in later.
  */
 import { normalizeReturnTargetPath, routePaths } from "./app-navigation";
-import { isAppRelativeTarget } from "./project-route";
+import { isAppRelativeTarget, readProjectPathSegment } from "./project-route";
 
 const APP_SIGN_IN_RETURN_PATH_STORAGE_KEY = "mcpjam_app_signin_return_path_v1";
 
@@ -64,7 +64,7 @@ function isStorableReturnPath(path: string): boolean {
  */
 export function writeAppSignInReturnPath(
   path: string | null | undefined,
-  now: number = Date.now()
+  now: number = Date.now(),
 ): void {
   if (typeof sessionStorage === "undefined") return;
   const trimmed = path?.trim() ?? "";
@@ -73,11 +73,18 @@ export function writeAppSignInReturnPath(
     const payload: StoredReturnPath = { path: trimmed, storedAt: now };
     sessionStorage.setItem(
       APP_SIGN_IN_RETURN_PATH_STORAGE_KEY,
-      JSON.stringify(payload)
+      JSON.stringify(payload),
     );
   } catch {
     // Ignore storage failures — the user lands on the default route.
   }
+}
+
+/** Keep a scoped AuthKit return on `/callback` for membership validation. */
+export function queueProjectSignInReturnPath(path: string): boolean {
+  if (readProjectPathSegment(path) === null) return false;
+  writeAppSignInReturnPath(path);
+  return true;
 }
 
 /** Capture the whole current URL (path + search + hash) before signing in. */
@@ -88,7 +95,7 @@ export function captureAppSignInReturnPath(): void {
 }
 
 export function readAppSignInReturnPath(
-  now: number = Date.now()
+  now: number = Date.now(),
 ): string | null {
   if (typeof sessionStorage === "undefined") return null;
   try {
@@ -125,7 +132,7 @@ export function clearAppSignInReturnPath(): void {
 
 /** Read and clear in one step. A return path is used at most once. */
 export function consumeAppSignInReturnPath(
-  now: number = Date.now()
+  now: number = Date.now(),
 ): string | null {
   const path = readAppSignInReturnPath(now);
   clearAppSignInReturnPath();
