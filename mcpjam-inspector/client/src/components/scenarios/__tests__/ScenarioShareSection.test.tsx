@@ -120,6 +120,28 @@ describe("ScenarioShareSection", () => {
     expect(screen.getByText(creditNotice)).toBeInTheDocument();
   });
 
+  // BB-205: an invite grants nothing a public link hasn't already granted, and
+  // the second ask is what testers read as a step they still owe. Asserted
+  // here rather than only on ShareSection because the gate depends on the
+  // scenario mode mapping onto the `link_guests` preset.
+  it("drops the email invite when the link is open to anyone", () => {
+    render(
+      <ScenarioShareSection
+        scenario={createScenario({
+          allowGuestAccess: true,
+          mode: "anyone_with_link",
+        })}
+        projectName="Acme"
+      />,
+    );
+
+    expect(screen.queryByText("Invite with email")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Invite", exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("scenario-copy-tester-link")).toBeInTheDocument();
+  });
+
   /**
    * The other end of "a scenario that cannot run must not be shareable": the
    * create flow refuses to publish without an environment, and a scenario whose
