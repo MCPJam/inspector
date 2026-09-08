@@ -12160,14 +12160,14 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction under verdict policy 2."
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
           },
           "isNegative": {
             "type": "boolean"
@@ -12526,14 +12526,14 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction under verdict policy 2."
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
           },
           "isNegative": {
             "type": "boolean"
