@@ -830,6 +830,16 @@ export class ChromiumDriver implements BrowserDriver {
     navigate: (page: DriverPage) => Promise<void>,
     permit: () => boolean,
   ): Promise<BrowserCommandResult> {
+    // BEFORE THE PAGE STARTS LOADING, not after.
+    //
+    // The attach is fire-and-forget at tab creation so opening a tab is not
+    // slowed by a CDP round trip, and every READ awaits it. That is not enough
+    // on its own: `toolsAdded` is an event, not a query, so a page that
+    // registers before `WebMCP.enable` and the listeners are wired loses those
+    // registrations permanently — awaiting the attach afterwards asks a bridge
+    // that was not listening when it mattered. Memoized, so this costs one
+    // await on the first navigation and nothing on any later one.
+    await this.attachWebmcp(tabId, entry).catch(() => undefined);
     await navigate(entry.page);
     entry.navCounter += 1;
     // A NEW GENERATION, whether or not the bridge has anything to say about it.

@@ -13,6 +13,7 @@
  *      promises about what a click can reach.
  */
 import { describe, expect, it, vi } from "vitest";
+import { WEBMCP_MAX_PAGE_TOOLS } from "@/shared/declared-tools";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { BrowserToolsSection } from "../BrowserToolsSection";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
@@ -97,6 +98,26 @@ describe("BrowserToolsSection", () => {
     expect(screen.getByText("webmcp_getAvailability")).toBeInTheDocument();
     // And the name on the page, with where it came from.
     expect(screen.getByText(/bookSlot · webmcp\.dev/)).toBeInTheDocument();
+  });
+
+  it("marks the page tools past the cap as NOT offered to the model", async () => {
+    // The server advertises at most `WEBMCP_MAX_PAGE_TOOLS`. A pane that
+    // listed every declaration under a footer saying the model can call them
+    // would lie about the run — and a page with a huge registry is exactly
+    // when somebody opens this pane to find out what happened.
+    const many = Array.from({ length: WEBMCP_MAX_PAGE_TOOLS + 2 }, (_u, i) => ({
+      name: `tool_${i}`,
+      description: `Tool ${i}`,
+      origin: "https://webmcp.dev",
+      isMainFrame: true,
+      frameId: "frame-main",
+      registrationSeq: i + 1,
+      inputSchema: { type: "object", properties: {} },
+    }));
+    renderSection({ page: { ok: true, tools: many } as never });
+    const notOffered = await screen.findAllByText(/Not offered to the model/);
+    // Exactly the overflow, not one more and not one fewer.
+    expect(notOffered).toHaveLength(2);
   });
 
   it("says the model calls them by name, not through a generic verb", () => {

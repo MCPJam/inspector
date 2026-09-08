@@ -50,6 +50,7 @@ import {
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import {
+  WEBMCP_MAX_PAGE_TOOLS,
   WEBMCP_TOOL_NAME_PREFIX,
   declaredToolsFromWebmcp,
   mintDeclaredToolNames,
@@ -124,7 +125,7 @@ export interface WebmcpPageToolsResult {
  * the context window the conversation gets — and the tools past the first few
  * dozen are not ones a model was going to pick anyway.
  */
-export const WEBMCP_MAX_PAGE_TOOLS = 64;
+export { WEBMCP_MAX_PAGE_TOOLS };
 
 /**
  * The attribution that rides inside a page tool's result.

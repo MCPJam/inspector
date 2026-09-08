@@ -351,6 +351,17 @@ function canonicalJson(
  */
 const CANONICAL_JSON_BUDGET_CHARS = WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES * 4;
 
+/**
+ * How many of a page's tools a turn will advertise.
+ *
+ * Lives HERE rather than beside the builder because the Tools pane has to
+ * apply the same number: a pane listing names the model was never given, under
+ * a footer saying it can call them, is a debugging surface that lies about the
+ * run — and a page with a large or hostile registry is exactly when someone
+ * opens it.
+ */
+export const WEBMCP_MAX_PAGE_TOOLS = 64;
+
 /** Digest of one input schema. Stable across key reordering. */
 export function declaredSchemaHash(
   schema: Record<string, unknown> | undefined,

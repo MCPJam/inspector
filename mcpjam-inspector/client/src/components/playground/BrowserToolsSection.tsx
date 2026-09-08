@@ -37,6 +37,7 @@ import {
   declaredToolsFromWebmcp,
   mintDeclaredToolNames,
   toProviderToolSchema,
+  WEBMCP_MAX_PAGE_TOOLS,
 } from "@/shared/declared-tools";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 
@@ -102,8 +103,15 @@ export function BrowserToolsSection({
       mintDeclaredToolNames(
         WEBMCP_TOOL_NAME_PREFIX,
         declaredToolsFromWebmcp(pageTools),
-      ).map((tool) => ({
+      ).map((tool, index) => ({
         ...tool,
+        // PAST THE SERVER'S CAP. `buildWebmcpPageTools` advertises at most
+        // `WEBMCP_MAX_PAGE_TOOLS`, so a page declaring more gets a pane that
+        // lists names the model was never given — under a footer saying it can
+        // call them. Marked rather than hidden: "this page declares more than
+        // we advertise" is the fact a person debugging a large or hostile
+        // registry actually needs.
+        overCap: index >= WEBMCP_MAX_PAGE_TOOLS,
         // `generic`, because the pane does not know which provider this turn
         // will run against — and must not guess. That still catches the one
         // diagnostic that is true of EVERY provider (a schema whose root is
@@ -113,6 +121,17 @@ export function BrowserToolsSection({
         // where the provider is known.
         diagnostics: [
           ...tool.diagnostics,
+          ...(index >= WEBMCP_MAX_PAGE_TOOLS
+            ? [
+                {
+                  code: "over_cap" as const,
+                  message:
+                    `this page declares more than ${WEBMCP_MAX_PAGE_TOOLS} tools; ` +
+                    "this one is past the cap and is not offered to the model.",
+                  blocking: true as const,
+                },
+              ]
+            : []),
           ...toProviderToolSchema(tool.inputSchema, "generic").diagnostics,
         ],
       })),

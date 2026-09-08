@@ -4007,6 +4007,7 @@ var ChromiumDriver = class {
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
   async navigateVerb(tabId, entry, navigate, permit) {
+    await this.attachWebmcp(tabId, entry).catch(() => void 0);
     await navigate(entry.page);
     entry.navCounter += 1;
     entry.webmcp.revision += 1;
