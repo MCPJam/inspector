@@ -127,6 +127,7 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 
 import {
   UserTestingScenarioCreateFlow,
+  composedSetupHasServers,
   pickDefaultCreateClient,
 } from "@/components/scenarios/UserTestingScenarioCreateFlow";
 
@@ -177,9 +178,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   sharePolicyState.policy = undefined;
   flagState.environments = true;
+  // `serverCount` matters: a client with none composes an environment that
+  // resolves to zero servers, which the screen now refuses to publish.
   hostListState.hosts = [
-    { hostId: "host-1", name: "Claude" },
-    { hostId: "host-2", name: "Cursor" },
+    { hostId: "host-1", name: "Claude", serverCount: 2 },
+    { hostId: "host-2", name: "Cursor", serverCount: 1 },
   ];
   hostListState.isLoading = false;
   ensureAdhocMock.mockImplementation(
@@ -206,7 +209,12 @@ describe("pickDefaultCreateClient", () => {
     // The one host every project is guaranteed to be able to run.
     const picked = pickDefaultCreateClient([
       { hostId: "a", name: "Claude", updatedAt: 99 } as HostListItem,
-      { hostId: "b", name: "MCPJam", hostStyle: "mcpjam", updatedAt: 1 } as HostListItem,
+      {
+        hostId: "b",
+        name: "MCPJam",
+        hostStyle: "mcpjam",
+        updatedAt: 1,
+      } as HostListItem,
     ]);
     expect(picked?.hostId).toBe("b");
   });
@@ -419,6 +427,155 @@ describe("UserTestingScenarioCreateFlow", () => {
  * client picker — "People block when you're making them name things", "Here
  * you don't have a default client picked", "Don't put that in my way".
  */
+/**
+ * A study whose environment resolves to no servers is created fine and then
+ * refuses to open — the creator gets "This scenario can't be opened right
+ * now", the tester gets "This link isn't available right now", and neither
+ * names the cause. Publish is the last place that can still prevent it.
+ */
+describe("UserTestingScenarioCreateFlow — a setup with no servers", () => {
+  it("prefers a client that has servers when defaulting", () => {
+    // A default that walks the creator into an unopenable study is worse than
+    // no default at all.
+    const picked = pickDefaultCreateClient([
+      {
+        hostId: "a",
+        name: "Empty",
+        serverCount: 0,
+        updatedAt: 99,
+      } as HostListItem,
+      {
+        hostId: "b",
+        name: "Loaded",
+        serverCount: 1,
+        updatedAt: 1,
+      } as HostListItem,
+    ]);
+    expect(picked?.hostId).toBe("b");
+  });
+
+  it("prefers MCPJam only among clients that can run", () => {
+    const picked = pickDefaultCreateClient([
+      {
+        hostId: "a",
+        name: "MCPJam",
+        hostStyle: "mcpjam",
+        serverCount: 0,
+        updatedAt: 1,
+      } as HostListItem,
+      {
+        hostId: "b",
+        name: "Cursor",
+        serverCount: 3,
+        updatedAt: 2,
+      } as HostListItem,
+    ]);
+    expect(picked?.hostId).toBe("b");
+  });
+
+  it("still fills the strip when NO client has servers", () => {
+    // The gate on the screen explains what is missing; returning null here
+    // would leave the creator with an empty form and no reason given.
+    const picked = pickDefaultCreateClient([
+      {
+        hostId: "a",
+        name: "Empty",
+        serverCount: 0,
+        updatedAt: 1,
+      } as HostListItem,
+    ]);
+    expect(picked?.hostId).toBe("a");
+  });
+
+  it("distinguishes 'no servers' from 'do not know yet'", () => {
+    const hosts = [
+      { hostId: "host-1", name: "Empty", serverCount: 0 } as HostListItem,
+      { hostId: "host-2", name: "Loaded", serverCount: 2 } as HostListItem,
+    ];
+    const ask = (
+      over: Partial<Parameters<typeof composedSetupHasServers>[0]>,
+    ) =>
+      composedSetupHasServers({
+        serverAttachmentId: null,
+        hostId: "host-1",
+        hosts,
+        hostsLoading: false,
+        ...over,
+      });
+
+    expect(ask({})).toBe(false);
+    expect(ask({ hostId: "host-2" })).toBe(true);
+    // A server group carries its own servers, whatever the client has.
+    expect(ask({ serverAttachmentId: "att_1" })).toBe(true);
+    // Unknown, not broken: nothing picked, still loading, or a client the
+    // list has not caught up with.
+    expect(ask({ hostId: null })).toBeNull();
+    expect(ask({ hostsLoading: true })).toBeNull();
+    expect(ask({ hostId: "host-unknown" })).toBeNull();
+  });
+
+  it("refuses to publish, and says what is missing", () => {
+    hostListState.hosts = [
+      { hostId: "host-1", name: "Claude", serverCount: 0 },
+    ];
+    renderFlow();
+
+    expect(
+      screen.getByTestId("user-testing-create-servers-required"),
+    ).toHaveTextContent(/no servers of its own/i);
+    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
+  });
+
+  it("says nothing while the host list has not settled", () => {
+    // An unknown answer must not render as a problem.
+    hostListState.hosts = [];
+    hostListState.isLoading = true;
+    renderFlow();
+
+    expect(
+      screen.queryByTestId("user-testing-create-servers-required"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never lands the default on the broken client when a runnable one exists", () => {
+    // The end-to-end shape of the fix: in a mixed project the creator never
+    // sees the problem, because the default skips the client that cannot run.
+    hostListState.hosts = [
+      { hostId: "host-1", name: "Empty", serverCount: 0, updatedAt: 99 },
+      { hostId: "host-2", name: "Loaded", serverCount: 2, updatedAt: 1 },
+    ];
+    renderFlow();
+
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
+      "Loaded",
+    );
+    expect(
+      screen.queryByTestId("user-testing-create-servers-required"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-create-continue"),
+    ).not.toBeDisabled();
+  });
+
+  it("blocks a picked client that cannot run, even in a mixed project", () => {
+    hostListState.hosts = [
+      { hostId: "host-1", name: "Empty", serverCount: 0 },
+      { hostId: "host-2", name: "Loaded", serverCount: 2 },
+    ];
+    renderFlow();
+
+    // Deliberately switching TO the empty one: the gate follows the pick, not
+    // just the default.
+    fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^empty$/i }));
+
+    expect(
+      screen.getByTestId("user-testing-create-servers-required"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-continue")).toBeDisabled();
+  });
+});
+
 describe("UserTestingScenarioCreateFlow — defaults", () => {
   it("preselects a client and suggests a name, so Continue is pressable on arrival", () => {
     renderFlow();
@@ -681,7 +838,9 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
 
     fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
-    expect(screen.getByTestId("user-testing-create-name")).toHaveValue("Cursor");
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
+      "Cursor",
+    );
     expect(
       screen.getByTestId("user-testing-create-continue"),
     ).not.toBeDisabled();
@@ -791,7 +950,9 @@ describe("UserTestingScenarioCreateFlow — without Project Environments", () =>
     fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
 
     // Named after the client, so Continue is reachable without typing.
-    expect(screen.getByTestId("user-testing-create-name")).toHaveValue("Cursor");
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
+      "Cursor",
+    );
     createStudy();
 
     await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(1));

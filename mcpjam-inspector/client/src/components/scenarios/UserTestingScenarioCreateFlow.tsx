@@ -72,21 +72,65 @@ const FALLBACK_STUDY_NAME = "User test";
 /**
  * The client a project gets by default, when nobody has picked one.
  *
- * MCPJam's own client first — it is the one host every project is guaranteed
- * to be able to run — then the most recently touched, which is the closest
- * thing to "the one you used last" without adding a second store to keep in
- * sync. Returns `null` only for a project with no clients at all, where
- * there is genuinely nothing to default to.
+ * **Clients that can actually RUN come first.** A composed setup with no
+ * server group inherits the client's own servers, so defaulting to a client
+ * with none produces an environment that resolves to zero servers — the
+ * backend's `ENV_NO_SERVERS` — and a study whose link never opens for anyone.
+ * A default that walks the creator into that is worse than no default, so
+ * `serverCount > 0` is the first filter.
+ *
+ * Within the runnable ones: MCPJam's own client first — the one host every
+ * project is guaranteed to be able to run — then the most recently touched,
+ * which is the closest thing to "the one you used last" without adding a
+ * second store to keep in sync.
+ *
+ * When NO client has servers, this still returns one (so the name and the
+ * strip are filled) and the screen's server gate explains what is missing.
+ * Returns `null` only for a project with no clients at all.
  */
 export function pickDefaultCreateClient(
   hosts: readonly HostListItem[],
 ): HostListItem | null {
   if (hosts.length === 0) return null;
-  const mcpjam = hosts.find((host) => host.hostStyle === "mcpjam");
+  const runnable = hosts.filter((host) => (host.serverCount ?? 0) > 0);
+  const pool = runnable.length > 0 ? runnable : hosts;
+  const mcpjam = pool.find((host) => host.hostStyle === "mcpjam");
   if (mcpjam) return mcpjam;
-  return hosts.reduce((latest, host) =>
+  return pool.reduce((latest, host) =>
     host.updatedAt > latest.updatedAt ? host : latest,
   );
+}
+
+/**
+ * Whether this setup will resolve to at least one server — `null` while the
+ * answer is genuinely unknown.
+ *
+ * The reason this check exists at all: an environment with no servers is
+ * refused at LAUNCH, not at publish. So a study could be created, get a share
+ * link, and only then turn out to be unopenable — the creator finds out from
+ * "This scenario can't be opened right now", and a tester from "This link
+ * isn't available right now". Neither message says what to do about it.
+ *
+ * Both modes reduce to the same question, because an environment with no
+ * server group of its own inherits its client's server picks:
+ *  - a server GROUP is attached ⇒ it has servers by construction;
+ *  - otherwise it is the client's own `serverCount`.
+ *
+ * `null` (not `false`) while the host list is still loading, or when the
+ * picked client is not in it: an unknown answer must not render as a problem.
+ */
+export function composedSetupHasServers(args: {
+  serverAttachmentId: string | null;
+  hostId: string | null | undefined;
+  hosts: readonly HostListItem[];
+  hostsLoading: boolean;
+}): boolean | null {
+  if (args.serverAttachmentId) return true;
+  if (!args.hostId) return null;
+  if (args.hostsLoading) return null;
+  const host = args.hosts.find((h) => h.hostId === args.hostId);
+  if (!host) return null;
+  return (host.serverCount ?? 0) > 0;
 }
 
 /**
@@ -333,10 +377,33 @@ export function UserTestingScenarioCreateFlow({
   // `undefined` also covers a query that is skipped or failed, not just one in
   // flight, so the reason is stated below rather than leaving a dead button.
   const environmentsSettled = environments !== undefined;
+
+  /**
+   * Whether this setup can resolve to any servers. See
+   * `composedSetupHasServers` for why publish has to ask.
+   *
+   * A picked saved environment is read the same way as a composed one: its
+   * `serverAttachmentId`, else its own client's server picks.
+   */
+  const setupHasServers = composedSetupHasServers({
+    serverAttachmentId: composing
+      ? target.stack.serverAttachmentId
+      : (selected?.serverAttachmentId ?? null),
+    hostId: composing ? target.stack.hostIds[0] : selected?.hostId,
+    hosts,
+    hostsLoading,
+  });
+
   // Deliberately NOT gated on the name. A prefilled suggestion plus a
   // fallback means "empty" is a state the creator can pass through, not a
   // wall they have to satisfy first (BB-176).
-  const canAdvance = environmentsSettled && hasTarget && !isSaving;
+  //
+  // It IS gated on servers, because that is not a preference — it is the
+  // difference between a study that opens and one that cannot. `null` (still
+  // unknown) does not block: the check exists to stop a knowably-broken
+  // publish, not to gate the screen on a query.
+  const canAdvance =
+    environmentsSettled && hasTarget && setupHasServers !== false && !isSaving;
 
   const handleTargetChange = (next: EnvironmentComposerState) => {
     // A pick of their own settles the question the default was answering.
@@ -596,6 +663,21 @@ export function UserTestingScenarioCreateFlow({
                     data-testid="user-testing-create-environments-loading"
                   >
                     Loading this project&apos;s setup…
+                  </p>
+                ) : null}
+                {/* The gate that would have saved a broken study: a setup with
+                    no servers publishes fine and then refuses to open, and
+                    neither the creator's nor the tester's error names the
+                    cause. Said here, where the fix is one click away. */}
+                {hasTarget && setupHasServers === false ? (
+                  <p
+                    className="text-xs text-amber-600 dark:text-amber-500"
+                    data-testid="user-testing-create-servers-required"
+                  >
+                    This client has no servers of its own, so there would be
+                    nothing for a tester to reach — pick a server group above. A
+                    study with no servers is created but never opens, for you or
+                    a tester.
                   </p>
                 ) : null}
                 {computersEnabled ? (

@@ -191,7 +191,9 @@ function ShareActions({
   className?: string;
 }) {
   return (
-    <div className={cn("flex shrink-0 flex-wrap items-center gap-2", className)}>
+    <div
+      className={cn("flex shrink-0 flex-wrap items-center gap-2", className)}
+    >
       {showInvite ? (
         <InviteByEmailControl
           id={id}
@@ -304,9 +306,29 @@ export function ScenarioShareEmptyPanel({
             className="mt-6 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
             data-testid="user-testing-share-empty-blocked"
           >
-            {share.shareLink
-              ? "This scenario can't be opened right now — its environment isn't resolving, so the link won't load for you or a tester."
-              : "No share link yet."}
+            {share.shareLink ? (
+              <>
+                This scenario can&apos;t be opened right now — its environment
+                isn&apos;t resolving, so the link won&apos;t load for you or a
+                tester.
+                {/* The BACKEND'S OWN reason, not just the fact of a failure.
+                    It already distinguishes "resolves to no servers", "is
+                    archived", and "references a host that no longer exists" —
+                    each with a different fix — and this panel used to
+                    flatten all of them into the sentence above, leaving the
+                    creator to guess. */}
+                {scenario.environmentError?.message ? (
+                  <span
+                    className="mt-1.5 block text-foreground"
+                    data-testid="user-testing-share-empty-blocked-reason"
+                  >
+                    {scenario.environmentError.message}
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              "No share link yet."
+            )}
           </p>
         )}
 
