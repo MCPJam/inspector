@@ -268,6 +268,7 @@ export function ActiveServerSelector({
             return (
               <button
                 key={name}
+                aria-current={isSelected ? "true" : undefined}
                 onClick={(e) => {
                   // Ignore clicks from the inline action buttons (reconnect /
                   // hide). Using Element to cover SVG elements too.
@@ -380,6 +381,19 @@ export function ActiveServerSelector({
                   >
                     <X className="w-3 h-3" />
                   </div>
+                )}
+                {isSelected && (
+                  // Foot rule on the active tab. The fill alone can't mark it:
+                  // the tab is --background and so is the panel it sits on, and
+                  // the two edges meet with no gap, so the active tab bleeds
+                  // into the pane below instead of reading as a tab. Absolute
+                  // rather than `border-b` so the 2px can't change the box
+                  // height and shift the row. Same bar HostFocusTabBar draws,
+                  // full-bleed here because these tabs are flush, not pills.
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-primary"
+                  />
                 )}
               </button>
             );

@@ -368,6 +368,35 @@ describe("ActiveServerSelector", () => {
       expect(addServer?.className).not.toContain("text-muted-foreground");
     });
 
+    it("draws a foot rule under the active tab and nothing else", () => {
+      // The fill on its own cannot mark the active tab: it is `bg-background`
+      // and so is the panel directly beneath it, and the two edges meet with
+      // no gap, so the tab bleeds into the pane instead of ending. The rule is
+      // what gives it a bottom edge.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      const selected = screen.getByText("server-1").closest("button");
+      expect(selected).toHaveAttribute("aria-current", "true");
+      const rule = selected?.querySelector("span[aria-hidden]");
+      expect(rule?.className).toContain("bg-primary");
+      expect(rule?.className).toContain("bottom-0");
+
+      const idle = screen.getByText("server-2").closest("button");
+      expect(idle).not.toHaveAttribute("aria-current");
+      expect(idle?.querySelector("span[aria-hidden]")).toBeNull();
+    });
+
     it("keeps a focus indicator on the selected tab, not just the idle ones", () => {
       // The strip sets `outline-none` on every tab, so without an explicit
       // ring the selected tab takes keyboard focus with nothing to show for
