@@ -551,13 +551,13 @@ Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 fai
 
 Four things about it are worth knowing before you script against it.
 
-**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *trials inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
+**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *iterations inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
 
-**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-trial diagnostics sit *underneath* that: a case can pass with a failing trial in it, so tallying the diagnostics gives a different answer than the platform reached.
+**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-iteration diagnostics sit *underneath* that: a case can pass with a failing iteration in it, so tallying the diagnostics gives a different answer than the platform reached.
 
 **`notEstablished` is not a failure.** It is a fourth verdict meaning no verdict exists at all — the run is unfinished, it stopped before finishing, or its decision could not be read. `undecided.reason` says which. It is also not `inconclusive`, which *is* a decision: the validity phase ran and withheld a verdict because the run did not measure the server well enough.
 
-**A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed trials are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
+**A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed iterations are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
 
 Evidence is scoped to the claim it supports: for a measured failure the span ids, prompt indexes and reasons come from the first failed stage's row alone, and a setup abort or evaluator error keeps a stage-less pointer rather than naming a stage nothing established.
 
