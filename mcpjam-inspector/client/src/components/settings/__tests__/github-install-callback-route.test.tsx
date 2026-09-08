@@ -117,6 +117,12 @@ function renderCallback(query: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears CALLS, not implementations. Two tests here make the
+  // redirect throw to prove the guard's developer text never reaches the
+  // screen, and without this that throwing implementation leaks into every
+  // test after them — where a redirect assertion still passes, because the
+  // call was made, while the page is actually showing a failure.
+  mockRedirectToGithub.mockReset();
   mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
   mockUserReady.mockReturnValue(true);
   mockWorkosAuth.mockReturnValue({
@@ -497,6 +503,9 @@ describe("the OAuth leg", () => {
     expect(mockRedirectToGithub).toHaveBeenCalledWith(
       "https://github.com/apps/mcpjam/installations/new?state=xyz"
     );
+    // The redirect SUCCEEDED. Asserting the call alone would pass even if the
+    // guard had thrown and the page had fallen back to a refusal.
+    expect(screen.queryByText(/could not finish connecting/i)).toBeNull();
   });
 
   it("offers no install action when the backend sent no URL", async () => {
