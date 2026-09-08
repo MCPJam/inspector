@@ -482,6 +482,35 @@ describe("BrowserStepFilmstrip — the recording's own numbers", () => {
   });
 });
 
+describe("the trace viewer's metadata gate", () => {
+  it("refuses metadata of the wrong shape rather than rendering it", async () => {
+    // A `truncated: "false"` string is TRUTHY. Cast rather than parsed, it
+    // would claim a recording stopped at its size limit when it did not —
+    // the one thing this metadata exists to say, asserted wrongly.
+    const { evalTraceVideoMetaZ } = await import("@/shared/eval-trace");
+    expect(
+      evalTraceVideoMetaZ.safeParse({ source: "hosted", truncated: "false" })
+        .success,
+    ).toBe(false);
+    expect(
+      evalTraceVideoMetaZ.safeParse({ source: "elsewhere" }).success,
+    ).toBe(false);
+    expect(
+      evalTraceVideoMetaZ.safeParse({ source: "hosted", durationMs: "9000" })
+        .success,
+    ).toBe(false);
+    expect(
+      evalTraceVideoMetaZ.safeParse({
+        source: "hosted",
+        fps: 15,
+        durationMs: 9_000,
+        distinctFrames: 42,
+        truncated: true,
+      }).success,
+    ).toBe(true);
+  });
+});
+
 describe("summarizeRecording", () => {
   it("derives nothing the recorder did not report", () => {
     expect(summarizeRecording(null)).toEqual([]);

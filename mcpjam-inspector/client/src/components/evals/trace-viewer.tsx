@@ -18,6 +18,7 @@ import type {
   EvalTraceVideoMeta,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
+import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
@@ -319,7 +320,14 @@ function getBrowserVideoMeta(
 ): EvalTraceVideoMeta | null {
   if (!trace || Array.isArray(trace) || typeof trace !== "object") return null;
   const raw = (trace as TraceEnvelope).videoMeta;
-  return raw && typeof raw === "object" ? raw : null;
+  if (!raw || typeof raw !== "object") return null;
+  // PARSED, not cast. The badge renders on `truncated` and the header formats
+  // `durationMs` and `fps`, so a value of the wrong TYPE does not degrade — a
+  // `truncated: "false"` string is truthy and would claim a recording stopped
+  // at its size limit when it did not. That is the one thing this metadata
+  // exists to say, so it is the one thing worth refusing to guess at.
+  const parsed = evalTraceVideoMetaZ.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 export function TraceViewer({

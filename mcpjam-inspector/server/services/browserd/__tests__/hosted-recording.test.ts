@@ -333,11 +333,25 @@ describe("hosted recording — starting", () => {
   it("reduces a session id to something the daemon's route accepts", () => {
     // An id the route refuses is a 400 that reads, in a log, exactly like a
     // daemon that cannot record — and the two want different fixes.
+    const ACCEPTED = /^[A-Za-z0-9_-]{1,64}$/;
+    // A clean id passes through untouched: the common case stays readable.
     expect(recordingIdFor("k17abc_DEF-9")).toBe("k17abc_DEF-9");
-    expect(recordingIdFor("a/../b c")).toBe("a----b-c");
-    expect(recordingIdFor("x".repeat(200))).toHaveLength(64);
-    expect(recordingIdFor("")).toBe("recording");
-    expect(recordingIdFor("///")).toBe("---");
+    for (const raw of ["a/../b c", "x".repeat(200), "", "///"]) {
+      expect(recordingIdFor(raw), `raw=${raw}`).toMatch(ACCEPTED);
+    }
+  });
+
+  it("keeps distinct sessions distinct through sanitising and truncation", () => {
+    // The id is load-bearing now: the 409 reclaim path treats a matching
+    // `recordStatus.id` as proof the daemon's take is OURS. Two runs colliding
+    // there would let the second stop and upload the first's recording as its
+    // own — evidence of the wrong run, silently. Both lossy steps are covered:
+    // substitution (`a/b` and `a-b` sanitize alike) and truncation.
+    expect(recordingIdFor("a/b")).not.toBe(recordingIdFor("a-b"));
+    const long = "s".repeat(70);
+    expect(recordingIdFor(`${long}one`)).not.toBe(recordingIdFor(`${long}two`));
+    // ...and it is stable, so a retry within one run reclaims its own take.
+    expect(recordingIdFor("a/b")).toBe(recordingIdFor("a/b"));
   });
 });
 

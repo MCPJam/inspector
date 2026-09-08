@@ -23,6 +23,7 @@
  * has no failure mode in its type, and why the registry entry is deleted in a
  * `finally` rather than on the happy path.
  */
+import { createHash } from "node:crypto";
 import { logger } from "../../utils/logger.js";
 import type { BrowserdRecordResult } from "./browserd-client";
 import type {
@@ -134,8 +135,19 @@ function recordingEnabled(): boolean {
  * cannot record — and the two want different fixes.
  */
 export function recordingIdFor(sessionId: string): string {
-  const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64);
-  return safe.length > 0 ? safe : "recording";
+  const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "-");
+  if (safe === sessionId && safe.length > 0 && safe.length <= 64) return safe;
+  // IDENTITY SURVIVES THE MANGLING. Both the truncation and the substitution
+  // are lossy — `a/b` and `a-b` sanitize to the same string, and two long ids
+  // sharing a prefix truncate to the same one — and this id is now load-
+  // bearing: the 409 reclaim path treats a matching `recordStatus.id` as proof
+  // the daemon's take is OURS. Two runs colliding there would let the second
+  // stop and upload the first's recording as its own. The suffix is derived
+  // from the FULL original, so distinct sessions stay distinct however the
+  // readable part was cut.
+  const digest = createHash("sha256").update(sessionId).digest("hex").slice(0, 12);
+  const head = safe.slice(0, 64 - digest.length - 1);
+  return head.length > 0 ? `${head}-${digest}` : `rec-${digest}`;
 }
 
 /**

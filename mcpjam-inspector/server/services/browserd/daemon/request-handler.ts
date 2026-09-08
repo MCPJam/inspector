@@ -701,30 +701,34 @@ export class BrowserdRequestHandler {
     // Boosting after any of them spends 45 JPEG encodes on a picture that did
     // not change, on the cores the agent is using.
     if (outcome.status !== "ok") return;
-    // A FAILED ACT IS NOT A STILL PAGE. `ok: false` covers two different
-    // things and only one of them is "nothing happened":
+    // A SUCCESSFUL RESULT, AND NOTHING ELSE — because a failed one is genuinely
+    // ambiguous here and this is only a frame-rate hint.
     //
-    //   - refused BEFORE executing — a stale observation (the guard read the
-    //     token and declined to act) — where the page is untouched;
-    //   - ran and then failed — `act_failed` / `target_not_found` from a
-    //     Playwright throw partway through. The driver hands back a FRESH
-    //     stateToken from a fresh snapshot there, which is it telling us the
-    //     page may well have moved. A click that landed before its follow-up
-    //     timed out is exactly the moment somebody watching wants to see.
+    // `ok: false` covers both "refused before touching the page"
+    // (`out_of_viewport`, `unknown_ref`, a stale observation) and "ran, then
+    // threw partway" (a click that landed before its follow-up timed out). The
+    // driver cannot tell those apart either: its catch classifies by message
+    // and snapshots the page either way, so `act_failed` arrives carrying a
+    // fresh `stateToken` in BOTH cases. Nothing reaching this method
+    // distinguishes them.
     //
-    // So the gate names what it can prove did not move, rather than reading
-    // failure as stillness.
-    if (outcome.result.staleObservation) return;
-    // A person owns the page now. `leaseBlocked` can arrive AFTER the verb ran
-    // — the driver re-asks the lease before every capture, so a handoff
-    // landing mid-command produces exactly this — but the agent's path stays
-    // out from the moment they hold it, and their own input already buys them
-    // the same boost through `dispatchInput`.
-    if (outcome.result.leaseBlocked) return;
+    // Given that, the two mistakes are not equal. Boosting a refusal spends
+    // 1.5s of 30fps encoding on a page that did not move, on the two cores the
+    // agent is using; not boosting a partial act leaves a watcher at 10fps
+    // through the settle of a command that failed anyway. The first is a real
+    // cost on every refusal, the second a cosmetic one on a rarer path — so
+    // the gate takes the side that never spends CPU on a still page.
+    //
+    // Making this exact would mean the DRIVER reporting whether it dispatched,
+    // which is a change across every act path for a hint whose worst case is a
+    // choppier second and a half. Named here rather than approximated with a
+    // list of error codes, which is how this gate has been wrong twice.
+    //
     // A duplicate resolved from the queue's cache still boosts: it reports the
     // original result and the queue does not say which of the two it was. That
     // is the honest limit of what is knowable here, and the cost is a second
     // boost over a repaint that did happen.
+    if (!outcome.result.ok) return;
     try {
       const viewport = await this.driver.viewportIfWatched?.(command.tabId);
       viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);

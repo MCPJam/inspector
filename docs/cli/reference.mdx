@@ -1801,7 +1801,7 @@ with `--out`.
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
-| `--out <path>` | No | Save the PNGs here instead of printing them. A directory unless the iteration rendered exactly one screenshot |
+| `--out <path>` | No | Save the PNGs here instead of printing them. A directory — except without `--video`, where a single-screenshot iteration may name a file. Created if it does not exist |
 | `--index <n>` | No | Only the Nth screenshot (1-based) |
 | `--video` | No | With `--out`, also save the iteration's replay recording beside the screenshots, as `<iteration>.mp4` or `<iteration>.webm` |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |

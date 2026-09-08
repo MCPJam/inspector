@@ -1053,20 +1053,20 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
     expect(boosts).toEqual([]);
   });
 
-  it("DOES boost an act that ran and then failed", async () => {
-    // A FAILED ACT IS NOT A STILL PAGE. `act_failed` / `target_not_found` come
-    // from a Playwright throw partway through — a click that landed before its
-    // follow-up timed out — and the driver hands back a fresh stateToken from
-    // a fresh snapshot, which is it saying the page may well have moved. That
-    // is exactly the moment somebody watching wants to see. Reading every
-    // `ok: false` as stillness would hold them at 10fps through it.
+  it("does not boost a failed act, which may never have touched the page", async () => {
+    // DELIBERATELY CONSERVATIVE, and the comment on the gate says why: an
+    // `act_failed` carrying a fresh stateToken is what BOTH a pre-dispatch
+    // refusal (`out_of_viewport`) and a ran-then-threw click look like — the
+    // driver's catch classifies by message and snapshots either way. Nothing
+    // here can separate them, so the gate takes the side that never spends
+    // 1.5s of 30fps encoding on a page that did not move.
     const { boosts, viewport } = boostSpy();
     const { handler } = makeHandler({
       outcome: {
         status: "ok",
         result: {
           ok: false,
-          error: "act_failed: locator.click: Timeout 15000ms exceeded",
+          error: "act_failed: out_of_viewport: (2000, 40) is outside the …",
           stateToken: {
             tabId: "@session",
             navCounter: 2,
@@ -1081,7 +1081,7 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
 
     await handler.handle(commandReq({ kind: "act", verb: "click" }));
 
-    expect(boosts).toEqual([[33, 1_500]]);
+    expect(boosts).toEqual([]);
   });
 
   it("still answers the command when the boost throws", async () => {
