@@ -152,7 +152,6 @@ export const MIN_RECORD_FPS = 1;
 export const MAX_RECORD_FPS = 30;
 export const DEFAULT_RECORD_FPS = 15;
 
-/** How long shutdown waits for ffmpeg to write its last fragment. */
 /**
  * The fragment interval, in seconds — and the ONLY number that sets it.
  *
@@ -172,6 +171,7 @@ export const DEFAULT_RECORD_FPS = 15;
  */
 export const FRAGMENT_SECONDS = 4;
 
+/** How long shutdown waits for ffmpeg to write its last fragment. */
 export const DEFAULT_FINALIZE_GRACE_MS = 2_000;
 
 /**
