@@ -65,26 +65,27 @@ function isStorableReturnPath(path: string): boolean {
 export function writeAppSignInReturnPath(
   path: string | null | undefined,
   now: number = Date.now(),
-): void {
-  if (typeof sessionStorage === "undefined") return;
+): boolean {
+  if (typeof sessionStorage === "undefined") return false;
   const trimmed = path?.trim() ?? "";
-  if (!isStorableReturnPath(trimmed)) return;
+  if (!isStorableReturnPath(trimmed)) return false;
   try {
     const payload: StoredReturnPath = { path: trimmed, storedAt: now };
     sessionStorage.setItem(
       APP_SIGN_IN_RETURN_PATH_STORAGE_KEY,
       JSON.stringify(payload),
     );
+    return true;
   } catch {
     // Ignore storage failures — the user lands on the default route.
+    return false;
   }
 }
 
 /** Keep a scoped AuthKit return on `/callback` for membership validation. */
 export function queueProjectSignInReturnPath(path: string): boolean {
   if (readProjectPathSegment(path) === null) return false;
-  writeAppSignInReturnPath(path);
-  return true;
+  return writeAppSignInReturnPath(path);
 }
 
 /** Capture the whole current URL (path + search + hash) before signing in. */

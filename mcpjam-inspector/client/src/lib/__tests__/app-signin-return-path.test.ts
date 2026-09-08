@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   APP_SIGN_IN_RETURN_PATH_TTL_MS,
   captureAppSignInReturnPath,
@@ -40,6 +40,28 @@ describe("generic app sign-in return path", () => {
     clearAppSignInReturnPath();
     expect(queueProjectSignInReturnPath("/servers")).toBe(false);
     expect(readAppSignInReturnPath()).toBeNull();
+  });
+
+  it("does not report a queued return when session storage is unavailable", () => {
+    vi.stubGlobal("sessionStorage", undefined);
+    try {
+      expect(queueProjectSignInReturnPath(`/p/${A}/servers`)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not report a queued return when storage rejects the write", () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage unavailable");
+      });
+    try {
+      expect(queueProjectSignInReturnPath(`/p/${A}/servers`)).toBe(false);
+    } finally {
+      setItem.mockRestore();
+    }
   });
 
   it("is consumed exactly once", () => {

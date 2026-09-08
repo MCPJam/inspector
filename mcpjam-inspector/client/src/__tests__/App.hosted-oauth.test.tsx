@@ -29,7 +29,10 @@ import {
   writeScenarioSignInReturnPath,
   writeScenarioSession,
 } from "../lib/scenario-session";
-import { writeAppSignInReturnPath } from "../lib/app-signin-return-path";
+import {
+  readAppSignInReturnPath,
+  writeAppSignInReturnPath,
+} from "../lib/app-signin-return-path";
 
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
@@ -599,6 +602,9 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   afterEach(() => {
+    if (vi.isMockFunction(window.history.replaceState)) {
+      vi.mocked(window.history.replaceState).mockRestore();
+    }
     vi.unstubAllGlobals();
   });
 
@@ -2160,24 +2166,55 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
-  it("keeps the callback timeout while project memberships are pending", async () => {
+  it("preserves the scoped return through a membership timeout and retry", async () => {
     vi.useFakeTimers();
     try {
       clearScenarioSession();
       const staleProjectId = "k5700000000000000000000000a";
-      writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
+      const currentProjectId = "k5700000000000000000000000b";
+      const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+      let projectsLoaded = false;
+      writeAppSignInReturnPath(stalePath);
       window.history.replaceState({}, "", "/callback?code=oauth-code");
       mockUseAppState.mockImplementation(() => ({
         ...createAppStateMock(),
-        isLoadingRemoteProjects: true,
-        activeProjectId: staleProjectId,
-        projects: {},
+        isLoadingRemoteProjects: !projectsLoaded,
+        activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+        projects: projectsLoaded
+          ? {
+              [currentProjectId]: {
+                id: currentProjectId,
+                name: "Current Project",
+                sharedProjectId: currentProjectId,
+                organizationId: "org-1",
+                servers: {},
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }
+          : {},
       }));
-      mockUseQuery.mockImplementation((name: string) =>
-        name === "users:getCurrentUser" ? existingConvexUser : undefined,
-      );
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projects:getMyProjects") {
+          return projectsLoaded
+            ? [
+                {
+                  _id: currentProjectId,
+                  name: "Current Project",
+                  organizationId: "org-1",
+                  ownerId: "user-1",
+                  servers: {},
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              ]
+            : undefined;
+        }
+        return undefined;
+      });
 
-      render(<App />);
+      const view = render(<App />);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(15_000);
       });
@@ -2192,6 +2229,30 @@ describe("App hosted OAuth callback handling", () => {
         "project_route_inaccessible",
         expect.anything(),
       );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try sign in again" }),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+      expect(readAppSignInReturnPath()).toBe(stalePath);
+      expect(window.location.pathname).toBe("/");
+
+      view.unmount();
+      projectsLoaded = true;
+      vi.useRealTimers();
+      window.history.replaceState({}, "", "/callback?code=retry-code");
+      render(<App />);
+
+      await waitFor(() => {
+        expect(
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+      });
+      expect(readAppSignInReturnPath()).toBeNull();
     } finally {
       vi.useRealTimers();
     }

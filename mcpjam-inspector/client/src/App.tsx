@@ -207,6 +207,7 @@ import {
 import {
   captureAppSignInReturnPath,
   consumeAppSignInReturnPath,
+  writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import {
   trackSignInReturnRestored,
@@ -3001,6 +3002,9 @@ export default function App() {
   }, [isOAuthCallback, callbackCompleted]);
 
   const handleRetryCallbackSignIn = useCallback(() => {
+    if (pendingProjectReturnRecovery) {
+      writeAppSignInReturnPath(pendingProjectReturnRecovery.path);
+    }
     clearHostedCallbackRetryState();
     callbackReturnConsumedRef.current = false;
     setPendingProjectReturnRecovery(null);
@@ -3010,7 +3014,7 @@ export default function App() {
     queueMicrotask(() => {
       signIn();
     });
-  }, [signIn]);
+  }, [pendingProjectReturnRecovery, signIn]);
 
   const handleReloadFromCallback = useCallback(() => {
     clearHostedCallbackRetryState();
