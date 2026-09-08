@@ -785,8 +785,14 @@ export interface PlatformEvalRun {
    * `"api"`, including the `mcpjam` CLI, a GitHub Action running it, and an
    * MCP client driving the platform tools. Read `launcher` / `attribution` for
    * which of those it was.
+   *
+   * A closed union rather than `string`, matching the spec's own enum — this
+   * is a field callers branch on (a gate that treats `schedule` like `api`, a
+   * table that badges `github_check`), and a bare `string` gave them no help
+   * spelling those correctly. `benchmark` is present because the platform can
+   * emit it, not because a caller should ask for it.
    */
-  source: string;
+  source: "ui" | "api" | "sdk" | "schedule" | "github_check" | "benchmark";
   /**
    * What the launching client DECLARED itself to be — the display half of run
    * origin, sent as the `x-mcpjam-launcher` header at launch.
