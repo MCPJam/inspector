@@ -153,6 +153,18 @@ export type GithubInstallCallbackResult =
       status: "pick_required";
       linkSessionId: string;
       installations: ClaimableInstallation[];
+      /**
+       * Where to send the browser to install on an account that is not in
+       * `installations` — including when that list is EMPTY, which is a
+       * complete answer (this GitHub user administers no account with the app)
+       * and the case where installing is the only move left.
+       *
+       * Optional because a deployment running the older backend does not send
+       * it. Every use of it must degrade to something the user can still act
+       * on, since the settings page no longer carries an install button of its
+       * own.
+       */
+      installUrl?: string;
     };
 
 export type GithubCheckRepoConfigRow = {
@@ -331,9 +343,6 @@ export function useGithubChecksSettings(
   // that drifts or a required argument that is forgotten fails at RUNTIME, on
   // the click, in production — not at build time. Treat these call shapes as
   // part of the backend's signature and change them together.
-  const startInstallationAction = useAction(
-    "github/appInstallLinkNode:startInstallation" as any,
-  );
   const startDirectClaimAction = useAction(
     "github/appInstallLinkNode:startDirectClaim" as any,
   );
@@ -349,25 +358,21 @@ export function useGithubChecksSettings(
   ) as GithubInstallationBinding[] | undefined;
 
   /**
-   * Begin installing the App for this organization. Returns GitHub's install
-   * URL; the caller navigates to it.
+   * Begin connecting a GitHub account — THE only way in, for every case.
+   *
+   * Goes to the OAuth leg first and lets the callback's pick answer "which of
+   * your accounts", because GitHub's install URL cannot be relied on to ask
+   * that: it redirects into an existing installation whenever the signed-in
+   * user administers one. Asking GitHub who the user is, then reading their
+   * installation list, is the only approach that does not depend on GitHub's
+   * redirect behaviour.
+   *
+   * Installing, when the answer is "none of these", is driven from the pick
+   * using the `installUrl` the backend sends with it — not from here.
    *
    * The URL carries a one-time state whose HASH is what the backend stored, so
    * it is not a credential the browser has to protect beyond the session's
    * ten-minute life.
-   */
-  const startInstallation = useCallback(
-    () =>
-      startInstallationAction({ organizationId } as any) as Promise<{
-        installUrl: string;
-      }>,
-    [startInstallationAction, organizationId],
-  );
-
-  /**
-   * Begin CLAIMING an installation somebody created from GitHub's side, where
-   * there was never a setup redirect for us to catch. Goes straight to the
-   * OAuth leg; the pick comes back from the callback.
    */
   const startDirectClaim = useCallback(
     () =>
@@ -501,7 +506,6 @@ export function useGithubChecksSettings(
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
-    startInstallation,
     startDirectClaim,
     unbindInstallation,
   };
