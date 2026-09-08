@@ -107,7 +107,7 @@ export interface OrgModelHandlerOptions {
    */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace,
+    turnTrace: PersistedTurnTrace
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -288,7 +288,7 @@ export interface OrgLocalModelHandlerOptions {
    */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace,
+    turnTrace: PersistedTurnTrace
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -372,7 +372,7 @@ function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
 }
 
 export function handleLocalOrgChatModel(
-  options: OrgLocalModelHandlerOptions,
+  options: OrgLocalModelHandlerOptions
 ): Response {
   const {
     provider,
@@ -391,7 +391,7 @@ export function handleLocalOrgChatModel(
   // sites; system fallback keeps the invariant if a future caller forgets it.
   const failureReporter = oncePerTurn(
     options.failureReporter ??
-      createSystemStreamFailureReporter("org-local-stream"),
+      createSystemStreamFailureReporter("org-local-stream")
   );
 
   // Deliberately NOT reported as an operation failure: this is a declared
@@ -597,7 +597,7 @@ export function handleLocalOrgChatModel(
           if (
             isSuspendedScopeStepUpOutputChunk(
               chunk,
-              options.suspendedToolCallId?.(),
+              options.suspendedToolCallId?.()
             )
           ) {
             continue;
@@ -807,7 +807,7 @@ export async function postLocalUsage(params: {
 // ---------------------------------------------------------------------------
 
 export async function handleHostedOrgChatModel(
-  options: OrgModelHandlerOptions,
+  options: OrgModelHandlerOptions
 ): Promise<Response> {
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");

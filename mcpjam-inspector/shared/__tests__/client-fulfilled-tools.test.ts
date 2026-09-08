@@ -45,16 +45,16 @@ describe("client-fulfilled tool names", () => {
   it("uiToolCallNeedsApproval gates mutating tools only when the flag is on (legacy, no annotations)", () => {
     // The truth table both the server gate and the client defer read.
     expect(
-      uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: true }),
+      uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: true })
     ).toBe(true);
     expect(
-      uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: true }),
+      uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: true })
     ).toBe(false);
     expect(
-      uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: false }),
+      uiToolCallNeedsApproval({ readOnly: false, requireToolApproval: false })
     ).toBe(false);
     expect(
-      uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: false }),
+      uiToolCallNeedsApproval({ readOnly: true, requireToolApproval: false })
     ).toBe(false);
   });
 
@@ -71,7 +71,7 @@ describe("client-fulfilled tool names", () => {
           readOnly: false,
           annotations: destructive,
           requireToolApproval: false,
-        }),
+        })
       ).toBe(true);
     });
 
@@ -81,7 +81,7 @@ describe("client-fulfilled tool names", () => {
           readOnly: false,
           annotations: additive,
           requireToolApproval: false,
-        }),
+        })
       ).toBe(false);
     });
 
@@ -92,7 +92,7 @@ describe("client-fulfilled tool names", () => {
             readOnly: false,
             annotations,
             requireToolApproval: true,
-          }),
+          })
         ).toBe(true);
       }
     });
@@ -104,7 +104,7 @@ describe("client-fulfilled tool names", () => {
             readOnly: true,
             annotations: readOnly,
             requireToolApproval,
-          }),
+          })
         ).toBe(false);
       }
     });
@@ -116,14 +116,14 @@ describe("client-fulfilled tool names", () => {
           readOnly: false,
           annotations: { readOnlyHint: false },
           requireToolApproval: false,
-        }),
+        })
       ).toBe(true);
       expect(
         uiToolCallNeedsApproval({
           readOnly: false,
           annotations: {},
           requireToolApproval: false,
-        }),
+        })
       ).toBe(true);
     });
 
@@ -165,7 +165,7 @@ describe("client-fulfilled tool names", () => {
             openWorldHint: true,
           },
           requireToolApproval: false,
-        }),
+        })
       ).toBe(false);
     });
   });

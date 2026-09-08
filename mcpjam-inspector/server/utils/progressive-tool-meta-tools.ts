@@ -38,7 +38,7 @@ const searchSchema = z.object({
   query: z
     .string()
     .describe(
-      "Free-text search across tool names, descriptions, and field names.",
+      "Free-text search across tool names, descriptions, and field names."
     ),
   limit: z
     .number()
@@ -53,7 +53,7 @@ const loadSchema = z.object({
     .array(z.string())
     .min(1)
     .describe(
-      "Stable tool ids (from search_mcp_tools) to make callable on the next step.",
+      "Stable tool ids (from search_mcp_tools) to make callable on the next step."
     ),
 });
 
@@ -88,7 +88,7 @@ export interface ProgressiveMetaToolsConfig {
  * distinguishable from "somebody decided".
  */
 export function createProgressiveMetaTools(
-  config: ProgressiveMetaToolsConfig,
+  config: ProgressiveMetaToolsConfig
 ): ToolSet {
   const { getCatalog, state, policy } = config;
   const result: ToolSet = {};
@@ -106,7 +106,7 @@ export function createProgressiveMetaTools(
       const MAX_SEARCH_LIMIT = Math.max(policy.searchLimit * 4, 32);
       const effectiveLimit = Math.min(
         limit ?? policy.searchLimit,
-        MAX_SEARCH_LIMIT,
+        MAX_SEARCH_LIMIT
       );
       const catalog = getCatalog();
       // Rank the full match list first so `totalMatches` reflects the true

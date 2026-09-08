@@ -207,7 +207,12 @@ export function createApprovalDecisionCache(): ApprovalDecisionCache {
  *
  * A FUNCTION is invoked the way the AI SDK invokes it, `(input, {toolCallId,
  * messages})`, and awaited — see {@link ApprovalDecisionCache} for why exactly
- * once.
+ * once. The whole resolution deliberately mirrors the SDK's
+ * `isApprovalNeeded` case for case: absent is free, a boolean is itself, a
+ * function is called. The two readers agreeing is not a nicety — the client
+ * decides whether to DEFER a client-fulfilled call from one of them and the
+ * server decides whether to SEND a pill from the other, and a disagreement
+ * strands the turn.
  *
  * EXPORTED as a test seam. `__tests__/tool-approval-matrix.test.ts` pins its
  * contract directly next to the end-to-end rows that drive it through a whole
@@ -239,7 +244,18 @@ async function decideToolCallApproval(args: {
   const declared = (
     args.tools as Record<string, { needsApproval?: unknown } | undefined>
   )[args.name]?.needsApproval;
-  if (typeof declared !== "function") return declared === true;
+  if (declared == null) return false;
+  if (typeof declared === "boolean") return declared;
+  if (typeof declared !== "function") {
+    // Out of contract: the SDK would try to CALL this and throw. Ask rather
+    // than run, and say so — a malformed declaration is a bug to fix, not a
+    // tool to wave through.
+    logger.warn(
+      "[mcpjam-stream-handler] tool declared a non-boolean, non-function needsApproval; asking",
+      { toolName: args.name, declared: typeof declared },
+    );
+    return true;
+  }
   try {
     const evaluated = await (
       declared as (
@@ -250,7 +266,8 @@ async function decideToolCallApproval(args: {
       toolCallId: args.toolCallId,
       messages: args.messages,
     });
-    return evaluated === true;
+    // Truthiness, as the SDK's caller reads its return.
+    return Boolean(evaluated);
   } catch (error) {
     // FAIL CLOSED. A function-form declaration is the shape used where consent
     // is bound to something that had to be fetched, so "we could not work out
@@ -863,10 +880,12 @@ export interface MCPJamHandlerOptions {
   /**
    * The host's approval switch for this turn.
    *
-   * NOT read by the approval gate — every tool already carries the declaration
-   * this switch produced (`shared/tool-approval.ts`), and the gate reads that.
-   * It is still threaded because the harness engine, which builds its own tool
-   * set rather than consuming `tools`, needs the host's intent directly.
+   * NOT read by the emulated loop at all. Every tool in `tools` already
+   * carries the declaration this switch produced (`shared/tool-approval.ts`),
+   * and the gate reads that. It survives as an option because
+   * `handleMCPJamFreeChatModel` also dispatches the HARNESS engine, which
+   * builds its own MCP tool set rather than consuming `tools` and so needs the
+   * host's intent directly.
    */
   requireToolApproval?: boolean;
   /**
@@ -1098,7 +1117,6 @@ interface StepContext {
   temperature?: number;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
-  requireToolApproval?: boolean;
   /** One approval decision per tool call, shared across the whole turn. */
   approvalDecisions: ApprovalDecisionCache;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -1740,16 +1758,20 @@ async function processStream(
   traceTurn: LiveTraceTurnContext,
   stepIndex: number,
   tools: ToolSet,
-  requireToolApproval?: boolean,
+  // The turn's approval decisions, and the history a function-form
+  // declaration is handed. Both REQUIRED and both positioned before the
+  // optional callbacks: the cache is what makes a SEP-2640 manifest resolve
+  // once per tool call rather than once per asker, so a default that quietly
+  // minted a fresh one per step would reintroduce the bug it exists to
+  // prevent, and it would do so silently.
+  approvalDecisions: ApprovalDecisionCache,
+  messageHistory: ModelMessage[],
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
-  progressivePlan?: ProgressiveToolPlan,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
   // supplied. Chat / synthetic omit (handler still writes the UI
   // chunk + trace event unchanged).
   onToolCall?: (event: MCPJamToolCallEvent) => void,
-  approvalDecisions: ApprovalDecisionCache = createApprovalDecisionCache(),
-  messageHistory: ModelMessage[] = [],
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -2571,7 +2593,6 @@ async function processOneStep(
     temperature,
     mcpClientManager,
     selectedServers,
-    requireToolApproval,
     approvalDecisions,
     modelVisibleMcpToolResults,
     approvalMode,
@@ -2927,13 +2948,11 @@ async function processOneStep(
     traceTurn,
     stepIndex,
     tools,
-    requireToolApproval,
-    onLiveTextDelta,
-    abortSignal,
-    progressivePlan,
-    onToolCall,
     approvalDecisions,
     messageHistory,
+    onLiveTextDelta,
+    abortSignal,
+    onToolCall,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -3529,7 +3548,6 @@ export async function runChatEngineLoop(
     projectId,
     mcpClientManager,
     selectedServers,
-    requireToolApproval,
     modelVisibleMcpToolResults,
     approvalMode,
     mrtrResume,
@@ -3903,7 +3921,6 @@ export async function runChatEngineLoop(
           temperature,
           mcpClientManager,
           selectedServers,
-          requireToolApproval,
           approvalDecisions,
           modelVisibleMcpToolResults,
           approvalMode,

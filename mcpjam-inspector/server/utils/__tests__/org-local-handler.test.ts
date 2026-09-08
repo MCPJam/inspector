@@ -79,7 +79,9 @@ function defaultStreamTextReturn(
     consumeStream: async () => {},
     response: Promise.resolve({
       modelId: "mock-model",
-      messages: overrides.messages ?? [{ role: "assistant", content: "Hi" }],
+      messages: overrides.messages ?? [
+        { role: "assistant", content: "Hi" },
+      ],
     }),
     steps: Promise.resolve(overrides.steps ?? []),
     totalUsage: Promise.resolve(
@@ -313,9 +315,8 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // Yield so the queued microtask + the in-flight fetch settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(
-      ([url]) =>
-        typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(([url]) =>
+      typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeDefined();
     const body = JSON.parse((usageCall![1] as any).body as string);
@@ -370,9 +371,8 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(
-      ([url]) =>
-        typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(([url]) =>
+      typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeUndefined();
   });

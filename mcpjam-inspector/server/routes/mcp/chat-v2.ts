@@ -532,8 +532,7 @@ function streamDirectChatWithLiveTrace(options: {
   // chain — cheaper than widening the engine's signature for every headless
   // caller that will never emit a receipt.
   let persistReceipt:
-    | { outcome: PersistChatOutcome; turnId: string }
-    | undefined;
+    { outcome: PersistChatOutcome; turnId: string } | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -749,7 +748,7 @@ chatV2.post("/", async (c) => {
       ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isScenarioSession ? bodySurface ?? "preview" : undefined;
+      isScenarioSession ? (bodySurface ?? "preview") : undefined;
 
     // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -1058,7 +1057,7 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+      isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1199,10 +1198,7 @@ chatV2.post("/", async (c) => {
         // AuthKit at all is a 503 the operator fixes. Collapsing both into
         // "your target is malformed" is what sends a signed-out user to
         // re-pick a folder.
-        return c.json(
-          { error: actor.message, reason: actor.reason },
-          actor.status,
-        );
+        return c.json({ error: actor.message, reason: actor.reason }, actor.status);
       }
       localHarnessActingUserId = actor.actor.userId;
     }
@@ -1274,9 +1270,7 @@ chatV2.post("/", async (c) => {
     // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        | { executionScope?: ExecutionScope }
-        | null
-        | undefined
+        { executionScope?: ExecutionScope } | null | undefined
     )?.executionScope;
 
     // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
@@ -1315,8 +1309,8 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-        ? { preference: "cloud" as const }
-        : {}),
+          ? { preference: "cloud" as const }
+          : {}),
       localConsentValid,
     });
 
@@ -1505,7 +1499,7 @@ chatV2.post("/", async (c) => {
           ? {
               toolCallCancellation:
                 toolCallCancellationFromMcpProfile(
-                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
                 ) ?? {},
             }
           : {}),
@@ -1633,11 +1627,11 @@ chatV2.post("/", async (c) => {
           modelVisibleMcpToolResults,
         })
       : scopeStepUpCancelRequest
-      ? buildLocalScopeStepUpCancellation({
-          request: scopeStepUpCancelRequest,
-          bindingKey: scopeStepUpBindingKey,
-        })
-      : undefined;
+        ? buildLocalScopeStepUpCancellation({
+            request: scopeStepUpCancelRequest,
+            bindingKey: scopeStepUpBindingKey,
+          })
+        : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );
@@ -2059,8 +2053,7 @@ chatV2.post("/", async (c) => {
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
     const inboundAbortSignalDirect = c.req.raw.signal as
-      | AbortSignal
-      | undefined;
+      AbortSignal | undefined;
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(

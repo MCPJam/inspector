@@ -86,7 +86,7 @@ vi.mock("../registry.js", () => ({
 
 /** The projection itself is covered by its own file; here it is a spy. */
 const projectSpy = vi.hoisted(() =>
-  vi.fn(async () => ({ tools: {}, keyToServerId: {} })),
+  vi.fn(async () => ({ tools: {}, keyToServerId: {} }))
 );
 vi.mock("../host-executed-mcp-tools.js", async (importOriginal) => {
   const actual = await importOriginal<
@@ -177,11 +177,9 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
 /** The `toolOptions` the turn handed the projection. */
 function forwardedToolOptions() {
   expect(projectSpy).toHaveBeenCalledTimes(1);
-  return (
-    projectSpy.mock.calls[0]![0] as unknown as {
-      toolOptions?: Record<string, unknown>;
-    }
-  ).toolOptions;
+  return (projectSpy.mock.calls[0]![0] as unknown as {
+    toolOptions?: Record<string, unknown>;
+  }).toolOptions;
 }
 
 describe("runHarnessTurn forwards host tool-construction options", () => {
@@ -203,7 +201,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
     };
     await runHarnessTurn(
       baseOptions({ modelVisibleMcpToolResults: policy }) as never,
-      "none",
+      "none"
     );
     expect(forwardedToolOptions()).toMatchObject({
       modelVisibleMcpToolResults: policy,
@@ -219,7 +217,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
   it("turns an explicit respectToolVisibility=false into includeAppOnly", async () => {
     await runHarnessTurn(
       baseOptions({ respectToolVisibility: false }) as never,
-      "none",
+      "none"
     );
     expect(forwardedToolOptions()).toMatchObject({ includeAppOnly: true });
   });
@@ -234,7 +232,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
     projectSpy.mockClear();
     await runHarnessTurn(
       baseOptions({ respectToolVisibility: true }) as never,
-      "none",
+      "none"
     );
     expect(forwardedToolOptions()?.includeAppOnly).toBe(false);
   });
@@ -254,7 +252,7 @@ describe("runHarnessTurn forwards host tool-construction options", () => {
     // what the projection does with a `true`.
     await runHarnessTurn(
       baseOptions({ requireToolApproval: false }) as never,
-      "none",
+      "none"
     );
     // A `false` is dropped by `mcpToolOptionsFor`, so a switch-off turn still
     // takes the no-options overload — see the byte-identity case below.

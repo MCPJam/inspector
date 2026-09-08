@@ -1826,7 +1826,7 @@ chatV2.post("/", async (c) => {
             ? {
                 toolCallCancellation:
                   toolCallCancellationFromMcpProfile(
-                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
                   ) ?? {},
               }
             : {}),

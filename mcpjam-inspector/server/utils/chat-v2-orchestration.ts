@@ -39,7 +39,9 @@ import {
 } from "./chat-helpers.js";
 import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
-import { withServerSkills } from "./server-skill-tools.js";
+import {
+  withServerSkills,
+} from "./server-skill-tools.js";
 import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
@@ -637,8 +639,7 @@ export function buildWidgetInteractionContextSystemPrompt(
 
   const sections = calls.map((call) => {
     const result = call.result as
-      | { content?: Array<Record<string, unknown>> }
-      | undefined;
+      { content?: Array<Record<string, unknown>> } | undefined;
     const content = result?.content ?? [];
     const lines = [
       `The user interacted with the \`${call.toolName}\` MCP App widget, which called the \`${call.toolName}\` tool. It returned:`,
@@ -1363,17 +1364,17 @@ export async function prepareChatV2(
     ? skillsSource.kind === "pinned"
       ? getPinnedSkillToolsAndPrompt(skillsSource.skills, modelContextTokens)
       : skillsSource.kind === "resolved" ||
-        skillsSource.kind === "pinned-effective"
-      ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
-          ...(skillsSource.abortSignal
-            ? { signal: skillsSource.abortSignal }
-            : {}),
-          // The discovery listing is budgeted against THIS model's context
-          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-          // model definition; the budget helper falls back to 8,000 chars.
-          ...modelContextTokens,
-        })
-      : { tools: {}, systemPromptSection: "" }
+          skillsSource.kind === "pinned-effective"
+        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+            ...(skillsSource.abortSignal
+              ? { signal: skillsSource.abortSignal }
+              : {}),
+            // The discovery listing is budgeted against THIS model's context
+            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+            // model definition; the budget helper falls back to 8,000 chars.
+            ...modelContextTokens,
+          })
+        : { tools: {}, systemPromptSection: "" }
     : // No source is no SKILLS OF ITS OWN — not a fallback. The old chain
       // ended `cloudSkills ? … : HOSTED_MODE ? {} : localFS` — exclusive arms
       // chosen by DEPLOYMENT rather than by what the user had, which is why a
@@ -1466,7 +1467,7 @@ export async function prepareChatV2(
         budgetChars: Math.max(
           0,
           skillMetadataBudgetChars(modelContextTokens.modelContextTokens) -
-            (skillsPromptSection?.length ?? 0),
+            (skillsPromptSection?.length ?? 0)
         ),
       })
     : "";

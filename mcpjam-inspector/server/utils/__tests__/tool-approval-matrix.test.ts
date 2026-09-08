@@ -808,6 +808,14 @@ describe("toolCallNeedsApproval — the MCPJam gate", () => {
     expect(calls).toBe(2);
   });
 
+  it("fails CLOSED on a declaration that is neither boolean nor function", async () => {
+    // Out of contract — the AI SDK would try to CALL it and throw. A bug to
+    // fix, not a tool to wave through.
+    expect(
+      await ask("weird", { weird: { needsApproval: "yes" as never } }),
+    ).toBe(true);
+  });
+
   it("fails CLOSED when a function declaration throws", async () => {
     const tools = {
       loadSkill: {

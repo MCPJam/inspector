@@ -1547,8 +1547,8 @@ export async function runHarnessTurn(
             ? "allow-reads"
             : localPermissionMode
           : requireToolApproval && harnessAdapter.supportsNativeToolApproval
-          ? harnessAdapter.approvalPermissionMode
-          : harnessAdapter.defaultPermissionMode;
+            ? harnessAdapter.approvalPermissionMode
+            : harnessAdapter.defaultPermissionMode;
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
@@ -1854,12 +1854,10 @@ export async function runHarnessTurn(
       // with no colon in them.
       const computerId =
         localPrepared !== null
-          ? `${harnessExecutionTarget!.machineId}:${
-              localPrepared.plan.runtime.runtimeId
-            }`
+          ? `${harnessExecutionTarget!.machineId}:${localPrepared.plan.runtime.runtimeId}`
           : box!.kind === "computer"
-          ? box!.computerId
-          : box!.sandboxRowId;
+            ? box!.computerId
+            : box!.sandboxRowId;
       // The id the CUMULATIVE-UPLOAD QUOTA is metered against — a real
       // `projectComputers` row, or nothing.
       //
@@ -1989,34 +1987,34 @@ export async function runHarnessTurn(
         localPrepared !== null
           ? localPrepared.sandbox
           : createE2BHarnessSandboxProvider({
-              sandboxId: sandboxId!,
-              defaultWorkingDirectory,
-              // The materialized secrets, as a session-wide env bag on every `run`
-              // and `spawn`. This is the whole of materialized delivery on the
-              // harness path: the agent runs `stripe customers list`, and
-              // `STRIPE_API_KEY` is simply in that process's environment.
+        sandboxId: sandboxId!,
+        defaultWorkingDirectory,
+        // The materialized secrets, as a session-wide env bag on every `run`
+        // and `spawn`. This is the whole of materialized delivery on the
+        // harness path: the agent runs `stripe customers list`, and
+        // `STRIPE_API_KEY` is simply in that process's environment.
+        //
+        // In `envs`, never in the command line — the rule `plugin-box.ts`
+        // already states: argv is readable by every process in the box through
+        // `/proc`, and it lands in shell history.
+        ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
+          ? {
+              sessionEnv: sessionSecretEnv,
+              // Stamped when the env is MERGED INTO A COMMAND, not here.
               //
-              // In `envs`, never in the command line — the rule `plugin-box.ts`
-              // already states: argv is readable by every process in the box through
-              // `/proc`, and it lands in shell history.
-              ...(sessionSecretEnv && Object.keys(sessionSecretEnv).length > 0
-                ? {
-                    sessionEnv: sessionSecretEnv,
-                    // Stamped when the env is MERGED INTO A COMMAND, not here.
-                    //
-                    // Constructing this provider only puts the values in a local
-                    // object — nothing has reached E2B yet, and harness setup can
-                    // still throw before any command runs (`startHarnessModelBroker`
-                    // below is the usual one). Stamping at construction made
-                    // `lastDeliveredAt` mean "a turn got this far", when the question
-                    // it is read for, before deleting a credential believed dormant,
-                    // is "did anything actually receive it".
-                    ...(onSecretEnvDelivered
-                      ? { onSessionEnvUsed: onSecretEnvDelivered }
-                      : {}),
-                  }
+              // Constructing this provider only puts the values in a local
+              // object — nothing has reached E2B yet, and harness setup can
+              // still throw before any command runs (`startHarnessModelBroker`
+              // below is the usual one). Stamping at construction made
+              // `lastDeliveredAt` mean "a turn got this far", when the question
+              // it is read for, before deleting a credential believed dormant,
+              // is "did anything actually receive it".
+              ...(onSecretEnvDelivered
+                ? { onSessionEnvUsed: onSecretEnvDelivered }
                 : {}),
-            });
+            }
+          : {}),
+      });
 
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
       // known, so have Convex mint the lease, keep the sandbox on its own
@@ -3380,7 +3378,11 @@ export async function runHarnessTurn(
           //
           // Durations and a boolean. No path, no machine id, no digest.
           logger.info(
-            `[harness][timing][local] runtimeVerify=${localPrepared.timings.localRuntimeVerifyMs}ms gatewayReady=${localPrepared.timings.localGatewayReadyMs}ms permissionMode=${localPrepared.permissionMode} resumed=${resumedSession}`,
+            `[harness][timing][local] runtimeVerify=${
+              localPrepared.timings.localRuntimeVerifyMs
+            }ms gatewayReady=${
+              localPrepared.timings.localGatewayReadyMs
+            }ms permissionMode=${localPrepared.permissionMode} resumed=${resumedSession}`,
           );
         }
         if (installedRuntimeVersion) {

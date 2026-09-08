@@ -42,7 +42,7 @@ interface ExaWebSearchResult {
 }
 
 export function buildExaWebSearchTool(
-  opts: ExaWebSearchToolOptions,
+  opts: ExaWebSearchToolOptions
 ): ToolSet[string] {
   return tool({
     description:

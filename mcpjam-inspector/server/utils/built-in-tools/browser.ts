@@ -157,18 +157,8 @@ export interface BrowserToolsResult {
 
 /** What a daemon reply means once both layers have been read. */
 type CommandOutcome =
-  | {
-      ok: true;
-      output: unknown;
-      stateToken?: ObservationStateToken;
-      settled?: boolean;
-    }
-  | {
-      ok: false;
-      error: string;
-      stateToken?: ObservationStateToken;
-      output?: unknown;
-    };
+  | { ok: true; output: unknown; stateToken?: ObservationStateToken; settled?: boolean }
+  | { ok: false; error: string; stateToken?: ObservationStateToken; output?: unknown };
 
 /** The daemon client surface these tools use (narrowed for tests). */
 interface CommandSender {
@@ -306,10 +296,7 @@ class BrowserTurnState {
     return this.session;
   }
 
-  rememberToken(
-    tabId: string | undefined,
-    token?: ObservationStateToken,
-  ): void {
+  rememberToken(tabId: string | undefined, token?: ObservationStateToken): void {
     if (!token) return;
     this.tokens.set(tabId ?? "@session", token);
     // A token minted AFTER the handoff describes the page as it is now, so the
@@ -417,9 +404,7 @@ export function buildBrowserTools(
   // and keeps its logins; one that cannot is unattended and must start blank.
   // Letting these be set independently is how an eval ends up running against
   // whatever profile the last playground session left signed in.
-  const contextMode: BrowserContextMode = unattended
-    ? "ephemeral"
-    : "persistent";
+  const contextMode: BrowserContextMode = unattended ? "ephemeral" : "persistent";
   // Ephemeral browsers are keyed per RUN. Falling back to the project (or to
   // the swarm, which fans out many runs) is what let two unattended runs share
   // one browser and one cookie jar — so a run that cannot name itself gets no
@@ -536,19 +521,17 @@ export function buildBrowserTools(
           ? { ...action, expectedState: pinned }
           : action,
     };
-    const response = await (
-      handle.client as unknown as CommandSender
-    ).sendCommand(command, handle.bootId);
+    const response = await (handle.client as unknown as CommandSender).sendCommand(
+      command,
+      handle.bootId,
+    );
     let outcome = unwrapCommand(response);
     // W4/L6 — a handoff invalidates everything this turn cached. Two signals
     // reach us: a refusal while the person still holds the browser, and the
     // note the daemon attaches to the first result after they hand it back.
     // Order matters: forget BEFORE remembering, so the fresh token from the
     // post-handoff observation survives and the turn is immediately caught up.
-    if (
-      response.status === "lease_blocked" ||
-      carriesHandoffNote(outcome.output)
-    ) {
+    if (response.status === "lease_blocked" || carriesHandoffNote(outcome.output)) {
       state.forgetTokens();
     }
     // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
@@ -585,23 +568,15 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(
-          engine,
-        )} (or go back / reload). Returns what the page ` +
+        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns what the page ` +
         "looks like after it settles, so you do not need to observe separately.",
       inputSchema: z.object({
-        url: z
-          .string()
-          .optional()
-          .describe("URL to open. Omit when using back or reload."),
+        url: z.string().optional().describe("URL to open. Omit when using back or reload."),
         action: z
           .enum(["goto", "back", "reload"])
           .optional()
           .describe("Defaults to goto."),
-        tabId: z
-          .string()
-          .optional()
-          .describe("Tab to drive. Omit for the main tab."),
+        tabId: z.string().optional().describe("Tab to drive. Omit for the main tab."),
         newTab: z
           .boolean()
           .optional()
@@ -611,34 +586,22 @@ export function buildBrowserTools(
       execute: async ({ url, action, tabId, newTab }, { abortSignal }) => {
         const verb = action ?? "goto";
         if (verb === "goto" && !url) return { error: "navigate needs a url" };
-        if (
-          url &&
-          unattended &&
-          !isOriginAllowed(url, unattended.originAllowlist)
-        ) {
+        if (url && unattended && !isOriginAllowed(url, unattended.originAllowlist)) {
           // Enforced BEFORE the command leaves this process: an unattended run
           // must not reach an origin its policy never named.
           return {
             error:
               `origin_not_allowed: this run's toolPolicy does not permit ${url} — ` +
-              `allowed origins: ${
-                (unattended.originAllowlist ?? []).join(", ") || "(none)"
-              }`,
+              `allowed origins: ${(unattended.originAllowlist ?? []).join(", ") || "(none)"}`,
           };
         }
         const browserAction: BrowserAction =
           verb === "goto"
-            ? {
-                kind: "navigate",
-                url: url!,
-                ...(newTab ? { newTab: true } : {}),
-              }
+            ? { kind: "navigate", url: url!, ...(newTab ? { newTab: true } : {}) }
             : verb === "back"
-            ? { kind: "back" }
-            : { kind: "reload" };
-        return present(
-          await send(browserAction, { tabId, signal: abortSignal }),
-        );
+              ? { kind: "back" }
+              : { kind: "reload" };
+        return present(await send(browserAction, { tabId, signal: abortSignal }));
       },
     }),
   );
@@ -691,10 +654,7 @@ export function buildBrowserTools(
         tabId: z.string().optional(),
       }),
       needsApproval,
-      execute: async (
-        { verb, selector, x, y, value, tabId },
-        { abortSignal },
-      ) => {
+      execute: async ({ verb, selector, x, y, value, tabId }, { abortSignal }) => {
         if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
@@ -712,8 +672,8 @@ export function buildBrowserTools(
           x !== undefined && y !== undefined
             ? { coordinates: [x, y] }
             : selector
-            ? { selector }
-            : undefined;
+              ? { selector }
+              : undefined;
         return present(
           await send(
             {
@@ -744,10 +704,7 @@ export function buildBrowserTools(
       execute: async ({ action, tabId }, { abortSignal }) =>
         present(
           await send(
-            {
-              kind: "act",
-              verb: action === "activate" ? "activate_tab" : "close_tab",
-            },
+            { kind: "act", verb: action === "activate" ? "activate_tab" : "close_tab" },
             { tabId, signal: abortSignal },
           ),
         ),
@@ -1020,16 +977,10 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
       value: [{ type: "text", text: JSON.stringify(output ?? null) }],
     };
   }
-  const rest: Record<string, unknown> = {
-    ...(output as Record<string, unknown>),
-  };
+  const rest: Record<string, unknown> = { ...(output as Record<string, unknown>) };
   const shot = takeScreenshot(rest);
   if (shot) {
-    value.push({
-      type: "image-data",
-      data: shot,
-      mediaType: imageMediaType(shot),
-    });
+    value.push({ type: "image-data", data: shot, mediaType: imageMediaType(shot) });
   }
   const { ours, page } = splitPageDerived(rest);
   // An empty `{}` is not worth a content part: a plain observation says
@@ -1170,9 +1121,7 @@ function fencePageContent(
 ): string {
   const nonce = pageContentNonce();
   return (
-    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(
-      origin,
-    )} ---\n` +
+    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(origin)} ---\n` +
     JSON.stringify(page) +
     `\n--- END_MCPJAM_PAGE_CONTENT nonce=${nonce} ---`
   );

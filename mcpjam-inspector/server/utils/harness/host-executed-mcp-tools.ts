@@ -81,10 +81,7 @@ import type { RuntimePluginVersion } from "../../services/environments/effective
 
 /** The harness tool-name prefix. Claude Code's native scheme, reused verbatim so
  *  a Codex run attributes identically to a Claude Code run. */
-export function harnessMcpToolName(
-  serverKey: string,
-  toolName: string,
-): string {
+export function harnessMcpToolName(serverKey: string, toolName: string): string {
   return `mcp__${serverKey}__${toolName}`;
 }
 
@@ -172,7 +169,7 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     ...(args.pluginOrigins ? { pluginOrigins: args.pluginOrigins } : {}),
     onSkipped: (id) =>
       logger.warn(
-        `[harness] selected server has no live config; skipping serverId=${id}`,
+        `[harness] selected server has no live config; skipping serverId=${id}`
       ),
   });
   if (configured.length === 0) return { tools: {}, keyToServerId: {} };
@@ -180,7 +177,7 @@ export async function projectSelectedMcpServersAsHostTools(args: {
   // Same sanitize + dedup + ordering as the `.mcp.json` keys, from the same
   // helper — so the two delivery modes cannot drift into different tool names.
   const keyToServerId = harnessServerKeyToName(
-    configured.map((id) => ({ name: id })),
+    configured.map((id) => ({ name: id }))
   );
   const serverIdToKey = new Map<string, string>();
   for (const [key, serverId] of Object.entries(keyToServerId)) {
@@ -200,7 +197,7 @@ export async function projectSelectedMcpServersAsHostTools(args: {
     // ship the server's tools under a name nothing can attribute.
     if (!key) {
       throw new Error(
-        `Harness host-executed MCP projection: no name key for serverId=${serverId}`,
+        `Harness host-executed MCP projection: no name key for serverId=${serverId}`
       );
     }
     // REUSE the manager's own AI SDK conversion (schemas, result shaping,
