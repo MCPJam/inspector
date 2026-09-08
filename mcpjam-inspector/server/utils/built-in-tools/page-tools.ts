@@ -62,16 +62,14 @@ import type {
 } from "../../services/browserd/protocol.js";
 
 /**
- * One page tool as the peek reported it, plus the identity the daemon minted.
+ * One page tool as the peek reported it.
  *
- * `BrowserPageTool` is the pane's shape and carries neither `frameId` nor
- * `registrationSeq`; both are load-bearing here, so the builder takes the
- * richer row rather than re-deriving identity it cannot see.
+ * An alias rather than a second shape: `BrowserPageTool` carries `frameId` and
+ * `registrationSeq` precisely because this builder needs them, and a parallel
+ * type here would be a second place for the pane and the model to disagree
+ * about what a page declared.
  */
-export interface PeekedPageTool extends BrowserPageTool {
-  frameId?: string;
-  registrationSeq?: number;
-}
+export type PeekedPageTool = BrowserPageTool;
 
 /** What a page-tool `execute` needs from the browser layer. */
 export type PageToolSend = (

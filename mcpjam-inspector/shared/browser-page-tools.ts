@@ -30,6 +30,22 @@ export interface BrowserPageTool {
   origin?: string;
   isMainFrame?: boolean;
   registrationKind?: "declarative" | "imperative" | "unknown";
+  /**
+   * The CDP frame that registered it.
+   *
+   * Carried through because it is HALF THE IDENTITY once a page tool becomes a
+   * model tool: two same-origin duplicate iframes declare the same names with
+   * the same origin, and nothing else tells them apart. Dropping it here was
+   * fine while the pane only listed names; it is not fine now that the same
+   * rows are minted into tools the model calls.
+   */
+  frameId?: string;
+  /**
+   * WHICH REGISTRATION, minted by the daemon. The other half: a page that
+   * re-registers a tool under an unchanged name in an unchanged frame has a
+   * different handler behind it.
+   */
+  registrationSeq?: number;
 }
 
 export interface BrowserPageToolsOk {
@@ -101,6 +117,10 @@ function pageToolFrom(value: unknown): BrowserPageTool | null {
     tool.annotations = value.annotations as BrowserPageTool["annotations"];
   }
   if (typeof value.origin === "string") tool.origin = value.origin;
+  if (typeof value.frameId === "string") tool.frameId = value.frameId;
+  if (typeof value.registrationSeq === "number") {
+    tool.registrationSeq = value.registrationSeq;
+  }
   if (typeof value.isMainFrame === "boolean") {
     tool.isMainFrame = value.isMainFrame;
   }

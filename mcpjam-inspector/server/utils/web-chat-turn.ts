@@ -23,6 +23,7 @@
  *   - Throwing/propagating errors; the caller is expected to catch and run
  *     its own OAuth-error enrichment if applicable.
  */
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -321,6 +322,13 @@ export interface WebChatTurnPersistContext {
    * written down. Delivery is byte-identical whether this is present or not.
    */
   turnProvenance?: TurnSkillProvenance;
+  /**
+   * The page tools this turn advertised, for the turn trace.
+   *
+   * Like `turnProvenance`: it decides only what gets WRITTEN DOWN, never what
+   * reaches the model. Delivery is byte-identical whether it is present or not.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 /**
@@ -1134,9 +1142,16 @@ export async function streamWebChatTurn(
         // Testing's most environment-driven surface with no record of what it
         // ran. Distinct from `resumeConfig`, which is gated because it is the
         // restorable-resume surface; this is provenance and restores nothing.
-        turnTrace: persist.turnProvenance
-          ? { ...turnTrace, ...persist.turnProvenance }
-          : turnTrace,
+        turnTrace: {
+          ...turnTrace,
+          ...(persist.turnProvenance ?? {}),
+          // An EMPTY array is meaningful and is written: "this turn advertised
+          // no page tools" is a different fact from "we do not know", and the
+          // pane says something different about each.
+          ...(persist.pageToolsAtTurn
+            ? { pageToolsAtTurn: persist.pageToolsAtTurn }
+            : {}),
+        },
         ...(persist.expectedVersion !== undefined
           ? { expectedVersion: persist.expectedVersion }
           : {}),

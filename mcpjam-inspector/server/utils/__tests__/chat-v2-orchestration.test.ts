@@ -1704,3 +1704,67 @@ describe("prepareChatV2 — a live resolved source", () => {
     ).toBe(true);
   });
 });
+
+describe("first-class page tools in prepareChatV2", () => {
+  function pageTool(name: string) {
+    return {
+      description: `[WebMCP page tool — https://pizza.test] ${name}`,
+      inputSchema: { jsonSchema: { type: "object", properties: {} } },
+      execute: async () => ({ ok: true }),
+    } as any;
+  }
+
+  const base = () => ({
+    selectedServers: [],
+    modelDefinition: { id: "gpt-4.1-mini", provider: "openai" } as any,
+    systemPrompt: "Base prompt.",
+  });
+
+  it("A PAGE TOOL LOSES a collision with an MCP tool, and never throws", async () => {
+    // The opposite of the built-in policy. A built-in winning over a same-named
+    // MCP tool is the host's own catalog choice beating a server's; a PAGE tool
+    // is a third party's name, and letting it win would let any web page shadow
+    // a tool the host configured. Throwing is equally wrong: a page choosing an
+    // unlucky name must not be able to fail somebody's turn.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({
+        webmcp_deploy: {
+          description: "the host's own deploy tool",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      }),
+      builtInTools: {
+        webmcp_deploy: pageTool("deploy"),
+        webmcp_safe: pageTool("safe"),
+      },
+    } as any);
+    expect((result.allTools.webmcp_deploy as any)?.description).toContain(
+      "the host's own",
+    );
+    expect(result.allTools.webmcp_safe).toBeDefined();
+  });
+
+  it("tells the model where the `webmcp_*` tools came from", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: { webmcp_pay: pageTool("pay") },
+    } as any);
+    // Tool DEFINITIONS are not fenced, so the provenance header on each
+    // description is the model's only in-band cue — and this is what says what
+    // that header means.
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+    expect(result.enhancedSystemPrompt).toContain("MCPJAM_PAGE_CONTENT");
+  });
+
+  it("says nothing about page tools when there are none", async () => {
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+    } as any);
+    expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
+  });
+});

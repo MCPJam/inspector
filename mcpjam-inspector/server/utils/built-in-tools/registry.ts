@@ -66,10 +66,15 @@ import { buildSandboxBashTool } from "./sandbox-bash.js";
 import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 import {
   buildBrowserTools,
+  type BrowserPageToolsSnapshot,
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
 import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
+import type {
+  DeclaredToolProvider,
+  MintedDeclaredTool,
+} from "@/shared/declared-tools";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -244,6 +249,32 @@ export interface BuiltInToolContext {
    * `uiToolApprovals` slot. Absent on surfaces that do not advertise them.
    */
   onBrowserApprovals?: (approvals: UiToolApprovalClassification) => void;
+  /**
+   * The page tools this turn STARTS with, read before the turn began by
+   * `peekPageTools`.
+   *
+   * Read-only and pre-resolved on purpose: this resolver is synchronous, and a
+   * browser read inside it would put a daemon round trip on the critical path
+   * of every turn that merely MENTIONS the browser capability. The route does
+   * the read (and decides whether to do it at all) and hands the answer down.
+   */
+  browserPageTools?: BrowserPageToolsSnapshot;
+  /**
+   * This turn's engine can grow its tool set between model steps. Decides
+   * whether the legacy `browser_webmcp_*` verbs are retired for it.
+   */
+  browserDynamicPageTools?: boolean;
+  /** Which provider's tool-schema subset page schemas are reported against. */
+  browserProvider?: DeclaredToolProvider;
+  /**
+   * What the browser capability actually advertised from the page, so the turn
+   * can PERSIST it. Deriving it later from the live browser would attribute a
+   * reopened conversation's cards to whatever page the browser is on now.
+   */
+  onBrowserPageTools?: (info: {
+    minted: MintedDeclaredTool[];
+    notices: Array<{ rawName: string; reason: string }>;
+  }) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
    * drive the SAME computer as the same uid, so a shell can read the driven
@@ -733,10 +764,23 @@ export function resolveHostTools(
               },
             }
           : {}),
+        // ABSENT ⇒ no `webmcp_*` tools, whatever the flag says. A turn only
+        // gets them when its route decided to read the page and got an answer.
+        ...(ctx.browserPageTools ? { pageTools: ctx.browserPageTools } : {}),
+        ...(ctx.browserDynamicPageTools
+          ? { dynamicPageTools: true as const }
+          : {}),
+        ...(ctx.browserProvider ? { provider: ctx.browserProvider } : {}),
       });
       if (browser) {
         Object.assign(out, browser.tools);
         ctx.onBrowserApprovals?.(browser.approvals);
+        if (browser.pageTools || browser.pageToolNotices) {
+          ctx.onBrowserPageTools?.({
+            minted: browser.pageTools ?? [],
+            notices: browser.pageToolNotices ?? [],
+          });
+        }
       }
       continue;
     }

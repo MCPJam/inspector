@@ -1,3 +1,13 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import {
   createUIMessageStream,
@@ -1320,9 +1330,44 @@ chatV2.post("/", async (c) => {
     });
 
 
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
+    // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
+    // skipped entirely for a turn that has no browser capability.
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: computerEngine === "local" ? "local" : "hosted",
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+    /**
+     * Record what this turn advertised from the page.
+     *
+     * Written down rather than re-derived: the live browser describes the page
+     * it is on NOW, so a conversation reopened tomorrow would attribute its
+     * cards to whatever tool happens to carry that name then.
+     */
+    const withPageToolsAtTurn = (
+      trace: PersistedTurnTrace,
+    ): PersistedTurnTrace =>
+      pageToolsSnapshot
+        ? {
+            ...trace,
+            pageToolsAtTurn: toMintedPageToolRecords(
+              advertisedPageTools,
+              pageToolsSnapshot,
+            ),
+          }
+        : trace;
+
     // Filled by the resolver when browser tools are advertised; merged into
     // the engines' single `uiToolApprovals` slot below.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
+    let advertisedPageTools: MintedDeclaredTool[] = [];
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1359,6 +1404,15 @@ chatV2.post("/", async (c) => {
             browserApprovalDelivery: { kind: "attested" },
             onBrowserApprovals: (approvals) => {
               browserToolApprovals = approvals;
+            },
+            ...(pageToolsSnapshot
+              ? {
+                  browserPageTools: pageToolsSnapshot,
+                  browserDynamicPageTools: true as const,
+                }
+              : {}),
+            onBrowserPageTools: ({ minted }) => {
+              advertisedPageTools = minted;
             },
           }
         : null,
@@ -1961,7 +2015,7 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn(turnTrace),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -2176,7 +2230,7 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn(turnTrace),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

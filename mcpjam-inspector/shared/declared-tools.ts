@@ -618,6 +618,41 @@ export function declaredToolsFromWebmcp(
   }));
 }
 
+/**
+ * The persistable record of what a turn advertised.
+ *
+ * Kept small on purpose: it rides inside every turn trace, and a schema copied
+ * verbatim would put a page's whole `anyOf` of two hundred options into every
+ * persisted turn. The schema HASH is enough to answer the question this record
+ * exists for — "is the tool in this old card the same tool as the one on the
+ * page now?" — and the exact definitions the Raw view replays come from the
+ * turn's own request payload.
+ */
+export function toMintedPageToolRecords(
+  minted: readonly MintedDeclaredTool[],
+  binding?: { bootId: string; tabId: string; navCounter: number },
+): MintedPageToolRecord[] {
+  return minted.map((tool) => ({
+    name: tool.name,
+    rawName: tool.rawName,
+    ...(tool.origin !== undefined ? { origin: tool.origin } : {}),
+    schemaHash: tool.schemaHash,
+    ...(binding &&
+    tool.frameId !== undefined &&
+    tool.registrationSeq !== undefined
+      ? {
+          binding: {
+            bootId: binding.bootId,
+            tabId: binding.tabId,
+            navCounter: binding.navCounter,
+            frameId: tool.frameId,
+            registrationSeq: tool.registrationSeq,
+          },
+        }
+      : {}),
+  }));
+}
+
 /** Model-request rows for a minted set, for the Tools pane and the Raw view. */
 export function toSerializedModelRequestTools(
   minted: readonly MintedDeclaredTool[],

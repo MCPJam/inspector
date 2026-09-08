@@ -1,3 +1,13 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
@@ -1639,9 +1649,34 @@ chatV2.post("/", async (c) => {
       sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
     }
 
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built.
+    //
+    // Read-only: this never starts, attaches or reserves a browser (see
+    // `peekPageTools`). A turn that was not going to drive one pays nothing,
+    // and a failure of any kind means "no page tools this turn" rather than a
+    // failed conversation.
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      // TRANSITIONAL: this client fulfils page tools itself through `page_*`.
+      // Advertising the same page's tools twice, under two namespaces with two
+      // fulfilment paths, is how a model calls one of each.
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: "hosted",
+      projectId: hostedBody.projectId,
+      bearer: bearerToken,
+      ...(sandboxBinding?.sandboxRowId
+        ? { sandboxRowId: sandboxBinding.sandboxRowId }
+        : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+
     // Filled by the resolver when browser tools are advertised; forwarded to
     // the turn runner, which merges it into the engines' one approval slot.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
+    let advertisedPageTools: MintedDeclaredTool[] = [];
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1684,6 +1719,18 @@ chatV2.post("/", async (c) => {
         browserApprovalDelivery: { kind: "attested" },
         onBrowserApprovals: (approvals) => {
           browserToolApprovals = approvals;
+        },
+        ...(pageToolsSnapshot
+          ? {
+              browserPageTools: pageToolsSnapshot,
+              // The hosted chat loop is the ONE engine that can grow its tool
+              // set between model steps, so it is the one that can retire the
+              // generic verbs.
+              browserDynamicPageTools: true as const,
+            }
+          : {}),
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
         },
       },
     );
@@ -1905,6 +1952,12 @@ chatV2.post("/", async (c) => {
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
           ...(turnProvenance ? { turnProvenance } : {}),
+          // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
+          // rather than re-derived, so a reopened conversation shows the tools
+          // the model really had rather than the ones the browser has now.
+          ...(pageToolsSnapshot
+            ? { pageToolsAtTurn: toMintedPageToolRecords(advertisedPageTools, pageToolsSnapshot) }
+            : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide
           // file query cannot return a plugin skill's) and the pinned plugin
