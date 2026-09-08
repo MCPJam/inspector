@@ -65,6 +65,23 @@ function makeClient(): {
         created: [],
         counts: {},
       });
+    if (/\/eval-suites\/[^/]+\/cases\/batch$/.test(path))
+      return Response.json({
+        created: (body.cases ?? []).map(
+          (testCase: { title?: string }, index: number) => ({
+            index,
+            id: `c-batch-${index}`,
+            title: testCase.title,
+            kind: "prompt",
+          })
+        ),
+        failed: [],
+        duplicatePolicy: {
+          effectivePolicy: "block",
+          coerced: false,
+        },
+        warnings: [],
+      });
     if (/\/eval-suites\/[^/]+\/cases$/.test(path) && method === "GET")
       return Response.json({ items: CASES });
     if (/\/eval-suites\/[^/]+\/cases$/.test(path) && method === "POST")
@@ -488,5 +505,111 @@ describe("eval suites × project environments", () => {
       setEvalSuiteEnvironmentsOperation.inputSchema.safeParse({ suite: "s1" })
         .success
     ).toBe(false);
+  });
+});
+
+/**
+ * The suite-file sync marker on the write operations.
+ *
+ * A CI-owned suite — one whose configuration lives in a repository — refuses
+ * these writes. The file's own sync is the exception, and it says so by naming
+ * the suite's own `suite.id`. What these tests pin is that the marker actually
+ * reaches the wire, in the right place for each verb, and that it never becomes
+ * part of the thing being written.
+ */
+describe("declaredSuiteId reaches the wire", () => {
+  it("rides the body on update_eval_suite", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute(
+      { suite: "s1", name: "Renamed", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.body).toMatchObject({
+      name: "Renamed",
+      declaredSuiteId: "s_from_file",
+    });
+  });
+
+  it("rides the body on update_eval_case, without joining the case definition", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      {
+        suite: "s1",
+        case: "c2",
+        title: "Renamed",
+        declaredSuiteId: "s_from_file",
+      },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.body).toMatchObject({
+      title: "Renamed",
+      declaredSuiteId: "s_from_file",
+    });
+    // A marker is not a case field. If it ever became one, a suite file's
+    // cases would each carry the id of the suite that contains them.
+    expect(write?.body?.suite).toBeUndefined();
+  });
+
+  it("rides the body on create_eval_cases", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        declaredSuiteId: "s_from_file",
+        cases: [
+          {
+            title: "One",
+            steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          },
+        ],
+      } as never,
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "POST");
+    expect(write?.body).toMatchObject({ declaredSuiteId: "s_from_file" });
+    // One marker for the batch, not one per case: a batch is one write to one
+    // suite, and a per-item marker would invite items that disagreed.
+    expect(write?.body?.cases?.[0]).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on delete_eval_case", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    // A DELETE with no body cannot carry a body field; making one route the
+    // exception is a shape callers get wrong.
+    expect(write?.path).toBeDefined();
+    expect(write?.body).toBeUndefined();
+  });
+
+  it("rides the body on set_eval_suite_environments", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteEnvironmentsOperation.execute(
+      { suite: "s1", environments: null, declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.body).toMatchObject({
+      environmentIds: null,
+      declaredSuiteId: "s_from_file",
+    });
+  });
+
+  it("sends nothing at all when the caller named no id", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute(
+      { suite: "s1", name: "Renamed" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    // An ordinary edit must not carry an empty marker: the route would forward
+    // it, and a platform that predates the lock rejects unknown arguments.
+    expect(
+      calls.find((call) => call.method === "PATCH")?.body
+    ).not.toHaveProperty("declaredSuiteId");
   });
 });

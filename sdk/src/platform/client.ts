@@ -179,6 +179,143 @@ export interface PlatformApiClientOptions {
    * credential or the dedupe key through this door, whatever it passes.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
+   *
+   * The platform stamps a run's `source` itself, and everything arriving over
+   * the public API is `api` — a CLI run, a GitHub Actions job and an MCP
+   * agent are indistinguishable there, because from the server's side all
+   * three are API calls. Deriving the difference from `user-agent` was tried
+   * and removed as forgeable. So the difference is declared, and stored beside
+   * the stamp rather than inside it: a display label, never an authorization
+   * input.
+   *
+   * SET ON THE CLIENT, not per call. The HOST PROCESS knows what it is; a run
+   * request does not, and putting it on a run's arguments would expose it as a
+   * settable field of the MCP `run_eval_suite` tool — letting the agent
+   * whose run it is choose its own badge.
+   *
+   * `kind` is allowlisted to the three the server cannot see for itself.
+   * Anything else is dropped at the API boundary rather than refused: a label
+   * must never fail a launch.
+   */
+  launcher?: PlatformRunLauncherOption;
+  /**
+   * The CI job this process is running inside, declared on every eval-run
+   * launch. Fills the run's CI columns and makes it resolvable by commit for
+   * baseline comparison. Build it with `detectCiMetadata()`.
+   */
+  ci?: PlatformCiMetadataOption;
+}
+
+/** See {@link PlatformApiClientOptions.launcher}. */
+export interface PlatformRunLauncherOption {
+  kind: "cli" | "mcp" | "github_action";
+  /** The launching program — `"mcpjam-cli"`, an MCP client's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+/**
+ * See {@link PlatformApiClientOptions.ci}.
+ *
+ * Deliberately the shape `detectCiMetadata` returns, GitHub's own spellings and
+ * all: the platform maps `runId`→`pipelineId` and `job`→`jobId` at its header
+ * boundary, and fields the run row has no column for (`repository`,
+ * `pullRequestNumber`, `workflow`) are dropped there. One mapping, in one
+ * place, rather than every caller learning the run row's vocabulary.
+ */
+export interface PlatformCiMetadataOption {
+  provider?: string;
+  repository?: string;
+  commitSha?: string;
+  branch?: string;
+  pullRequestNumber?: number;
+  workflow?: string;
+  job?: string;
+  runUrl?: string;
+  runId?: string;
+  /** Accepted in the run row's own spelling too, when a caller has it. */
+  pipelineId?: string;
+  jobId?: string;
+}
+
+/**
+ * The two headers, and why they are headers.
+ *
+ * Both `/v1` eval-run bodies reject unknown properties, so a new BODY field is
+ * a 400 against any deployment that predates it — self-hosted installs and
+ * staging included. An unknown header is ignored by every version of
+ * everything, so the first SDK release to send these keeps working against
+ * every server that has ever run.
+ */
+export const RUN_LAUNCH_HEADERS = {
+  launcher: "x-mcpjam-launcher",
+  ci: "x-mcpjam-ci",
+} as const;
+
+/**
+ * Serialize the declared launch context into its two headers, dropping
+ * anything unusable.
+ *
+ * Drops rather than throws, at every step. This is a label on a run, and a
+ * client that refused to construct because a version string was empty would
+ * trade a real capability for a cosmetic one. The API boundary drops the same
+ * values again for the same reason — belt and braces on a field whose worst
+ * failure mode is a missing badge.
+ */
+function buildLaunchHeaders(
+  options: PlatformApiClientOptions
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  const kind = options.launcher?.kind;
+  if (kind === "cli" || kind === "mcp" || kind === "github_action") {
+    const client = trimmedOrUndefined(options.launcher?.client);
+    const version = trimmedOrUndefined(options.launcher?.version);
+    headers[RUN_LAUNCH_HEADERS.launcher] = JSON.stringify({
+      kind,
+      ...(client ? { client } : {}),
+      ...(version ? { version } : {}),
+    });
+  }
+
+  if (options.ci) {
+    // Serialized from a KNOWN key list rather than by spreading the object: a
+    // detector that grows a field would otherwise start sending it into a
+    // header with a size cap, and the first symptom would be the whole
+    // envelope being dropped for being too long.
+    const ci: Record<string, string> = {};
+    for (const key of [
+      "provider",
+      "repository",
+      "commitSha",
+      "branch",
+      "workflow",
+      "job",
+      "jobId",
+      "runUrl",
+      "runId",
+      "pipelineId",
+    ] as const) {
+      const value = trimmedOrUndefined(
+        (options.ci as Record<string, unknown>)[key]
+      );
+      if (value) ci[key] = value;
+    }
+    if (Object.keys(ci).length > 0) {
+      headers[RUN_LAUNCH_HEADERS.ci] = JSON.stringify(ci);
+    }
+  }
+
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function trimmedOrUndefined(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -259,6 +396,15 @@ export class PlatformApiClient {
   private readonly timeoutMs: number;
   private readonly userAgent?: string;
   private readonly extraHeaders?: Record<string, string>;
+  /**
+   * The declared-origin headers, serialized ONCE at construction.
+   *
+   * Once, because they cannot change over the client's life — the host process
+   * is what it is — and because serializing per request would put a
+   * `JSON.stringify` on the hot path of every read call that will never send
+   * them.
+   */
+  private readonly launchHeaders?: Record<string, string>;
 
   constructor(options: PlatformApiClientOptions) {
     this.baseUrl = stripTrailingSlashes(
@@ -271,6 +417,7 @@ export class PlatformApiClient {
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
+    this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -1687,7 +1834,7 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
-      { body: params.body },
+      { body: params.body, declareLaunch: true },
       options
     );
   }
@@ -1809,7 +1956,7 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
-      { body: params.body },
+      { body: params.body, declareLaunch: true },
       options
     );
   }
@@ -2778,7 +2925,12 @@ export class PlatformApiClient {
   }
 
   deleteEvalSuite(
-    params: { projectId: string; suiteId: string },
+    params: {
+      projectId: string;
+      suiteId: string;
+      /** See `deleteEvalCase`. A query param for the same reason. */
+      declaredSuiteId?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformEvalSuiteDeleted> {
     return this.request(
@@ -2786,7 +2938,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      {},
+      { query: { declaredSuiteId: params.declaredSuiteId } },
       options
     );
   }
@@ -2902,7 +3054,17 @@ export class PlatformApiClient {
   }
 
   deleteEvalCase(
-    params: { projectId: string; suiteId: string; caseId: string },
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseId: string;
+      /**
+       * The suite file's `suite.id`, when this delete is that file syncing
+       * itself — see `updateEvalSuite`'s body field of the same name. A QUERY
+       * PARAM here because the route reads no body at all.
+       */
+      declaredSuiteId?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformEvalCaseDeleted> {
     return this.request(
@@ -2912,7 +3074,7 @@ export class PlatformApiClient {
       )}/eval-suites/${encodeURIComponent(
         params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      {},
+      { query: { declaredSuiteId: params.declaredSuiteId } },
       options
     );
   }
@@ -4732,7 +4894,17 @@ export class PlatformApiClient {
     // POST's.
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    init: { query?: QueryParams; body?: unknown },
+    init: {
+      query?: QueryParams;
+      body?: unknown;
+      /**
+       * Send the declared launch context. Opt-in per call rather than global:
+       * these headers describe a RUN's origin, and stamping them onto every
+       * read and every unrelated write would put a claim on requests that
+       * create nothing to claim.
+       */
+      declareLaunch?: boolean;
+    },
     options?: RequestOptions
   ): Promise<T> {
     const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
@@ -4753,6 +4925,11 @@ export class PlatformApiClient {
     }
     if (this.userAgent) {
       headers["user-agent"] = this.userAgent;
+    }
+    // After `extraHeaders`, like every other header this client owns: an edge
+    // authenticator's credential must not be able to relabel a run's origin.
+    if (init.declareLaunch && this.launchHeaders) {
+      Object.assign(headers, this.launchHeaders);
     }
     if (options?.idempotencyKey) {
       headers["idempotency-key"] = options.idempotencyKey;
