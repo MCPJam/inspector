@@ -51,7 +51,13 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
   >();
   return {
     ...actual,
-    useSuiteCapabilities: () => capabilitiesResult.current,
+    // RESPECTS ITS ARGUMENT, or it cannot prove anything about gating: a mock
+    // that answers `ready` for every call passes on a surface where the real
+    // hook is handed `null` and answers `unavailable`.
+    useSuiteCapabilities: (suiteId: string | null) =>
+      suiteId
+        ? capabilitiesResult.current
+        : { state: "unavailable", capabilities: null },
   };
 });
 

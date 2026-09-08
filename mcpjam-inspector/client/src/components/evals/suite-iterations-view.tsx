@@ -556,8 +556,20 @@ export function SuiteIterationsView({
   // is stored on the suite but is not a settings edit, so nothing else would
   // re-ask.
   const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
+  // ALWAYS the suite, never `isEditMode ? … : null`.
+  //
+  // Scoping this to edit mode is what the settings sheet needed when it was the
+  // only reader. It is not what the LOCK needs. `configLocked` below is meant to
+  // be two sources OR-ed, and on every surface but the settings sheet the second
+  // one answered `unavailable` — so the case-authoring callbacks fell back to
+  // the suite row alone, on exactly the surface where Add case and Generate
+  // render. A capability that cannot be read where it is needed is not a second
+  // source; it is a comment claiming there is one.
+  //
+  // The cost is one `getSuiteCapabilities` read per suite view. It is a
+  // one-shot query keyed on the suite and its revision, not a subscription.
   const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
-    isEditMode ? suite._id : null,
+    suite._id,
     `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
   );
   // The ONE rule every row below shares: when capabilities could not be read,
