@@ -207,6 +207,15 @@ export function parseLLMString(
 export type ProviderLanguageModel = ReturnType<ReturnType<typeof createOpenAI>>;
 
 /**
+ * Read an environment variable where one exists, and answer `undefined` where
+ * it does not. Returns `undefined` rather than throwing in a browser/Worker.
+ */
+function readEnvVar(name: string): string | undefined {
+  if (typeof process === "undefined" || !process.env) return undefined;
+  return process.env[name];
+}
+
+/**
  * Create a model from a custom provider configuration.
  */
 function createModelFromCustomProvider(
@@ -214,12 +223,19 @@ function createModelFromCustomProvider(
   model: string,
   runtimeApiKey?: string
 ): ProviderLanguageModel {
-  // Resolve API key: runtime > config > env var
+  // Resolve API key: runtime > config > env var.
+  //
+  // The env-var read is guarded because this function is reachable from the
+  // `@mcpjam/sdk/browser` and `/host-config` entry points, which exist to be
+  // loadable where there is no `process` at all. An unguarded read throws
+  // `ReferenceError: process is not defined` in a browser or a Worker the
+  // moment a custom provider declares `apiKeyEnvVar` — so the environment
+  // simply has no value to offer there, and the caller must pass one.
   const apiKey =
     runtimeApiKey ||
     customProvider.apiKey ||
     (customProvider.apiKeyEnvVar
-      ? process.env[customProvider.apiKeyEnvVar]
+      ? readEnvVar(customProvider.apiKeyEnvVar)
       : undefined) ||
     "";
 
