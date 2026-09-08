@@ -31,7 +31,6 @@ import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
 import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
-import { useRouteFactsEnabled } from "@/hooks/useRouteFactsEnabled";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
@@ -201,12 +200,15 @@ export function EvaluateRunContent({
         }
       : null;
   const failureGroupsEnabled = useFailureGroupsEnabled();
-  const routeFactsEnabled = useRouteFactsEnabled();
+  // No flag of its own: route facts read data the page already loaded, spend
+  // nothing, and have no backend gate. `evaluate-enabled` — which gates this
+  // whole page — is the audience gate, and a second one would only be a
+  // second thing to remember to turn on.
   const persistedRouteFacts = useEvalRunRouteFacts({
     projectId,
     runId: run._id,
     runStatus: run.status,
-    enabled: routeFactsEnabled && active,
+    enabled: active,
   });
   // The page-local producer stands in for a document that is NOT THERE —
   // `absent`, or a deployment that does not serve the route yet. It must not
@@ -218,24 +220,20 @@ export function EvaluateRunContent({
     (persistedRouteFacts.status === "error" &&
       persistedRouteFacts.error?.kind === "routeUnavailable");
   const routeFactsDoc = useMemo(() => {
-    if (!routeFactsEnabled) return null;
     if (persistedRouteFacts.status === "ready") {
       return persistedRouteFacts.document;
     }
     if (!routeFactsFallback) return null;
     return buildRunRouteFacts(run, iterations);
   }, [
-    routeFactsEnabled,
     persistedRouteFacts.status,
     persistedRouteFacts.document,
     routeFactsFallback,
     run,
     iterations,
   ]);
-  const routeFactsComputedHere =
-    routeFactsEnabled && routeFactsFallback && routeFactsDoc !== null;
+  const routeFactsComputedHere = routeFactsFallback && routeFactsDoc !== null;
   const routeFactsContractError =
-    routeFactsEnabled &&
     persistedRouteFacts.status === "error" &&
     persistedRouteFacts.error?.kind === "invalidContract";
   const routeLines = useMemo(

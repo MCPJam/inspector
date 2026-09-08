@@ -253,3 +253,123 @@ describe("electron context — outside Electron", () => {
     await expect(launchElectronContext({})).rejects.toThrow(/not Electron/i);
   });
 });
+
+
+/**
+ * V-3. Tabs as VIEWS on one hidden holder, which is what makes the browser
+ * showable: the pane reparents the active view into the app's own window and
+ * the person is looking at Chromium rather than at a JPEG of it.
+ */
+describe("the native surface", () => {
+  function surfaceSpy() {
+    const calls: Array<{ kind: string; view: unknown }> = [];
+    return {
+      calls,
+      surface: {
+        registerTab: (view: unknown) => calls.push({ kind: "register", view }),
+        setActive: (view: unknown) => calls.push({ kind: "active", view }),
+        forget: (view: unknown) => calls.push({ kind: "forget", view }),
+        show: () => {},
+        hide: () => {},
+        setLease: () => {},
+        setPaneHolder: () => {},
+        isShown: () => false,
+        inputAllowed: () => false,
+        dispose: () => calls.push({ kind: "dispose", view: undefined }),
+      },
+    };
+  }
+
+  it("puts every tab on ONE holder, not a window each", async () => {
+    // A window per tab is what made Electron count agent tabs as windows, so
+    // `window-all-closed` never fired and the app never quit.
+    const electron = fakeElectron();
+    const spy = surfaceSpy();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+      surface: spy.surface as never,
+    });
+    await context.newPage();
+    await context.newPage();
+    expect(electron.holders).toHaveLength(1);
+    expect(electron.views).toHaveLength(2);
+    expect(electron.windows).toHaveLength(0);
+    expect(electron.holders[0]!.children).toHaveLength(2);
+    expect(electron.holders[0]!.options.show).toBe(false);
+    await context.close();
+  });
+
+  it("tells the surface about each tab, newest active", async () => {
+    const electron = fakeElectron();
+    const spy = surfaceSpy();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+      surface: spy.surface as never,
+    });
+    await context.newPage();
+    expect(spy.calls.map((call) => call.kind)).toContain("register");
+    expect(spy.calls[0]!.view).toBe(electron.views[0]);
+    await context.close();
+  });
+
+  it("keeps the pages hostile-content-safe", async () => {
+    // Same `webPreferences` as the window path: the agent browses the open web,
+    // and a view is no less a hostile-content surface than a window was.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+    });
+    await context.newPage();
+    const prefs = electron.views[0]!.options.webPreferences as Record<
+      string,
+      unknown
+    >;
+    expect(prefs).toMatchObject({
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      backgroundThrottling: false,
+    });
+    expect(String(prefs.partition)).toContain("mcpjam-browser");
+    await context.close();
+  });
+
+  it("destroys the holder last, or the app never quits", async () => {
+    // The holder IS a window as far as Electron is concerned.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+    });
+    await context.newPage();
+    expect(electron.holders[0]!.isDestroyed()).toBe(false);
+    await context.close();
+    expect(electron.holders[0]!.isDestroyed()).toBe(true);
+  });
+
+  it("falls back to windows when the surface is off", async () => {
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` restores the pre-V-3 shape exactly.
+    const electron = fakeElectron();
+    const context = await launchElectronContext({ electron });
+    await context.newPage();
+    expect(electron.windows).toHaveLength(1);
+    expect(electron.views).toHaveLength(0);
+    await context.close();
+  });
+
+  it("falls back on an Electron with no WebContentsView", async () => {
+    const electron = fakeElectron();
+    delete (electron as { WebContentsView?: unknown }).WebContentsView;
+    const context = await launchElectronContext({
+      electron,
+      nativeSurface: true,
+    });
+    await context.newPage();
+    expect(electron.windows).toHaveLength(1);
+    await context.close();
+  });
+});

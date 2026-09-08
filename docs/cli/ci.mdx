@@ -412,6 +412,25 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
             eval-report.xml
 ```
 
+<Note>
+**Runs launched from Actions badge as GitHub, and fill the CI column.** The CLI
+declares what it is on every launch, so a run started from a workflow shows
+**GitHub** in the Runs table rather than the generic **API** that every hosted
+launch used to show, and its commit, branch and job appear alongside it. Nothing
+to configure: the declaration is derived from the standard `GITHUB_*`
+environment, exactly as conformance uploads already do it. Outside CI the same
+command declares **CLI**.
+
+That commit is also what `eval compare --baseline-sha` resolves against, so a
+run launched by the CLI in CI can now be compared to a previous commit's run the
+same way an SDK-reported one can.
+
+This is a *declared* label, deliberately: the platform still stamps the run's
+own `source` server-side and records the verified credential separately, so a
+badge can never claim more than "the client said so". No secret that could prove
+it can live in a public npm package.
+</Note>
+
 In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
 
 ```text
@@ -433,6 +452,37 @@ Either `eval run --wait` or `eval gate` already fails the job on its own — the
 <Note>
 `eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
+
+#### Gating on cost
+
+Cost is the question people actually have about a change: *did this make the
+suite more expensive?* Gate it relatively rather than absolutely — an absolute
+ceiling goes stale on every prompt and model change, while a percentage
+against the previous run keeps meaning the same thing.
+
+```bash
+npx -y @mcpjam/cli@latest cloud eval compare --run "$RUN_ID" \
+  --project "My project" \
+  --max-cost-increase-percent 10
+```
+
+With no `--base-run` or `--base-sha`, the baseline is the nearest earlier
+completed run in the same suite — which is what "did my change make this more
+expensive?" usually means.
+
+An absolute ceiling is also available, for a suite whose budget is fixed:
+
+```bash
+npx -y @mcpjam/cli@latest cloud eval gate --run "$RUN_ID" \
+  --project "My project" \
+  --max-cost-usd 0.50
+```
+
+Both report **non-gateable** (exit `3`) rather than passing when the cost is
+unknown or only partly measured — a run on your own API keys, a harness run,
+or a run only some of whose trials MCPJam priced. Exit `3` is safe to retry
+and safe to treat as "no opinion"; what it never does is let an unpriced run
+through as if it were cheap.
 
 #### Waiving a gate
 
@@ -525,7 +575,7 @@ The line is **not** a diagnosis. A first failed stage is a location and a failur
 
 `eval status --stages` expands each failing trial to all six chain rows with their states and reasons. It is off by default: six rows per trial is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval github list/connect` (GitHub checks integration), and more.
 
 ### Upload SDK eval results
 

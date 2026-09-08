@@ -210,9 +210,63 @@ export class FakeBrowserWindow implements ElectronWindowLike {
   }
 }
 
+/**
+ * A `WebContentsView` double.
+ *
+ * The native surface's unit: a real one is Chromium with no window of its own,
+ * moved between windows by its parent's `contentView`.
+ */
+export class FakeWebContentsView {
+  readonly webContents: FakeBrowserWebContents;
+  bounds: { x: number; y: number; width: number; height: number } | undefined;
+
+  constructor(
+    readonly options: Record<string, unknown>,
+    contents?: FakeBrowserWebContents,
+  ) {
+    this.webContents = contents ?? new FakeBrowserWebContents();
+  }
+
+  setBounds(next: { x: number; y: number; width: number; height: number }): void {
+    this.bounds = next;
+  }
+}
+
+/** A `BaseWindow` double: a container, not a page. */
+export class FakeBaseWindow {
+  readonly id: number;
+  readonly children: FakeWebContentsView[] = [];
+  destroyed = false;
+  readonly contentView = {
+    addChildView: (view: FakeWebContentsView) => {
+      if (!this.children.includes(view)) this.children.push(view);
+    },
+    removeChildView: (view: FakeWebContentsView) => {
+      const at = this.children.indexOf(view);
+      if (at >= 0) this.children.splice(at, 1);
+    },
+  };
+
+  constructor(readonly options: Record<string, unknown>) {
+    this.id = nextWindowId++;
+  }
+
+  isDestroyed(): boolean {
+    return this.destroyed;
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+  }
+}
+
 export interface FakeElectron extends ElectronLike {
   /** Every window built, oldest first. */
   readonly windows: FakeBrowserWindow[];
+  /** Every holder built. There should never be more than one per context. */
+  readonly holders: FakeBaseWindow[];
+  /** Every view built, oldest first. */
+  readonly views: FakeWebContentsView[];
   /** Partitions `session.fromPartition` was asked for, in order. */
   readonly partitions: string[];
   /** Permission handlers installed, so a test can call one. */
@@ -230,6 +284,8 @@ export function fakeElectron(
   nextContents: FakeBrowserWebContents[] = [],
 ): FakeElectron {
   const windows: FakeBrowserWindow[] = [];
+  const holders: FakeBaseWindow[] = [];
+  const views: FakeWebContentsView[] = [];
   const partitions: string[] = [];
   const permissionRequestHandlers: Array<(...args: never[]) => void> = [];
   const permissionCheckHandlers: Array<(...args: never[]) => void> = [];
@@ -243,8 +299,28 @@ export function fakeElectron(
     return window;
   } as unknown as ElectronLike["BrowserWindow"];
 
+  const BaseWindow = function (
+    this: unknown,
+    options: Record<string, unknown>,
+  ) {
+    const window = new FakeBaseWindow(options);
+    holders.push(window);
+    return window;
+  } as unknown as NonNullable<ElectronLike["BaseWindow"]>;
+
+  const WebContentsView = function (
+    this: unknown,
+    options: Record<string, unknown>,
+  ) {
+    const view = new FakeWebContentsView(options, nextContents.shift());
+    views.push(view);
+    return view;
+  } as unknown as NonNullable<ElectronLike["WebContentsView"]>;
+
   return {
     BrowserWindow,
+    BaseWindow,
+    WebContentsView,
     session: {
       fromPartition(partition: string) {
         partitions.push(partition);
@@ -265,6 +341,8 @@ export function fakeElectron(
       },
     },
     windows,
+    holders,
+    views,
     partitions,
     permissionRequestHandlers,
     permissionCheckHandlers,

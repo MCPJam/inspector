@@ -259,6 +259,7 @@ export function JudgeVerdictPanel({
   judgeCase,
   review,
   onReview,
+  onRevealed,
 }: {
   judgeCase: JudgeCase;
   /** An existing calibration label for this trial, when there is one. */
@@ -276,6 +277,11 @@ export function JudgeVerdictPanel({
     verdict: ReviewerVerdict,
     options: { blind: boolean; note?: string },
   ) => void | Promise<void>;
+  /**
+   * The judge's band is now on screen. The trial page uses this to open the
+   * Scores-list channel that would otherwise print the same number.
+   */
+  onRevealed?: () => void;
 }) {
   // The blind protocol. The judge's band starts HIDDEN and stays hidden until
   // somebody asks for it — a label chosen while looking at the judge's answer
@@ -294,7 +300,10 @@ export function JudgeVerdictPanel({
           onSubmit={(verdict, note) =>
             onReview?.(verdict, { blind: !revealed, ...(note ? { note } : {}) })
           }
-          onReveal={() => setRevealed(true)}
+          onReveal={() => {
+            setRevealed(true);
+            onRevealed?.();
+          }}
         />
       ) : null}
       {review ? (

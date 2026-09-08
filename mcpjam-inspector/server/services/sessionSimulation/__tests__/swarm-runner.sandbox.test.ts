@@ -297,15 +297,27 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
+  // A deployment that CAN run hosted browsers. The desktop trigger asks the
+  // same two gates `resolveHostTools` does, so without this every browser
+  // target below would correctly decline to book a box — see the
+  // "declines to book a desktop" case for the other side of it.
+  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
   let seq = 0;
-  provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
+  provisionJourneySandboxMock.mockReset().mockImplementation(async (...args) => {
     seq += 1;
+    const requested = (args[0] as { runtimeKind?: string } | undefined)
+      ?.runtimeKind;
     return {
       ok: true,
       value: {
         sandboxId: `sbx_${seq}`,
         sandboxRowId: `row_${seq}`,
         workdir: "/home/user",
+        // A current control plane answers with the kind it ACTUALLY booted.
+        // Echoing the request is what that looks like; a backend that predates
+        // per-run desktops omits the field, which the runner now refuses
+        // rather than silently accepting a browser-less box.
+        ...(requested ? { runtimeKind: requested } : {}),
       },
     };
   });
@@ -407,6 +419,11 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     expect(ctxs).toHaveLength(1);
     expect(ctxs[0]!.sandboxBinding).toEqual({
       sandboxId: "sbx_1",
+      // The control-plane row and the image class ride along: a browser
+      // session is recorded against the row, and a browser on a terminal
+      // image would fail with nothing saying why.
+      sandboxRowId: "row_1",
+      runtimeKind: "terminal",
       workdir: "/home/user",
     });
     expect(ctxs[0]!.isJourneySession).toBe(true);
@@ -452,8 +469,216 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
 
     expect(calls).toBe(2);
     const ctxs = resolverContexts();
-    expect(ctxs[0]!.sandboxBinding).toEqual({ sandboxId: "sbx_9" });
+    expect(ctxs[0]!.sandboxBinding).toEqual({
+      sandboxId: "sbx_9",
+      sandboxRowId: "row_9",
+      runtimeKind: "terminal",
+    });
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("provisions a DESKTOP box for a browser-only target, and binds it", async () => {
+    // A browser target boots the STOCK desktop image, so it needs no
+    // environment pin at all — `pinImage: false` is the normal shape here,
+    // not a degraded one.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).toMatchObject({
+      runtimeKind: "desktop-browser",
+    });
+    expect(resolverContexts()[0]!.sandboxBinding).toMatchObject({
+      sandboxId: "sbx_1",
+      sandboxRowId: "row_1",
+    });
+  });
+
+  it("declines to book a desktop when this replica cannot advertise a browser", async () => {
+    // The box is booked before the tool resolver runs, so without this gate a
+    // replica with the rollout flag off would hold a paid desktop for the
+    // whole attempt and then suppress every tool it exists for. The backend
+    // refuses its own half of this, but cannot see an inspector-side env flag.
+    vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "");
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("FAILS the attempt when the control plane answers with a TERMINAL box", async () => {
+    // Version skew: a backend that predates per-run desktops ignores the
+    // requested kind and answers without one. Accepting it would run the whole
+    // session on a box where the registry suppresses `browser` — no tools, no
+    // error, and an attempt that reads as "the model never chose to browse".
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: true,
+      value: { sandboxId: "sbx_t", sandboxRowId: "row_t", workdir: "/home/user" },
+    }));
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toContain("does not support per-run");
+    // The box we could not use is handed back rather than left to the GC.
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_t" })
+    );
+    // Not retried: the answer cannot change.
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives two SESSIONS of one browser target two DISTINCT desktop boxes", async () => {
+    await startJourneyRun(
+      baseOpts(
+        {
+          builtInToolIds: ["browser"],
+          browserToolPolicy: { mode: "allow_all" },
+          computerEnvironment: undefined,
+          computer: undefined,
+        },
+        2
+      )
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(2);
+    const bindings = resolverContexts().map(
+      (c) => c.sandboxBinding as { sandboxId: string }
+    );
+    // The entire point of per-attempt scoping: two cookie jars, two tabs.
+    expect(bindings[0]!.sandboxId).not.toBe(bindings[1]!.sandboxId);
+  });
+
+  it("provisions NOTHING for a browser target with no policy", async () => {
+    // Nothing in a swarm session can approve a click, so a policy-less
+    // `browser` advertises no tools at all — a box booted for it would be paid
+    // and unused, and refused a moment later as `desktop_not_advertised`.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the attempt with the backend's SENTENCE on a pin conflict", async () => {
+    // The refusal is written for a human and names the fix; a bare 409 tells
+    // the author nothing they can act on.
+    const conflict =
+      "This target uses a custom computer environment AND advertises the " +
+      "browser tool. Browsers run on the stock desktop image today, so a " +
+      "target cannot have both — remove the environment pin, or drop the " +
+      "browser tool from this host config.";
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: false,
+      status: 409,
+      code: "desktop_pin_conflict",
+      error: conflict,
+    }));
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toContain("stock desktop image");
+  });
+
+  it("names the DESKTOP budget when capacity is what it waited on", async () => {
+    // A desktop refusal is a different sentence — and a different remedy —
+    // from "this deployment is full": the message names WHICH budget ran out
+    // and passes the backend's own ceiling through, rather than restating a
+    // number this side does not own.
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: false,
+      status: 503,
+      code: "at_capacity",
+      resource: "desktop",
+      error: "This organization already has 4 desktop (browser) sandboxes in flight.",
+    }));
+
+    vi.useFakeTimers();
+    const run = startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toMatch(/desktop \(browser\) capacity/);
+  });
+
+  it("threads the target's declared browser policy to the tool resolver", async () => {
+    // A swarm session never pauses to ask, so approval — the gate every
+    // interactive surface uses — does not exist here, and this DECLARED policy
+    // is the only thing that can authorize a browser tool. Before it was
+    // threaded, `browser` on a journey target was unreachable no matter what
+    // the host config said: the resolver saw no delivery and advertised
+    // nothing, silently.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["bash", "browser"],
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: ["example.com"],
+        },
+      })
+    );
+
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toEqual({
+      kind: "unattended",
+      policy: { mode: "allowlist", originAllowlist: ["example.com"] },
+    });
+  });
+
+  it("passes NO delivery when the target declares no policy (fail-closed)", async () => {
+    await startJourneyRun(baseOpts({ builtInToolIds: ["bash", "browser"] }));
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
+  });
+
+  it("passes NO delivery for a malformed policy — never a permissive default", async () => {
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        // `allowlist` naming nothing would mean "everything".
+        browserToolPolicy: { mode: "allowlist" },
+      })
+    );
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
   });
 
   it("gives two sessions of ONE target two DISTINCT boxes", async () => {
@@ -671,6 +896,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(turnOpts.harnessSandboxBinding).toEqual({
       sandboxRowId: "row_1",
       sandboxId: "sbx_1",
+      runtimeKind: "terminal",
       workdir: "/home/user",
     });
     expect(turnOpts.harness).toBe("claude-code");

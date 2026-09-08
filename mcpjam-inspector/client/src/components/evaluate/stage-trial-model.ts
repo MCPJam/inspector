@@ -207,3 +207,12 @@ export function summarizeTrialChain(
 
 /** The chain's stages, re-exported so a renderer need not reach past this. */
 export { USER_VALUE_STAGES };
+
+export {
+  trialActivity,
+  trialVerdict,
+  type TrialActivity,
+  type TrialVerdict,
+  type TrialVerdictTone,
+  type TrialVerdictWord,
+} from "./case-workspace/selected-trial";

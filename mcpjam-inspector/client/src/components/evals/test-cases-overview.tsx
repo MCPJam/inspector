@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { Circle, Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { SIMPLE_CASE_EDITOR_FLAG } from "./simple-case/simple-case-model";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -142,8 +140,16 @@ interface TestCasesOverviewProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
-  /** Run-once-then-adopt draft. Flag-gated; omitted keeps the two-button empty state. */
+  /** Run-once-then-adopt draft. Evaluate-only; omitted keeps the two-button empty state. */
   onRecordTestCase?: () => void;
+  /**
+   * Evaluate (New) only: the empty state offers Generate / Record / Write and
+   * the CLI import pointer instead of Generate / New case.
+   *
+   * OFF by default. This table is shared with the shipped Evals tab, so the
+   * surface decides — see the same prop on `TestTemplateEditor`.
+   */
+  simpleCaseEditor?: boolean;
   /**
    * `namedHostId` → display name for hosts with no suite attachment — the
    * resolved host of an environment-backed run, or a detached one. Owned by
@@ -193,9 +199,9 @@ export function TestCasesOverview({
   hostNamesById,
   environments,
   quickRunIterationOverride,
+  simpleCaseEditor = false,
 }: TestCasesOverviewProps) {
-  const simpleCaseEditorEnabled =
-    useFeatureFlagEnabled(SIMPLE_CASE_EDITOR_FLAG) === true;
+  const simpleCaseEditorEnabled = simpleCaseEditor;
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.

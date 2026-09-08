@@ -45,7 +45,10 @@ export const EVAL_SUITE_REVISION_CONFLICT = "EVAL_SUITE_REVISION_CONFLICT";
 const LEGACY_UNSUPPORTED_ARGS: ReadonlyMap<string, SuiteSettingsKey> = new Map<
   string,
   SuiteSettingsKey
->([["judgeRubric", "judgeRubric"]]);
+>([
+  ["judgeRubric", "judgeRubric"],
+  ["gatePolicy", "gatePolicy"],
+]);
 
 export type CommitOutcome =
   /**
