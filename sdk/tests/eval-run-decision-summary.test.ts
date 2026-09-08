@@ -25,6 +25,11 @@ import {
   EVAL_RUN_MEASUREMENT_UNIT_LABELS,
   EVAL_RUN_MEASUREMENT_UNITS,
   EVAL_VERDICT_DECISION_REASON_LABELS,
+  FRICTION_NOT_MEASURED_REASON_LABELS,
+  FRICTION_SIGNAL_LABELS,
+  SUSPECTED_CONDITION_CONFIDENCES,
+  SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+  SUSPECTED_CONDITION_LABELS,
   evalRunDecisionSummarySchema,
   evalStageCoverageDetailSchema,
   EXCLUDED_TRIAL_DETAIL_LABELS,
@@ -306,10 +311,10 @@ describe("evidence is attached to the claim it supports", () => {
         ...(opts.failSelection
           ? { state: "failed", reason: "missingToolCall" }
           : opts.unmeasureSelection
-            ? { state: "notMeasured", reason: "noEvidenceCaptured" }
-            : opts.selectionNotApplicable
-              ? { state: "notApplicable", reason: "notAuthored" }
-              : { state: "passed", reason: "observed" }),
+          ? { state: "notMeasured", reason: "noEvidenceCaptured" }
+          : opts.selectionNotApplicable
+          ? { state: "notApplicable", reason: "notAuthored" }
+          : { state: "passed", reason: "observed" }),
       },
       { stage: "call", state: "passed", reason: "observed" },
       { stage: "response", state: "passed", reason: "observed" },
@@ -625,6 +630,29 @@ describe("labels are total over the vocabularies they render", () => {
     total(
       EVAL_VERDICT_DECISION_REASON_LABELS,
       DECISION_LABEL_VOCABULARIES.verdictDecisionReasons
+    );
+    // The friction vocabularies. A kind added to the contract without words
+    // here would render a per-trial line with a wire spelling in it.
+    total(
+      FRICTION_SIGNAL_LABELS,
+      DECISION_LABEL_VOCABULARIES.frictionSignalKinds
+    );
+    total(
+      FRICTION_NOT_MEASURED_REASON_LABELS,
+      DECISION_LABEL_VOCABULARIES.frictionNotMeasuredReasons
+    );
+    // Step 2's taxonomy. A condition the backend judge can name with no words
+    // here would render as a wire spelling in front of a customer.
+    total(
+      SUSPECTED_CONDITION_LABELS,
+      DECISION_LABEL_VOCABULARIES.suspectedConditions
+    );
+    // Against the vocabulary directly: the confidence scale is deliberately
+    // absent from DECISION_LABEL_VOCABULARIES (see the note there), and its
+    // words still have to be total over it.
+    total(
+      SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+      SUSPECTED_CONDITION_CONFIDENCES
     );
   });
 

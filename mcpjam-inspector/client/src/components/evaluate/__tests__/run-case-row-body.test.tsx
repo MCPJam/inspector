@@ -436,3 +436,231 @@ describe("RunCaseRowBody", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("RunCaseRowBody — friction signals", () => {
+  const withFriction = (signals: unknown[]) =>
+    [
+      {
+        _id: "it_1",
+        testCaseId: "tc_1",
+        status: "completed",
+        result: "failed",
+        actualToolCalls: [{ toolName: "search_issues", arguments: {} }],
+        metadata: {
+          frictionSignals: {
+            version: 1,
+            state: "measured",
+            callCount: 4,
+            resultAvailableCount: 4,
+            timedCallCount: 0,
+            identifierSignals: { state: "measured" },
+            signals,
+          },
+        },
+      },
+    ] as unknown as EvalIteration[];
+
+  it("heads a detour, and keeps the specifics behind a disclosure", async () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withFriction([
+          {
+            kind: "identifierSurfacedUnused",
+            informationCallIndex: 1,
+            observedAtCallIndex: 3,
+            toolName: "search_issues",
+            identifierKeyPaths: ["results[].id"],
+            identifierCount: 2,
+            laterCallCount: 2,
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText("Possible detour")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Possible detour"));
+    expect(
+      screen.getByText(
+        /`search_issues` returned identifiers \(results\[\]\.id\) at call 1 that no later call used/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("calls a pagination-only trial Pagination, never a detour", () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withFriction([
+          {
+            kind: "paginationContinuation",
+            callIndex: 1,
+            priorCallIndex: 0,
+            toolName: "list_pages",
+            paginationKeys: ["cursor"],
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText("Pagination")).toBeInTheDocument();
+    expect(screen.queryByText("Possible detour")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing for a trial that produced no signals", () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withFriction([])}
+      />,
+    );
+    expect(
+      screen.queryByTestId("friction-signals-section"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders nothing for a run that predates the measurement", () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={ITERATIONS}
+      />,
+    );
+    expect(
+      screen.queryByTestId("friction-signals-section"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the trace affordance, which the line never replaces", () => {
+    const onOpenIteration = vi.fn();
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withFriction([
+          {
+            kind: "identicalRetry",
+            callIndex: 1,
+            priorCallIndex: 0,
+            toolName: "search_issues",
+            afterError: false,
+          },
+        ])}
+        onOpenIteration={onOpenIteration}
+      />,
+    );
+    expect(screen.getByText("Retry")).toBeInTheDocument();
+    expect(screen.getByText("Open iteration trace")).toBeInTheDocument();
+  });
+});
+
+describe("RunCaseRowBody — the suspected condition", () => {
+  const withVerdict = (verdict: unknown) =>
+    [
+      {
+        _id: "it_1",
+        testCaseId: "tc_1",
+        status: "completed",
+        result: "failed",
+        actualToolCalls: [{ toolName: "search_issues", arguments: {} }],
+        metadata: {
+          frictionSignals: {
+            version: 1,
+            state: "measured",
+            callCount: 4,
+            resultAvailableCount: 4,
+            timedCallCount: 0,
+            identifierSignals: { state: "measured" },
+            signals: [
+              {
+                kind: "identifierSurfacedUnused",
+                informationCallIndex: 0,
+                observedAtCallIndex: 2,
+                toolName: "search_issues",
+                identifierKeyPaths: ["results[].id"],
+                identifierCount: 1,
+                laterCallCount: 2,
+              },
+            ],
+          },
+          ...(verdict === undefined
+            ? {}
+            : { suspectedConditionVerdict: verdict }),
+        },
+      },
+    ] as unknown as EvalIteration[];
+
+  const scored = {
+    status: "scored",
+    condition: "idBuriedInPayload",
+    confidence: "high",
+    remediation: "Surface `results[].id` at the top level of `search_issues`.",
+    gradingKey: "case_a#1",
+    signalKind: "identifierSurfacedUnused",
+    informationCallIndex: 0,
+    observedAtCallIndex: 2,
+    judgeTemplateVersion: 1,
+    judgeTemplateHash: "h",
+    model: "openai/gpt-5.4-mini",
+    generatedAt: 1,
+  };
+
+  it("renders the condition and the next step under the signal line", async () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withVerdict(scored)}
+      />,
+    );
+    await userEvent.click(screen.getByText("Possible detour"));
+    const line = screen.getByTestId("suspected-condition");
+    expect(line.textContent).toContain(
+      "Suspected condition: identifier buried in payload (high confidence)",
+    );
+    expect(line.textContent).toContain(
+      "Next: Surface `results[].id` at the top level of `search_issues`.",
+    );
+    expect(line.textContent?.toLowerCase()).not.toContain("caused");
+  });
+
+  it("unclear shows no next step", async () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withVerdict({
+          ...scored,
+          condition: "unclear",
+          remediation: undefined,
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByText("Possible detour"));
+    const line = screen.getByTestId("suspected-condition");
+    expect(line.textContent).toBe("Suspected condition: could not attribute");
+    expect(line.textContent).not.toContain("Next:");
+  });
+
+  it("an unrecognized condition reads as not available", async () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withVerdict({ status: "scored", condition: "invented" })}
+      />,
+    );
+    await userEvent.click(screen.getByText("Possible detour"));
+    expect(
+      screen.getByText("Suspected condition: not available"),
+    ).toBeInTheDocument();
+  });
+
+  it("a flagged trial with no verdict shows the signal line and nothing else", async () => {
+    render(
+      <RunCaseRowBody
+        row={row({ failureGroups: [] })}
+        iterations={withVerdict(undefined)}
+      />,
+    );
+    await userEvent.click(screen.getByText("Possible detour"));
+    expect(screen.queryByTestId("suspected-condition")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Suspected condition: not available"),
+    ).not.toBeInTheDocument();
+  });
+});

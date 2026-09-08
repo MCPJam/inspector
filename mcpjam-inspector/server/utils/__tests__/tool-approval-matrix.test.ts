@@ -624,19 +624,23 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: never — never set on this family.
+    // Floor: setting. The query is the user's text and it leaves for a third
+    // party, and the call spends org credits — so it follows the switch like
+    // the other built-ins that reach outside this process, rather than
+    // counting as a free read.
     family: "exa web search",
     name: "web_search",
     input: { query: "mcp" },
-    tools: () => ({
+    tools: (flag) => ({
       web_search: buildExaWebSearchTool({
         authHeader: "Bearer u",
         projectId: "proj_1",
+        requireToolApproval: flag,
       } as never),
     }),
     expected: {
-      mcpjam: { on: "free", off: "free" },
-      byok: { on: "free", off: "free" },
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
     },
   },
 ];

@@ -238,6 +238,44 @@ function defaultMintToken(path: string): string {
  * what the compositor actually rasterises — and the encoder grabs the
  * compositor's output, not the page's opinion of itself.
  */
+/**
+ * What this daemon announces it can do with the display — ANNOUNCED rather
+ * than assumed by a caller, which never asks for a route or a codec that is
+ * not listed here.
+ *
+ * Two switches, and they are INDEPENDENT:
+ *
+ *   `MCPJAM_BROWSER_VIDEO=false`  turns off the live `h264` stream. It is the
+ *                                 same variable the inspector reads to decide
+ *                                 kiosk, and `h264` also needs kiosk: the live
+ *                                 encoder grabs the whole X display, so "the
+ *                                 display IS the page" only holds when the
+ *                                 window covers it with no chrome.
+ *   `MCPJAM_BROWSERD_RECORD=0`    turns off `record` (`recordingEnabled`).
+ *
+ * They used to be nested — the video switch silenced both — so an operator who
+ * disabled live video to exercise the JPEG fallback also, silently, stopped
+ * every unattended run from leaving evidence. A recording is watched
+ * afterwards and never clicked, so it needs neither kiosk nor the live stream;
+ * only its own switch says no.
+ *
+ * ffmpeg's presence is checked for neither, deliberately: probing for a binary
+ * at boot costs a process on every start, and the honest answer arrives anyway
+ * — the spawn fails and the stream ends `video_unavailable` or the start
+ * answers `record_unavailable`.
+ */
+export function announcedFeatures(
+  config: Pick<BrowserdConfig, "kiosk" | "recordingEnabled">,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const features: string[] = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
+}
+
 export function extraArgsFor(config: BrowserdConfig): string[] {
   const args: string[] = [];
   if (config.windowSize) args.push(`--window-size=${config.windowSize}`);

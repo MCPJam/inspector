@@ -1170,7 +1170,7 @@ function approvalGuidance(
       .slice(0, -1)
       .join(", ")}, and ${alwaysPause[alwaysPause.length - 1]}.`;
   const rest = requireToolApproval
-    ? "Tool approval is ON for this conversation, so most other tool calls pause too. Web search, read-only lookups of the user's own project, the discovery meta-tools and read-only `ui_*` actions still run without asking — they are not covered by the switch in either direction."
+    ? "Tool approval is ON for this conversation, so most other tool calls pause too. Read-only lookups of the user's own project, the discovery meta-tools and read-only `ui_*` actions still run without asking — they are not covered by the switch in either direction."
     : "Everything else applies immediately, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for.";
   return `${always} ${rest} A denial is final — explain what you wanted to do instead of retrying the call.`;
 }

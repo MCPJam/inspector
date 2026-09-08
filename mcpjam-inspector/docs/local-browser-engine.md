@@ -187,7 +187,13 @@ MCPJAM_BROWSERD_RECORD=0                 # daemon: `features` omits "record"
 MCPJAM_BROWSERD_RECORD_DIR=…             # default ${userDataDir}/recordings
 MCPJAM_BROWSERD_RECORD_MAX_BYTES=…       # default and ceiling 60 MiB
 MCPJAM_HOSTED_BROWSER_RECORDING=0        # inspector: never start a take
+MCPJAM_BROWSER_VIDEO=false               # live h264 stream only — recording is unaffected
 ```
+
+The live-video switch and the recording switch are independent. Turning off
+`MCPJAM_BROWSER_VIDEO` (to exercise the JPEG fallback, say) leaves every
+unattended run recording; only `MCPJAM_BROWSERD_RECORD=0` or
+`MCPJAM_HOSTED_BROWSER_RECORDING=0` stops that.
 
 Only `MCPJAM_HOSTED_BROWSER_RECORDING` is read at call time — flip it and the
 next run stops recording, no deploy. The three daemon-side ones are read ONCE,
