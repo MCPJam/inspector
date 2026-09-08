@@ -268,7 +268,10 @@ export function ActiveServerSelector({
             return (
               <button
                 key={name}
-                aria-current={isSelected ? "true" : undefined}
+                aria-current={
+                  !isMultiSelectEnabled && isSelected ? "true" : undefined
+                }
+                aria-pressed={isMultiSelectEnabled ? isSelected : undefined}
                 onClick={(e) => {
                   // Ignore clicks from the inline action buttons (reconnect /
                   // hide). Using Element to cover SVG elements too.
@@ -289,7 +292,12 @@ export function ActiveServerSelector({
                   // them against the linen. `overflow-hidden` so the rising
                   // fill below is cut to the same silhouette.
                   "h-[calc(100%-6px)] rounded-t-lg overflow-hidden border border-chrome-control-border",
-                  "transition-[height,background-color,box-shadow] duration-200 ease-out",
+                  // Colours only. `box-shadow` in this list pinned the cast at
+                  // the transition's start value and it never painted — the
+                  // shadow is built from --tw-shadow, a registered property, so
+                  // listing it hands the paint to an interpolation that never
+                  // lands. Height left too: every sheet is the same size now.
+                  "transition-colors duration-200 ease-out",
                   // The ring is on the BASE, not on one branch: `outline-none`
                   // above kills the native indicator for every tab, so the
                   // selected one would otherwise take keyboard focus with
@@ -306,7 +314,7 @@ export function ActiveServerSelector({
                   // --chrome-hover is for controls with no fill at rest, which
                   // these no longer are.
                   isSelected
-                    ? "border-b-2 bg-chrome-control shadow-[0_-2px_6px_oklch(0_0_0_/_0.07)]"
+                    ? "border-b-2 bg-chrome-control shadow-chrome-tab"
                     : "border-b-0 bg-chrome-control hover:bg-chrome-control-hover focus-visible:bg-chrome-control-hover",
                 )}
               >

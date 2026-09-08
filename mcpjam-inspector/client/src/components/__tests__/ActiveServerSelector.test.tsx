@@ -503,6 +503,40 @@ describe("ActiveServerSelector", () => {
       expect(onMultiServerToggle).toHaveBeenCalledWith("server-1");
     });
 
+    it("marks every selected sheet, and says so without aria-current", () => {
+      // aria-current names THE current item in a set. Multi-select has no
+      // such thing, so the tabs switch to aria-pressed rather than each
+      // claiming to be the one. The tick beside the label can't carry it —
+      // it is a styled div, invisible to a screen reader.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+        "server-3": createServer({ name: "server-3" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          isMultiSelectEnabled
+          selectedMultipleServers={["server-1", "server-3"]}
+        />,
+      );
+
+      for (const name of ["server-1", "server-3"]) {
+        const tab = screen.getByText(name).closest("button");
+        expect(tab).toHaveAttribute("aria-pressed", "true");
+        expect(tab).not.toHaveAttribute("aria-current");
+        expect(fillLayer(tab)?.className).toContain("bg-background");
+        expect(tab?.className).toContain("border-b-2");
+      }
+
+      const unpicked = screen.getByText("server-2").closest("button");
+      expect(unpicked).toHaveAttribute("aria-pressed", "false");
+      expect(fillLayer(unpicked)).toBeUndefined();
+      expect(unpicked?.className).toContain("border-b-0");
+    });
+
     it("shows check mark for selected servers in multi-select mode", () => {
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
