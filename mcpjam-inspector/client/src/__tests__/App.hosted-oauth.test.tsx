@@ -29,7 +29,10 @@ import {
   writeScenarioSignInReturnPath,
   writeScenarioSession,
 } from "../lib/scenario-session";
-import { writeAppSignInReturnPath } from "../lib/app-signin-return-path";
+import {
+  readAppSignInReturnPath,
+  writeAppSignInReturnPath,
+} from "../lib/app-signin-return-path";
 
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
@@ -54,6 +57,7 @@ const {
   mockPlaygroundTabProps,
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
+  mockDbUserState,
   mockHandleOAuthCallback,
   mockHeader,
   mockHostedShellGateState,
@@ -124,6 +128,10 @@ const {
       isLoading: false,
     },
     mockCompleteHostedOAuthCallback: vi.fn(),
+    mockDbUserState: {
+      isEnsuringUser: false,
+      isUserReady: true,
+    },
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
@@ -272,11 +280,8 @@ vi.mock("../hooks/useElectronOAuth", () => ({
 }));
 
 vi.mock("../contexts/db-user-ready-context", () => ({
-  useDbUserBootstrapStatus: vi.fn(() => ({
-    isEnsuringUser: false,
-    isUserReady: true,
-  })),
-  useDbUserReady: vi.fn(() => true),
+  useDbUserBootstrapStatus: vi.fn(() => mockDbUserState),
+  useDbUserReady: vi.fn(() => mockDbUserState.isUserReady),
 }));
 
 vi.mock("../hooks/usePostHogIdentify", () => ({
@@ -516,6 +521,8 @@ describe("App hosted OAuth callback handling", () => {
     mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = true;
     mockConvexAuthState.isLoading = false;
+    mockDbUserState.isEnsuringUser = false;
+    mockDbUserState.isUserReady = true;
     mockWorkOsAuthState.getAccessToken = vi.fn();
     mockWorkOsAuthState.signIn = vi.fn();
     mockWorkOsAuthState.user = null;
@@ -540,6 +547,7 @@ describe("App hosted OAuth callback handling", () => {
     mockPosthogCapture.mockReset();
     mockTrack.mockReset();
     vi.mocked(sonnerToast.error).mockReset();
+    vi.mocked(sonnerToast.success).mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
@@ -594,6 +602,9 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   afterEach(() => {
+    if (vi.isMockFunction(window.history.replaceState)) {
+      vi.mocked(window.history.replaceState).mockRestore();
+    }
     vi.unstubAllGlobals();
   });
 
@@ -1875,6 +1886,7 @@ describe("App hosted OAuth callback handling", () => {
       return undefined;
     });
 
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
     render(<App />);
 
     await waitFor(() => {
@@ -1886,10 +1898,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(
       screen.queryByTestId("project-route-inaccessible"),
     ).not.toBeInTheDocument();
-    expect(sonnerToast.error).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(sonnerToast.error).mock.calls[0]?.[0]).toMatchObject({
-      props: { text: "Project not found. Switched to Default Project." },
-    });
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
+    expect(
+      replaceStateSpy.mock.calls.filter(
+        ([, , target]) =>
+          target === `/p/${currentProjectId}/evals?view=runs#case-3`,
+      ),
+    ).toHaveLength(1);
     expect(mockTrack).toHaveBeenCalledWith(
       "project_route_stale_return_recovered",
       { location: "signin-return", outcome: "switched" },
@@ -1900,7 +1916,123 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
-  it("recovers when AuthKit restores the project URL before App sees the callback", async () => {
+  it("opens a valid scoped sign-in return unchanged", async () => {
+    clearScenarioSession();
+    const projectId = "k5700000000000000000000000b";
+    const savedPath = `/p/${projectId}/servers?view=grid#tools`;
+    writeAppSignInReturnPath(savedPath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: projectId,
+      projects: {
+        [projectId]: {
+          id: projectId,
+          name: "Current Project",
+          sharedProjectId: projectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: projectId,
+            name: "Current Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(savedPath);
+    });
+    expect(
+      replaceStateSpy.mock.calls.filter(([, , target]) => target === savedPath),
+    ).toHaveLength(1);
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(sonnerToast.success).not.toHaveBeenCalled();
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      expect.anything(),
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("keeps a scoped callback loading until the database user is ready", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/servers`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockDbUserState.isEnsuringUser = true;
+    mockDbUserState.isUserReady = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Current Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Current Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+    expect(window.location.pathname).toBe("/callback");
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+
+    mockDbUserState.isEnsuringUser = false;
+    mockDbUserState.isUserReady = true;
+    view.rerender(<App />);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/p/${currentProjectId}/servers`);
+    });
+  });
+
+  it("does not automatically recover a stale URL outside the callback", async () => {
     clearScenarioSession();
     const staleProjectId = "k5700000000000000000000000a";
     const currentProjectId = "k5700000000000000000000000b";
@@ -1942,18 +2074,88 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
+    expect(
+      `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    ).toBe(stalePath);
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      expect.anything(),
+    );
+  });
+
+  it("keeps recovery armed while a cached active project waits for membership", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/playground?model=test#chat`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+
+    let projectsLoaded = false;
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isLoadingRemoteProjects: !projectsLoaded,
+      activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+      projects: projectsLoaded
+        ? {
+            [currentProjectId]: {
+              id: currentProjectId,
+              name: "Default Project",
+              sharedProjectId: currentProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
+        : {
+            [staleProjectId]: {
+              id: staleProjectId,
+              name: "Cached Project",
+              sharedProjectId: staleProjectId,
+              organizationId: "org-1",
+              servers: {},
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return projectsLoaded
+          ? [
+              {
+                _id: currentProjectId,
+                name: "Default Project",
+                organizationId: "org-1",
+                ownerId: "user-1",
+                servers: {},
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            ]
+          : undefined;
+      }
+      return undefined;
+    });
+
+    const view = render(<App />);
+
+    expect(window.location.pathname).toBe("/callback");
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+
+    projectsLoaded = true;
+    view.rerender(<App />);
+
     await waitFor(() => {
       expect(
         `${window.location.pathname}${window.location.search}${window.location.hash}`,
-      ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+      ).toBe(`/p/${currentProjectId}/playground?model=test#chat`);
     });
     expect(
       screen.queryByTestId("project-route-inaccessible"),
     ).not.toBeInTheDocument();
-    expect(mockTrack).toHaveBeenCalledWith("app_signin_return_restored", {
-      location: "signin-return",
-      outcome: "restored",
-    });
     expect(mockTrack).toHaveBeenCalledWith(
       "project_route_stale_return_recovered",
       { location: "signin-return", outcome: "switched" },
@@ -1962,6 +2164,98 @@ describe("App hosted OAuth callback handling", () => {
       "project_route_inaccessible",
       expect.anything(),
     );
+  });
+
+  it("preserves the scoped return through a membership timeout and retry", async () => {
+    vi.useFakeTimers();
+    try {
+      clearScenarioSession();
+      const staleProjectId = "k5700000000000000000000000a";
+      const currentProjectId = "k5700000000000000000000000b";
+      const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+      let projectsLoaded = false;
+      writeAppSignInReturnPath(stalePath);
+      window.history.replaceState({}, "", "/callback?code=oauth-code");
+      mockUseAppState.mockImplementation(() => ({
+        ...createAppStateMock(),
+        isLoadingRemoteProjects: !projectsLoaded,
+        activeProjectId: projectsLoaded ? currentProjectId : staleProjectId,
+        projects: projectsLoaded
+          ? {
+              [currentProjectId]: {
+                id: currentProjectId,
+                name: "Current Project",
+                sharedProjectId: currentProjectId,
+                organizationId: "org-1",
+                servers: {},
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
+            }
+          : {},
+      }));
+      mockUseQuery.mockImplementation((name: string) => {
+        if (name === "users:getCurrentUser") return existingConvexUser;
+        if (name === "projects:getMyProjects") {
+          return projectsLoaded
+            ? [
+                {
+                  _id: currentProjectId,
+                  name: "Current Project",
+                  organizationId: "org-1",
+                  ownerId: "user-1",
+                  servers: {},
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              ]
+            : undefined;
+        }
+        return undefined;
+      });
+
+      const view = render(<App />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+
+      expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
+      expect(window.location.pathname).toBe("/callback");
+      expect(mockTrack).not.toHaveBeenCalledWith(
+        "project_route_stale_return_recovered",
+        expect.anything(),
+      );
+      expect(mockTrack).not.toHaveBeenCalledWith(
+        "project_route_inaccessible",
+        expect.anything(),
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try sign in again" }),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockWorkOsAuthState.signIn).toHaveBeenCalledTimes(1);
+      expect(readAppSignInReturnPath()).toBe(stalePath);
+      expect(window.location.pathname).toBe("/");
+
+      view.unmount();
+      projectsLoaded = true;
+      vi.useRealTimers();
+      window.history.replaceState({}, "", "/callback?code=retry-code");
+      render(<App />);
+
+      await waitFor(() => {
+        expect(
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+      });
+      expect(readAppSignInReturnPath()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns a no-project account home without claiming it switched projects", async () => {
