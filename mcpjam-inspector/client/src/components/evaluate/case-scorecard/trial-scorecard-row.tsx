@@ -102,21 +102,43 @@ function formatValue(result: TrialRowResult): string | null {
 export function TrialScorecardRow({
   row,
   body,
+  hideJudgeResult = false,
   syncedStepId,
   onSyncStep,
 }: {
   row: JoinedScorecardRow;
   /** The judge row's panel, which owns the blind-label protocol. */
   body?: React.ReactNode;
+  /**
+   * Withhold this row's own judge output while a blind label is being taken.
+   *
+   * A reviewer's label is counted toward calibration only when it was made
+   * without seeing the judge — the panel asserts `blind: true` from its own
+   * reveal state, and it cannot know what the row around it printed. This row
+   * showed the score, the glyph and the rationale beside the very control that
+   * records the label, so a label taken there was recorded as blind while the
+   * answer was on screen. Calibration gates other people's builds, so it fails
+   * closed: hidden until the panel says it was revealed.
+   */
+  hideJudgeResult?: boolean;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
-  const reason = "reason" in row.result ? row.result.reason : undefined;
-  const evidence = row.evidence?.scoreEvidence ?? [];
+  const isJudge = row.provenance === "judge";
+  const withheld = isJudge && hideJudgeResult;
+  const reason = withheld
+    ? undefined
+    : "reason" in row.result
+      ? row.result.reason
+      : undefined;
+  const evidence = withheld ? [] : (row.evidence?.scoreEvidence ?? []);
   const expandable = Boolean(reason || evidence.length > 0);
   const [open, setOpen] = useState(false);
-  const glyph = resultGlyph(row.result, row.role);
-  const value = formatValue(row.result);
+  const glyph = resultGlyph(
+    withheld ? { state: "notMeasured" } : row.result,
+    row.role,
+  );
+  const value = withheld ? undefined : formatValue(row.result);
   const active = row.stepId !== undefined && syncedStepId === row.stepId;
 
   return (
@@ -142,6 +164,14 @@ export function TrialScorecardRow({
         />
         <span className="min-w-0 flex-1 truncate text-xs text-foreground">
           {row.label}
+          {withheld ? (
+            <span
+              className="ml-2 text-[11px] text-muted-foreground"
+              data-testid="judge-result-withheld"
+            >
+              hidden until you label this trial
+            </span>
+          ) : null}
         </span>
         {value ? (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">

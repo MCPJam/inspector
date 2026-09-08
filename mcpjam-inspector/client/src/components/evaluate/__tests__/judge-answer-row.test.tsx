@@ -206,3 +206,39 @@ describe("JudgeAnswerRow", () => {
     expect(onOpenSuiteSettings).toHaveBeenCalled();
   });
 });
+
+describe("blind review", () => {
+  it("withholds the verdict while a label is being taken", () => {
+    // A label recorded as `blind: true` beside a visible score is not
+    // calibration data, and calibration gates other people's builds.
+    expect(
+      judgeAnswerState({ ...base, hidden: true, judgeCase: scored() }).kind,
+    ).toBe("withheld");
+  });
+
+  it("withholds ahead of every other state, including a skip", () => {
+    expect(
+      judgeAnswerState({
+        ...base,
+        hidden: true,
+        skippedForCase: true,
+        judgeEnabledOnSuite: false,
+      }).kind,
+    ).toBe("withheld");
+  });
+
+  it("prints no score when withheld", () => {
+    render(<JudgeAnswerRow state={{ kind: "withheld" }} />);
+    expect(screen.queryByTestId("judge-answer-word")).toBeNull();
+    expect(screen.getByText("Hidden until you label this trial")).toBeTruthy();
+  });
+
+  it("still hosts the review control, which is the point", () => {
+    render(
+      <JudgeAnswerRow state={{ kind: "withheld" }}>
+        <button>Label this trial</button>
+      </JudgeAnswerRow>,
+    );
+    expect(screen.getByText("Label this trial")).toBeTruthy();
+  });
+});

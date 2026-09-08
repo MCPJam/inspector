@@ -137,3 +137,70 @@ describe("authoredForTrial", () => {
     });
   });
 });
+
+describe("a frozen trial keeps the route it was graded against", () => {
+  const snapshotTrial = (snapshot: Record<string, unknown>) =>
+    ({
+      kind: "persisted",
+      iteration: {
+        _id: "it-old",
+        iterationNumber: 1,
+        status: "completed",
+        result: "passed",
+        testCaseSnapshot: snapshot,
+      },
+    }) as never;
+
+  it("reads the historical no-tool flag, not today's setting", () => {
+    // The case forbade tools then and is unrestricted now. Showing "Any route"
+    // would describe a gate that trial actually graded as absent.
+    const { authored, basis } = authoredForTrial({
+      trial: snapshotTrial({
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        isNegativeTest: true,
+      }),
+      draft: { steps: [], toolsChoice: "checks" } as never,
+      run: null,
+      forceSnapshot: true,
+    } as never);
+    expect(basis).toBe("snapshot");
+    expect(authored.toolsChoice).toBe("noTool");
+  });
+
+  it("reads pinned route tools out of the frozen steps", () => {
+    const { authored } = authoredForTrial({
+      trial: snapshotTrial({
+        steps: [
+          { id: "s1", kind: "prompt", prompt: "hi" },
+          {
+            id: "t1",
+            kind: "assert",
+            assertion: {
+              type: "toolCalledWith",
+              toolName: "get_me",
+              args: { args: {} },
+            },
+          },
+        ],
+        isNegativeTest: false,
+      }),
+      draft: { steps: [], toolsChoice: "noTool" } as never,
+      run: null,
+      forceSnapshot: true,
+    } as never);
+    expect(authored.toolsChoice).toBe("tools");
+  });
+
+  it("says unset when the frozen case asserted no route at all", () => {
+    const { authored } = authoredForTrial({
+      trial: snapshotTrial({
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        isNegativeTest: false,
+      }),
+      draft: { steps: [], toolsChoice: "tools" } as never,
+      run: null,
+      forceSnapshot: true,
+    } as never);
+    expect(authored.toolsChoice).toBe("unset");
+  });
+});

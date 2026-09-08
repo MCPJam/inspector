@@ -71,12 +71,27 @@ export function useSuggestedScorers({
   });
 
   const card = useMemo(() => buildCaseScorecard(authored), [authored]);
+  /**
+   * Whether the case carries a gate that could establish "this trial worked".
+   *
+   * The Route row is ALWAYS `role: "gate"`, including in its `unset` and
+   * `checks` states where it restricts nothing — so counting it made a
+   * prompt-and-goal case with no checks look gated, and a passing unjudged run
+   * then supplied a success signal it had not earned. An unjudged run that
+   * called the wrong tool would go on to suggest requiring that tool.
+   *
+   * Same rule `coverageForCase` uses: a route counts only when it names tools
+   * or forbids them.
+   */
   const authoredHasGate = useMemo(
     () =>
       card.groups.some((group) =>
-        group.rows.some(
-          (row) => row.role === "gate" && row.provenance !== "judge",
-        ),
+        group.rows.some((row) => {
+          if (row.role !== "gate" || row.provenance === "judge") return false;
+          if (row.provenance !== "route") return true;
+          const kind = row.route?.kind;
+          return kind === "tools" || kind === "noTool";
+        }),
       ),
     [card],
   );

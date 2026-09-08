@@ -242,6 +242,41 @@ describe("useEvalHandlers", () => {
       expect(body.tests).toHaveLength(1);
     });
 
+    it("stays on the page for a case-scoped launch", async () => {
+      // The page that launched the run is what asks the judge to grade it when
+      // it finishes. Navigating to run detail unmounts that, so Run test would
+      // never deliver the judged result it promises.
+      mockAuthFetch.mockResolvedValue(createFetchResponse({ runId: "run-1" }));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-stay",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          { caseIds: ["test-case-1"] },
+        );
+      });
+      expect(mockNavigateApp).not.toHaveBeenCalled();
+    });
+
+    it("still navigates for an ordinary full rerun", async () => {
+      // The control for the test above: navigation is conditional on the API
+      // returning a run id, so without one the assertion would pass for the
+      // wrong reason.
+      mockAuthFetch.mockResolvedValue(createFetchResponse({ runId: "run-1" }));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-nav",
+          name: "Suite",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+      expect(mockNavigateApp).toHaveBeenCalled();
+    });
+
     it("refuses a case id that is not in the suite, before launching", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
       await act(async () => {

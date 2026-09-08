@@ -24,7 +24,9 @@ export type JudgeAnswerState =
   | { kind: "notRun" }
   | { kind: "quickRun" }
   | { kind: "suiteOff" }
-  | { kind: "skipped" };
+  | { kind: "skipped" }
+  /** A reviewer is labelling this trial and has not revealed the verdict. */
+  | { kind: "withheld" };
 
 /** The band a score falls in, in the words a reader would use. */
 function answerWord(passed: boolean, score: number, threshold: number): string {
@@ -63,7 +65,7 @@ export function JudgeAnswerRow({
           onOpenSuiteSettings={onOpenSuiteSettings}
         />
       </div>
-      {state.kind === "scored" ? children : null}
+      {state.kind === "scored" || state.kind === "withheld" ? children : null}
     </div>
   );
 }
@@ -123,6 +125,13 @@ function Body({
         </span>
         {onRetry ? <RetryButton onRetry={onRetry} /> : null}
       </>
+    );
+  }
+  if (state.kind === "withheld") {
+    return (
+      <span className="text-xs text-muted-foreground">
+        Hidden until you label this trial
+      </span>
     );
   }
   if (state.kind === "quickRun") {
@@ -187,6 +196,8 @@ function RetryButton({ onRetry }: { onRetry: () => void }) {
  * data, this decides what the row says about it.
  */
 export function judgeAnswerState(input: {
+  /** Withhold the answer while a blind label is being taken. */
+  hidden?: boolean;
   /** `compare:` batches are quick runs; they carry no `suiteRunId`. */
   isQuickRun: boolean;
   judgeEnabledOnSuite: boolean;
@@ -196,6 +207,9 @@ export function judgeAnswerState(input: {
   threshold: number;
   gating: boolean;
 }): JudgeAnswerState {
+  // Fails closed and FIRST: a label recorded as blind beside a visible
+  // verdict is not calibration data, and calibration gates other builds.
+  if (input.hidden) return { kind: "withheld" };
   if (input.skippedForCase) return { kind: "skipped" };
   if (!input.judgeEnabledOnSuite) return { kind: "suiteOff" };
   if (input.isQuickRun) return { kind: "quickRun" };

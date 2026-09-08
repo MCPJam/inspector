@@ -29,6 +29,7 @@ export function CaseJudgeAnswer({
   isQuickRun,
   skippedForCase,
   shouldRequest,
+  hidden = false,
   onOpenSuiteSettings,
   children,
 }: {
@@ -50,6 +51,8 @@ export function CaseJudgeAnswer({
    * page the user is only reading would spend without an action.
    */
   shouldRequest: boolean;
+  /** True while a reviewer is labelling and has not revealed the verdict. */
+  hidden?: boolean;
   onOpenSuiteSettings?: () => void;
   /**
    * The trial's judge panel — the review flow when a label is being taken,
@@ -95,6 +98,7 @@ export function CaseJudgeAnswer({
 
   const judgeCase = resolveIterationJudge(iteration, run ? [run] : []);
   const state = judgeAnswerState({
+    hidden,
     isQuickRun,
     judgeEnabledOnSuite: enabled,
     skippedForCase,
@@ -113,7 +117,9 @@ export function CaseJudgeAnswer({
       onOpenSuiteSettings={onOpenSuiteSettings}
     >
       {children ??
-        (judgeCase ? <JudgeVerdictPanel judgeCase={judgeCase} /> : null)}
+        (judgeCase && !hidden ? (
+          <JudgeVerdictPanel judgeCase={judgeCase} />
+        ) : null)}
     </JudgeAnswerRow>
   );
 }

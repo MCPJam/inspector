@@ -34,6 +34,8 @@ import type {
 } from "@/components/evals/types";
 import type { SelectedTrial } from "../case-workspace/selected-trial";
 import { trialMatchesDraft } from "../case-workspace/selected-trial";
+import type { TestStep } from "@/shared/steps";
+import { isToolCalledWithAssert } from "../simple-case/simple-case-model";
 import type { CaseScorecardInput } from "./case-scorecard-model";
 
 export type AuthoredForTrial = {
@@ -54,6 +56,16 @@ function asCasePredicates(
 ): CasePredicates | undefined {
   if (!value) return undefined;
   return Array.isArray(value) ? { mode: "replace", list: value } : value;
+}
+
+/**
+ * Did the frozen steps pin any route tool?
+ *
+ * Reads the snapshot's own steps rather than the live case: the question is
+ * what THAT trial was graded against.
+ */
+function snapshotHasRouteTools(steps: TestStep[] | undefined): boolean {
+  return (steps ?? []).some((step) => isToolCalledWithAssert(step));
 }
 
 export function authoredForTrial(input: {
@@ -112,6 +124,22 @@ export function authoredForTrial(input: {
       ...input.draft,
       steps: snapshot?.steps ?? input.draft.steps,
       matchOptions: snapshot?.matchOptions ?? input.draft.matchOptions,
+      /**
+       * The tool question as the TRIAL froze it, not as the case reads today.
+       *
+       * `toolsChoice` decides whether the route row says "No tool should be
+       * called" or "Any route", and it arrived here from the live draft. A
+       * case that used to forbid tools and is now unrestricted therefore
+       * showed an old no-tool trial as "Any route" — losing the matcher join
+       * and describing a gate that trial actually graded as absent.
+       */
+      toolsChoice: snapshot
+        ? snapshot.isNegativeTest
+          ? "noTool"
+          : snapshotHasRouteTools(snapshot.steps)
+            ? "tools"
+            : "unset"
+        : input.draft.toolsChoice,
       expectedOutput: snapshot?.expectedOutput ?? undefined,
       // Both are superseded by the resolved list; passing it as
       // `snapshotPredicates` is what makes the rows say "Run snapshot".

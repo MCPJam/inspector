@@ -490,3 +490,28 @@ describe("heldInEvery", () => {
     expect(result).toEqual({ held: 2, of: 3, unread: 1 });
   });
 });
+
+describe("a placeholder route is not a success signal", () => {
+  it("does not treat an unrestricted route as a gate that proved success", () => {
+    // The Route row is always `role: "gate"`, including when it restricts
+    // nothing. Counting it made a prompt-and-goal case look gated, so a
+    // passing unjudged run supplied a signal it had not earned — and the
+    // engine went on to suggest requiring whatever tool it happened to call.
+    const out = suggestScorers(
+      input({
+        route: { kind: "checks" },
+        trials: [
+          facts({ successSignal: "none", toolSequence: ["wrong_tool"] }),
+          facts({ successSignal: "none", toolSequence: ["wrong_tool"] }),
+        ],
+      }),
+    );
+    expect(out.diagnosis?.noSignal).toBe(true);
+    expect(out.suggestions.every((s) => s.role !== "gate")).toBe(true);
+    expect(
+      out.suggestions.some((s) =>
+        JSON.stringify(s.predicate ?? {}).includes("wrong_tool"),
+      ),
+    ).toBe(false);
+  });
+});

@@ -264,3 +264,27 @@ describe("the chain lives inside the Scorecard", () => {
     expect(screen.queryByTestId("stage-strip")).toBeNull();
   });
 });
+
+describe("blind review hides the judge row's own output", () => {
+  it("withholds the score and the reason", () => {
+    renderCard({ judgeHidden: true });
+    expect(screen.getByTestId("judge-result-withheld")).toBeTruthy();
+  });
+
+  it("shows them once the reviewer has revealed", () => {
+    renderCard({ judgeHidden: false });
+    expect(screen.queryByTestId("judge-result-withheld")).toBeNull();
+  });
+
+  it("hides nothing on a non-judge row", () => {
+    renderCard({ judgeHidden: true });
+    const withheld = screen
+      .getAllByTestId("trial-scorecard-row")
+      .filter((row) =>
+        row.querySelector('[data-testid="judge-result-withheld"]'),
+      );
+    // Only the judge row withholds; a deterministic check has no verdict to
+    // leak and hiding it would just make the trial unreadable.
+    expect(withheld.length).toBeLessThanOrEqual(1);
+  });
+});

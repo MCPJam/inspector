@@ -1956,6 +1956,17 @@ export function TestTemplateEditor({
         let predicates = current.predicates;
         for (const suggestion of list) {
           if (suggestion.kind === "route" && suggestion.route) {
+            // "No tool should be called" is a CASE-LEVEL claim, not a step.
+            // `adoptRouteFromIteration` only removes tool assertions for an
+            // empty observed route, which leaves the case unrestricted — the
+            // row said "Added" while nothing was saved. The tool question is
+            // what carries it, and it is what `buildSavePayload` reads to send
+            // `isNegativeTest`.
+            if (suggestion.route.noTool) {
+              setSimpleToolsChoice("noTool");
+            } else {
+              setSimpleToolsChoice("tools");
+            }
             const iteration = recentIterations.find(
               (it) => it._id === suggestion.route!.iterationId,
             );
@@ -2052,20 +2063,31 @@ export function TestTemplateEditor({
    */
   const judgeIntentRunIds = useRef<Set<string>>(new Set());
   const [runTestPending, setRunTestPending] = useState(false);
+  /**
+   * `handleSave` closes over `editForm` and is rebuilt every render, so the
+   * copy captured by a memoized callback goes stale the moment the deps stop
+   * changing — which they do as soon as `hasUnsavedChanges` flips true. Run
+   * test then saved the draft as it stood at the FIRST edit and ran that,
+   * while the pane showed the latest. A ref always holds the current one.
+   */
+  const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const runTest = useCallback(async () => {
     const caseId = currentTestCase?._id;
     if (!onRunCase || !caseId || isDraft) return;
     setRunTestPending(true);
     try {
-      if (hasUnsavedChanges) await handleSave();
+      if (hasUnsavedChanges) {
+        // A refused save (an unset tool question, an invalid step list) must
+        // not launch: the run executes the PERSISTED case, so it would grade
+        // a version of the case the author is not looking at.
+        const saved = await handleSaveRef.current?.();
+        if (!saved) return;
+      }
       judgeIntentRunIds.current.add(caseId);
       onRunCase(caseId, { iterationOverride });
     } finally {
       setRunTestPending(false);
     }
-    // `handleSave` is redefined every render; the values it closes over are
-    // covered by the deps that matter here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     onRunCase,
     currentTestCase?._id,
@@ -2464,7 +2486,7 @@ export function TestTemplateEditor({
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
-      return;
+      return false;
     }
 
     if (!validateSteps(editForm.steps)) {
@@ -2472,7 +2494,7 @@ export function TestTemplateEditor({
         getStepsBlockReason(editForm.steps) ??
           "Fix the test configuration before saving.",
       );
-      return;
+      return false;
     }
 
     setIsSavingDraft(true);
@@ -2505,17 +2527,26 @@ export function TestTemplateEditor({
     }
   };
 
-  const handleSave = async () => {
+  /**
+   * Returns whether the draft was actually persisted.
+   *
+   * It refuses on its own validation — an unset tool question, an invalid step
+   * list — and used to do so by returning normally, which reads as success to
+   * anything that awaits it. "Run test" awaited it and launched the PREVIOUSLY
+   * saved case, so a refused save silently ran something the author was not
+   * looking at.
+   */
+  const handleSave = async (): Promise<boolean> => {
     if (isDraft) {
       await handleCreateFromDraft();
-      return;
+      return true;
     }
-    if (!editForm || !currentTestCase) return;
+    if (!editForm || !currentTestCase) return false;
 
     if (simpleToolsBlock) {
       setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
-      return;
+      return false;
     }
 
     if (!validateSteps(editForm.steps)) {
@@ -2523,7 +2554,7 @@ export function TestTemplateEditor({
         getStepsBlockReason(editForm.steps) ??
           "Fix the test configuration before saving.",
       );
-      return;
+      return false;
     }
 
     try {
@@ -2550,12 +2581,15 @@ export function TestTemplateEditor({
         has_predicates: savePayload.predicates != null,
       });
       toast.success("Changes saved");
+      return true;
     } catch (error) {
       console.error("Failed to save:", error);
       toast.error(getBillingErrorMessage(error, "Failed to save changes"));
       throw error;
     }
   };
+  // Kept current so `runTest` never awaits a save built from a stale draft.
+  handleSaveRef.current = handleSave;
 
   const buildSelectedCompareModels = (
     modelValues: string[],
@@ -4652,6 +4686,7 @@ export function TestTemplateEditor({
                                 suiteRuns,
                               )}
                               envelope={ctx.envelope}
+                              judgeHidden={ctx.reviewActive && ctx.judgeHidden}
                               suggestionsSlot={
                                 useSpine ? (
                                   <SuggestedFromRunSection
@@ -4716,6 +4751,9 @@ export function TestTemplateEditor({
                                     }
                                     shouldRequest={judgeIntentRunIds.current.has(
                                       currentTestCase?._id ?? "",
+                                    )}
+                                    hidden={Boolean(
+                                      ctx.reviewActive && ctx.judgeHidden,
                                     )}
                                     onOpenSuiteSettings={onOpenSuiteSettings}
                                   >

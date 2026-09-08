@@ -681,6 +681,14 @@ export function useEvalHandlers({
          * needs a SUITE run (not a quick run) because the judge is keyed by
          * `suiteRunId`. The plans, cap payload and snapshot handling are
          * otherwise identical to a full rerun.
+         *
+         * A case-scoped launch also STAYS ON THE PAGE and never takes the
+         * replay fallback. Both matter. The page that launched the run is what
+         * asks the judge to grade it once it finishes, so navigating away
+         * unmounts the only thing that would. And a replay sends the old run
+         * id alone — it would silently re-run the whole historical suite
+         * instead of the one case that was asked for, spending on tests the
+         * author did not launch.
          */
         caseIds?: string[];
       }
@@ -706,6 +714,9 @@ export function useEvalHandlers({
         (selectedSuiteEntry?.suite._id === suite._id
           ? selectedSuiteEntry.latestRun
           : null);
+      // A launch scoped to specific cases must not degrade into a replay of
+      // the whole suite: the replay path carries only the old run id.
+      const caseScoped = Boolean(options?.caseIds?.length);
       const rerunEligibility = getSuiteReplayEligibility({
         suiteServers,
         connectedServerNames,
@@ -713,7 +724,7 @@ export function useEvalHandlers({
       });
 
       if (!isEnvironmentSuite && suiteServers.length === 0) {
-        if (rerunEligibility.replayableLatestRun?._id) {
+        if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
@@ -726,7 +737,7 @@ export function useEvalHandlers({
           const readiness = await ensureServersReady(suiteServers);
           if (!hasUnavailableServers(readiness)) {
             // Continue with the live rerun now that the servers are ready.
-          } else if (rerunEligibility.replayableLatestRun?._id) {
+          } else if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
             await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
             return;
           } else {
@@ -944,7 +955,10 @@ export function useEvalHandlers({
           // results without hunting through the runs list. Multi-host
           // fan-outs land on the suite's runs view instead, since there
           // are multiple sibling runs to pick from.
-          if (runPlans.length === 1) {
+          if (caseScoped) {
+            // Stay put. The case page owns the judge request for the run it
+            // just launched, and it can only make it while it is mounted.
+          } else if (runPlans.length === 1) {
             const firstSettled = settled[0];
             const newRunId =
               firstSettled?.status === "fulfilled"

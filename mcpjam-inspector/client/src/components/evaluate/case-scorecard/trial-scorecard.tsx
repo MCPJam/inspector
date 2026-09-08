@@ -78,6 +78,7 @@ export function TrialScorecard({
   judgeSlot,
   scoresSection,
   suggestionsSlot,
+  judgeHidden = false,
   syncedStepId,
   onSyncStep,
 }: {
@@ -99,6 +100,12 @@ export function TrialScorecard({
    * belong to the editor, and `RunColumn` mounts this component too.
    */
   suggestionsSlot?: ReactNode;
+  /**
+   * True while a reviewer is labelling this trial and has not revealed the
+   * judge. The judge row then withholds its score, glyph and rationale — a
+   * label recorded as blind beside a visible verdict is not calibration data.
+   */
+  judgeHidden?: boolean;
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
@@ -193,6 +200,7 @@ export function TrialScorecard({
               key={row.key}
               row={row}
               body={row.provenance === "judge" ? judgeSlot : undefined}
+              hideJudgeResult={judgeHidden}
               syncedStepId={syncedStepId}
               onSyncStep={onSyncStep}
             />
