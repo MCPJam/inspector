@@ -2219,11 +2219,15 @@ describe("eval run --file", () => {
           systemPrompt: "Be terse.",
           temperature: 0.2,
         });
+        // The suite is CI-owned by virtue of its declared id, so the file's own
+        // write has to name that id or the platform refuses it — on the QUERY
+        // STRING, because these bodies are strict on every Inspector older than
+        // the lock and a body field would be a 400 there.
+        assert.deepEqual(fixture.suitePatchQueries[0], {
+          declaredSuiteId: "s_billing",
+        });
         assert.deepEqual(fixture.suitePatches, [
           {
-            // The suite is CI-owned by virtue of its declared id, so the
-            // file's own write has to name that id or the platform refuses it.
-            declaredSuiteId: "s_billing",
             hosts: [
               {
                 host: "h1",
