@@ -91,6 +91,19 @@ Open the **Tools** tab in the left rail to invoke any tool by hand:
 
 When multiple servers are selected at the same time, the Tools rail aggregates every server's tools into one list and routes each execution to the right server automatically.
 
+### Browser section
+
+When the previewed host has the browser capability attached, a **Browser** section appears in the Tools rail with two groups:
+
+- **MCPJam browser tools** — the six `browser_*` tools the model is given, with their descriptions and JSON input schemas exactly as the model sees them.
+- **Page tools** — the WebMCP tools the page currently open in the browser offers. These are reached by the model through `browser_webmcp_invoke`, not called directly by name. Click **Refresh page tools** to re-read the current page (the list does not update automatically as the model navigates).
+
+The section is labeled **this machine** when the browser runs locally, or **your computer** when it is a hosted cloud browser.
+
+Browser tools have no **Run** button — driving a browser goes through the approval flow that exists to put you in front of each action.
+
+If the browser has not yet loaded a page, the Page tools group shows a "hasn't loaded a page yet" notice rather than an error. If someone else has taken control of the browser, the group shows a "taken control" notice until the lease is released.
+
 ## Model Picker
 
 The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
