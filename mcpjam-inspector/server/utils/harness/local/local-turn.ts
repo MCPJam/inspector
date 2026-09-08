@@ -43,6 +43,13 @@ import {
   type LocalModelGateway,
 } from "./model-gateway.js";
 import { readRuntimeInstallStatus } from "./runtime-install.js";
+import {
+  reserveRuntimeUse,
+  type RuntimeOperationKey,
+  type RuntimeUseReservation,
+} from "./runtime-lifecycle.js";
+import { runtimeInstallRoot } from "./runtime-install.js";
+import { localPackTarget } from "./targets.js";
 import { createSupervisedLocalHarnessProvider } from "./supervised-provider.js";
 import { LocalHarnessSupervisor } from "./supervisor.js";
 import { localHarnessStateRoot } from "./grants.js";
@@ -52,6 +59,7 @@ import {
 } from "./instance-key.js";
 import {
   forgetLocalHarnessSession,
+  forgetLocalHarnessSessionRecord,
   registerLocalHarnessSession,
 } from "./session-registry.js";
 import { join } from "node:path";
@@ -187,6 +195,109 @@ export async function prepareLocalHarnessTurn(
           : `The local Claude Code runtime is not usable (${runtimeStatus.state}).`,
     };
   }
+
+  // ── Reserve the runtime BEFORE verifying it ──────────────────────────────
+  //
+  // Not after, and not at spawn. The window that has to be covered runs from
+  // before the digest is read until after the last supervised child is dead: a
+  // pack replaced anywhere inside it means this session verified one tree and
+  // executed another. An install in another Inspector window, or the install
+  // CLI, consults these reservations and refuses to replace a runtime that has
+  // one — so taking it late is the same as not taking it.
+  //
+  // Released on every exit that is not a started session: a refusal returned
+  // below, a throw, and — for a session that did start — the teardown that
+  // runs when it ends.
+  const target = localPackTarget();
+  const lifecycleKey: RuntimeOperationKey | null =
+    target === null
+      ? null
+      : {
+          runtimeRoot: runtimeInstallRoot(),
+          harnessId: "claude-code",
+          target,
+          packVersion: runtimeStatus.packVersion,
+          treeDigest: runtimeStatus.digest,
+        };
+  let runtimeUse: RuntimeUseReservation | null = null;
+  if (lifecycleKey !== null) {
+    try {
+      runtimeUse = await reserveRuntimeUse({
+        key: lifecycleKey,
+        runtimeRoot: runtimeStatus.runtimeRoot,
+        label: args.sessionId,
+      });
+    } catch (error) {
+      // A reservation that cannot be TAKEN is a refusal, not something to
+      // shrug off. It is what stops another Inspector — or the install CLI —
+      // replacing the tree this session's children are about to execute from,
+      // so running without one means running unprotected, quietly.
+      //
+      // Refused as `runtime-unavailable` with the reason, rather than letting
+      // an ENOSPC or an EACCES on a read-only runtime root escape as an
+      // unhandled error out of turn preparation. The user sees what is wrong
+      // with their machine instead of a stack trace.
+      return {
+        ok: false,
+        status: "runtime-unavailable",
+        message:
+          "This Inspector could not reserve the local runtime, so it will " +
+          "not start a session that another process could replace underneath: " +
+          `${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+  const releaseRuntimeUse = async () => {
+    const held = runtimeUse;
+    runtimeUse = null;
+    await held?.release();
+  };
+
+  try {
+    const prepared = await prepareWithReservedRuntime({
+      args,
+      runtimeStatus,
+      verifyStartedAt,
+      releaseRuntimeUse,
+    });
+    // Ownership passes to the session's teardown ONLY on success.
+    //
+    // A refusal is a RESOLVED value here, not a throw, so it never reaches the
+    // `catch` below. Without this the reservation outlived every declined turn
+    // — and it does not decay, because the owner it names is this live server
+    // process. `activateVerifiedPack` then refuses to replace a version
+    // directory that is "in use by N running session(s)", counting sessions
+    // that never started, so one refused turn disabled reinstall and repair
+    // for the rest of the process's life.
+    if (!prepared.ok) await releaseRuntimeUse();
+    return prepared;
+  } catch (error) {
+    await releaseRuntimeUse();
+    throw error;
+  }
+}
+
+/**
+ * The body of `prepareLocalHarnessTurn`, with the runtime reservation held.
+ *
+ * Split out so every refusal path below is one `return` rather than a
+ * `release(); return` pair that a later edit can forget one half of. The
+ * caller releases the reservation for anything that is not a started session
+ * — a resolved refusal as well as a throw — and only the success path hands
+ * ownership of it to the session's teardown.
+ */
+async function prepareWithReservedRuntime(outer: {
+  args: PrepareLocalHarnessTurnArgs;
+  runtimeStatus: Extract<
+    Awaited<ReturnType<typeof readRuntimeInstallStatus>>,
+    { state: "ready" }
+  >;
+  verifyStartedAt: number;
+  releaseRuntimeUse: () => Promise<void>;
+}): Promise<LocalHarnessTurnPreparation> {
+  const args = outer.args;
+  const runtimeStatus = outer.runtimeStatus;
+  const verifyStartedAt = outer.verifyStartedAt;
 
   const availability = await resolveLocalHarnessAvailability({
     target: {
@@ -327,34 +438,68 @@ export async function prepareLocalHarnessTurn(
       },
     });
 
-    const teardownOnce = onceAsync(async () => {
-      try {
-        started.revoke();
-        await started.close();
-      } finally {
-        // Dropped from the registry here, not only on the stop-all path: a turn
-        // that ends normally leaves a record behind otherwise, and the map is
-        // what `stop-all` and the telemetry count read. Every completed local
-        // turn would add one more dead session to both.
-        forgetLocalHarnessSession(args.sessionId);
-        await revokeLease(broker.runId, args.bearer);
-      }
-    });
-
-    // Registered so `stop-all` and the abort path can end this session without
-    // holding a reference to the turn that created it.
-    registerLocalHarnessSession({
+    // Built before the teardown that has to drop it, so the drop can prove the
+    // entry under this id is still the one this turn registered.
+    const sessionRecord = {
       sessionId: args.sessionId,
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
       brokerRunId: broker.runId,
       gateway: started,
-      stop: async () => {
-        await supervisor.stopSession(args.sessionId);
-      },
+      stop: async () => await supervisor.stopSession(args.sessionId),
       revokeLease: () => revokeLease(broker.runId, args.bearer),
+      releaseRuntime: outer.releaseRuntimeUse,
       startedAt: Date.now(),
+    };
+
+    const teardownOnce = onceAsync(async () => {
+      try {
+        started.revoke();
+        await started.close();
+      } finally {
+        await revokeLease(broker.runId, args.bearer);
+        // Stop the supervised tree, THEN give up the reservation. This is the
+        // teardown a normal turn takes — `run-harness-turn.ts` calls it when
+        // the model stream ends — and `endLocalHarnessSession` never reaches
+        // it, so nothing else was going to stop the tree on this path. The
+        // reservation is what stops another process replacing the directory
+        // these children execute from, so releasing it while they are still
+        // alive is the one ordering that must not happen.
+        //
+        // And only when the stop SUCCEEDED. `stopSession` answers
+        // `{ stopped, escaped }`, and a `finally` that released regardless
+        // handed the directory back while escaped children were still
+        // executing from it — `activateVerifiedPack` would then be free to
+        // replace it. A tree that cannot be proven down keeps its claim; the
+        // reservation outliving a leak is the safe direction.
+        const stop = await supervisor.stopSession(args.sessionId);
+        // Dropped from the registry only in here, and only on a proven stop.
+        //
+        // Dropping it FIRST — which is what this did — was right for the normal
+        // case and wrong for the one the check above exists for: it deleted the
+        // record, then declined to release, leaving an escaped tree holding the
+        // reservation with nothing left in this process that could stop it or
+        // hand it back. `stop-all` reads this map, so the retry path went out
+        // with the record. Keeping it registered is also the honest count: that
+        // session really is still running.
+        //
+        // On the normal path this still drops the record, which is the reason
+        // it is here at all — a completed turn that left one behind would add a
+        // dead session to `stop-all` and to the telemetry count every time.
+        //
+        // And by RECORD, not by id: this runs after a SIGTERM grace now, and by
+        // id alone a late teardown would remove whatever is registered under
+        // that id at the time — a live session from a later turn included.
+        if (stop.stopped) {
+          forgetLocalHarnessSessionRecord(sessionRecord);
+          await outer.releaseRuntimeUse();
+        }
+      }
     });
+
+    // Registered so `stop-all` and the abort path can end this session without
+    // holding a reference to the turn that created it.
+    registerLocalHarnessSession(sessionRecord);
 
     logger.info("[local-harness] turn prepared", {
       sessionId: args.sessionId,

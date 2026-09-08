@@ -39,7 +39,9 @@ import { TabHeader } from "@/components/ui-playground/TabHeader";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
 import { WebmcpPageToolsSection } from "@/components/playground/WebmcpPageToolsSection";
+import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
@@ -55,6 +57,14 @@ interface InnerProps {
   activeServerNames: string[];
   /** Harness native built-in tools (display-only). Present for harness hosts. */
   builtinTools?: HarnessBuiltinToolInfo[];
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
+  /**
+   * The agent browser's tools, when the previewed host attaches one. Omitted
+   * by callers that don't resolve a host (the Evals embedded chat), which just
+   * means the section isn't rendered.
+   */
+  browserTools?: BrowserToolsState;
 }
 
 interface Selection {
@@ -65,6 +75,8 @@ interface Selection {
 export function MultiServerToolsPaneInner({
   activeServerNames,
   builtinTools = [],
+  builtinToolsRunLocally = false,
+  browserTools,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
   const appState = useSharedAppState();
@@ -259,6 +271,8 @@ export function MultiServerToolsPaneInner({
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             builtinTools={builtinTools}
+            builtinToolsRunLocally={builtinToolsRunLocally}
+            {...(browserTools ? { browserTools } : {})}
             selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
             onSelectBuiltin={handleSelectBuiltin}
             selected={selected}
@@ -312,6 +326,8 @@ interface FlatToolListProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   builtinTools: HarnessBuiltinToolInfo[];
+  builtinToolsRunLocally: boolean;
+  browserTools?: BrowserToolsState;
   selectedBuiltinKey: string | null;
   onSelectBuiltin: (key: string) => void;
   selected: Selection | null;
@@ -327,14 +343,19 @@ function FlatToolList({
   searchQuery,
   onSearchQueryChange,
   builtinTools,
+  builtinToolsRunLocally,
+  browserTools,
   selectedBuiltinKey,
   onSelectBuiltin,
   selected,
   onToggleSelected,
 }: FlatToolListProps) {
   // A harness host has native built-in tools even with zero MCP-server tools,
-  // so the "no tools" empty state must account for them.
-  const hasBuiltin = builtinTools.length > 0;
+  // and a browser host has the six `browser_*` ones — so the "no tools" empty
+  // state must account for both, or it reports the wrong reason for a list
+  // that is not actually empty.
+  const hasBuiltin =
+    builtinTools.length > 0 || (browserTools?.tools.length ?? 0) > 0;
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 py-2 flex-shrink-0">
@@ -474,7 +495,17 @@ function FlatToolList({
           searchQuery={searchQuery}
           selectedKey={selectedBuiltinKey}
           onSelect={onSelectBuiltin}
+          localExecution={builtinToolsRunLocally}
         />
+        {browserTools ? (
+          <BrowserToolsSection
+            tools={browserTools.tools}
+            page={browserTools.page}
+            engine={browserTools.engine}
+            searchQuery={searchQuery}
+            onRefreshPage={browserTools.refreshPage}
+          />
+        ) : null}
         <WebmcpPageToolsSection />
       </div>
     </div>

@@ -8,152 +8,88 @@ const STALE = "k5700000000000000000000000a";
 const CURRENT = "k5700000000000000000000000b";
 
 describe("project sign-in return recovery", () => {
-  it("preserves the current page, query and hash when switching projects", () => {
+  it("waits until membership data is authoritative", () => {
     const intent = createProjectSignInReturnRecoveryIntent(
-      `/p/${STALE}/evals/suite/s1?view=runs#case-3`,
+      `/p/${STALE}/servers`,
     );
-    const currentPath = `/p/${STALE}/servers?tab=tools#details`;
 
     expect(
       resolveProjectSignInReturnRecovery({
         intent,
-        routeState: {
-          status: "inaccessible",
-          requestedProjectId: STALE,
-          reason: "not-a-member",
-        },
-        currentPath,
+        membershipProjectIds: undefined,
+        fallbackProjectId: CURRENT,
+      }),
+    ).toEqual({ kind: "wait" });
+  });
+
+  it("opens a valid saved project without changing its URL", () => {
+    const path = `/p/${CURRENT}/evals/suite/s1?view=runs#case-3`;
+
+    expect(
+      resolveProjectSignInReturnRecovery({
+        intent: createProjectSignInReturnRecoveryIntent(path),
         membershipProjectIds: new Set([CURRENT]),
-        fallbackProject: { id: CURRENT, name: "Default Project" },
+        fallbackProjectId: CURRENT,
+      }),
+    ).toEqual({ kind: "open", path });
+  });
+
+  it("preserves the saved page, query and hash when switching projects", () => {
+    const path = `/p/${STALE}/evals/suite/s1?view=runs#case-3`;
+
+    expect(
+      resolveProjectSignInReturnRecovery({
+        intent: createProjectSignInReturnRecoveryIntent(path),
+        membershipProjectIds: new Set([CURRENT]),
+        fallbackProjectId: CURRENT,
       }),
     ).toEqual({
       kind: "switch",
-      path: `/p/${CURRENT}/servers?tab=tools#details`,
-      message: "Project not found. Switched to Default Project.",
+      path: `/p/${CURRENT}/evals/suite/s1?view=runs#case-3`,
     });
   });
 
-  it("does nothing for a direct inaccessible URL", () => {
+  it("opens malformed scoped returns so normal route handling reports them", () => {
+    const path = "/p/not-a-project/servers";
+
     expect(
       resolveProjectSignInReturnRecovery({
-        intent: null,
-        routeState: {
-          status: "inaccessible",
-          requestedProjectId: STALE,
-          reason: "not-a-member",
-        },
-        currentPath: `/p/${STALE}/servers`,
+        intent: createProjectSignInReturnRecoveryIntent(path),
         membershipProjectIds: new Set([CURRENT]),
-        fallbackProject: { id: CURRENT, name: "Default Project" },
+        fallbackProjectId: CURRENT,
       }),
-    ).toEqual({ kind: "none" });
+    ).toEqual({ kind: "open", path });
   });
 
-  it("does not hide malformed URLs or switch timeouts", () => {
-    const malformed = createProjectSignInReturnRecoveryIntent(
-      "/p/not-a-project/servers",
-    );
+  it("uses home when the account has no valid fallback project", () => {
     expect(
       resolveProjectSignInReturnRecovery({
-        intent: malformed,
-        routeState: {
-          status: "inaccessible",
-          requestedProjectId: "not-a-project",
-          reason: "malformed",
-        },
-        currentPath: "/p/not-a-project/servers",
-        membershipProjectIds: new Set([CURRENT]),
-        fallbackProject: { id: CURRENT, name: "Default Project" },
-      }),
-    ).toEqual({ kind: "clear" });
-
-    const intent = createProjectSignInReturnRecoveryIntent(
-      `/p/${STALE}/servers`,
-    );
-    expect(
-      resolveProjectSignInReturnRecovery({
-        intent,
-        routeState: {
-          status: "inaccessible",
-          requestedProjectId: STALE,
-          reason: "timed-out",
-        },
-        currentPath: `/p/${STALE}/servers`,
-        membershipProjectIds: new Set([CURRENT]),
-        fallbackProject: { id: CURRENT, name: "Default Project" },
-      }),
-    ).toEqual({ kind: "clear" });
-  });
-
-  it("keeps the recovery intent until membership data has loaded", () => {
-    const intent = createProjectSignInReturnRecoveryIntent(
-      `/p/${STALE}/servers`,
-    );
-    const input = {
-      intent,
-      routeState: {
-        status: "inaccessible" as const,
-        requestedProjectId: STALE,
-        reason: "not-a-member" as const,
-      },
-      currentPath: `/p/${STALE}/servers`,
-      fallbackProject: { id: CURRENT, name: "Default Project" },
-    };
-
-    expect(
-      resolveProjectSignInReturnRecovery({
-        ...input,
-        membershipProjectIds: undefined,
-      }),
-    ).toEqual({ kind: "none" });
-    expect(
-      resolveProjectSignInReturnRecovery({
-        ...input,
-        membershipProjectIds: new Set([CURRENT]),
-      }).kind,
-    ).toBe("switch");
-  });
-
-  it("uses home when the account has no fallback project", () => {
-    const intent = createProjectSignInReturnRecoveryIntent(
-      `/p/${STALE}/playground`,
-    );
-    expect(
-      resolveProjectSignInReturnRecovery({
-        intent,
-        routeState: {
-          status: "inaccessible",
-          requestedProjectId: STALE,
-          reason: "not-a-member",
-        },
-        currentPath: `/p/${STALE}/playground`,
+        intent: createProjectSignInReturnRecoveryIntent(
+          `/p/${STALE}/playground`,
+        ),
         membershipProjectIds: new Set(),
-        fallbackProject: null,
+        fallbackProjectId: null,
+      }),
+    ).toEqual({ kind: "home" });
+
+    expect(
+      resolveProjectSignInReturnRecovery({
+        intent: createProjectSignInReturnRecoveryIntent(
+          `/p/${STALE}/playground`,
+        ),
+        membershipProjectIds: new Set([CURRENT]),
+        fallbackProjectId: STALE,
       }),
     ).toEqual({ kind: "home" });
   });
 
-  it("clears its one-shot intent after success or unrelated navigation", () => {
-    const intent = createProjectSignInReturnRecoveryIntent(
-      `/p/${STALE}/servers`,
-    );
+  it("does nothing when the selected sign-in return is unscoped", () => {
     expect(
       resolveProjectSignInReturnRecovery({
-        intent,
-        routeState: { status: "ready", projectId: STALE },
-        currentPath: `/p/${STALE}/servers`,
-        membershipProjectIds: new Set([STALE]),
-        fallbackProject: { id: STALE, name: "Original" },
-      }),
-    ).toEqual({ kind: "clear" });
-    expect(
-      resolveProjectSignInReturnRecovery({
-        intent,
-        routeState: { status: "ready", projectId: CURRENT },
-        currentPath: `/p/${CURRENT}/servers`,
+        intent: createProjectSignInReturnRecoveryIntent("/servers"),
         membershipProjectIds: new Set([CURRENT]),
-        fallbackProject: { id: CURRENT, name: "Current" },
+        fallbackProjectId: CURRENT,
       }),
-    ).toEqual({ kind: "clear" });
+    ).toEqual({ kind: "none" });
   });
 });

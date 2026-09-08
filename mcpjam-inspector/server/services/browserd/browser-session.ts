@@ -25,6 +25,7 @@
  * `live-session-deps.ts` (VALIDATE-ON-STAGING).
  */
 import { randomUUID } from "node:crypto";
+import { logger } from "../../utils/logger.js";
 import type {
   BootBrowserdOptions,
   BrowserdHandle,
@@ -35,13 +36,20 @@ import type {
   BrowserdLeaseState,
   BrowserdStatus,
 } from "./browserd-client";
-import { formatBrowserdError, type BrowserCommand } from "./protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  formatBrowserdError,
+  HOSTED_DISPLAY,
+  type BrowserCommand,
+} from "./protocol";
 import type {
   BrowserContextMode,
   BrowserRelaunchClaim,
-  BrowserSessionLookup,
-  BrowserSessionRecord,
   BrowserSessionRecordResult,
+  ComputerBrowserSessionLookup,
+  ComputerBrowserSessionRecord,
+  SandboxBrowserSessionLookup,
+  SandboxBrowserSessionRecord,
 } from "./browser-sessions-client";
 import { withKeyedLock } from "./probe-lock";
 // The same once-a-minute throttle the panel and the page tools use, so one
@@ -52,6 +60,18 @@ import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
 export const BROWSERD_PORT = 8791;
 export const BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+/**
+ * Where a PRELAUNCHED daemon leaves the bearer it minted for itself.
+ *
+ * A daemon baked into the desktop image starts before any inspector exists, so
+ * nobody can hand it a secret. It mints 32 random bytes into this file at 0600
+ * and the inspector reads them back over the E2B files API — the same
+ * API-key-authenticated channel that already writes the daemon's own bytes, so
+ * adopting one creates no trust relationship that did not already exist. The
+ * agent's shell runs on a different box (`runtimeKind`), so nothing the model
+ * drives can read it.
+ */
+export const BROWSERD_TOKEN_FILE = "/home/user/.mcpjam-browserd.token";
 
 /**
  * A `BrowserdClient`, narrowed to what sessions need (fakeable in tests).
@@ -81,6 +101,14 @@ export interface SessionClient {
 export interface SessionSandbox {
   /** Write the daemon bundle into the sandbox filesystem. */
   writeBundle(path: string, content: Uint8Array): Promise<void>;
+  /**
+   * Read a small text file, for the prelaunched daemon's token.
+   *
+   * OPTIONAL: an older adapter, or a test fake with no filesystem in mind,
+   * simply has none — and every way of failing to read means the same thing,
+   * which is "boot a daemon yourself".
+   */
+  readTextFile?(path: string): Promise<string | undefined>;
   /** The daemon runner `bootBrowserd` drives. */
   browserd: BrowserdSandbox;
   /** Reap any daemon from a previous boot (idempotent; never throws for
@@ -100,28 +128,64 @@ export interface SessionSandbox {
 }
 
 /** The session-store functions (browser-sessions-client), injectable. */
+interface StoreLookupOptions {
+  expectedBundleHash: string;
+  /** Required: see `lookupBrowserSession`. `"any"` is the explicit
+   *  opt-out; omission is rejected by the control plane. */
+  expectedContextMode: BrowserContextMode | "any";
+  /** The wire this build speaks; see `BROWSERD_PROTOCOL_VERSION`. */
+  expectedProtocolVersion?: number;
+  signal?: AbortSignal;
+}
+
+interface StoreRecordOptions {
+  bootId: string;
+  browserdToken: string;
+  browserdPort: number;
+  publicOrigin: string;
+  bundleHash: string;
+  contextMode: BrowserContextMode;
+  /** What wire the booted daemon announced, when it announced one. */
+  protocolVersion?: number;
+  replacesSessionId?: string;
+  signal?: AbortSignal;
+}
+
 export interface SessionStore {
-  lookup(args: {
-    computerId: string;
-    expectedBundleHash: string;
-    /** Required: see `lookupBrowserSession`. `"any"` is the explicit
-     *  opt-out; omission is rejected by the control plane. */
-    expectedContextMode: BrowserContextMode | "any";
-    signal?: AbortSignal;
-  }): Promise<BrowserSessionLookup>;
-  record(args: {
-    computerId: string;
-    bootId: string;
-    browserdToken: string;
-    browserdPort: number;
-    publicOrigin: string;
-    streamUrl: string;
-    streamPassword: string;
-    bundleHash: string;
-    contextMode: BrowserContextMode;
-    replacesSessionId?: string;
-    signal?: AbortSignal;
-  }): Promise<BrowserSessionRecordResult>;
+  // OVERLOADED per target, so a computer lookup keeps the computer TYPE and
+  // this module never has to narrow a union to say "yes, the box I asked
+  // about is the box I got".
+  lookup(
+    args: { computerId: string; sandboxRowId?: undefined } & StoreLookupOptions,
+  ): Promise<ComputerBrowserSessionLookup>;
+  lookup(
+    args: { sandboxRowId: string; computerId?: undefined } & StoreLookupOptions,
+  ): Promise<SandboxBrowserSessionLookup>;
+  // The stream rides the TARGET, not the options: it is REQUIRED on a computer
+  // (the password exists nowhere else durable, so this row is the only way
+  // another replica recovers it) and REFUSED on a per-run box (no panel, no
+  // stream, nothing minted a password). Optional on both would let either
+  // mistake compile and be caught only by the backend — after a daemon had
+  // been booted on a paid box.
+  //
+  // Each overload also EXCLUDES the other target key (`?: undefined`), the
+  // same discriminants `BrowserSessionTargetArgs` carries. Without them a
+  // value holding both ids satisfies the first overload, and "exactly one
+  // target" would be enforced only on the wire.
+  record(
+    args: {
+      computerId: string;
+      sandboxRowId?: undefined;
+      stream: { url: string; password: string };
+    } & StoreRecordOptions,
+  ): Promise<BrowserSessionRecordResult>;
+  record(
+    args: {
+      sandboxRowId: string;
+      computerId?: undefined;
+      stream?: undefined;
+    } & StoreRecordOptions,
+  ): Promise<BrowserSessionRecordResult>;
   /**
    * Take the exclusive right to relaunch this computer's browser.
    *
@@ -194,6 +258,19 @@ export interface EnsureBrowserSessionArgs {
   bearer: string;
   projectId: string;
   /**
+   * WHICH BOX this session runs on. Absent ⇒ the member's durable project
+   * computer, byte-identical to every call that predates per-run boxes.
+   *
+   * `sandbox` names a box the CALLER HAS ALREADY PROVISIONED for this run —
+   * both its control-plane row and its vendor id — so this path reserves
+   * nothing and bills nothing. That is the whole point: an unattended run's
+   * isolation is a property of the box it owns, not of a lease or a lock, and
+   * the run is the only thing that knows which box is its own.
+   */
+  target?:
+    | { kind: "computer" }
+    | { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+  /**
    * Persistent Chrome profile (playground/inspector) unless stated.
    *
    * `ephemeral` boots the daemon with no profile directory at all, so an
@@ -219,18 +296,58 @@ export interface EnsureBrowserSessionArgs {
 export type BrowserSessionHandle =
   HostedBrowserSessionHandle | LocalBrowserSessionHandle;
 
-export interface HostedBrowserSessionHandle {
+interface HostedBrowserSessionHandleCommon {
   engine: "hosted";
   sessionId: string;
-  computerId: string;
   bootId: string;
   client: SessionClient;
-  streamUrl: string;
-  streamPassword: string;
   contextMode: BrowserContextMode;
   /** True when an existing daemon was verified and reused (no sandbox I/O). */
   reused: boolean;
+  /**
+   * This daemon speaks our wire but is running OLD BYTES.
+   *
+   * Not a problem to solve now. Relaunching mid-session rotates `bootId` and
+   * the stream password, so every open pane and in-flight command breaks — and
+   * during a wave of daemon work that would happen on almost every deploy, to
+   * a person who is quite possibly mid-login. The replacement is scheduled for
+   * the first moment nothing is using the browser.
+   */
+  upgradeAvailable?: boolean;
 }
+
+/**
+ * A daemon on the member's durable computer — the Playground's browser, with
+ * their logins, a panel that can watch it and a lease a person can take.
+ */
+export interface ComputerHostedBrowserSessionHandle
+  extends HostedBrowserSessionHandleCommon {
+  target: "computer";
+  computerId: string;
+  streamUrl: string;
+  streamPassword: string;
+}
+
+/**
+ * A daemon on a per-RUN disposable desktop box.
+ *
+ * NO STREAM, and that absence is the type doing its job: nobody is watching an
+ * unattended run, so no stream is started and there is no password to hand
+ * back. Making it a union member rather than optional fields is what stops a
+ * `streamUrl: ""` placeholder from reaching a panel that would render it.
+ */
+export interface SandboxHostedBrowserSessionHandle
+  extends HostedBrowserSessionHandleCommon {
+  target: "sandbox";
+  /** The control-plane row — the session's identity and its teardown hook. */
+  sandboxRowId: string;
+  /** The vendor box id the daemon actually runs in. */
+  sandboxId: string;
+}
+
+export type HostedBrowserSessionHandle =
+  | ComputerHostedBrowserSessionHandle
+  | SandboxHostedBrowserSessionHandle;
 
 /**
  * A browserd running INSIDE this inspector process — the npm engine's
@@ -260,11 +377,75 @@ export interface LocalBrowserSessionHandle {
  * the probe. Throws on any failure — never leaving an unrecorded daemon
  * running.
  */
+// OVERLOADED per target, for the same reason the store's lookup is: a caller
+// that named the member's computer should not have to narrow a union to learn
+// it got a computer back, and one that named a per-run box should get a handle
+// whose type says there is no stream on it.
+export async function ensureBrowserSession(
+  deps: BrowserSessionDeps,
+  args: EnsureBrowserSessionArgs & { target?: { kind: "computer" } },
+): Promise<ComputerHostedBrowserSessionHandle>;
+export async function ensureBrowserSession(
+  deps: BrowserSessionDeps,
+  args: EnsureBrowserSessionArgs & {
+    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+  },
+): Promise<SandboxHostedBrowserSessionHandle>;
 export async function ensureBrowserSession(
   deps: BrowserSessionDeps,
   args: EnsureBrowserSessionArgs,
 ): Promise<HostedBrowserSessionHandle> {
   const contextMode = args.contextMode ?? "persistent";
+  const target = args.target ?? { kind: "computer" };
+  if (target.kind === "sandbox") {
+    // A PER-RUN BOX, already provisioned by whatever asked for a browser.
+    //
+    // Nothing here reserves or bills: the run owns the box, and the box's
+    // identity IS the isolation — no other run can resolve to it, so there is
+    // no profile to share, no relaunch race across replicas and no human whose
+    // page a restart could pull away.
+    if (contextMode !== "ephemeral") {
+      // The mode is not a preference here, it is what the box is FOR. A
+      // persistent profile on a machine that dies with the run is a
+      // contradiction, and accepting it would quietly promise durability
+      // nothing can keep.
+      throw new BrowserSessionTargetError(
+        "persistent_requires_computer",
+        "a per-run sandbox browser is always ephemeral: the box dies with " +
+          "the run, so a persistent profile on it could keep nothing",
+      );
+    }
+    // Keyed per BOX. Two ensures for one row serialize (the fixed port and one
+    // daemon per box); two different rows never wait on each other.
+    return withKeyedLock(`browser-session:sandbox:${target.sandboxRowId}`, () =>
+      ensureOnSandbox(deps, target, contextMode, args),
+    );
+  }
+  if (contextMode === "ephemeral") {
+    // AN EPHEMERAL BROWSER MAY NOT RIDE THE PROJECT COMPUTER.
+    //
+    // There is exactly one hosted computer per (project, member), so every
+    // unattended run in a project resolves to the SAME daemon, the same tab
+    // and the same cookie jar — the sharing the ephemeral mode exists to
+    // prevent, and which the local engine already refuses by name
+    // (`owner_key_required`). Worse, the mode is part of session identity, so
+    // an ephemeral request against the box a member is using mid-session is a
+    // mismatch, and a mismatch is a relaunch: it `pkill`s their Chromium.
+    //
+    // An unattended run gets its own disposable box instead (its run sandbox,
+    // booted from the desktop template) — see `EnsureBrowserSessionArgs.target`.
+    // Until a caller names one, refusing is the only honest answer, and it
+    // refuses BEFORE `reserveDesktop` so nothing is provisioned or billed on
+    // the way to the error.
+    throw new BrowserSessionTargetError(
+      "ephemeral_requires_sandbox",
+      "an unattended hosted browser needs its own sandbox: the project " +
+        "computer is shared by every run in the project, so an ephemeral " +
+        "session there would share one profile and would restart the " +
+        "browser out from under whoever is using it. Name a sandbox target " +
+        "instead.",
+    );
+  }
   const { computerId } = await deps.reserveDesktop({
     bearer: args.bearer,
     projectId: args.projectId,
@@ -273,6 +454,26 @@ export async function ensureBrowserSession(
   return withKeyedLock(`browser-session:${computerId}`, () =>
     ensureOnComputer(deps, computerId, contextMode, args),
   );
+}
+
+/**
+ * The requested session cannot be served by the target it names.
+ *
+ * A sibling of `BrowserSessionInUseError`, and carries a `code` for the same
+ * reason `LocalBrowserUnavailableError` does: callers branch on the reason
+ * rather than on message text.
+ */
+export class BrowserSessionTargetError extends Error {
+  constructor(
+    readonly code:
+      | "ephemeral_requires_sandbox"
+      | "persistent_requires_computer"
+      | "unsupported_target",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BrowserSessionTargetError";
+  }
 }
 
 /**
@@ -293,7 +494,9 @@ export async function attachBrowserSession(
     contextMode?: BrowserContextMode;
     signal?: AbortSignal;
   },
-): Promise<HostedBrowserSessionHandle> {
+  // Always the COMPUTER member: the panel adopts the browser on a machine it
+  // has already proven it owns, and a per-run box has no panel to attach.
+): Promise<ComputerHostedBrowserSessionHandle> {
   return withKeyedLock(`browser-session:${args.computerId}`, async () => {
     const contextMode =
       args.contextMode ??
@@ -333,13 +536,13 @@ async function modeAlreadyRunning(
   return lookup?.session?.contextMode ?? "persistent";
 }
 
-/** Verify a looked-up row against the daemon itself; a handle on success. */
+/** Verify a looked-up COMPUTER row against the daemon itself. */
 async function tryReuse(
   deps: BrowserSessionDeps,
-  lookup: BrowserSessionLookup,
+  lookup: ComputerBrowserSessionLookup,
   contextMode: BrowserContextMode,
   signal?: AbortSignal,
-): Promise<HostedBrowserSessionHandle | null> {
+): Promise<ComputerHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
   // Belt-and-braces against the backend's own mode filter: a daemon running
@@ -354,11 +557,100 @@ async function tryReuse(
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return null;
   }
+  // THE WIRE, NOT THE BYTES. A daemon whose protocol number differs (or which
+  // is too old to announce one) cannot be proven compatible, and continuing
+  // would produce wrong answers rather than merely old ones.
+  if (lazyUpgradeEnabled()) {
+    const running = status.protocolVersion ?? session.protocolVersion;
+    if (running !== BROWSERD_PROTOCOL_VERSION) return null;
+  }
   // Best-effort: losing the touch costs an earlier sweep, never this turn.
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
     .catch(() => {});
-  return handleFromRecord(deps, session, client, true);
+  // A hash difference is an UPGRADE, not a refusal.
+  const runningHash = status.bundleHash ?? session.bundleHash;
+  const upgradeAvailable =
+    lazyUpgradeEnabled() && !!runningHash && runningHash !== deps.bundleHash();
+  // Taken NOW only if nothing is using the browser. A relaunch rotates the
+  // bootId and the stream password, so every open pane and in-flight command
+  // breaks; doing that to somebody mid-login to ship a comment change is the
+  // failure this whole mechanism exists to end. Returning null here drops into
+  // the ordinary relaunch path below, fence, claim and all.
+  if (upgradeAvailable && daemonIsIdle(status)) return null;
+  return handleFromRecord(deps, session, client, true, upgradeAvailable);
+}
+
+/**
+ * How long a browser must have gone untouched before an upgrade may take it.
+ *
+ * Generous on purpose: the cost of waiting is running old bytes for another
+ * minute, and the cost of being wrong is a person's session ending mid-form.
+ */
+const UPGRADE_QUIET_MS = 60_000;
+
+/**
+ * Is nobody using this browser?
+ *
+ * EVERY fact must be present and must say idle. A daemon too old to report one
+ * of them answers `undefined`, which is "unknown" — and an upgrade that read
+ * unknown as idle would relaunch a browser somebody is watching, which is
+ * precisely the behaviour V-4a removes.
+ */
+function daemonIsIdle(status: {
+  lease?: "free" | "held" | "parked";
+  watchers?: number;
+  msSinceActivity?: number;
+}): boolean {
+  if (status.lease !== "free") return false;
+  if (status.watchers === undefined || status.watchers > 0) return false;
+  // Never touched at all is idle; touched recently is not.
+  return (
+    status.msSinceActivity === undefined ||
+    status.msSinceActivity >= UPGRADE_QUIET_MS
+  );
+}
+
+/**
+ * Kill switch, read at CALL TIME.
+ *
+ * `false` restores the pre-V-4a behaviour exactly: a bundle hash that differs
+ * relaunches the daemon there and then. Read per call rather than captured at
+ * import so a deployment can flip it without a restart, and so a test can
+ * exercise both paths in one process.
+ */
+function lazyUpgradeEnabled(): boolean {
+  return process.env.MCPJAM_BROWSER_LAZY_UPGRADE !== "false";
+}
+
+/**
+ * The same verification for a SANDBOX row.
+ *
+ * Deliberately a sibling rather than a generic: it verifies the same two
+ * facts (the mode matches, the daemon answers with the recorded bootId) but
+ * builds a handle with no stream, and touches only the session row — a per-run
+ * box has no separate computer-activity clock, and the backend bumps its
+ * `lastUsedAt` from the same touch.
+ */
+async function trySandboxReuse(
+  deps: BrowserSessionDeps,
+  lookup: SandboxBrowserSessionLookup,
+  contextMode: BrowserContextMode,
+  sandboxId: string,
+  signal?: AbortSignal,
+): Promise<SandboxHostedBrowserSessionHandle | null> {
+  const session = lookup.session;
+  if (!session) return null;
+  if (session.contextMode !== contextMode) return null;
+  const client = deps.createClient(session.publicOrigin, session.browserdToken);
+  const status = await client.status().catch(() => null);
+  if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
+    return null;
+  }
+  void deps.store
+    .touch({ sessionId: session.sessionId, kind: "command", signal })
+    .catch(() => {});
+  return sandboxHandleFromRecord(deps, session, sandboxId, client, true);
 }
 
 /**
@@ -379,7 +671,7 @@ interface RelaunchGate {
   /** The lease we took, or null when there was nothing to fence. */
   fence: RelaunchFence | null;
   /** The row the ownership lookup saw, which may be a WINNER'S. */
-  owner: BrowserSessionLookup | null;
+  owner: ComputerBrowserSessionLookup | null;
 }
 
 /**
@@ -537,7 +829,7 @@ export class BrowserSessionInUseError extends Error {
  */
 function withActivityTouches(
   deps: BrowserSessionDeps,
-  session: { sessionId: string; computerId: string },
+  session: { sessionId: string; computerId?: string },
   client: SessionClient,
 ): SessionClient {
   // Rebuilt method by method rather than spread: `client` is usually a
@@ -549,10 +841,12 @@ function withActivityTouches(
       void deps.store
         .touch({ sessionId: session.sessionId, kind: "command" })
         .catch(() => {});
-      if (deps.touchActivity && shouldTouchActivity(session.computerId)) {
-        void deps
-          .touchActivity({ computerId: session.computerId })
-          .catch(() => {});
+      // The COMPUTER's own hibernation clock. A per-run box has none — it is
+      // never hibernated, and the backend advances its `lastUsedAt` from the
+      // session touch above, in the same transaction.
+      const computerId = session.computerId;
+      if (deps.touchActivity && computerId && shouldTouchActivity(computerId)) {
+        void deps.touchActivity({ computerId }).catch(() => {});
       }
       return client.sendCommand(command, expectedBootId);
     },
@@ -565,12 +859,14 @@ function withActivityTouches(
 
 function handleFromRecord(
   deps: BrowserSessionDeps,
-  session: BrowserSessionRecord,
+  session: ComputerBrowserSessionRecord,
   client: SessionClient,
   reused: boolean,
-): HostedBrowserSessionHandle {
+  upgradeAvailable = false,
+): ComputerHostedBrowserSessionHandle {
   return {
     engine: "hosted",
+    target: "computer",
     sessionId: session.sessionId,
     computerId: session.computerId,
     bootId: session.bootId,
@@ -579,13 +875,395 @@ function handleFromRecord(
     streamPassword: session.streamPassword,
     contextMode: session.contextMode,
     reused,
+    ...(upgradeAvailable ? { upgradeAvailable: true } : {}),
   };
+}
+
+function sandboxHandleFromRecord(
+  deps: BrowserSessionDeps,
+  session: SandboxBrowserSessionRecord,
+  sandboxId: string,
+  client: SessionClient,
+  reused: boolean,
+): SandboxHostedBrowserSessionHandle {
+  return {
+    engine: "hosted",
+    target: "sandbox",
+    sessionId: session.sessionId,
+    sandboxRowId: session.sandboxRowId,
+    sandboxId,
+    bootId: session.bootId,
+    client: withActivityTouches(deps, session, client),
+    contextMode: session.contextMode,
+    reused,
+  };
+}
+
+/**
+ * Adopt a daemon the BOX started, if it can prove it is ours to use.
+ *
+ * Every step here is a refusal that costs one round trip and saves a relaunch;
+ * failing any of them falls through to the ordinary path, which is what a box
+ * whose image predates prelaunch does on every ensure.
+ */
+async function tryAdoptPrelaunched(
+  deps: BrowserSessionDeps,
+  sandbox: SessionSandbox,
+  target: {
+    computerId: string;
+    contextMode: BrowserContextMode;
+    observedSessionId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<ComputerHostedBrowserSessionHandle | null> {
+  if (process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT === "false") return null;
+  const token = await sandbox
+    .readTextFile?.(BROWSERD_TOKEN_FILE)
+    .catch(() => undefined);
+  // No file: an image that predates prelaunch, or a daemon this inspector
+  // booted itself (which is handed its token rather than minting one).
+  if (!token) return null;
+
+  const publicOrigin = `https://${sandbox.browserd.getHost(BROWSERD_PORT)}`;
+  const client = deps.createClient(publicOrigin, token);
+  const status = await client.status().catch(() => null);
+  if (!status || status.kind !== "ok") return null;
+  // THE BOX STARTED IT, not an inspector. A daemon an inspector booted has a
+  // row of its own, and adopting it here would write a second row for the same
+  // process under a token the first row does not know.
+  if (status.startedBy !== "prelaunch") return null;
+  if (status.protocolVersion !== BROWSERD_PROTOCOL_VERSION) return null;
+  // A daemon in the wrong profile mode is never adoptable: its browser state
+  // is the wrong kind (a persistent profile's cookies for an eval, or an
+  // ephemeral one's blank slate for a signed-in user).
+  if (status.contextMode !== target.contextMode) return null;
+
+  const { streamUrl, streamPassword } = await sandbox.ensureStream();
+  const recorded = await deps.store.record({
+    computerId: target.computerId,
+    bootId: status.bootId,
+    browserdToken: token,
+    browserdPort: BROWSERD_PORT,
+    publicOrigin,
+    // The stream rides the TARGET now — required here, refused on a per-run
+    // box — so it is passed as the computer overload's `stream`, not as two
+    // loose fields.
+    stream: { url: streamUrl, password: streamPassword },
+    // The hash of the bundle WE would have uploaded, so a later lookup can see
+    // the drift: a baked daemon is old bytes by design, and the lazy upgrade is
+    // what replaces it once nobody is looking.
+    bundleHash: deps.bundleHash(),
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    contextMode: target.contextMode,
+    ...(target.observedSessionId
+      ? { replacesSessionId: target.observedSessionId }
+      : {}),
+    ...(signal ? { signal } : {}),
+  });
+  // A lost compare-and-swap means another replica recorded first. Their row
+  // describes this same daemon or a newer one; either way the ordinary path
+  // below re-reads and verifies, which is a better answer than guessing here.
+  if (recorded.status !== "recorded") return null;
+
+  const session: ComputerBrowserSessionRecord = {
+    sessionId: recorded.sessionId,
+    target: "computer",
+    computerId: target.computerId,
+    bootId: status.bootId,
+    browserdToken: token,
+    browserdPort: BROWSERD_PORT,
+    publicOrigin,
+    streamUrl,
+    streamPassword,
+    bundleHash: deps.bundleHash(),
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    contextMode: target.contextMode,
+  };
+  // Baked bytes are old bytes by design: `upgradeAvailable` when the image's
+  // daemon is not the one this build ships, replaced the first moment nobody
+  // is holding the lease, watching, or driving it.
+  const stale = !!status.bundleHash && status.bundleHash !== deps.bundleHash();
+  return handleFromRecord(deps, session, client, true, stale);
+}
+
+/**
+ * The display settings a hosted daemon boots with.
+ *
+ * `MCPJAM_HOSTED_BROWSER_DPR` is how a deployment tries a sharper display
+ * without shipping one — the gate is x264 under 60% of one core at 20fps on a
+ * 2 vCPU box, and until a measurement passes it the answer is 1.
+ *
+ * NEVER for an ephemeral context. That is an eval or a swarm iteration, where a
+ * screenshot on one host has to match a screenshot on another (L5); the daemon
+ * pins its scale factor at 1 there too, and this is the belt to that braces.
+ */
+function hostedDisplayEnv(contextMode: BrowserContextMode): {
+  deviceScaleFactor?: number;
+  kiosk?: boolean;
+} {
+  const kiosk = process.env.MCPJAM_BROWSER_VIDEO !== "false";
+  if (contextMode !== "persistent") return { kiosk };
+  const raw = Number(process.env.MCPJAM_HOSTED_BROWSER_DPR);
+  const dpr =
+    Number.isFinite(raw) && raw >= 1 && raw <= 3 ? raw : HOSTED_DISPLAY.dpr;
+  return { kiosk, ...(dpr !== 1 ? { deviceScaleFactor: dpr } : {}) };
 }
 
 /** Refuse to continue once the caller has gone away. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw new Error("browser session establishment aborted");
+  }
+}
+
+/** What the shared relaunch tail ended up doing. */
+type BootOutcome<THandle> =
+  /** Our daemon is up AND recorded; it now outlives this call. */
+  | { kind: "booted"; booted: BrowserdHandle; sessionId: string }
+  /** Another replica won; ours is stopped and theirs is verified. */
+  | { kind: "adopted"; handle: THandle };
+
+/**
+ * THE TAIL EVERY RELAUNCH SHARES: upload the bundle, boot the daemon, publish
+ * it — and adopt whoever won if another replica got there first.
+ *
+ * Extracted because the two arms differ only in what publishing MEANS (a
+ * computer's row carries a stream and its password; a per-run box's does not)
+ * and in what "look again" resolves to. Everything that is easy to get wrong
+ * is here, once: the boot-race retry that reuses a winner instead of failing,
+ * the compare-and-swap, and the rule that a daemon which cannot be recorded is
+ * stopped rather than left running where no replica could ever find it.
+ *
+ * The caller still owns the `finally` that stops an unrecorded daemon: a
+ * `booted` result hands the handle back precisely so the caller can clear its
+ * own cleanup once the record has landed.
+ */
+async function bootAndPublish<THandle>(
+  deps: BrowserSessionDeps,
+  args: {
+    sandbox: SessionSandbox;
+    contextMode: BrowserContextMode;
+    /** Re-read the store for THIS target and verify what comes back. */
+    reuseAgain: () => Promise<THandle | null>;
+    /**
+     * Write the row for THIS target. Called once the daemon is up, and owns
+     * anything that has to happen in between (the computer arm starts its
+     * stream here, because the row is the only durable copy of the password).
+     */
+    publish: (booted: BrowserdHandle) => Promise<BrowserSessionRecordResult>;
+    /** Stop the daemon we booted, on the way to adopting somebody else's. */
+    onAdopt?: () => void;
+  },
+): Promise<BootOutcome<THandle>> {
+  await args.sandbox.writeBundle(BROWSERD_SCRIPT_PATH, deps.bundle());
+  let booted: BrowserdHandle;
+  try {
+    booted = await deps.boot(args.sandbox.browserd, {
+      scriptPath: BROWSERD_SCRIPT_PATH,
+      port: BROWSERD_PORT,
+      userDataDir: BROWSERD_USER_DATA_DIR,
+      contextMode: args.contextMode,
+      // Applied to BOTH targets: a per-run desktop box has a display for the
+      // same reason a computer does, and `hostedDisplayEnv` already keeps the
+      // scale factor pinned at 1 for an ephemeral context — which is every
+      // sandbox session — so an eval screenshot stays comparable across hosts.
+      ...hostedDisplayEnv(args.contextMode),
+    });
+  } catch (bootError) {
+    // Another replica may have won the boot race for this box (the keyed lock
+    // is per-process only): before failing, ask the store once more and reuse
+    // a daemon that verifies.
+    const raced = await args.reuseAgain();
+    if (raced) return { kind: "adopted", handle: raced };
+    throw bootError;
+  }
+
+  const recorded = await args.publish(booted);
+  if (recorded.status === "conflict") {
+    // Stop our own daemon first (the winner's session must be verified against
+    // a box we are no longer fighting over), then adopt the winner.
+    await booted.stop().catch(() => {});
+    args.onAdopt?.();
+    const adopted = await args.reuseAgain();
+    if (adopted) return { kind: "adopted", handle: adopted };
+    throw new Error(
+      "browser session record lost a boot race and the winning session did not verify",
+    );
+  }
+  if (recorded.status === "unsupported_target") {
+    // A control plane that does not know this kind of target. Stop the daemon
+    // rather than leave one running that nothing can ever address.
+    await booted.stop().catch(() => {});
+    args.onAdopt?.();
+    throw new BrowserSessionTargetError(
+      "unsupported_target",
+      "this control plane does not support a per-run browser session yet",
+    );
+  }
+  if (recorded.status !== "recorded") {
+    throw new Error(
+      "browser session record did not land — refusing a runtime no replica could find",
+    );
+  }
+  return { kind: "booted", booted, sessionId: recorded.sessionId };
+}
+
+/**
+ * Ensure a verified-live browserd on a PER-RUN box.
+ *
+ * Deliberately much shorter than the computer path, and every omission is a
+ * decision:
+ *
+ *   - NO relaunch claim and NO lease fence. Both exist to stop two parties
+ *     fighting over one SHARED box — another replica, or a person at a
+ *     keyboard. A per-run box has exactly one run and one driving process, and
+ *     no panel can reach it, so there is nobody to fence. The record
+ *     compare-and-swap stays as the backstop.
+ *   - NO `resolveSandboxId`. The caller provisioned this box and already
+ *     holds its vendor id; asking the control plane to resolve one again would
+ *     be a round trip to learn something we were handed.
+ *   - NO wake-then-ask-again. A per-run box is `live` or it is gone — there is
+ *     no paused state whose probe failure would be a false negative.
+ *   - NO stream. Nobody is watching.
+ */
+async function ensureOnSandbox(
+  deps: BrowserSessionDeps,
+  target: { sandboxRowId: string; sandboxId: string },
+  contextMode: BrowserContextMode,
+  args: { signal?: AbortSignal },
+): Promise<SandboxHostedBrowserSessionHandle> {
+  const bundleHash = deps.bundleHash();
+  const lookupArgs = {
+    sandboxRowId: target.sandboxRowId,
+    expectedBundleHash: bundleHash,
+    expectedContextMode: contextMode,
+    ...(args.signal ? { signal: args.signal } : {}),
+  };
+
+  const lookup = await deps.store.lookup(lookupArgs);
+  // REFUSE BEFORE CONNECTING. A control plane that does not know this target
+  // shape will refuse the record too, so booting first would pay a cold
+  // desktop boot — the most expensive thing on this path — on every attempt,
+  // to reach the same failure. This is what makes the inspector safe to ship
+  // ahead of the backend.
+  if (lookup.unsupportedTarget) {
+    throw new BrowserSessionTargetError(
+      "unsupported_target",
+      "this control plane does not support a per-run browser session yet",
+    );
+  }
+  const reusedHandle = await trySandboxReuse(
+    deps,
+    lookup,
+    contextMode,
+    target.sandboxId,
+    args.signal,
+  );
+  if (reusedHandle) return reusedHandle;
+
+  // An aborted lookup comes back indistinguishable from "no session" — the
+  // client never throws — so check the signal before booting on that answer.
+  throwIfAborted(args.signal);
+
+  const startedAt = Date.now();
+  const sandbox = await deps.connect(target.sandboxId);
+  const connectedAt = Date.now();
+  let handle: BrowserdHandle | undefined;
+  const reuseAgain = async () =>
+    trySandboxReuse(
+      deps,
+      await deps.store.lookup(lookupArgs),
+      contextMode,
+      target.sandboxId,
+      args.signal,
+    );
+  try {
+    // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
+    //
+    // `killBrowserd` is a `pkill` on the box, so it would reap a daemon
+    // another party booted in the meantime and leave their row addressing
+    // nothing — and the record compare-and-swap below cannot repair that,
+    // because it fires after the kill and the damage IS the kill. The computer
+    // path fences this with a control-plane relaunch claim; a per-run box
+    // needs no such thing, because the work that owns it is claimed exactly
+    // once a layer up (a swarm attempt whose claim came back `applied: false`
+    // skips before it ever provisions, and two eval runners of one run mint
+    // distinct iteration ids, hence distinct boxes). So there is no second
+    // driver to serialize against.
+    //
+    // Re-reading the store before the kill is nonetheless worth its one round
+    // trip: connecting to a box takes seconds, it costs a fraction of the
+    // desktop boot it guards, and it means the kill is conditional on what we
+    // still believe is there rather than on a lookup from before we connected.
+    const raced = await reuseAgain();
+    if (raced) return raced;
+
+    await sandbox.killBrowserd();
+    const outcome = await bootAndPublish<SandboxHostedBrowserSessionHandle>(
+      deps,
+      {
+        sandbox,
+        contextMode,
+        reuseAgain,
+        publish: (booted) => {
+          handle = booted;
+          return deps.store.record({
+            sandboxRowId: target.sandboxRowId,
+            bootId: booted.bootId,
+            browserdToken: booted.bearer,
+            browserdPort: booted.port,
+            publicOrigin: booted.publicOrigin,
+            bundleHash,
+            contextMode,
+            // Same daemon, same wire: a per-run box records what it speaks so
+            // a later lookup can refuse it on `protocol_changed` rather than
+            // adopt a daemon nothing can prove it can talk to.
+            ...(booted.protocolVersion !== undefined
+              ? { protocolVersion: booted.protocolVersion }
+              : {}),
+            ...(lookup.observedSessionId
+              ? { replacesSessionId: lookup.observedSessionId }
+              : {}),
+            ...(args.signal ? { signal: args.signal } : {}),
+          });
+        },
+        onAdopt: () => {
+          handle = undefined;
+        },
+      },
+    );
+    if (outcome.kind === "adopted") return outcome.handle;
+
+    const booted = outcome.booted;
+    handle = undefined; // recorded: the daemon now outlives this call
+    // BOOT-TO-READY, recorded from the first run rather than guessed later.
+    // Every iteration of a browser eval pays this before its first navigate,
+    // and it is the number that decides whether warm pools are worth building.
+    logger.info("[browser-session] browser.sandbox_boot", {
+      sandboxRowId: target.sandboxRowId,
+      connectMs: connectedAt - startedAt,
+      bootMs: Date.now() - connectedAt,
+      totalMs: Date.now() - startedAt,
+    });
+    return {
+      engine: "hosted",
+      target: "sandbox",
+      sessionId: outcome.sessionId,
+      sandboxRowId: target.sandboxRowId,
+      sandboxId: target.sandboxId,
+      bootId: booted.bootId,
+      client: withActivityTouches(
+        deps,
+        { sessionId: outcome.sessionId },
+        deps.createClient(booted.publicOrigin, booted.bearer),
+      ),
+      contextMode,
+      reused: false,
+    };
+  } finally {
+    // On any failure after a boot, never leave an unrecorded daemon running.
+    await handle?.stop().catch(() => {});
+    await sandbox.disconnect().catch(() => {});
   }
 }
 
@@ -596,12 +1274,18 @@ async function ensureOnComputer(
   // Only the signal: the reserve's inputs are consumed by the caller, so this
   // function cannot accidentally reserve anything.
   args: { signal?: AbortSignal },
-): Promise<HostedBrowserSessionHandle> {
+): Promise<ComputerHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const lookupArgs = {
     computerId,
     expectedBundleHash: bundleHash,
     expectedContextMode: contextMode,
+    // Sent only while lazy upgrade is on. With the switch off the backend goes
+    // back to answering `bundle_changed`, which is the pre-V-4a behaviour this
+    // rollback is for.
+    ...(lazyUpgradeEnabled()
+      ? { expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION }
+      : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   };
 
@@ -693,6 +1377,42 @@ async function ensureOnComputer(
       args.signal,
     );
 
+    // IS ONE ALREADY RUNNING THAT WE CAN SIMPLY USE?
+    //
+    // The desktop image starts browserd itself, so on a fresh box there is a
+    // healthy daemon listening before any inspector has done anything — and
+    // the whole relaunch below (kill, upload, boot Chromium) would replace it
+    // with an identical one, several seconds later. Adoption is what turns a
+    // cold start into a warm one.
+    //
+    // Refused unless it can PROVE it is ours to use: it must have minted a
+    // token into the file only `user` can read, answer `/v1/status` with that
+    // bearer, speak this build's wire, and be running the profile mode this
+    // caller asked for. Anything short of that and it is killed and replaced,
+    // exactly as before.
+    //
+    // AND NEVER FATAL. Adoption is an optimisation over a path that already
+    // works; a transient failure inside it — a stream that would not start, a
+    // record that lost its race — must fall through to the kill-and-boot
+    // below rather than fail the whole ensure, which would leave the caller
+    // with no browser at all because a shortcut did not pay off.
+    const adopted = await tryAdoptPrelaunched(
+      deps,
+      sandbox,
+      { computerId, contextMode, observedSessionId: lookup.observedSessionId },
+      args.signal,
+    ).catch((error: unknown) => {
+      logger.warn("[browser-session] prelaunch adoption failed; relaunching", {
+        computerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    if (adopted) {
+      await fence?.release();
+      return adopted;
+    }
+
     // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
     //
     // Resuming a paused sandbox takes seconds, and another replica that lost
@@ -725,78 +1445,75 @@ async function ensureOnComputer(
       await fence?.release();
       throw killError;
     }
-    await sandbox.writeBundle(BROWSERD_SCRIPT_PATH, deps.bundle());
-    try {
-      handle = await deps.boot(sandbox.browserd, {
-        scriptPath: BROWSERD_SCRIPT_PATH,
-        port: BROWSERD_PORT,
-        userDataDir: BROWSERD_USER_DATA_DIR,
+
+    // The stream, started INSIDE `publish` so its ordering relative to the
+    // record cannot drift: the password exists nowhere else, so the row must
+    // be written from the same start that minted it.
+    let stream: { streamUrl: string; streamPassword: string } | undefined;
+    const outcome = await bootAndPublish<ComputerHostedBrowserSessionHandle>(
+      deps,
+      {
+        sandbox,
         contextMode,
-      });
-    } catch (bootError) {
-      // Another replica may have won the boot race for this computer (the
-      // keyed lock is per-process only): before failing, ask the store once
-      // more and reuse a daemon that verifies.
-      const retry = await deps.store.lookup(lookupArgs);
-      const raced = await tryReuse(deps, retry, contextMode, args.signal);
-      if (raced) return raced;
-      throw bootError;
-    }
+        reuseAgain: async () =>
+          tryReuse(
+            deps,
+            await deps.store.lookup(lookupArgs),
+            contextMode,
+            args.signal,
+          ),
+        publish: async (booted) => {
+          handle = booted;
+          stream = await sandbox.ensureStream();
+          // Compare-and-swap against the row observed at lookup: if another
+          // replica booted and recorded in the meantime, OUR daemon is the
+          // loser — the winner's `pkill` may already have reaped it — so we
+          // must not overwrite their credentials with a dead one.
+          return deps.store.record({
+            computerId,
+            bootId: booted.bootId,
+            browserdToken: booted.bearer,
+            browserdPort: booted.port,
+            publicOrigin: booted.publicOrigin,
+            stream: {
+              url: stream.streamUrl,
+              password: stream.streamPassword,
+            },
+            bundleHash,
+            contextMode,
+            // The wire the daemon announced, so a later lookup can answer
+            // "can I still talk to it?" without a probe.
+            ...(booted.protocolVersion !== undefined
+              ? { protocolVersion: booted.protocolVersion }
+              : {}),
+            ...(lookup.observedSessionId
+              ? { replacesSessionId: lookup.observedSessionId }
+              : {}),
+            ...(args.signal ? { signal: args.signal } : {}),
+          });
+        },
+        onAdopt: () => {
+          handle = undefined;
+        },
+      },
+    );
+    if (outcome.kind === "adopted") return outcome.handle;
 
-    const { streamUrl, streamPassword } = await sandbox.ensureStream();
-
-    // Compare-and-swap against the row observed at lookup: if another replica
-    // booted and recorded in the meantime, OUR daemon is the loser — the
-    // winner's `pkill` may already have reaped it — so we must not overwrite
-    // their credentials with a dead one.
-    const recorded = await deps.store.record({
-      computerId,
-      bootId: handle.bootId,
-      browserdToken: handle.bearer,
-      browserdPort: handle.port,
-      publicOrigin: handle.publicOrigin,
-      streamUrl,
-      streamPassword,
-      bundleHash,
-      contextMode,
-      ...(lookup.observedSessionId
-        ? { replacesSessionId: lookup.observedSessionId }
-        : {}),
-      ...(args.signal ? { signal: args.signal } : {}),
-    });
-    if (recorded.status === "conflict") {
-      // Stop our own daemon first (the `finally` would do it anyway, but the
-      // winner's session must be verified against a box we are no longer
-      // fighting over), then adopt the winner.
-      await handle.stop().catch(() => {});
-      handle = undefined;
-      const winner = await deps.store.lookup(lookupArgs);
-      const adopted = await tryReuse(deps, winner, contextMode, args.signal);
-      if (adopted) return adopted;
-      throw new Error(
-        "browser session record lost a boot race and the winning session did not verify",
-      );
-    }
-    if (recorded.status !== "recorded") {
-      throw new Error(
-        "browser session record did not land — refusing a runtime no replica could find",
-      );
-    }
-
-    const booted = handle;
+    const booted = outcome.booted;
     handle = undefined; // recorded: the daemon now outlives this call
     return {
       engine: "hosted",
-      sessionId: recorded.sessionId,
+      target: "computer",
+      sessionId: outcome.sessionId,
       computerId,
       bootId: booted.bootId,
       client: withActivityTouches(
         deps,
-        { sessionId: recorded.sessionId, computerId },
+        { sessionId: outcome.sessionId, computerId },
         deps.createClient(booted.publicOrigin, booted.bearer),
       ),
-      streamUrl,
-      streamPassword,
+      streamUrl: stream!.streamUrl,
+      streamPassword: stream!.streamPassword,
       contextMode,
       reused: false,
     };

@@ -24,7 +24,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import {
+  canManageGithubChecks,
+  useOrganizationQueries,
+} from "@/hooks/useOrganizations";
 import {
   OutagePolicyExplainer,
   OutagePolicySelectItems,
@@ -42,6 +45,7 @@ import {
 } from "@/lib/github-checks-errors";
 import { redirectToGithub } from "@/lib/github-external-redirect";
 import {
+  isSelectableGithubRepo,
   findRepoByPickerValue,
   installationBindingsKey,
   pickerLabelFor,
@@ -224,7 +228,6 @@ export function GithubChecksRoute({
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
-    startInstallation,
     startDirectClaim,
     unbindInstallation,
   } = useGithubChecksSettings(activeOrganizationId);
@@ -239,9 +242,27 @@ export function GithubChecksRoute({
   // window a cold deep link lands in. Only once auth AND the org list have
   // settled is a missing id genuinely missing rather than merely early.
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
-  const { isLoading: organizationsLoading } = useOrganizationQueries({
-    isAuthenticated,
-  });
+  const { sortedOrganizations, isLoading: organizationsLoading } =
+    useOrganizationQueries({
+      isAuthenticated,
+    });
+
+  // Every write on this page is org-ADMIN-only server-side; the availability
+  // query behind it needs only MEMBER. So a member reaches the page
+  // legitimately and must NOT be handed live controls — see
+  // `canManageGithubChecks`.
+  //
+  // Unresolved reads as "may not", which greys the page for the moment before
+  // the org list settles. That is the safe direction: the opposite flashes
+  // enabled controls at somebody who is about to be refused.
+  const activeOrganization = useMemo(
+    () =>
+      activeOrganizationId
+        ? sortedOrganizations.find((org) => org._id === activeOrganizationId)
+        : undefined,
+    [sortedOrganizations, activeOrganizationId]
+  );
+  const canManage = canManageGithubChecks(activeOrganization);
 
   // `null` = not loaded yet, `[]` = loaded and genuinely empty. The error is
   // tracked separately so a failed fetch never renders as "you have no
@@ -256,13 +277,13 @@ export function GithubChecksRoute({
   // to the server snapshot until the list refreshes, so two fast clicks would
   // both read the same stale `row.enabled` and send the same value twice.
   const [pendingToggles, setPendingToggles] = useState<ReadonlySet<string>>(
-    () => new Set()
+    () => new Set(),
   );
   // Policy writes are tracked SEPARATELY from `pendingToggles`: they are
   // different writes on the same row, and one set would have a policy change
   // disable the enable switch (and vice versa) for no reason the user can see.
   const [pendingPolicies, setPendingPolicies] = useState<ReadonlySet<string>>(
-    () => new Set()
+    () => new Set(),
   );
   const [pendingConformance, setPendingConformance] = useState<
     ReadonlySet<string>
@@ -271,7 +292,7 @@ export function GithubChecksRoute({
   // different writes land on one row, and a shared set would grey out a control
   // the admin has no reason to think is busy.
   const [pendingFeedback, setPendingFeedback] = useState<ReadonlySet<string>>(
-    () => new Set()
+    () => new Set(),
   );
   // The picker's value is the repository's NUMERIC ID as a string, not its
   // name. Two accounts can both have a `widgets`, and the id is what the connect
@@ -320,7 +341,7 @@ export function GithubChecksRoute({
    */
   const bindingsKey = useMemo(
     () => installationBindingsKey(bindings),
-    [bindings]
+    [bindings],
   );
 
   // Switching organizations must not carry a selection across: the connect
@@ -377,7 +398,7 @@ export function GithubChecksRoute({
       listingGenerationRef.current += 1;
       listedForRef.current = null;
     },
-    []
+    [],
   );
 
   useEffect(() => {
@@ -433,7 +454,7 @@ export function GithubChecksRoute({
     void listInstallationRepos()
       .then((repositories) => {
         if (listingGenerationRef.current !== generation) return;
-        setInstallationRepos(repositories);
+        setInstallationRepos(repositories.filter(isSelectableGithubRepo));
       })
       .catch((error) => {
         if (listingGenerationRef.current !== generation) return;
@@ -477,20 +498,26 @@ export function GithubChecksRoute({
     suiteOptions.find((s) => s._id === suiteId);
 
   /**
-   * Send the admin to GitHub to install, or to authorize a claim.
+   * Send the admin to GitHub to sign in, for every case.
    *
-   * Both start server-side — the URL carries a one-time state whose hash the
+   * There used to be a second button here that went straight to GitHub's
+   * install URL. It could not work: GitHub redirects that URL into an existing
+   * installation whenever the signed-in user administers one, so it silently
+   * dead-ended for anyone who already had the app somewhere — and made
+   * installing on a SECOND account impossible. Signing in first and reading the
+   * user's real installation list is the only approach that does not depend on
+   * GitHub's redirect behaviour. Installing is driven from the picker that
+   * comes back.
+   *
+   * Starts server-side — the URL carries a one-time state whose hash the
    * backend stored — so this only follows what it is handed, through a helper
    * that refuses anything not on github.com.
    */
-  const beginBindingFlow = async (kind: "install" | "claim") => {
+  const beginBindingFlow = async () => {
     setBindingBusy(true);
     try {
-      const { url } =
-        kind === "install"
-          ? await startInstallation().then((r) => ({ url: r.installUrl }))
-          : await startDirectClaim().then((r) => ({ url: r.authorizeUrl }));
-      redirectToGithub(url);
+      const { authorizeUrl } = await startDirectClaim();
+      redirectToGithub(authorizeUrl);
     } catch (error) {
       handleWriteError(error);
       // Only cleared on failure: on success the browser is already leaving, and
@@ -540,7 +567,7 @@ export function GithubChecksRoute({
           projectId: suite.projectId,
           suiteId: suite._id,
           outagePolicy: pickerPolicy,
-        })
+        }),
       );
       // A completion for the PREVIOUS org lands on a page that is now showing a
       // different one. Clearing selections there would wipe a fresh choice, and
@@ -582,7 +609,7 @@ export function GithubChecksRoute({
 
   const handleSuiteChange = async (
     row: GithubCheckRepoConfigRow,
-    suiteId: string
+    suiteId: string,
   ) => {
     const suite = suiteById(suiteId);
     if (!suite?.projectId) return;
@@ -599,7 +626,7 @@ export function GithubChecksRoute({
 
   const handlePolicyChange = async (
     row: GithubCheckRepoConfigRow,
-    outagePolicy: GithubCheckOutagePolicy
+    outagePolicy: GithubCheckOutagePolicy,
   ) => {
     // Same reason as the enable toggle: the select stays bound to the server
     // snapshot until the list refreshes, so a second change made before the
@@ -641,7 +668,7 @@ export function GithubChecksRoute({
   };
 
   const handleFeedbackCommentsToggle = async (
-    row: GithubCheckRepoConfigRow
+    row: GithubCheckRepoConfigRow,
   ) => {
     if (pendingFeedback.has(row._id)) return;
     // ABSENT IS `on`. Only a stored `off` turns the comment off, so the flip of
@@ -709,7 +736,7 @@ export function GithubChecksRoute({
   }
 
   const alreadyConnected = new Set(
-    rows.map((row) => normalizeRepoName(row.repoFullName))
+    rows.map((row) => normalizeRepoName(row.repoFullName)),
   );
   // Offer nothing until the connected list has actually loaded. `rows` is `[]`
   // while `repos` is undefined, so filtering then would advertise repositories
@@ -718,7 +745,7 @@ export function GithubChecksRoute({
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName))
+          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName)),
         );
 
   // Selection and labelling live in `@/lib/github-repo-picker`, shared with the
@@ -757,6 +784,16 @@ export function GithubChecksRoute({
         — existing repositories stay eval-only until you turn it on.
       </p>
 
+      {/* Says WHY the page is read-only, next to the controls it explains.
+          Without it a member reads the greyed page as broken, and the only
+          alternative answer they had was to click and get a refusal toast. */}
+      {!canManage && !organizationsLoading ? (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          You can see this organization's GitHub Checks setup, but only an
+          organization owner or admin can change it.
+        </p>
+      ) : null}
+
       <SettingsSection title="GitHub accounts">
         {bindings === undefined ? (
           <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
@@ -765,10 +802,9 @@ export function GithubChecksRoute({
         ) : bindingRows.length === 0 ? (
           <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
             <p>
-              No GitHub accounts connected yet. Install the MCPJam app on the
-              account whose repositories you want checked — or, if somebody has
-              already installed it from GitHub, claim that installation for this
-              workspace.
+              No GitHub accounts connected yet. Connect the account whose
+              repositories you want checked — an organization, or your own
+              account.
             </p>
           </div>
         ) : (
@@ -776,7 +812,7 @@ export function GithubChecksRoute({
             <InstallationRow
               key={binding.installationRef}
               binding={binding}
-              disabled={bindingBusy}
+              disabled={bindingBusy || !canManage}
               onUnbind={() => setPendingUnbind(binding)}
             />
           ))
@@ -784,25 +820,18 @@ export function GithubChecksRoute({
 
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <Button
-            disabled={bindingBusy}
-            onClick={() => void beginBindingFlow("install")}
+            disabled={bindingBusy || !canManage}
+            onClick={() => void beginBindingFlow()}
           >
-            <Github className="mr-2 size-4" aria-hidden /> Install on a GitHub
+            <Github className="mr-2 size-4" aria-hidden /> Connect a GitHub
             account
-          </Button>
-          <Button
-            variant="outline"
-            disabled={bindingBusy}
-            onClick={() => void beginBindingFlow("claim")}
-          >
-            Claim an existing installation
           </Button>
         </div>
         <p className="px-4 pb-3 text-xs text-muted-foreground">
-          Claiming is for an installation somebody already added from GitHub's
-          side. You will be asked to sign in to GitHub so we can confirm you
-          administer that account — installing the app is not on its own proof
-          that it is yours to connect here.
+          You will be asked to sign in to GitHub so we can confirm which
+          accounts you administer, then pick one — installing the app is not on
+          its own proof that it is yours to connect here. Accounts without the
+          app yet can be installed from that same list.
         </p>
       </SettingsSection>
 
@@ -881,7 +910,7 @@ export function GithubChecksRoute({
                     </span>
                     <RepoVisibilityBadge
                       isPrivate={visibilityByRepo.get(
-                        normalizeRepoName(row.repoFullName)
+                        normalizeRepoName(row.repoFullName),
                       )}
                     />
                     <RepoConnectionState status={row.connectionStatus} />
@@ -916,6 +945,7 @@ export function GithubChecksRoute({
               <div className="flex items-center gap-3 shrink-0">
                 <Select
                   value={row.suiteId}
+                  disabled={!canManage}
                   onValueChange={(value) => void handleSuiteChange(row, value)}
                 >
                   <SelectTrigger
@@ -939,11 +969,11 @@ export function GithubChecksRoute({
                     the default — a claim the stored row does not make. */}
                 <Select
                   value={row.outagePolicy ?? ""}
-                  disabled={pendingPolicies.has(row._id)}
+                  disabled={pendingPolicies.has(row._id) || !canManage}
                   onValueChange={(value) =>
                     void handlePolicyChange(
                       row,
-                      value as GithubCheckOutagePolicy
+                      value as GithubCheckOutagePolicy,
                     )
                   }
                 >
@@ -960,14 +990,18 @@ export function GithubChecksRoute({
 
                 <Switch
                   checked={row.enabled}
-                  disabled={pendingToggles.has(row._id)}
+                  disabled={pendingToggles.has(row._id) || !canManage}
                   onCheckedChange={() => void handleToggle(row)}
                   aria-label={`Enable checks for ${row.repoFullName}`}
                 />
 
                 <Switch
                   checked={row.conformanceEnabled === true}
-                  disabled={pendingConformance.has(row._id) || !row.enabled}
+                  disabled={
+                    pendingConformance.has(row._id) ||
+                    !row.enabled ||
+                    !canManage
+                  }
                   onCheckedChange={() => void handleConformanceToggle(row)}
                   aria-label={`Enable conformance check for ${row.repoFullName}`}
                 />
@@ -981,7 +1015,7 @@ export function GithubChecksRoute({
                     write, and it stays answerable while checks are paused. */}
                 <Switch
                   checked={row.feedbackComments !== "off"}
-                  disabled={pendingFeedback.has(row._id)}
+                  disabled={pendingFeedback.has(row._id) || !canManage}
                   onCheckedChange={() => void handleFeedbackCommentsToggle(row)}
                   aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
                   aria-describedby={`feedback-comments-note-${row._id}`}
@@ -990,6 +1024,7 @@ export function GithubChecksRoute({
                 <Button
                   variant="ghost"
                   size="icon"
+                  disabled={!canManage}
                   aria-label={`Disconnect ${row.repoFullName}`}
                   onClick={() => void handleDisconnect(row)}
                 >
@@ -1007,7 +1042,11 @@ export function GithubChecksRoute({
               each have a `widgets`, and the id is what the connect is actually
               keyed on — selecting by name would make the account label below
               purely decorative and let one pick resolve to the other repo. */}
-          <Select value={pickerRepo} onValueChange={setPickerRepo}>
+          <Select
+            value={pickerRepo}
+            disabled={!canManage}
+            onValueChange={setPickerRepo}
+          >
             <SelectTrigger className="w-72" aria-label="Repository">
               <SelectValue placeholder="Select a repository" />
             </SelectTrigger>
@@ -1023,7 +1062,11 @@ export function GithubChecksRoute({
             </SelectContent>
           </Select>
 
-          <Select value={pickerSuite} onValueChange={setPickerSuite}>
+          <Select
+            value={pickerSuite}
+            disabled={!canManage}
+            onValueChange={setPickerSuite}
+          >
             <SelectTrigger className="w-56" aria-label="Suite">
               <SelectValue placeholder="Select a suite" />
             </SelectTrigger>
@@ -1038,6 +1081,7 @@ export function GithubChecksRoute({
 
           <Select
             value={pickerPolicy}
+            disabled={!canManage}
             onValueChange={(value) =>
               setPickerPolicy(value as GithubCheckOutagePolicy)
             }
@@ -1053,7 +1097,11 @@ export function GithubChecksRoute({
           <Button
             onClick={() => void handleConnect()}
             disabled={
-              connecting || !pickerRepo || !pickerSuite || !pickerPolicy
+              connecting ||
+              !pickerRepo ||
+              !pickerSuite ||
+              !pickerPolicy ||
+              !canManage
             }
           >
             <Plus className="mr-2 size-4" aria-hidden /> Connect

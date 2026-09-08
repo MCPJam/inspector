@@ -28,6 +28,7 @@ import { isProjectScopedRoutePath } from "./app-routes";
 import {
   buildProjectPath,
   isAppRelativeTarget,
+  isProjectIdShape,
   parseProjectPath,
   stripProjectFromPath,
 } from "./project-route";
@@ -53,6 +54,7 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "slack",
   "discord",
   "observability",
+  "budget",
 ] as const;
 
 export type OrganizationRouteSection =
@@ -71,6 +73,7 @@ export function parseOrganizationSection(
   if (segment === "slack") return "slack";
   if (segment === "discord") return "discord";
   if (segment === "observability") return "observability";
+  if (segment === "budget") return "budget";
   return "overview";
 }
 
@@ -416,6 +419,10 @@ export function buildOrganizationPath(
   // dialog rather than a view, so there is nothing for a `?tab=` to select.
   if (section === "observability")
     return `/organizations/${orgId}/observability`;
+  // The organization spend budget. One segment like the two above: the cap
+  // and its alert thresholds are one form, so there is nothing for a `?tab=`
+  // to select.
+  if (section === "budget") return `/organizations/${orgId}/budget`;
   return `/organizations/${orgId}`;
 }
 
@@ -999,6 +1006,38 @@ export function buildProjectSwitchTarget(projectId: string): string {
 /** The per-project settings gear in the picker — one gesture, one URL. */
 export function buildProjectSettingsTarget(projectId: string): string {
   return buildProjectPath(projectId, routePaths.projectSettings);
+}
+
+/**
+ * Where picking another organization in the switcher lands.
+ *
+ * Same contract as `buildProjectSwitchTarget`: the switcher NAVIGATES and the
+ * route coordinator performs the state switch, because the URL named a project
+ * that lives in the other organization. The previous shape — set the active
+ * organization, then navigate to the logical `/servers` — could not work: the
+ * logical path is already `/servers`, so the navigation no-opped, the URL kept
+ * `/p/<project-in-the-old-org>`, and the coordinator dutifully switched the
+ * organization back to the one the URL still named.
+ *
+ * The organization's most recently updated project is the destination, matching
+ * the ordering the project list itself uses. With no project to aim at — a
+ * brand-new organization, or a membership list that has not loaded yet — the
+ * organization overview is the landing spot, and `ensureDefaultProject`
+ * provisions one from there.
+ */
+export function buildOrganizationSwitchTarget(
+  organizationId: string,
+  projects:
+    | ReadonlyArray<{ _id: string; organizationId?: string; updatedAt: number }>
+    | undefined,
+): string {
+  const mostRecent = (projects ?? [])
+    .filter((project) => project.organizationId === organizationId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (mostRecent && isProjectIdShape(mostRecent._id)) {
+    return buildProjectSwitchTarget(mostRecent._id);
+  }
+  return buildOrganizationPath(organizationId);
 }
 
 export function getInvalidOrganizationRouteNavigationTarget({

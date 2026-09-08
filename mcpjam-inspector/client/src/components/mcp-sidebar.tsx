@@ -49,6 +49,7 @@ import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
+import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
@@ -63,7 +64,7 @@ import {
   isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -72,7 +73,6 @@ import {
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;
@@ -459,16 +459,22 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * whatever the settings route resolves to afterwards.
    */
   onOpenProjectSettings?: (projectId: string) => void;
-  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  /**
+   * Creates a project and lands the user in it. The optional organization is
+   * the one chosen in the create dialog; omitted means the active one.
+   */
+  onCreateProject: (name: string, organizationId?: string) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
   activeOrganizationId?: string;
   activeOrganizationName?: string;
-  onSwitchOrganization?: (
-    organizationId: string,
-    section?: OrganizationRouteSection,
-  ) => void;
-  onSwitchActiveOrganization?: (organizationId: string) => void;
+  /**
+   * Switches the active organization. The handler NAVIGATES into that
+   * organization (see `buildOrganizationSwitchTarget`) rather than writing
+   * hidden state, so there is no section to open — the switcher's gears are
+   * gone with the old layout.
+   */
+  onSwitchOrganization?: (organizationId: string) => void;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
@@ -491,7 +497,6 @@ export function MCPSidebar({
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onSwitchActiveOrganization,
   onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
@@ -752,7 +757,6 @@ export function MCPSidebar({
             }
             activeOrganizationId={activeOrganizationId}
             onSwitchOrganization={onSwitchOrganization}
-            onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
           {showUpdateButton && (
             <div className="px-3 pt-2">
@@ -849,6 +853,17 @@ export function MCPSidebar({
               trialStartedAt={trialBilling.trialStartedAt}
               onUpgradeClick={handleTrialUpgradeClick}
               className="mt-1"
+            />
+          ) : null}
+          {isAuthenticated && user && activeOrganizationId ? (
+            <SidebarCredits
+              organizationId={activeOrganizationId}
+              billingUiEnabled={billingUiEnabled}
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
             />
           ) : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />

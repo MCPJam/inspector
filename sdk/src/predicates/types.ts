@@ -17,6 +17,7 @@
 
 import { z } from "zod";
 import type { EvalMatchOptions } from "../matchers.js";
+import type { CheckPolicy } from "./policy.js";
 
 /**
  * Argument-matching mode reused from the eval matcher
@@ -48,9 +49,11 @@ export type ArgMatcher = {
  * The deterministic predicate library.
  *
  * Discriminated on `type`. Each variant is evaluated by a pure function over
- * the {@link IterationTranscript}.
+ * the {@link IterationTranscript}. Intersected with {@link CheckPolicy} so
+ * any kind can be marked advisory (`role: "advisory"`, `severity: "warn"`)
+ * without a parallel field.
  */
-export type Predicate =
+export type Predicate = (
   /** A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. */
   | {
       type: "toolCalledWith";
@@ -62,6 +65,15 @@ export type Predicate =
   | { type: "toolCalledAtLeastOnce"; toolName: string }
   /** `toolName` was never called (forbidden tool). */
   | { type: "toolNeverCalled"; toolName: string }
+  /**
+   * No tool OUTSIDE `toolNames` was called.
+   *
+   * Subset semantics: it says nothing about whether the listed tools WERE
+   * called (`toolCalledAtLeastOnce` says that), only that nothing else was.
+   * An EMPTY list means no tool at all was called — the negative case, as a
+   * check that can be turn-scoped and can carry a role.
+   */
+  | { type: "onlyToolsCalled"; toolNames: string[] }
   /** The first tool call observed in the transcript was `toolName`. */
   | { type: "firstToolWas"; toolName: string }
   /** The final assistant message contains `needle`. Case-insensitive unless `caseSensitive`. */
@@ -101,7 +113,8 @@ export type Predicate =
    * when the transcript carries no turn count: an unmeasured budget is not a
    * met budget.
    */
-  | { type: "turnCountUnder"; turns: number };
+  | { type: "turnCountUnder"; turns: number }
+) & CheckPolicy;
 
 /** The `type` discriminants of {@link Predicate}, for validators. */
 export type PredicateType = Predicate["type"];
@@ -121,6 +134,7 @@ export const TURN_SCOPABLE_PREDICATE_KINDS = [
   "toolCalledWith",
   "toolCalledAtLeastOnce",
   "toolNeverCalled",
+  "onlyToolsCalled",
   "firstToolWas",
   "responseContains",
   "responseMatches",
@@ -192,33 +206,57 @@ export const argMatcherSchema = z.object({
 });
 
 /**
- * Zod schema for {@link Predicate}. Uses `z.discriminatedUnion` on `type`
- * so authoring-side validation surfaces a precise error (e.g. "unknown
- * predicate type 'firstToolWass'") rather than a generic union failure.
+ * Policy fields spread into every predicate variant. `severity` is only
+ * valid with `role: "advisory"` — enforced by {@link predicateSchema}'s
+ * `superRefine`, not here, so the underlying discriminated union keeps
+ * `.options` for kind lists (do not read `.options` from the refinement).
  */
-export const predicateSchema = z.discriminatedUnion("type", [
+const checkPolicyShape = {
+  role: z.enum(["gating", "advisory"]).optional(),
+  severity: z.literal("warn").optional(),
+};
+
+/**
+ * The underlying discriminated union. {@link PREDICATE_KINDS} and
+ * {@link PredicateKind} read `.options` from THIS, never from the
+ * refinement wrapper — a ZodEffects has no `.options`.
+ */
+export const predicateUnion = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("toolCalledWith"),
     toolName: z.string().min(1),
     args: argMatcherSchema,
     minCount: z.number().int().positive().optional(),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("toolCalledAtLeastOnce"),
     toolName: z.string().min(1),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("toolNeverCalled"),
     toolName: z.string().min(1),
+    ...checkPolicyShape,
+  }),
+  z.object({
+    type: z.literal("onlyToolsCalled"),
+    // An empty array is VALID — it is the "no tool was called" claim. Blank
+    // entries are not: nothing can equal one, so it reads as an allowance and
+    // grades as none.
+    toolNames: z.array(z.string().min(1)),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("firstToolWas"),
     toolName: z.string().min(1),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("responseContains"),
     needle: z.string().min(1),
     caseSensitive: z.boolean().optional(),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("responseMatches"),
@@ -236,37 +274,60 @@ export const predicateSchema = z.discriminatedUnion("type", [
         },
         { message: "Invalid regular expression" }
       ),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("noToolErrors"),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("finalAssistantMessageNonEmpty"),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("tokenBudgetUnder"),
     tokens: z.number().int().positive(),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("widgetRendered"),
     toolName: z.string().min(1).optional(),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("widgetRenderLatencyUnder"),
     ms: z.number().int().positive(),
     toolName: z.string().min(1).optional(),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("widgetNoConsoleErrors"),
     toolName: z.string().min(1).optional(),
+    ...checkPolicyShape,
   }),
   z.object({
     type: z.literal("turnCountUnder"),
     // Positive: `< 0` and `< 1` with a zero floor can never be satisfied, so a
     // non-positive budget is an authoring mistake, not a strict gate.
     turns: z.number().int().positive(),
+    ...checkPolicyShape,
   }),
 ]);
+
+/**
+ * Zod schema for {@link Predicate}. The discriminated union is refined so
+ * `severity` requires `role: "advisory"`. Kind lists must read
+ * {@link predicateUnion}.options, not this wrapper.
+ */
+export const predicateSchema = predicateUnion.superRefine((value, ctx) => {
+  if (value.severity !== undefined && value.role !== "advisory") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["severity"],
+      message: 'severity requires role: "advisory"',
+    });
+  }
+});
 
 /** Array of predicates — used for both suite defaults and case overrides. */
 export const predicateArraySchema = z.array(predicateSchema);
@@ -287,6 +348,7 @@ export const casePredicatesSchema = z.object({
 export type CasePredicates = z.infer<typeof casePredicatesSchema>;
 export type PredicatePlaceholder =
   (typeof PREDICATE_PLACEHOLDER_STRINGS)[number];
+export type { CheckPolicy } from "./policy.js";
 
 /**
  * How a tool failure surfaced. The plan requires `noToolErrors` to distinguish

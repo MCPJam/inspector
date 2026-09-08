@@ -36,9 +36,11 @@ export type {
   RenderObservationSummary,
   CasePredicates,
   PredicatePlaceholder,
+  CheckPolicy,
 } from "./types.js";
 export {
   predicateSchema,
+  predicateUnion,
   predicateArraySchema,
   argMatcherSchema,
   casePredicatesSchema,
@@ -47,3 +49,11 @@ export {
   TURN_SCOPABLE_PREDICATE_KINDS,
   isTurnScopablePredicateKind,
 } from "./types.js";
+export {
+  CHECK_POLICY_KEYS,
+  stripCheckPolicy,
+  checkRole,
+  checkSeverity,
+  type CheckRole,
+  type CheckSeverity,
+} from "./policy.js";

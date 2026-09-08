@@ -25,6 +25,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Sandbox } from "e2b";
+import { logger } from "../../utils/logger.js";
 import {
   ensureComputerReady,
   getComputerSandboxInfo,
@@ -43,7 +44,9 @@ import {
 import {
   ensureBrowserSession,
   type BrowserSessionDeps,
+  type ComputerHostedBrowserSessionHandle,
   type HostedBrowserSessionHandle,
+  type SandboxHostedBrowserSessionHandle,
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
@@ -93,6 +96,12 @@ export interface ConnectedSandboxLike {
   files: {
     write(path: string, data: ArrayBuffer): Promise<unknown>;
     makeDir(path: string): Promise<unknown>;
+    /**
+     * Optional because an older `@e2b/desktop` may not expose it, and because
+     * every failure to read means the same thing to the caller: boot a daemon
+     * yourself.
+     */
+    read?(path: string): Promise<string | Uint8Array>;
   };
   getHost(port: number): string;
 }
@@ -109,8 +118,54 @@ export function adaptSandbox(sandbox: ConnectedSandboxLike): BrowserdSandbox {
       });
       return { kill: () => handle.kill(), wait: () => handle.wait() };
     },
+    async run(command, options) {
+      try {
+        const result = await sandbox.commands.run(command, {
+          envs: options?.envs,
+          timeoutMs: 30_000,
+        });
+        return { exitCode: Number(result?.exitCode ?? 0) };
+      } catch (error) {
+        // The E2B SDK rejects on a non-zero exit. The caller asked for the
+        // exit CODE — a failing probe is an answer, not an error — so recover
+        // it when the SDK carried one, and read anything else as a failure.
+        const code = (error as { exitCode?: unknown })?.exitCode;
+        return { exitCode: typeof code === "number" ? code : 1 };
+      }
+    },
     getHost: (port) => sandbox.getHost(port),
   };
+}
+
+/**
+ * Read a small text file out of the sandbox.
+ *
+ * The prelaunch token's channel. A daemon baked into the image mints its own
+ * bearer into a 0600 file, and this is how the inspector learns it — over the
+ * SAME API-key-authenticated files API that already writes the daemon's bytes
+ * (`writeBundleInto`), so no new trust relationship is created. The agent's own
+ * shell runs on a different box (a different `runtimeKind`), so nothing the
+ * model drives can reach the file.
+ *
+ * `undefined` for "not there", which is the ordinary answer on an image that
+ * predates prelaunch, and the answer the caller treats as "boot one yourself".
+ */
+export async function readTextFileFrom(
+  sandbox: ConnectedSandboxLike,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    if (!sandbox.files.read) return undefined;
+    const raw = await sandbox.files.read(path);
+    const text =
+      typeof raw === "string" ? raw : new TextDecoder().decode(raw as never);
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } catch {
+    // A missing file, an unreadable one, an SDK that does not have `read`:
+    // every one of them means the same thing to the caller.
+    return undefined;
+  }
 }
 
 /** Write `content` at `path`, creating the parent directory idempotently. */
@@ -153,13 +208,42 @@ function streamOf(sandbox: unknown): DesktopStreamLike | null {
 }
 
 /**
+ * Reset a stream this process cannot speak for.
+ *
+ * `x11vnc` holds the password and the noVNC proxy in front of it serves the
+ * page. Both are sandbox processes that outlive whichever inspector replica
+ * started them, and `@e2b/desktop`'s own `stop()` only kills the proxy handle
+ * ITS instance owns — which a fresh `connect` does not have. So the reset is
+ * done here, by name, and covers both.
+ */
+const STREAM_RESET_COMMAND =
+  "pkill x11vnc || true; pkill -f novnc_proxy || true";
+
+/**
  * Ensure the desktop stream is up with auth required and return its URL +
  * minted password. `MCPJAM_BROWSER_STREAM_DISABLED=1` is a staging bring-up
  * hatch: it records a well-formed but deliberately unusable stream so the
  * command path can be validated before the stream seam is.
+ *
+ * THE PASSWORD IS NOT RETRIEVABLE, only mintable. `stream.start()` generates it
+ * and keeps it in memory on that `VNCServer` instance; `getAuthKey()` reads
+ * that field and nothing else. A stream left running by an earlier session —
+ * another replica, or this box's WebMCP Inspector session an hour ago — makes
+ * `start()` throw "Stream is already running", and the fresh instance then has
+ * no password to report:
+ *
+ *     Unable to retrieve stream auth key, check if requireAuth is enabled
+ *
+ * which is what reached the model as a failed `browser_navigate`. Swallowing
+ * "already running" was only ever safe for a stream THIS instance had started.
+ *
+ * So an already-running stream is reset and restarted, minting a key we hold.
+ * That rotates the password, which is what a relaunch does anyway (see the
+ * comment on the relaunch path in `browser-session.ts`) — and it is the only
+ * outcome that leaves the row's durable copy actually matching the box.
  */
-async function ensureStreamOn(
-  sandbox: unknown,
+export async function ensureStreamOn(
+  sandbox: ConnectedSandboxLike,
 ): Promise<{ streamUrl: string; streamPassword: string }> {
   if (process.env.MCPJAM_BROWSER_STREAM_DISABLED === "1") {
     return {
@@ -176,10 +260,19 @@ async function ensureStreamOn(
   try {
     await stream.start({ requireAuth: true });
   } catch (error) {
-    // An already-running stream is fine — its auth key is still readable.
-    // Anything else is a real failure the caller must surface.
     const message = error instanceof Error ? error.message : String(error);
+    // Anything but "already running" is a real failure the caller must surface.
     if (!/already/i.test(message)) throw error;
+    logger.info(
+      "[browserd] desktop stream was already running; restarting it to mint a key this process holds",
+    );
+    await sandbox.commands
+      .run(STREAM_RESET_COMMAND, { timeoutMs: 15_000 })
+      .catch(() => {
+        // Best-effort: if the reset could not run, the restart below fails
+        // with the SDK's own error, which says more than this would.
+      });
+    await stream.start({ requireAuth: true });
   }
   const streamPassword = String(await stream.getAuthKey());
   if (!streamPassword) {
@@ -209,6 +302,7 @@ export function connectSessionSandbox(
 ): SessionSandbox {
   return {
     writeBundle: (path, content) => writeBundleInto(sandbox, path, content),
+    readTextFile: (path) => readTextFileFrom(sandbox, path),
     browserd: adaptSandbox(sandbox),
     killBrowserd: () => killBrowserdIn(sandbox),
     ensureStream: () => ensureStreamOn(sandbox),
@@ -301,8 +395,31 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
  * local handle that cannot arrive — and cost the WebMCP inspector, which needs
  * the hosted fields, the type that says so.
  */
+// OVERLOADED, so the three computer callers (the WebMCP inspector route, the
+// Browser Panel, the hosted session resolver) keep the COMPUTER type and stay
+// unedited: they read `computerId` and `streamUrl` straight off the handle,
+// and none of them should have to narrow a union to say "yes, the member's own
+// machine is the member's own machine".
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & { target?: { kind: "computer" } },
+): Promise<ComputerHostedBrowserSessionHandle>;
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & {
+    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+  },
+): Promise<SandboxHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs,
 ): Promise<HostedBrowserSessionHandle> {
-  return ensureBrowserSession(liveBrowserSessionDeps(), args);
+  // Dispatched rather than cast: the two overloads above are the checked
+  // surface, and narrowing here is what makes the implementation satisfy both
+  // without an `as` that a later edit could quietly widen.
+  const { target, ...rest } = args;
+  if (target?.kind === "sandbox") {
+    return ensureBrowserSession(liveBrowserSessionDeps(), { ...rest, target });
+  }
+  return ensureBrowserSession(liveBrowserSessionDeps(), {
+    ...rest,
+    ...(target ? { target } : {}),
+  });
 }

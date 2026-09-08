@@ -7,6 +7,31 @@ const MCPJAM_LIMIT_CODES = new Set([
   MCPJAM_RATE_LIMIT_CODE,
   MCPJAM_USER_RATE_LIMIT_CODE,
 ]);
+
+/**
+ * The organization's admin-set spend budget is exhausted for the current
+ * billing window — emitted by the backend's `/stream` precheck and mirrored
+ * by `ORGANIZATION_SPEND_BUDGET_REACHED` on the eval-launch mutations.
+ *
+ * Deliberately NOT a member of {@link MCPJAM_LIMIT_CODES}: that set is what
+ * opens the top-up dialog, and buying credits does not clear a budget. The
+ * only fix is an owner or admin raising the cap, so this code carves itself
+ * OUT of the model-limit classification and gets its own banner copy.
+ */
+export const SPEND_BUDGET_REACHED_CODE = "spend_budget_reached";
+
+/** True when this error is the org spend budget refusing, not the wallet. */
+export function isSpendBudgetReachedCode(code: string | undefined): boolean {
+  return code === SPEND_BUDGET_REACHED_CODE;
+}
+
+/**
+ * The one sentence every surface shows for a budget refusal. Names the fix
+ * (raise the cap) rather than the wallet, because the wallet is not what
+ * refused.
+ */
+export const SPEND_BUDGET_REACHED_MESSAGE =
+  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Budget.";
 const MCPJAM_RATE_LIMIT_CODE_PATTERN =
   /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
@@ -112,6 +137,45 @@ const findMCPJamRateLimitCode = (
   return undefined;
 };
 
+/**
+ * The spend-budget code, wherever it is nested.
+ *
+ * The top-level `code` is not the only place it arrives: a refusal can reach
+ * the client with the code inside `details`, or inside a JSON-encoded
+ * `message`. Missing it there is not a cosmetic slip — the deep scan below
+ * would then classify the same refusal as a wallet limit and open the top-up
+ * dialog, selling credits to an organization that set its own ceiling and
+ * cannot spend its way past it.
+ */
+const hasNestedSpendBudgetCode = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): boolean => {
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+
+  if (isSpendBudgetReachedCode(getStringProperty(value, "code"))) return true;
+
+  const values = Array.isArray(value) ? value : Object.values(value);
+  for (const item of values) {
+    // A STRING LEAF CAN BE JSON. Servers routinely nest an encoded error
+    // inside `details` or a `message` field, and stopping at the string is
+    // how the budget code hides from this walk — leaving the deep scan below
+    // to read the same payload's rate-limit text and open the top-up dialog.
+    if (typeof item === "string") {
+      if (isSpendBudgetReachedCode(item)) return true;
+      for (const parsed of collectJsonCandidates(item)) {
+        if (hasNestedSpendBudgetCode(parsed, seen)) return true;
+      }
+      continue;
+    }
+    if (hasNestedSpendBudgetCode(item, seen)) return true;
+  }
+
+  return false;
+};
+
 const findMCPJamLimitKind = (
   value: unknown,
   seen = new WeakSet<object>(),
@@ -185,6 +249,24 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // throttle resolves in seconds and is owned by the inline retry banner,
   // never the modal. Downstream consumers don't need to re-check.
   if (args.limitKind === "concurrency") return false;
+
+  // Same shape of carve-out for the org spend budget: it is a refusal the
+  // user cannot buy their way out of, so it must never reach the top-up
+  // modal. Checked before the deep scans below so a budget payload that
+  // happens to embed a rate-limit string still classifies as a budget —
+  // and checked at EVERY nesting level, because the code arrives inside
+  // `details` or a JSON-encoded `message` as readily as at the top.
+  if (isSpendBudgetReachedCode(args.code)) return false;
+  for (const value of [args.message, args.details]) {
+    if (typeof value === "string") {
+      if (isSpendBudgetReachedCode(value)) return false;
+      for (const parsed of collectJsonCandidates(value)) {
+        if (hasNestedSpendBudgetCode(parsed)) return false;
+      }
+      continue;
+    }
+    if (hasNestedSpendBudgetCode(value)) return false;
+  }
 
   if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
   if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;

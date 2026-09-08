@@ -61,6 +61,9 @@ export function ModelCompareCardHeader({
   showStepsTab = false,
   stepsActive = false,
   onSelectSteps,
+  showScorecardTab = false,
+  scorecardActive = false,
+  onSelectScorecard,
   showBrowserTab = false,
   browserActive = false,
   onSelectBrowser,
@@ -109,6 +112,10 @@ export function ModelCompareCardHeader({
   showStepsTab?: boolean;
   stepsActive?: boolean;
   onSelectSteps?: () => void;
+  /** Scorecard tab — same out-of-union pattern as Steps. */
+  showScorecardTab?: boolean;
+  scorecardActive?: boolean;
+  onSelectScorecard?: () => void;
   /** Include the eval-only "Browser" tab (headless render observations / replay
    *  video). Rides the out-of-union `browserActive` / `onSelectBrowser` props so
    *  the shared `TraceViewMode` union stays narrow (see TraceViewModeTabs doc). */
@@ -265,6 +272,9 @@ export function ModelCompareCardHeader({
             mode={mode}
             onModeChange={onModeChange}
             showToolsTab={showToolsTab}
+            showScorecardTab={showScorecardTab}
+            scorecardActive={scorecardActive}
+            onSelectScorecard={onSelectScorecard}
             showStepsTab={showStepsTab}
             stepsActive={stepsActive}
             onSelectSteps={onSelectSteps}

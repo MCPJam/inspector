@@ -35,6 +35,28 @@ export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
 export const DEFAULT_QUEUE_KEY = "@session";
 
 /**
+ * The daemon's WIRE compatibility number, and the only thing a reuse decision
+ * may key off.
+ *
+ * Not the bundle hash. Every edit anywhere in the daemon's import graph rotates
+ * that hash, and a hash mismatch used to mean "relaunch now" — so a deploy
+ * carrying a one-line comment change killed every live hosted browser
+ * mid-session, including one somebody was typing a password into. During a wave
+ * of daemon work that is most deploys.
+ *
+ * This number answers the question that actually matters: can the inspector
+ * talk to the daemon that is already running? Bump it ONLY when the wire or a
+ * command's semantics change incompatibly — a new endpoint, a new optional
+ * field, a new frame kind negotiated per stream are all ADDITIVE and must not
+ * bump it. A hash that differs while this matches is an upgrade that can wait
+ * for the session to be idle (`browser-session.ts`, `upgradeAvailable`).
+ *
+ * History:
+ *   1 — the wire as of the viewport-fidelity wave (V-4a).
+ */
+export const BROWSERD_PROTOCOL_VERSION = 1;
+
+/**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
  * CONTRACT rather than a launch detail — which is why it lives here and not
  * beside the Chromium switches that happen to configure it.
@@ -59,6 +81,30 @@ export const BROWSERD_OBSERVATION_VIEWPORT = {
  * after your action" — a no-op that is indistinguishable from a click that
  * hit a dead area. Refusing is the only version the model can recover from.
  */
+/**
+ * The X display a hosted box draws on, derived from the viewport above.
+ *
+ * DERIVED, not configured: the "three places must agree" rule for the
+ * observation viewport now has a fourth member, and a display that disagreed
+ * with the page would show a browser painting past the edge of what is
+ * captured, with nothing in either repository to say so.
+ *
+ * `dpr` is 1 and staying there until a measurement says otherwise. Raising it
+ * is a MEASUREMENT, never a promise: the encoder's cost is quadratic in it, the
+ * desktop box has 2 vCPU, and the gate is x264 under 60% of one core at 20fps
+ * with Chromium and xfce on the same machine. `MCPJAM_HOSTED_BROWSER_DPR` is
+ * how a deployment tries a candidate without shipping one.
+ *
+ * The MODEL's coordinate space is unaffected either way: every capture it sees
+ * is CSS pixels (`scale: "css"`), and `isPointInViewport` still refuses
+ * anything past 1023×767.
+ */
+export const HOSTED_DISPLAY = {
+  dpr: 1,
+  width: BROWSERD_OBSERVATION_VIEWPORT.width,
+  height: BROWSERD_OBSERVATION_VIEWPORT.height,
+} as const;
+
 export function isPointInViewport(x: number, y: number): boolean {
   return (
     Number.isFinite(x) &&

@@ -14,6 +14,7 @@ import {
   fetchHostedBrowserSession,
   HostedBrowserError,
   isSecureBrowserOrigin,
+  openHostedBrowserFrameStream,
   sendHostedBrowserInput,
 } from "../client";
 
@@ -234,5 +235,43 @@ describe("changing who holds the browser", () => {
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
       action: "acquire",
     });
+  });
+});
+
+describe("the frame socket's URL", () => {
+  /** A `WebSocket` that only records the URL it was opened with. */
+  function stubSocket() {
+    const urls: string[] = [];
+    class Fake {
+      binaryType = "";
+      constructor(url: string) {
+        urls.push(url);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", Fake as unknown as typeof WebSocket);
+    return urls;
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks for the codec the pane can actually decode", () => {
+    // WITHOUT THIS THE VIDEO PATH IS DEAD CODE. The hosted route enables H.264
+    // only when the URL carries it, so a pane that asked in its own options
+    // and not on the wire negotiated JPEG every single time.
+    const urls = stubSocket();
+    openHostedBrowserFrameStream({
+      token: "tok",
+      wire: "binary",
+      codec: "h264",
+    });
+    const url = new URL(urls[0]!);
+    expect(url.searchParams.get("codec")).toBe("h264");
+    expect(url.searchParams.get("wire")).toBe("binary");
+  });
+
+  it("says nothing about a codec it did not ask for", () => {
+    const urls = stubSocket();
+    openHostedBrowserFrameStream({ token: "tok", wire: "binary" });
+    expect(new URL(urls[0]!).searchParams.has("codec")).toBe(false);
   });
 });
