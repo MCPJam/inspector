@@ -191,6 +191,34 @@ describe("buildBrowserTools — unattended policy", () => {
     }
   });
 
+  it("frees every tool on a HOSTED unattended run — the policy is the gate", () => {
+    // Nobody to ask, on a disposable per-run box the caller provisioned. The
+    // declared `toolPolicy` is what decides, and it is enforced at execute
+    // time (origin and tool allowlists), not by a pill nobody would see.
+    //
+    // The `build` helper puts unattended cases on the LOCAL engine, where the
+    // floor is `always` whoever is watching; this one names the hosted engine
+    // and its own sandbox explicitly, which is the shape an eval or swarm run
+    // actually has.
+    const fake = fakeSession(async () => OK);
+    const result = buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      engine: "hosted",
+      runKey: "iteration-3",
+      sandboxTarget: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      ensureSession: fake.ensureSession,
+    });
+    expect(Object.keys(result!.tools)).toHaveLength(6);
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(false);
+    }
+  });
+
   it("an allowlist policy builds only the named tools", () => {
     const { result } = build({
       approvalDelivery: {

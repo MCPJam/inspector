@@ -43,6 +43,7 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  BROWSER_OBSERVATION_TOOL_NAMES,
   BROWSER_TOOL_NAMES,
   type BrowserUnattendedPolicy,
 } from "@/shared/client-fulfilled-tools";
@@ -930,8 +931,18 @@ function resultUrl(output: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Which verbs only LOOK at the page.
+ *
+ * Reads the shared set rather than repeating its members. This used to be a
+ * private list, which was harmless only while `classifyBrowserToolApprovals`
+ * kept the shared one honest — that classifier is gone, and two lists of the
+ * same six names drift the moment a seventh verb is added. The one that would
+ * be forgotten is this one, and forgetting it means an unattended read-only
+ * run silently gets an interactive tool.
+ */
 function isObservational(name: string): boolean {
-  return name === "browser_observe" || name === "browser_webmcp_tools";
+  return BROWSER_OBSERVATION_TOOL_NAMES.has(name);
 }
 
 /**
