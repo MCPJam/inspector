@@ -92,6 +92,7 @@ import { buildEvalSharePath } from "@/lib/app-navigation";
 // lint and to make the removal obvious if someone reaches for it later.
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
   CAPABILITY_REASON_COPY,
   CI_OWNED_REASON_COPY,
@@ -462,6 +463,13 @@ export function SuiteIterationsView({
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
   /**
+   * Lock this suite's configuration for a reason of the CALLER's own.
+   *
+   * NOT the way CI ownership gets in — that is read from the `suite` row here,
+   * so no caller has to remember it (`CiEvalsTab` did not, and the CI Runs tab
+   * went unlocked until the capability query resolved). This is OR-ed on top,
+   * for a caller that knows something this component cannot see.
+   *
    * The suite's configuration lives in a repository (a committed suite file, or
    * SDK ingest), so the app refuses to edit it — see `isCiOwnedSuite`.
    *
@@ -584,14 +592,25 @@ export function SuiteIterationsView({
 
   // IS THIS SUITE CI'S? — asked of two sources, and answered once.
   //
-  // OR-ed, because they fail in opposite directions. The SUITE ROW
-  // (`isCiOwnedSuite`, resolved by the caller) is complete — `declaredSuiteId`
-  // and `source` both live on it — and answers before any query resolves, which
-  // is why it cannot simply be replaced. `getSuiteCapabilities.ownership` is the
-  // backend's own answer, from the same predicate that will refuse the write,
-  // and it is the one that stays right if the cached row is stale. Neither
-  // alone; a lock that disagrees with the server is the bug this whole change
-  // exists to remove.
+  // OR-ed, because they fail in opposite directions. The SUITE ROW is complete
+  // — `declaredSuiteId` and `source` both live on it — and answers before any
+  // query resolves, which is why it cannot simply be replaced.
+  // `getSuiteCapabilities.ownership` is the backend's own answer, from the same
+  // predicate that will refuse the write, and it is the one that stays right if
+  // the cached row is stale. Neither alone; a lock that disagrees with the
+  // server is the bug this whole change exists to remove.
+  //
+  // THE ROW IS READ HERE, not taken from the caller. It used to arrive only as
+  // `configLocked`, and `CiEvalsTab` never passed it — so on the CI Runs tab,
+  // the surface most likely to be SHOWING a CI-owned suite, the row half was
+  // simply absent and the lock was whatever the capability query had gotten
+  // around to answering. Until it resolved, the suite was fully editable.
+  //
+  // Deriving it from the `suite` this component already holds is the same
+  // instrument as the withheld callbacks below, applied one level up: a caller
+  // cannot forget to pass what it never had to pass. `configLockedProp` stays
+  // as a way to lock a suite for reasons of the CALLER's own, which is a
+  // different question from whether CI owns it.
   //
   // It SHADOWS the prop rather than sitting beside it, so there is exactly one
   // answer in this component. Beside it, the two disagreed in a way nobody
@@ -604,6 +623,7 @@ export function SuiteIterationsView({
   // only, so it never reads this.
   const configLocked =
     configLockedProp ||
+    isCiOwnedSuite(suite) ||
     (capabilitiesReady && capabilities.ownership?.ciOwned === true);
 
   // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
@@ -631,9 +651,10 @@ export function SuiteIterationsView({
   // answers by ROLE (`canDeleteArtifact` over the suite's author);
   // `suite.delete` is in the backend's CI-locked set, so on a CI-owned suite
   // the answer is no regardless of role — an org owner holds the permission
-  // and still gets a `409`. Folded in here rather than at the three call sites
-  // for the reason the callbacks below are: the fourth is the one somebody
-  // forgets.
+  // and still gets a `409`. Folded in here rather than at each call site for
+  // the reason the callbacks below are, and for the reason the row is read
+  // here rather than passed: the call site that forgets is the whole failure
+  // mode.
   //
   // `configLocked`, NOT `editingDisabled`: `readOnlyConfig` is about editing
   // configuration, and the platform refuses delete for ownership, not for

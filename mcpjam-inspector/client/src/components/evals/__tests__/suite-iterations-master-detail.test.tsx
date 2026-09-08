@@ -524,6 +524,69 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         canDeleteSuite: false,
       })
     );
+  })
+  /*
+   * THE ROW LOCKS THE SUITE WITHOUT ANY CALLER'S HELP.
+   *
+   * `CiEvalsTab` never passed `configLocked` — no prop, no import — so on the
+   * CI Runs tab, the surface most likely to be SHOWING a CI-owned suite, the
+   * row half of the lock was simply absent. The suite stayed fully editable
+   * until `useSuiteCapabilities` resolved, and `capabilitiesResult` is
+   * `unavailable` here, which is also what a backend predating the ownership
+   * query answers forever.
+   *
+   * So: an SDK-ingested suite, NO `configLocked` prop, no capability answer.
+   * It must still be locked, from the row alone.
+   */
+  it("locks from the suite row when no caller passes configLocked", () => {
+    render(
+      withDataRouter(
+      <SuiteIterationsView
+        suite={{ ...baseSuite, source: "sdk" }}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        onCreateTestCase={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        connectedServerNames={new Set()}
+        canDeleteSuite
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "runs",
+        }}
+        navigation={noopNav}
+      />,)
+    );
+
+    // `RunOverview` takes no `configLocked` — every control it renders runs or
+    // stops a run, none edits — so the lock shows up here as the withdrawn
+    // delete, and on the header as the withheld case authoring.
+    expect(mocks.runOverview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canDeleteSuite: false,
+      })
+    );
+
+    const header = mocks.suiteHeader.mock.calls.at(-1)?.[0];
+    expect(header.configLocked).toBe(true);
+    expect(header.onCreateTestCase).toBeUndefined();
+    expect(header.onGenerateTestCases).toBeUndefined();
+    // Running is untouched: the lock is on edits, not on the suite.
+    expect(header.onRerun).toBeTypeOf("function");
   });
 });
 
