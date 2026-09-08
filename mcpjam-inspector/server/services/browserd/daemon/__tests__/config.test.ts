@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  announcedFeatures,
   DEFAULT_BROWSERD_HOST,
   DEFAULT_BROWSERD_PORT,
   DEFAULT_BROWSERD_RECORD_MAX_BYTES,
@@ -282,5 +283,51 @@ describe("extraArgsFor / formatReadyLine", () => {
       port: 8791,
       bootId: "boot-xyz",
     });
+  });
+});
+
+describe("announcedFeatures", () => {
+  it("announces both when kiosk is on and recording is enabled", () => {
+    expect(
+      announcedFeatures({ kiosk: true, recordingEnabled: true }, {}),
+    ).toEqual(["h264", "record"]);
+  });
+
+  it("needs kiosk for the live stream, not for a recording", () => {
+    // A pane maps clicks onto what it shows; a recording is watched afterwards
+    // and never clicked, so a desktop with a browser on it is still evidence.
+    expect(
+      announcedFeatures({ kiosk: false, recordingEnabled: true }, {}),
+    ).toEqual(["record"]);
+  });
+
+  it("turning off live video does NOT turn off recording", () => {
+    // The two switches were nested once: an operator disabling live video to
+    // exercise the JPEG fallback silently stopped every unattended run from
+    // leaving evidence. Verified by reverting: nesting them again fails here.
+    expect(
+      announcedFeatures(
+        { kiosk: true, recordingEnabled: true },
+        { MCPJAM_BROWSER_VIDEO: "false" },
+      ),
+    ).toEqual(["record"]);
+  });
+
+  it("only the exact string turns live video off", () => {
+    expect(
+      announcedFeatures(
+        { kiosk: true, recordingEnabled: false },
+        { MCPJAM_BROWSER_VIDEO: "0" },
+      ),
+    ).toEqual(["h264"]);
+  });
+
+  it("announces nothing when both are off", () => {
+    expect(
+      announcedFeatures(
+        { kiosk: false, recordingEnabled: false },
+        { MCPJAM_BROWSER_VIDEO: "false" },
+      ),
+    ).toEqual([]);
   });
 });
