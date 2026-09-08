@@ -35,7 +35,7 @@ import v1Routes from "../index.js";
 function request(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
 ): Promise<Response> {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
@@ -47,7 +47,7 @@ function request(
         Authorization: "Bearer tok",
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-    })
+    }),
   );
 }
 
@@ -94,14 +94,14 @@ function useSuite(suite: Record<string, unknown>): void {
 /** The per-case payload of the batch create every first-party create goes through. */
 function authoredCase(index = 0): any {
   const call = convexMutationMock.mock.calls.find(
-    (c) => c[0] === "testSuites:createTestCases"
+    (c) => c[0] === "testSuites:createTestCases",
   );
   return call?.[1]?.cases?.[index];
 }
 
 function patchedCase(): any {
   const calls = convexMutationMock.mock.calls.filter(
-    (c) => c[0] === "testSuites:updateTestCase"
+    (c) => c[0] === "testSuites:updateTestCase",
   );
   return calls[calls.length - 1]?.[1];
 }
@@ -135,7 +135,8 @@ describe("per-case verdict-policy fields", () => {
           warnings: [],
         });
       }
-      if (name === "testSuites:updateTestCase") return Promise.resolve(CASE_DOC);
+      if (name === "testSuites:updateTestCase")
+        return Promise.resolve(CASE_DOC);
       return Promise.resolve(null);
     });
   });
@@ -175,7 +176,7 @@ describe("per-case verdict-policy fields", () => {
         const res = await request(
           write.method,
           write.path,
-          write.body({ [field]: value })
+          write.body({ [field]: value }),
         );
 
         expect(res.status).toBe(400);
@@ -198,8 +199,8 @@ describe("per-case verdict-policy fields", () => {
       expect(patchedCase().title).toBe("Renamed");
       expect(
         convexQueryMock.mock.calls.filter(
-          (c) => c[0] === "testSuites:getTestSuite"
-        )
+          (c) => c[0] === "testSuites:getTestSuite",
+        ),
       ).toHaveLength(0);
     });
   });
@@ -251,7 +252,7 @@ describe("per-case verdict-policy fields", () => {
 
         expect(res.status).toBe(400);
         expect(convexMutationMock).not.toHaveBeenCalled();
-      }
+      },
     );
 
     it.each(["repetitions", "iterations"] as const)(
@@ -263,7 +264,7 @@ describe("per-case verdict-policy fields", () => {
         });
 
         expect(res.status).toBe(201);
-      }
+      },
     );
   });
 });

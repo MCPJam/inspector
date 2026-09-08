@@ -13056,7 +13056,11 @@
         "type": "object",
         "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model). Exactly one of `runs` / `iterations` is required — an inline test on a run has no suite default to inherit. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
         "required": ["title", "model", "provider", "steps"],
-        "anyOf": [{ "required": ["runs"] }, { "required": ["iterations"] }],
+        "oneOf": [{ "required": ["runs"] }, { "required": ["iterations"] }],
+        "allOf": [
+          { "not": { "required": ["isNegative", "isNegativeTest"] } },
+          { "not": { "required": ["checks", "predicates"] } }
+        ],
         "properties": {
           "title": {
             "type": "string"
@@ -13234,6 +13238,10 @@
                 "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
             "additionalProperties": false
           },
           "tags": {
@@ -13251,6 +13259,11 @@
             "items": {
               "type": "object",
               "required": ["title", "steps"],
+              "allOf": [
+                { "not": { "required": ["runs", "iterations"] } },
+                { "not": { "required": ["isNegative", "isNegativeTest"] } },
+                { "not": { "required": ["checks", "predicates"] } }
+              ],
               "properties": {
                 "title": {
                   "type": "string",
@@ -13594,6 +13607,10 @@
                 "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
             "additionalProperties": false
           }
         }
@@ -14070,6 +14087,10 @@
                 "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
             "additionalProperties": false
           },
           "iterationOverride": {
@@ -14303,6 +14324,10 @@
                 "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
             "additionalProperties": false
           },
           "idempotencyKey": {

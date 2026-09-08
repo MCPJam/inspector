@@ -31,15 +31,16 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js"
+    "../../shared/evals.js",
   );
   return { ...actual, authorEvalSuite: authorEvalSuiteMock };
 });
 
 vi.mock("../../web/auth.js", async () => {
-  const actual = await vi.importActual<typeof import("../../web/auth.js")>(
-    "../../web/auth.js"
-  );
+  const actual =
+    await vi.importActual<typeof import("../../web/auth.js")>(
+      "../../web/auth.js",
+    );
   return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
 });
 
@@ -57,7 +58,7 @@ import v1Routes from "../index.js";
 function request(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
 ): Promise<Response> {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
@@ -69,7 +70,7 @@ function request(
         Authorization: "Bearer tok",
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-    })
+    }),
   );
 }
 
@@ -155,7 +156,10 @@ describe("passCriteria is a bounded percent", () => {
   });
 
   it.each([
-    ["both spellings at once", { minimumPassRatePercent: 80, minimumPassRate: 90 }],
+    [
+      "both spellings at once",
+      { minimumPassRatePercent: 80, minimumPassRate: 90 },
+    ],
     ["neither spelling", {}],
     ["a negative percent", { minimumPassRate: -1 }],
     ["a negative canonical percent", { minimumPassRatePercent: -1 }],
@@ -233,15 +237,12 @@ describe("a v2 suite reports no dead legacy percent", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     convexQueryMock.mockImplementation((name: string) =>
-      Promise.resolve(name === "testSuites:getTestSuite" ? V2_SUITE : null)
+      Promise.resolve(name === "testSuites:getTestSuite" ? V2_SUITE : null),
     );
   });
 
   it("reports the live fraction and not the stale percent beside it", async () => {
-    const res = await request(
-      "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1"
-    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -263,14 +264,11 @@ describe("a v2 suite reports no dead legacy percent", () => {
               name: "Legacy suite",
               defaultPassCriteria: { minimumPassRate: 80 },
             }
-          : null
-      )
+          : null,
+      ),
     );
 
-    const res = await request(
-      "GET",
-      "/api/v1/projects/p1/eval-suites/suite_1"
-    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;

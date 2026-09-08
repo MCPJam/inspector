@@ -40,7 +40,7 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js"
+    "../../shared/evals.js",
   );
   return {
     ...actual,
@@ -50,9 +50,10 @@ vi.mock("../../shared/evals.js", async () => {
 });
 
 vi.mock("../../web/auth.js", async () => {
-  const actual = await vi.importActual<typeof import("../../web/auth.js")>(
-    "../../web/auth.js"
-  );
+  const actual =
+    await vi.importActual<typeof import("../../web/auth.js")>(
+      "../../web/auth.js",
+    );
   return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
 });
 
@@ -70,7 +71,7 @@ import v1Routes from "../index.js";
 function request(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
 ): Promise<Response> {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
@@ -82,7 +83,7 @@ function request(
         Authorization: "Bearer tok",
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-    })
+    }),
   );
 }
 
@@ -135,7 +136,7 @@ describe("v1 inline-test vocabulary", () => {
     convexQueryMock.mockImplementation(async (fn: string) =>
       fn === "testSuites:getTestSuite"
         ? { _id: "suite_1", projectId: "p1", name: "Smoke" }
-        : null
+        : null,
     );
     createAuthorizedManagerMock.mockResolvedValue({
       manager: {
@@ -167,7 +168,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ isNegative: true })
+        suiteBody({ isNegative: true }),
       );
 
       expect(res.status).toBe(201);
@@ -181,7 +182,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ isNegativeTest: true })
+        suiteBody({ isNegativeTest: true }),
       );
 
       expect(res.status).toBe(201);
@@ -194,7 +195,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ iterations: 5 })
+        suiteBody({ iterations: 5 }),
       );
 
       expect(res.status).toBe(201);
@@ -209,12 +210,12 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ checks })
+        suiteBody({ checks }),
       );
 
       expect(res.status).toBe(201);
       expect(authorEvalSuiteMock.mock.calls[0][0].tests[0].predicates).toEqual(
-        checks
+        checks,
       );
     });
   });
@@ -224,7 +225,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        runBody({ runs: 1, isNegative: true })
+        runBody({ runs: 1, isNegative: true }),
       );
 
       expect(res.status).toBe(202);
@@ -238,7 +239,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        runBody({ iterations: 3 })
+        runBody({ iterations: 3 }),
       );
 
       expect(res.status).toBe(202);
@@ -249,7 +250,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        runBody({})
+        runBody({}),
       );
 
       expect(res.status).toBe(400);
@@ -263,7 +264,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1/eval-suites",
-        suiteBody({ isNegative: true, isNegativeTest: false })
+        suiteBody({ isNegative: true, isNegativeTest: false }),
       );
 
       expect(res.status).toBe(400);
@@ -278,7 +279,7 @@ describe("v1 inline-test vocabulary", () => {
         const res = await request(
           "POST",
           "/api/v1/projects/p1/eval-suites",
-          suiteBody({ [field]: value })
+          suiteBody({ [field]: value }),
         );
 
         expect(res.status).toBe(400);
@@ -287,7 +288,7 @@ describe("v1 inline-test vocabulary", () => {
         expect(body.message).toContain(field);
         expect(body.message).toContain("/cases");
         expect(authorEvalSuiteMock).not.toHaveBeenCalled();
-      }
+      },
     );
   });
 
@@ -344,7 +345,7 @@ describe("v1 inline-test vocabulary", () => {
       const res = await request(
         surface.method,
         surface.path,
-        surface.body({ notAFieldOnThisContract: true })
+        surface.body({ notAFieldOnThisContract: true }),
       );
 
       expect(res.status).toBe(400);
