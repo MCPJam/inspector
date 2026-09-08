@@ -223,6 +223,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/gate": "getEvalRunGate",
   "get /projects/{projectId}/eval-runs/{runId}/route-facts":
     "getEvalRunRouteFacts",
+  "get /projects/{projectId}/eval-runs/{runId}/server-facts":
+    "getEvalRunServerFacts",
   "post /projects/{projectId}/eval-runs/{runId}/description-experiments":
     "proposeEvalDescriptionRewrite",
   "get /projects/{projectId}/eval-runs/{runId}/description-experiments":

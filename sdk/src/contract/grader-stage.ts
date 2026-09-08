@@ -148,6 +148,43 @@ export const GRADER_PRESENTATION_GROUP: Partial<
   turnCountUnder: "budget",
 };
 
+/**
+ * The checks a NEW suite starts with when its creator says nothing about
+ * checks at all.
+ *
+ * HAND-MIRRORED from `mcpjam-backend/convex/lib/predicates.ts`
+ * (`RECOMMENDED_DEFAULT_PREDICATES`), which is where the seed is APPLIED. This
+ * copy exists so the scorer library can mark these kinds "Recommended", and so
+ * the acceptance-corpus test can prove — on this side, where the evaluator
+ * lives — that nothing enters the set above the corpus bar.
+ *
+ * NOTHING HERE GATES. The predicate gate is independent of a case's
+ * `failOnToolError`, so a seeded gating `noToolErrors` would flip a case that
+ * sets it false, hits an error, recovers and passes today. Warn preserves
+ * effective case policy: the row is visible, the verdict is untouched.
+ *
+ * `noDeprecatedToolCalled` is an observation and is here on EVIDENCE: it is the
+ * one heuristic that clears the corpus bar (zero detector errors and zero
+ * misleading firings). The other four observations do not, and a kind that
+ * starts firing misleadingly on a newly added corpus item leaves this list.
+ */
+export const RECOMMENDED_DEFAULT_PREDICATES = [
+  { type: "noToolErrors", role: "advisory", severity: "warn" },
+  { type: "argumentsMatchToolSchema", role: "advisory", severity: "warn" },
+  { type: "noDeprecatedToolCalled", role: "advisory", severity: "warn" },
+] as const satisfies ReadonlyArray<{
+  type: PredicateKind;
+  role: "advisory";
+  severity: "warn";
+}>;
+
+/** True when a new suite starts with this kind. Drives the "Recommended" chip. */
+export function isRecommendedDefaultPredicateKind(kind: string): boolean {
+  return RECOMMENDED_DEFAULT_PREDICATES.some(
+    (predicate) => predicate.type === kind
+  );
+}
+
 /** True when this predicate kind's evidence is filed at `selection`. */
 export function isSelectionStagePredicateKind(
   kind: string | undefined

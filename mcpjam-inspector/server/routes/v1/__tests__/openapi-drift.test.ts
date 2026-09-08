@@ -157,6 +157,8 @@ const KNOWN_UNDOCUMENTED = new Set([
   // Route-facts GET landed with the contract; the hand-authored spec
   // has not caught up. Same follow-up as the description-experiment trio.
   "get /projects/{projectId}/eval-runs/{runId}/route-facts",
+  // Server-facts GET landed with the contract; same follow-up.
+  "get /projects/{projectId}/eval-runs/{runId}/server-facts",
 ]);
 
 /**

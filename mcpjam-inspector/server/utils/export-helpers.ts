@@ -258,9 +258,39 @@ export function renderServerToolSnapshotSection(
   };
 }
 
+/**
+ * Bytes of one server's ASSEMBLED tool catalog, measured at capture.
+ *
+ * Rides on `toolSnapshotDebug` (a `v.any()` field), so recording it needs no
+ * schema change. The BASIS is part of the value rather than assumed by the
+ * reader: three different "payload size" numbers exist for a server, and a
+ * number that does not say which one it is will be compared against the wrong
+ * one. See `sdk/src/contract/server-facts.ts`.
+ */
+export type ServerCatalogBytes = {
+  serverId: string;
+  bytes: number;
+  basis: "aggregated_catalog_json";
+  complete: true;
+};
+
+/** UTF-8 byte length. `Buffer` is available here; `TextEncoder` is portable. */
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** JSON, or `""` for a value that will not serialize — never a throw. */
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function buildServerToolSnapshotDebug(
   snapshot: ServerToolSnapshot | undefined,
-  options?: { maxChars?: number },
+  options?: { maxChars?: number; catalogBytes?: ServerCatalogBytes[] },
 ): Record<string, unknown> {
   const rendered = renderServerToolSnapshotSection(snapshot, options);
   return {
@@ -270,6 +300,13 @@ export function buildServerToolSnapshotDebug(
     promptSectionMaxChars: rendered.maxChars,
     fallbackReason: inferServerToolSnapshotFallbackReason(snapshot) ?? null,
     fullSnapshot: snapshot ?? null,
+    // Absent on every run captured before this shipped — the backend then
+    // falls back to measuring the normalized snapshot and labels the basis
+    // accordingly, rather than reporting a smaller number as if it were the
+    // catalog.
+    ...(options?.catalogBytes?.length
+      ? { catalogBytes: options.catalogBytes }
+      : {}),
   };
 }
 
@@ -443,13 +480,31 @@ function readInitializeFromManager(
 export async function exportConnectedServerToolSnapshotForEvalAuthoring(
   manager: Manager,
   serverIds: string[],
-  options?: { logPrefix?: string },
+  options?: { logPrefix?: string; catalogBytes?: ServerCatalogBytes[] },
 ): Promise<ServerToolSnapshot> {
   const logPrefix = options?.logPrefix ?? "evals";
+  const catalogBytes = options?.catalogBytes;
   const servers = await Promise.all(
     [...new Set(serverIds)].map(async (serverId) => {
       try {
         const result = await manager.listTools(serverId);
+
+        // MEASURED HERE, BEFORE THE TRANSFORM AND BEFORE ANY REDACTION.
+        //
+        // The snapshot below drops and rewrites fields (`$`-prefixed schema
+        // keys, unknown extensions), so measuring it later answers "how much
+        // did we keep", not "how much did the server send" — and a payload
+        // budget is about the second. This is the ASSEMBLED catalog: the
+        // client manager pages `tools/list` internally and returns one merged
+        // `ListToolsResult`, which is why the basis is not called "raw".
+        // Per-page wire bytes need a transport hook and are a later change.
+        catalogBytes?.push({
+          serverId,
+          bytes: utf8ByteLength(safeJsonStringify(result)),
+          basis: "aggregated_catalog_json",
+          complete: true,
+        });
+
         const tools = (result?.tools ?? []).map(transformToolForSnapshot);
 
         const initialize = readInitializeFromManager(manager, serverId);
@@ -468,6 +523,9 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
             error: message,
           },
         );
+        // No `catalogBytes` row: a server we could not list has no catalog
+        // to measure, and a 0 here would read as "this server advertises
+        // nothing" rather than "we never got an answer".
         return {
           serverId,
           tools: [],

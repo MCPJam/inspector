@@ -17,6 +17,7 @@ import type {
   DescriptionExperimentReport,
   EvalRunDecisionSummary,
   EvalRunRouteFacts,
+  EvalRunServerFactsV1,
   EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
   EvalVerdictDecision,
@@ -72,6 +73,22 @@ export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
  * field is added.
  */
 export type PlatformEvalRouteFacts = EvalRunRouteFacts;
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/server-facts` — one RUN's server-facts
+ * document: what the snapshot it ran against looked like, and what the setup
+ * phase observed.
+ *
+ * An ALIAS, same reasoning as the three above: the shape is owned by
+ * `@mcpjam/sdk/contract` (`evalRunServerFactsSchema`).
+ *
+ * UNLIKE the others, this one is computed on read and therefore never
+ * "absent" for a visible run: a run with no snapshot answers
+ * `state: "unavailable"` with a reason, which is a measured fact about the run
+ * rather than a missing document.
+ */
+export type PlatformEvalServerFacts = EvalRunServerFactsV1;
 
 /**
  * Response of the description-experiment routes:

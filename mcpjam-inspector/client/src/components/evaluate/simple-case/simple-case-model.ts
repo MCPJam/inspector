@@ -62,12 +62,30 @@ export const MORE_CHECK_GROUPS: ReadonlyArray<{
       "noToolErrors",
       "tokenBudgetUnder",
       "turnCountUnder",
+      "noEndingQuestion",
+      // What the server answered with. `toolResultMatchesSchema` is
+      // deliberately absent — see EXCLUDED_FROM_MORE_CHECKS.
+      "toolLatencyUnder",
+      "toolResultContains",
+      "toolResultSizeUnder",
+      "toolErrorNamesInput",
+      "fullPageHasContinuation",
     ],
   },
   {
     id: "selection",
     label: "Selection and call",
-    kinds: ["toolCalledAtLeastOnce", "toolNeverCalled", "firstToolWas"],
+    kinds: [
+      "toolCalledAtLeastOnce",
+      "toolNeverCalled",
+      "firstToolWas",
+      "toolCallCountUnder",
+      "toolCalledBefore",
+      "noDeprecatedToolCalled",
+      "noDestructiveToolCalled",
+      "argumentsMatchToolSchema",
+      "noRepeatedIdenticalCall",
+    ],
   },
   {
     id: "appView",
@@ -81,12 +99,20 @@ export const MORE_CHECK_GROUPS: ReadonlyArray<{
 ];
 
 /**
- * Owned by the tool question above the disclosure. Offering it again here
- * would author the route twice, and on a no-tool case would create the
- * contradiction the corpus guard rejects.
+ * Kinds this form does not offer, each for its own reason.
+ *
+ * `toolCalledWith` is owned by the tool question above the disclosure —
+ * offering it again here would author the route twice, and on a no-tool case
+ * would create the contradiction the corpus guard rejects.
+ *
+ * `toolResultMatchesSchema` needs a JSON Schema document. This form is the
+ * SIMPLE case editor: every other check here is a name, a number or a phrase,
+ * and a schema textarea is the one control that does not belong beside them.
+ * It stays available in the full Scorers table, which is where an author who
+ * wants it is already working.
  */
 export const EXCLUDED_FROM_MORE_CHECKS: ReadonlySet<Predicate["type"]> =
-  new Set<Predicate["type"]>(["toolCalledWith"]);
+  new Set<Predicate["type"]>(["toolCalledWith", "toolResultMatchesSchema"]);
 
 export const UNSET_TOOLS_BLOCK_REASON =
   "Choose which tool should handle it, or that no tool should be called.";

@@ -15,6 +15,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import { isRecommendedDefaultPredicateKind } from "@mcpjam/sdk/contract";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import { SYNTHETIC_MONITOR_KINDS } from "./predicate-kind-meta";
 import {
@@ -102,7 +103,19 @@ function LibraryCategory({
               className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent/50"
             >
               <span>{PREDICATE_KIND_LABELS[kind] ?? kind}</span>
-              {NEW_SCORER_KINDS.includes(kind) ? (
+              {/*
+                "Recommended" outranks "New": a kind a new suite already
+                starts with is not news to an author reading this menu, and
+                two chips on one row is noise.
+              */}
+              {isRecommendedDefaultPredicateKind(kind) ? (
+                <span
+                  title="New suites start with this check, as Warn"
+                  className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground"
+                >
+                  Recommended
+                </span>
+              ) : NEW_SCORER_KINDS.includes(kind) ? (
                 <span className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
                   New
                 </span>

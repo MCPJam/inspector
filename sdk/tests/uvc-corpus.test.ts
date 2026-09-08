@@ -19,10 +19,14 @@ import { describe, expect, it } from "vitest";
 import {
   formatCorpusReport,
   loadUvcCorpus,
+  meetsCorpusSeedBar,
   observe,
   summarizeUvcCorpus,
 } from "./uvc-corpus-harness.js";
-import { PREDICATE_KINDS } from "../src/contract/grader-stage.js";
+import {
+  PREDICATE_KINDS,
+  RECOMMENDED_DEFAULT_PREDICATES,
+} from "../src/contract/grader-stage.js";
 
 const corpus = loadUvcCorpus();
 const known = new Set<string>(PREDICATE_KINDS as readonly string[]);
@@ -104,5 +108,52 @@ describe("uvc corpus — report", () => {
     // misleading firings — that is what keeps it out of the seed.
     console.log(formatCorpusReport(report));
     expect(report.expectations).toBeGreaterThan(0);
+  });
+});
+
+describe("the recommended seed clears the corpus bar", () => {
+  // THE GATE ON SEEDING, enforced rather than described. A new suite gets
+  // these checks without anybody choosing them, so a kind that fires
+  // misleadingly here would put a finding nobody should act on in front of
+  // every author on day one.
+  const report = summarizeUvcCorpus(corpus);
+
+  for (const predicate of RECOMMENDED_DEFAULT_PREDICATES) {
+    it(`${predicate.type}: zero detector errors and zero misleading firings`, () => {
+      const entry = report.byKind.get(predicate.type);
+      expect(
+        entry,
+        `${predicate.type} is seeded but the corpus does not cover it`,
+      ).toBeDefined();
+      expect(entry!.evaluated).toBeGreaterThan(0);
+      expect(entry!.detectorErrors).toEqual([]);
+      expect(entry!.misleadingFirings).toEqual([]);
+      expect(meetsCorpusSeedBar(predicate.type, report)).toBe(true);
+    });
+  }
+
+  it("never seeds a kind that gates", () => {
+    // The rule that keeps a seeded check from changing a verdict the author
+    // never asked about: a case with `failOnToolError: false` that recovers
+    // still passes.
+    for (const predicate of RECOMMENDED_DEFAULT_PREDICATES) {
+      expect(predicate.role, predicate.type).toBe("advisory");
+    }
+  });
+
+  it("leaves out the observations that do not clear the bar", () => {
+    // Named, so removing an item from the corpus cannot quietly promote one.
+    for (const kind of [
+      "noEndingQuestion",
+      "noRepeatedIdenticalCall",
+      "toolErrorNamesInput",
+      "fullPageHasContinuation",
+    ]) {
+      expect(
+        RECOMMENDED_DEFAULT_PREDICATES.some((p) => p.type === kind),
+        `${kind} has misleading firings in the corpus and must not be seeded`,
+      ).toBe(false);
+      expect(meetsCorpusSeedBar(kind, report)).toBe(false);
+    }
   });
 });

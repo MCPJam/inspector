@@ -270,7 +270,7 @@ export const PICKER_CATALOG: readonly PickerCatalogEntry[] = [
   },
   {
     key: "check:toolCalledBefore",
-    group: "toolUse",
+    group: "transcriptMore",
     tier: "secondary",
     label: labelForInlineAssert("toolCalledBefore"),
     hint: "Ordering: the lookup before the write",

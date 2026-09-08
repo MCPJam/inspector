@@ -59,6 +59,7 @@ import {
   descriptionExperimentReportSchema,
   EVAL_VERDICT_POLICY_VERSION,
   evalRunRouteFactsSchema,
+  evalRunServerFactsSchema,
   evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
@@ -71,6 +72,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import type {
   EvalRunRouteFacts,
+  EvalRunServerFactsV1,
   EvalStageAnalyticsV1,
   SuiteGatePolicyV1,
   SuiteGateReportV1,
@@ -6136,6 +6138,96 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
   }
 
   return v1Resource(c, parsed.data as EvalRunRouteFacts);
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/server-facts
+//
+// ONE run's SERVER FACTS: what the snapshot it ran against looked like, and
+// what the setup phase observed. Computed on read (there is no table), so
+// unlike route facts this never 404s for "no document" — a run with no
+// snapshot answers `state: "unavailable"` with a reason, which is the honest
+// difference between "we did not measure" and "there is nothing here".
+//
+// The 404 is therefore about VISIBILITY only, and its message says nothing a
+// caller holding a run id could use to learn that the run exists somewhere
+// else.
+const RUN_SERVER_FACTS_NOT_FOUND = "Eval run server facts not found";
+
+evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let document: unknown;
+  let runSuiteId: string | undefined;
+  try {
+    // Project-matched FIRST, same as route facts: a valid run id from another
+    // of the caller's projects reads as NOT_FOUND here rather than relying on
+    // the backend's fail-soft null, which is defense in depth and not the
+    // answer.
+    const run = await convex.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+    requireProjectMatch(run, projectId, "Eval run");
+    const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
+    runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
+    document = await convex.query("testSuites:getEvalRunServerFacts" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        RUN_SERVER_FACTS_NOT_FOUND,
+      );
+    }
+    throw error;
+  }
+
+  if (document === null || document === undefined) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      RUN_SERVER_FACTS_NOT_FOUND,
+    );
+  }
+
+  const parsed = evalRunServerFactsSchema.safeParse(document);
+  if (!parsed.success) {
+    // A 502, not a silent pass-through. The backend builder is hand-mirrored
+    // from this contract, so a parse failure means the two have drifted — and
+    // serving a half-understood document would put numbers on a page whose
+    // basis nobody can vouch for.
+    logger.warn("[v1 evals] run server facts failed contract validation", {
+      projectId,
+      runId,
+      issue: parsed.error.issues[0]?.message ?? "unknown",
+      path: parsed.error.issues[0]?.path?.join(".") ?? "",
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Server facts payload failed validation",
+    );
+  }
+
+  const identityMismatch =
+    parsed.data.runId !== runId ||
+    (runSuiteId !== undefined && parsed.data.suiteId !== runSuiteId);
+  if (identityMismatch) {
+    logger.warn("[v1 evals] run server facts identity does not match", {
+      projectId,
+      runId,
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Server facts payload failed validation",
+    );
+  }
+
+  return v1Resource(c, parsed.data as EvalRunServerFactsV1);
 });
 
 // ── Description experiments (PR-E3) ──────────────────────────────────

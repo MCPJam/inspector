@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for the @mcpjam/sdk Zod `predicateSchema` (this repo: mcpjam-inspector) and the Convex hand-mirrored `predicateValidator` v.union (sibling repo: mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json). The two files MUST stay in sync — every accept here must parse on both sides; every reject must fail on both sides. A future PR will publish them as a shared package. When adding a new predicate kind, edit BOTH files in the SAME PR (Phase 2 plan: jaunty-wiggling-lecun.md).",
+  "__readme": "Shared parity fixtures for the predicate wire shape. ONE FILE, byte-identical in both repos: mcpjam-inspector at sdk/tests/fixtures/predicates-parity-fixtures.json (checked by the Zod `predicateSchema`) and mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json (checked by the Convex `predicateValidator` plus `assertValidPredicate`, through the real mutation boundary). Pinned by `predicates-parity-fixtures` in convex/lib/mirrors.json, so editing one side without the other fails CI. Every `accept` row must parse on both sides; every `reject` row must fail on both. When adding a predicate kind, edit BOTH validators and this file in the same PR — a kind with no accept row here has no proof the two validators agree about it.",
   "accept": [
     {
       "label": "toolCalledWith — minimal (only required fields)",
@@ -142,19 +142,7 @@
       }
     },
     {
-      "label": "noToolErrors — second example (still no fields)",
-      "value": {
-        "type": "noToolErrors"
-      }
-    },
-    {
       "label": "finalAssistantMessageNonEmpty — no fields beyond type",
-      "value": {
-        "type": "finalAssistantMessageNonEmpty"
-      }
-    },
-    {
-      "label": "finalAssistantMessageNonEmpty — second example",
       "value": {
         "type": "finalAssistantMessageNonEmpty"
       }
@@ -547,6 +535,153 @@
         "type": "fullPageHasContinuation",
         "toolName": "list_orders",
         "role": "advisory"
+      }
+    },
+    {
+      "label": "toolCalledWith — minimal (no minCount)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "list_files",
+        "args": {
+          "args": {}
+        }
+      }
+    },
+    {
+      "label": "toolCalledWith — full (argumentMatching=partial with placeholder leaves, minCount)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": {
+          "args": {
+            "query": "string",
+            "limit": "number",
+            "filter": {
+              "kind": "any"
+            }
+          },
+          "argumentMatching": "partial"
+        },
+        "minCount": 2
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — minimal",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "fetch"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — dotted tool name",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "files.read"
+      }
+    },
+    {
+      "label": "toolNeverCalled — minimal",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_all"
+      }
+    },
+    {
+      "label": "toolNeverCalled — namespaced",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "admin.shutdown"
+      }
+    },
+    {
+      "label": "firstToolWas — minimal (Phase 2 NEW)",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "list_files"
+      }
+    },
+    {
+      "label": "firstToolWas — namespaced",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "github.search_issues"
+      }
+    },
+    {
+      "label": "responseContains — caseSensitive true",
+      "value": {
+        "type": "responseContains",
+        "needle": "OK",
+        "caseSensitive": true
+      }
+    },
+    {
+      "label": "responseMatches — minimal regex",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "^Done\\."
+      }
+    },
+    {
+      "label": "responseMatches — character class regex",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "[0-9]{4}-[0-9]{2}-[0-9]{2}"
+      }
+    },
+    {
+      "label": "tokenBudgetUnder — large budget",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 250000
+      }
+    },
+    {
+      "label": "toolCalledWith — advisory warn",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "list_files",
+        "args": {
+          "args": {}
+        },
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — advisory warn",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "fetch",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolNeverCalled — advisory warn",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_all",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "firstToolWas — advisory warn",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "list_files",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseMatches — advisory warn",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "^Done\\.",
+        "role": "advisory",
+        "severity": "warn"
       }
     }
   ],
@@ -944,6 +1079,109 @@
         "type": "argumentsMatchToolSchema",
         "toolName": ""
       }
+    },
+    {
+      "label": "missing type discriminator",
+      "value": {
+        "toolName": "anything"
+      },
+      "why": "v.union has no variant to match"
+    },
+    {
+      "label": "unknown type value",
+      "value": {
+        "type": "tooManyTokens",
+        "tokens": 100
+      },
+      "why": "no variant has this type literal"
+    },
+    {
+      "label": "toolCalledAtLeastOnce missing toolName",
+      "value": {
+        "type": "toolCalledAtLeastOnce"
+      },
+      "why": "toolName is required"
+    },
+    {
+      "label": "toolCalledAtLeastOnce with non-string toolName",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": 42
+      },
+      "why": "toolName must be a string"
+    },
+    {
+      "label": "responseContains missing needle",
+      "value": {
+        "type": "responseContains"
+      },
+      "why": "needle is required"
+    },
+    {
+      "label": "responseContains with non-boolean caseSensitive",
+      "value": {
+        "type": "responseContains",
+        "needle": "x",
+        "caseSensitive": "yes"
+      },
+      "why": "caseSensitive must be boolean"
+    },
+    {
+      "label": "responseMatches missing pattern",
+      "value": {
+        "type": "responseMatches"
+      },
+      "why": "pattern is required"
+    },
+    {
+      "label": "responseMatches with non-string pattern",
+      "value": {
+        "type": "responseMatches",
+        "pattern": 123
+      },
+      "why": "pattern must be a string (regex source); non-strings cannot be compiled"
+    },
+    {
+      "label": "tokenBudgetUnder with negative tokens",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": -100
+      },
+      "why": "tokens must be a non-negative integer (caught by assertValidPredicate)"
+    },
+    {
+      "label": "tokenBudgetUnder with non-integer tokens",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000.5
+      },
+      "why": "tokens must be an integer"
+    },
+    {
+      "label": "severity error is not a legal severity",
+      "value": {
+        "type": "noToolErrors",
+        "severity": "error"
+      },
+      "why": "severity is v.literal('warn') — 'error' is not a member"
+    },
+    {
+      "label": "severity warn with role gating is refused",
+      "value": {
+        "type": "noToolErrors",
+        "role": "gating",
+        "severity": "warn"
+      },
+      "why": "severity requires role: 'advisory' (caught by assertValidPredicate)"
+    },
+    {
+      "label": "severity warn without role is refused (absent role is gating)",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "fetch",
+        "severity": "warn"
+      },
+      "why": "severity requires role: 'advisory'; omitted role counts as gating"
     }
   ]
 }

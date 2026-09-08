@@ -28,6 +28,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
+import { useEvalRunServerFacts } from "@/hooks/use-eval-run-server-facts";
+import { ServerFactsCard } from "./server-facts-card";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
 import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
@@ -236,6 +238,15 @@ export function EvaluateRunContent({
   const routeFactsContractError =
     persistedRouteFacts.status === "error" &&
     persistedRouteFacts.error?.kind === "invalidContract";
+  // Server facts are COMPUTED ON READ, so there is no materializer to wait for
+  // and no page-local fallback: nothing in the browser can reconstruct the
+  // snapshot the run was taken against, and a fabricated stand-in would be a
+  // description of a server nobody observed.
+  const serverFacts = useEvalRunServerFacts({
+    projectId,
+    runId: run._id,
+    enabled: active,
+  });
   const routeLines = useMemo(
     () =>
       routeFactsDoc
@@ -485,6 +496,28 @@ export function EvaluateRunContent({
           onSelectStage={setStageFilter}
         />
       </div>
+
+      {/*
+        Directly under the strip, because it answers the two cells the strip
+        could only say "observed by the runner" about. Rendered ONLY on a real
+        document: an unreadable or missing one shows nothing rather than an
+        empty shell, and the failure kinds stay apart below.
+      */}
+      {serverFacts.status === "ready" && serverFacts.document ? (
+        <ServerFactsCard
+          document={serverFacts.document}
+          stageFilter={stageFilter}
+        />
+      ) : null}
+      {serverFacts.status === "error" &&
+      serverFacts.error?.kind === "invalidContract" ? (
+        <p
+          className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
+          data-testid="server-facts-error"
+        >
+          server facts not shown — the document did not match the contract
+        </p>
+      ) : null}
 
       {routeFactsContractError ? (
         <p
