@@ -2137,6 +2137,246 @@ describe("mcpjam-stream-handler", () => {
       expect(vi.mocked(executeToolCallsFromMessages)).not.toHaveBeenCalled();
     });
 
+    it("advertises a tool that appeared BETWEEN steps, with its pill", async () => {
+      // The whole point of the mid-turn refresh: a page registers a tool two
+      // seconds after load, no model action caused it, and the next step has
+      // to be able to call it.
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://pizza.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "add pepperoni" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          browser_navigate: {
+            description: "navigate",
+            inputSchema: z.object({ url: z.string() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        refreshTools: async () => ({
+          add: {
+            webmcp_add_topping: {
+              description: "[WebMCP page tool] add a topping",
+              inputSchema: z.object({ topping: z.string() }),
+              execute: async () => ({ ok: true }),
+            },
+          } as any,
+          approvals: {
+            requiredNames: new Set(["webmcp_add_topping"]),
+            freeNames: new Set<string>(),
+          },
+        }),
+      });
+
+      await lastExecution;
+
+      expect(bodies.length).toBeGreaterThan(1);
+      const step1 = (bodies[0].tools ?? []).map((tool: any) => tool.name);
+      const step2 = (bodies[1].tools ?? []).map((tool: any) => tool.name);
+      expect(step1).not.toContain("webmcp_add_topping");
+      expect(step2).toContain("webmcp_add_topping");
+    });
+
+    it("withdraws a retired tool's DEFINITION but keeps it callable", async () => {
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://elsewhere.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+      const tools: any = {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: z.object({ url: z.string() }),
+          execute: async () => ({ ok: true }),
+        },
+        webmcp_gone: {
+          description: "[WebMCP page tool] gone",
+          inputSchema: z.object({}),
+          execute: async () => ({ ok: true }),
+        },
+      };
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        refreshTools: async () => ({ retire: ["webmcp_gone"] }),
+      });
+
+      await lastExecution;
+
+      const step2 = (bodies[1]?.tools ?? []).map((tool: any) => tool.name);
+      expect(step2).not.toContain("webmcp_gone");
+      // Still in the executable map. A model that had already decided to call
+      // it gets a recoverable answer instead of "Tool not found".
+      expect(tools.webmcp_gone).toBeDefined();
+    });
+
+    it("keeps the tool definitions IDENTICAL when nothing changed", async () => {
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://a.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          browser_navigate: {
+            description: "navigate",
+            inputSchema: z.object({ url: z.string() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        // An unchanged page reports nothing to do.
+        refreshTools: async () => undefined,
+      });
+
+      await lastExecution;
+
+      // Byte-identical, which is what keeps every provider's prompt cache
+      // hitting across the steps of one turn.
+      expect(JSON.stringify(bodies[1]?.tools)).toBe(
+        JSON.stringify(bodies[0]?.tools),
+      );
+    });
+
+    it("swallows a throwing refresh and carries on with the current set", async () => {
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://a.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          browser_navigate: {
+            description: "navigate",
+            inputSchema: z.object({ url: z.string() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        refreshTools: async () => {
+          throw new Error("the browser would not answer");
+        },
+      });
+
+      await lastExecution;
+
+      // A tool-list read is not a reason to end somebody's conversation.
+      expect(bodies.length).toBeGreaterThan(1);
+      expect((bodies[1].tools ?? []).map((tool: any) => tool.name)).toContain(
+        "browser_navigate",
+      );
+    });
+
     it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {
       // Approve-by-fulfillment: the client executed the approved ui_* call
       // and shipped the tool-result; the approval request stays UNANSWERED.

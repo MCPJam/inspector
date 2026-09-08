@@ -1528,3 +1528,248 @@ describe("buildBrowserTools — first-class page tools", () => {
     );
   });
 });
+
+describe("buildBrowserTools — the mid-turn refresh", () => {
+  const PAGE = {
+    name: "add_topping",
+    description: "Add a topping",
+    origin: "https://pizza.test",
+    isMainFrame: true,
+    frameId: "frame-main",
+    registrationSeq: 2,
+  };
+
+  function withFlagOn<T>(run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    process.env.MCPJAM_WEBMCP_PAGE_TOOLS = "first_class";
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
+  }
+
+  /** A daemon whose page-tool set a test can change between reads. */
+  function daemon(initial: {
+    revision: number;
+    hash: string;
+    tools: unknown[];
+    navCounter?: number;
+  }) {
+    const state = { ...initial, navCounter: initial.navCounter ?? 1 };
+    const seen: string[] = [];
+    const send = async (command: any): Promise<SendResult> => {
+      const action = command.action;
+      seen.push(
+        action.kind === "observe" ? `observe:${action.mode}` : action.kind,
+      );
+      if (action.kind === "observe" && action.mode === "webmcp_revision") {
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: { url: "https://pizza.test/" },
+            webmcpTools: {
+              revision: state.revision,
+              hash: state.hash,
+              count: state.tools.length,
+              supported: true,
+            },
+          } as never,
+        };
+      }
+      if (action.kind === "observe" && action.mode === "webmcp_tools") {
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: {
+              url: "https://pizza.test/",
+              webmcpSupported: true,
+              tools: state.tools,
+            },
+            stateToken: {
+              tabId: "@session",
+              navCounter: state.navCounter,
+              urlHash: "u",
+              domHash: "d",
+            },
+          } as never,
+        };
+      }
+      // EVERY result carries the revision, exactly as the daemon stamps it at
+      // the observation funnel — which is what lets a change the model's own
+      // action caused be seen with no extra round trip.
+      return {
+        ...OK,
+        result: {
+          ...OK.result!,
+          webmcpTools: {
+            revision: state.revision,
+            hash: state.hash,
+            count: state.tools.length,
+            supported: true,
+          },
+        } as never,
+      };
+    };
+    return { state, seen, send };
+  }
+
+  function build(fake: ReturnType<typeof daemon>) {
+    const { ensureSession } = fakeSession(fake.send);
+    return withFlagOn(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        pageTools: {
+          tools: [PAGE],
+          bootId: "boot-1",
+          tabId: "@session",
+          navCounter: 1,
+          revision: 5,
+          hash: "h1",
+        },
+      }),
+    )!;
+  }
+
+  it("an unchanged revision fetches no definitions and changes nothing", async () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    const refresh = await built.refreshPageTools!({});
+    expect(refresh).toBeUndefined();
+    // One cheap read that touches no page — and NOT the expensive definitions
+    // fetch. On a turn where the page never changes (most of them) this is the
+    // whole per-step cost, and the tool definitions keep their identity so the
+    // request stays byte-identical and the provider's prompt cache keeps
+    // hitting.
+    expect(fake.seen).toEqual(["observe:webmcp_revision"]);
+  });
+
+  it("advertises a tool the page registered with no model action in between", async () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    // The page registers a second tool two seconds after load. Nothing the
+    // model did caused it, so nothing but this refresh could ever see it.
+    fake.state.revision = 6;
+    fake.state.hash = "h2";
+    fake.state.tools = [PAGE, { ...PAGE, name: "remove_topping", registrationSeq: 3 }];
+
+    const refresh = await built.refreshPageTools!({});
+    expect(Object.keys(refresh?.add ?? {})).toEqual(
+      expect.arrayContaining(["webmcp_remove_topping"]),
+    );
+    // It arrives WITH its gate. A tool that appeared mid-turn without one
+    // would be an unclassified name — which on this engine executes with no
+    // pill at all.
+    expect(refresh?.approvals?.requiredNames.has("webmcp_remove_topping")).toBe(
+      true,
+    );
+    expect(fake.seen).toEqual([
+      "observe:webmcp_revision",
+      "observe:webmcp_tools",
+    ]);
+  });
+
+  it("TOMBSTONES a tool the page dropped instead of deleting it", async () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    fake.state.revision = 6;
+    fake.state.hash = "h2";
+    fake.state.tools = [];
+
+    const refresh = await built.refreshPageTools!({});
+    expect(refresh?.retire).toEqual(["webmcp_add_topping"]);
+    // The model may already have decided to call it on the step about to run.
+    // An absent tool of any name comes back as "Tool not found", which says
+    // nothing about what happened or what to do instead.
+    const result = await (built.tools.webmcp_add_topping as any).execute({}, {});
+    expect(result.error).toContain("webmcp_tool_gone");
+    expect(result.error).toContain("add_topping");
+    expect(result.error).toContain("pizza.test");
+  });
+
+  it("binds a refreshed tool to the generation it was read at", async () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    // The model navigated: same tool name, same frame, NEW document.
+    fake.state.revision = 6;
+    fake.state.hash = "h2";
+    fake.state.navCounter = 9;
+    fake.state.tools = [{ ...PAGE, registrationSeq: 11 }];
+    await built.refreshPageTools!({});
+
+    await (built.tools.webmcp_add_topping as any).execute({}, {});
+    const invoke = fake.seen.filter((entry) => entry === "webmcp_invoke");
+    expect(invoke).toHaveLength(1);
+    // Reusing the turn-start navCounter here would mint a binding for a
+    // document that is gone, and every call would be refused `stale_binding`.
+    expect(built.currentPageTools!()[0].registrationSeq).toBe(11);
+  });
+
+  it("PAUSES rather than retiring when a person takes the browser", async () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    fake.state.revision = 6;
+    fake.state.hash = "h2";
+    const realSend = fake.send;
+    const paused = {
+      ...fake,
+      send: async (command: any) => {
+        const action = command.action;
+        if (action.kind === "observe" && action.mode === "webmcp_tools") {
+          return { status: "lease_blocked" } as SendResult;
+        }
+        return realSend(command);
+      },
+    };
+    const built2 = build(paused as never);
+    paused.state.revision = 6;
+    paused.state.hash = "h2";
+    const refresh = await built2.refreshPageTools!({});
+    // The tools have not gone anywhere; we simply cannot look. Churning the
+    // model's tool set every step while somebody signs in would be worse than
+    // holding still.
+    expect(refresh).toBeUndefined();
+    expect(built2.tools.webmcp_add_topping).toBeDefined();
+    void built;
+  });
+
+  it("is not built for an engine that cannot grow its tool set", () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const { ensureSession } = fakeSession(fake.send);
+    const built = withFlagOn(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: {
+          tools: [PAGE],
+          bootId: "boot-1",
+          tabId: "@session",
+          navCounter: 1,
+        },
+      }),
+    )!;
+    expect(built.refreshPageTools).toBeUndefined();
+  });
+
+  it("tells the model, in an observation, that the page's tools are callable", async () => {
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const built = build(fake);
+    const result = await (built.tools.browser_navigate as any).execute(
+      { url: "https://pizza.test/" },
+      {},
+    );
+    // Without this a model that just navigated has no way to know: the tools
+    // appear on the NEXT step, and nothing in the result it is reading now
+    // says so — so it reasons with the six verbs and clicks.
+    expect(result.pageToolsNote).toContain("`webmcp_*`");
+  });
+});

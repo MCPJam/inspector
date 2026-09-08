@@ -38,7 +38,7 @@
  *      success — which is exactly how `unimplemented_in_w1` used to surface as
  *      HTTP 200. `unwrapCommand` is the single place both are read.
  */
-import { tool, type ToolSet } from "ai";
+import { jsonSchema, tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
@@ -68,6 +68,7 @@ import type {
   MintedDeclaredTool,
 } from "@/shared/declared-tools";
 import { buildWebmcpPageTools, type PeekedPageTool } from "./page-tools.js";
+import { pageToolsFromObservation } from "@/shared/browser-page-tools";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
@@ -250,6 +251,25 @@ export interface BrowserToolsResult {
   pageTools?: MintedDeclaredTool[];
   /** Reasons page tools were not advertised, for the Tools pane. */
   pageToolNotices?: Array<{ rawName: string; reason: string }>;
+  /**
+   * Re-read the page's tools and report what changed, for an engine that can
+   * grow its tool set between model steps.
+   *
+   * Present only when this turn was built with page tools and a dynamic
+   * engine. The caller hands it to the engine's `refreshTools` hook.
+   */
+  refreshPageTools?: (ctx: {
+    signal?: AbortSignal;
+  }) => Promise<BrowserPageToolsRefresh | undefined>;
+  /** The live minted set, re-read after each refresh, for the turn record. */
+  currentPageTools?: () => MintedDeclaredTool[];
+}
+
+/** What one mid-turn re-read of the page changed. */
+export interface BrowserPageToolsRefresh {
+  add?: ToolSet;
+  retire?: string[];
+  approvals?: UiToolApprovalClassification;
 }
 
 /** What a daemon reply means once both layers have been read. */
@@ -723,12 +743,19 @@ export function buildBrowserTools(
     return { ...outcome, tabId };
   };
 
+  // Whether this turn actually advertises the page's tools, so an observation
+  // can say so. Computed once: it is a property of the turn, not of a call.
+  const pageToolsAdvertised =
+    firstClassPageTools && (opts.pageTools?.tools.length ?? 0) > 0;
+  const presented = (outcome: CommandOutcome & { tabId: string }) =>
+    present(outcome, { pageToolsAdvertised });
+
   const tools: ToolSet = {};
   const built: string[] = [];
   const add = (name: string, definition: ToolSet[string]) => {
     if (!names.includes(name)) return;
     // Attached HERE, once, rather than on each tool: every one of these
-    // returns a `present()` shape and so may carry a capture, and a tool added
+    // returns a `presented()` shape and so may carry a capture, and a tool added
     // later that forgot the mapping would silently go back to sending the
     // model an unreadable base64 string.
     tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
@@ -786,7 +813,7 @@ export function buildBrowserTools(
             : verb === "back"
               ? { kind: "back" }
               : { kind: "reload" };
-        return present(
+        return presented(
           await send(browserAction, { tabId, signal: abortSignal }),
         );
       },
@@ -864,7 +891,7 @@ export function buildBrowserTools(
             : selector
               ? { selector }
               : undefined;
-        return present(
+        return presented(
           await send(
             {
               kind: "act",
@@ -892,7 +919,7 @@ export function buildBrowserTools(
       }),
       needsApproval,
       execute: async ({ action, tabId }, { abortSignal }) =>
-        present(
+        presented(
           await send(
             {
               kind: "act",
@@ -945,7 +972,7 @@ export function buildBrowserTools(
         { mode, filter, rootRef, rootSelector, tabId },
         { abortSignal },
       ) =>
-        present(
+        presented(
           await send(
             {
               kind: "observe",
@@ -969,7 +996,7 @@ export function buildBrowserTools(
       inputSchema: z.object({ tabId: z.string().optional() }),
       needsApproval: needsApproval && !readOnly,
       execute: async ({ tabId }, { abortSignal }) =>
-        present(
+        presented(
           await send(
             { kind: "observe", mode: "webmcp_tools" },
             { tabId, signal: abortSignal },
@@ -981,8 +1008,17 @@ export function buildBrowserTools(
   add(
     "browser_webmcp_invoke",
     tool({
-      description:
-        "Call one of the WebMCP tools the current page offers (see browser_webmcp_tools).",
+      description: firstClassPageTools
+        ? // Kept for the engines that cannot grow their tool set inside a turn
+          // (BYOK, the harness): they were handed the page's tools as they were
+          // at turn start, so a page the model navigates to DURING the turn is
+          // reachable only through this. Retiring it there would remove a
+          // capability rather than replace one.
+          "Call a WebMCP tool on the current page BY NAME. Use this only for a page you " +
+          "navigated to during this turn: a page's tools are otherwise available to you " +
+          "directly as `webmcp_*` tools, which are typed and validated — prefer one of " +
+          "those whenever it exists."
+        : "Call one of the WebMCP tools the current page offers (see browser_webmcp_tools).",
       inputSchema: z.object({
         toolName: z.string(),
         input: z.unknown().optional(),
@@ -1001,7 +1037,7 @@ export function buildBrowserTools(
               `"${toolName}"`,
           };
         }
-        return present(
+        return presented(
           await send(
             { kind: "webmcp_invoke", toolKey: toolName, input },
             { tabId, signal: abortSignal },
@@ -1022,6 +1058,21 @@ export function buildBrowserTools(
     : EMPTY_PAGE_TOOLS;
   Object.assign(tools, page.tools);
 
+  const refresher =
+    firstClassPageTools && opts.dynamicPageTools && opts.pageTools
+      ? createPageToolRefresher({
+          opts,
+          unattended,
+          needsApproval,
+          send,
+          reservedNames: new Set(built),
+          initial: { snapshot: opts.pageTools, minted: page.minted },
+          install: (name, definition) => {
+            tools[name] = definition;
+          },
+        })
+      : undefined;
+
   return {
     tools,
     approvals: mergeUiToolApprovalClassifications(
@@ -1030,6 +1081,178 @@ export function buildBrowserTools(
     ),
     ...(page.minted.length > 0 ? { pageTools: page.minted } : {}),
     ...(page.notices.length > 0 ? { pageToolNotices: page.notices } : {}),
+    ...(refresher
+      ? {
+          refreshPageTools: refresher.refresh,
+          currentPageTools: refresher.current,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Keep this turn's page tools in step with the page.
+ *
+ * TWO READS, NOT ONE, and the split is the whole design. The cheap one asks
+ * the daemon for a cached `{revision, hash}` and touches no page at all — no
+ * screenshot, no settle, no DOM read — which is what makes it affordable
+ * before every model step. Only when that moved does the expensive one fetch
+ * the definitions. On a turn where the page never changes (most of them) the
+ * cost is one tiny round trip per step and the tool definitions keep their
+ * identity, so the per-step request stays byte-identical and every provider's
+ * prompt cache keeps hitting.
+ *
+ * The revision that rides on the step's OWN observations short-circuits even
+ * that: when the model just navigated, the result it already paid for carries
+ * the new revision, and no extra call is made.
+ */
+function createPageToolRefresher(args: {
+  opts: BrowserToolsOptions;
+  unattended: BrowserUnattendedPolicy | null;
+  needsApproval: boolean;
+  send: (
+    action: BrowserAction,
+    sendArgs: {
+      tabId?: string;
+      signal?: AbortSignal;
+      raw?: boolean;
+    },
+  ) => Promise<CommandOutcome & { tabId: string }>;
+  reservedNames: ReadonlySet<string>;
+  initial: {
+    snapshot: BrowserPageToolsSnapshot;
+    minted: MintedDeclaredTool[];
+  };
+  install: (name: string, definition: ToolSet[string]) => void;
+}): {
+  refresh: (ctx: {
+    signal?: AbortSignal;
+  }) => Promise<BrowserPageToolsRefresh | undefined>;
+  current: () => MintedDeclaredTool[];
+} {
+  const tabId = args.initial.snapshot.tabId;
+  let lastRevision = args.initial.snapshot.revision;
+  let lastHash = args.initial.snapshot.hash;
+  let advertised = new Map(
+    args.initial.minted.map((tool) => [tool.name, tool] as const),
+  );
+
+  const readRevision = async (signal?: AbortSignal) => {
+    const outcome = await args.send(
+      { kind: "observe", mode: "webmcp_revision" },
+      {
+        ...(tabId && tabId !== "@session" ? { tabId } : {}),
+        ...(signal ? { signal } : {}),
+        // NOT REMEMBERED (L3). This is the server's own read; a token minted
+        // by it would let the model's next act be pinned to a state the model
+        // never observed.
+        raw: true,
+      },
+    );
+    return outcome.webmcpTools;
+  };
+
+  return {
+    current: () => [...advertised.values()],
+    refresh: async ({ signal }) => {
+      const revision = await readRevision(signal);
+      // A daemon that would not answer, or one too old to know this observe
+      // mode, leaves the set exactly as it was. Advertising nothing because a
+      // read failed would silently take a capability away mid-turn.
+      if (!revision) return undefined;
+      if (
+        revision.revision === lastRevision &&
+        revision.hash === lastHash
+      ) {
+        return undefined;
+      }
+      lastRevision = revision.revision;
+      lastHash = revision.hash;
+
+      const observation = await args.send(
+        { kind: "observe", mode: "webmcp_tools" },
+        {
+          ...(tabId && tabId !== "@session" ? { tabId } : {}),
+          ...(signal ? { signal } : {}),
+          raw: true,
+        },
+      );
+      if (!observation.ok) {
+        // `lease_blocked` lands here: a person has the browser. PAUSE rather
+        // than retire — the tools have not gone anywhere, we simply cannot
+        // look right now, and churning the model's tool set every step while
+        // somebody signs in would be worse than holding still.
+        return undefined;
+      }
+      const page = pageToolsFromObservation(observation.output);
+      const rebuilt = buildPageToolsFor({
+        opts: args.opts,
+        unattended: args.unattended,
+        needsApproval: args.needsApproval,
+        send: args.send,
+        reservedNames: args.reservedNames,
+        snapshot: {
+          tools: page.tools,
+          bootId: args.initial.snapshot.bootId,
+          tabId,
+          // THE GENERATION THESE WERE READ AT. Reusing the turn-start
+          // navCounter here would mint bindings for a document that is gone,
+          // and every one of them would be refused as `stale_binding`.
+          navCounter:
+            observation.stateToken?.navCounter ??
+            args.initial.snapshot.navCounter,
+        },
+      });
+
+      const next = new Map(
+        rebuilt.minted.map((tool) => [tool.name, tool] as const),
+      );
+      const add: ToolSet = {};
+      for (const [name, definition] of Object.entries(rebuilt.tools)) {
+        add[name] = definition;
+        args.install(name, definition);
+      }
+      const retire: string[] = [];
+      for (const [name, gone] of advertised) {
+        if (next.has(name)) continue;
+        retire.push(name);
+        // A TOMBSTONE, not a deletion. The model may already have decided to
+        // call this tool on the step that is about to run, and an absent tool
+        // of any name comes back as "Tool not found" — which tells it nothing
+        // about what happened or what to do instead. This answers in a
+        // sentence it can act on.
+        args.install(name, tombstoneTool(gone));
+      }
+      advertised = next;
+      if (Object.keys(add).length === 0 && retire.length === 0) {
+        return undefined;
+      }
+      return {
+        ...(Object.keys(add).length > 0 ? { add } : {}),
+        ...(retire.length > 0 ? { retire } : {}),
+        approvals: rebuilt.approvals,
+      };
+    },
+  };
+}
+
+/** A tool the page has stopped offering, kept callable so a call can recover. */
+function tombstoneTool(gone: MintedDeclaredTool): ToolSet[string] {
+  return {
+    ...tool({
+      description: gone.description,
+      inputSchema: jsonSchema<Record<string, unknown>>({
+        type: "object",
+        properties: {},
+      } as never),
+      execute: async () => ({
+        error:
+          `webmcp_tool_gone: the page no longer offers "${gone.rawName}"` +
+          `${gone.origin ? ` (it was on ${gone.origin})` : ""}; ` +
+          "re-read the page and decide again",
+      }),
+    }),
+    toModelOutput: toBrowserModelOutput,
   };
 }
 
@@ -1380,6 +1603,10 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
  * fence header still names the origin (scheme and host only, which a page
  * cannot write prose into), so nothing is lost: the model can see where it is
  * without reading untrusted text to find out.
+ *
+ * `webmcpTools` IS ONE TOO. The projection the model sees is a count and a
+ * list of NAMES, and a page picks its own tool names — so it is a place a page
+ * can write a sentence just as surely as a tool description is.
  */
 const PAGE_DERIVED_KEYS = [
   "url",
@@ -1388,6 +1615,7 @@ const PAGE_DERIVED_KEYS = [
   "dom",
   "console",
   "tools",
+  "webmcpTools",
   "result",
 ] as const;
 
@@ -1525,6 +1753,7 @@ function takeScreenshot(rest: Record<string, unknown>): string | undefined {
 
 function present(
   outcome: CommandOutcome & { tabId: string },
+  options: { pageToolsAdvertised?: boolean } = {},
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
@@ -1542,5 +1771,31 @@ function present(
           note: "the page was still loading when this was captured; observe again if it looks incomplete",
         }
       : {}),
+    ...pageToolsNote(outcome, options.pageToolsAdvertised === true),
+  };
+}
+
+/**
+ * Tell the model, once per observation, that this page's tools are already
+ * tools it can call.
+ *
+ * Without it a model that just navigated has no way to know: the tools appear
+ * on the NEXT step, and nothing in the result it is reading now says so — so
+ * it reasons about the page it can see using only the six verbs, and clicks.
+ *
+ * The count and names go INSIDE the fence (a page chooses its own names); the
+ * sentence is ours and sits outside it.
+ */
+function pageToolsNote(
+  outcome: CommandOutcome,
+  advertised: boolean,
+): Record<string, unknown> {
+  const revision = outcome.webmcpTools;
+  if (!advertised || !revision || revision.count === 0) return {};
+  return {
+    webmcpTools: { count: revision.count },
+    pageToolsNote:
+      "This page's tools are available to you directly as `webmcp_*` tools; " +
+      "call one rather than clicking. They change when you navigate.",
   };
 }

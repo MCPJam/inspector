@@ -1677,6 +1677,17 @@ chatV2.post("/", async (c) => {
     // the turn runner, which merges it into the engines' one approval slot.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: {
+            signal?: AbortSignal;
+          }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1731,6 +1742,9 @@ chatV2.post("/", async (c) => {
           : {}),
         onBrowserPageTools: ({ minted }) => {
           advertisedPageTools = minted;
+        },
+        onBrowserToolsRefresh: (refresh) => {
+          pageToolRefresh = refresh;
         },
       },
     );
@@ -1902,6 +1916,22 @@ chatV2.post("/", async (c) => {
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           ...(browserToolApprovals ? { browserToolApprovals } : {}),
+          // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+          // step and the tools it needs exist only from the next; a
+          // turn-start-only set would mean a turn per page.
+          //
+          // The persisted record is re-read here rather than captured at turn
+          // start, so a reopened conversation shows the set the turn ENDED
+          // with — which is the one the last steps actually used.
+          ...(pageToolRefresh
+            ? {
+                refreshTools: async (ctx: { signal?: AbortSignal }) => {
+                  const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+                  advertisedPageTools = pageToolRefresh!.currentPageTools();
+                  return refresh as never;
+                },
+              }
+            : {}),
           // COMP-16: root the harness Shell at the host-configured working
           // directory — the same `computer.workdir` the bash tool runs in.
           ...(harnessComputerWorkdir

@@ -45,6 +45,7 @@ import type {
 } from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
+  type MCPJamHandlerOptions,
   warnIfChatAbortSignalMissing,
 } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
@@ -392,6 +393,14 @@ export interface WebChatTurnPrepareInputs {
    * whose gated call never gets its approval request.
    */
   browserToolApprovals?: UiToolApprovalClassification;
+  /**
+   * Re-read the page's tools between model steps, when this turn built page
+   * tools on an engine that can grow its set.
+   *
+   * Threaded rather than derived: only the browser capability knows how to ask,
+   * and only the hosted loop can use the answer.
+   */
+  refreshTools?: MCPJamHandlerOptions["refreshTools"];
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -1272,6 +1281,9 @@ export async function streamWebChatTurn(
         prepare.pageTools,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // The hosted loop is the ONE engine that can grow its tool set between
+      // steps, so it is the one that gets this.
+      ...(prepare.refreshTools ? { refreshTools: prepare.refreshTools } : {}),
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
@@ -1362,6 +1374,7 @@ export async function streamWebChatTurn(
       prepare.pageTools,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    ...(prepare.refreshTools ? { refreshTools: prepare.refreshTools } : {}),
     // Harness engine only: it builds its own MCP tool set (host-executed
     // delivery) rather than consuming `allTools`, so the host's
     // tool-construction policies have to reach it separately. Inert on the

@@ -67,6 +67,7 @@ import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 import {
   buildBrowserTools,
   type BrowserPageToolsSnapshot,
+  type BrowserToolsResult,
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
@@ -274,6 +275,18 @@ export interface BuiltInToolContext {
   onBrowserPageTools?: (info: {
     minted: MintedDeclaredTool[];
     notices: Array<{ rawName: string; reason: string }>;
+  }) => void;
+  /**
+   * Receives the mid-turn page-tool refresher, when this turn built one.
+   *
+   * The route hands it to the engine's `refreshTools` hook. It exists here
+   * rather than being returned because the browser is one built-in among
+   * several and this resolver's return value is a plain `ToolSet` — the same
+   * reason `onBrowserApprovals` is a callback.
+   */
+  onBrowserToolsRefresh?: (refresh: {
+    refreshPageTools: NonNullable<BrowserToolsResult["refreshPageTools"]>;
+    currentPageTools: NonNullable<BrowserToolsResult["currentPageTools"]>;
   }) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
@@ -779,6 +792,12 @@ export function resolveHostTools(
           ctx.onBrowserPageTools?.({
             minted: browser.pageTools ?? [],
             notices: browser.pageToolNotices ?? [],
+          });
+        }
+        if (browser.refreshPageTools && browser.currentPageTools) {
+          ctx.onBrowserToolsRefresh?.({
+            refreshPageTools: browser.refreshPageTools,
+            currentPageTools: browser.currentPageTools,
           });
         }
       }

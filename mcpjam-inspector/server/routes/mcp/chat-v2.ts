@@ -1368,6 +1368,17 @@ chatV2.post("/", async (c) => {
     // the engines' single `uiToolApprovals` slot below.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: {
+            signal?: AbortSignal;
+          }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1413,6 +1424,9 @@ chatV2.post("/", async (c) => {
               : {}),
             onBrowserPageTools: ({ minted }) => {
               advertisedPageTools = minted;
+            },
+            onBrowserToolsRefresh: (refresh) => {
+              pageToolRefresh = refresh;
             },
           }
         : null,
@@ -1802,6 +1816,20 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh
+          ? {
+              refreshTools: async (ctx: { signal?: AbortSignal }) => {
+                const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+                // The persisted record is re-read here rather than captured at
+                // turn start, so a reopened conversation shows the set the turn
+                // ENDED with — the one its last steps actually used.
+                advertisedPageTools = pageToolRefresh!.currentPageTools();
+                return refresh as never;
+              },
+            }
+          : {}),
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
         // tool-construction policies have to reach it separately. Inert on the
@@ -2080,6 +2108,20 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh
+          ? {
+              refreshTools: async (ctx: { signal?: AbortSignal }) => {
+                const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+                // The persisted record is re-read here rather than captured at
+                // turn start, so a reopened conversation shows the set the turn
+                // ENDED with — the one its last steps actually used.
+                advertisedPageTools = pageToolRefresh!.currentPageTools();
+                return refresh as never;
+              },
+            }
+          : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
