@@ -331,7 +331,7 @@ describe("EvaluateRunContent", () => {
     // is not the first thing a reader has to get through.
     expect(caveats).not.toHaveAttribute("open");
     expect(caveats).toHaveTextContent("legacy percent-threshold run");
-    expect(caveats).toHaveTextContent("Counts are iterations, not cases");
+    expect(caveats).toHaveTextContent("Counts are trials, not case variants");
     expect(caveats).toHaveTextContent(
       "1 non-passing of 3 trials examined — this is the run's whole non-passing set.",
     );

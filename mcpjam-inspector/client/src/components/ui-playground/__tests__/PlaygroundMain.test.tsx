@@ -1144,6 +1144,50 @@ describe("PlaygroundMain", () => {
     });
   });
 
+  describe("welcome logo theme handling (BB-106)", () => {
+    const getThemedLogos = () => {
+      const imgs = screen.getAllByAltText("MCPJam") as HTMLImageElement[];
+      return {
+        light: imgs.find((img) =>
+          img.getAttribute("src")?.includes("mcp_jam_light")
+        ),
+        dark: imgs.find((img) =>
+          img.getAttribute("src")?.includes("mcp_jam_dark")
+        ),
+      };
+    };
+
+    it("renders both theme variants with inverse aria-hidden and reuses the same nodes across a theme flip", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      // Default resolves to the light global theme: light logo shown, dark hidden.
+      const initial = getThemedLogos();
+      expect(initial.light).toBeDefined();
+      expect(initial.dark).toBeDefined();
+      expect(initial.light).toHaveAttribute("aria-hidden", "false");
+      expect(initial.dark).toHaveAttribute("aria-hidden", "true");
+      // Also assert the CSS visibility toggle, not just the a11y attribute: if
+      // the `hidden` class regressed, both logos could show while aria passes.
+      expect(initial.light).not.toHaveClass("hidden");
+      expect(initial.dark).toHaveClass("hidden");
+
+      act(() => {
+        useHostContextStore.getState().patchHostContext({ theme: "dark" });
+      });
+
+      const afterFlip = getThemedLogos();
+      // aria-hidden AND the hidden class both invert to follow the new theme...
+      expect(afterFlip.light).toHaveAttribute("aria-hidden", "true");
+      expect(afterFlip.dark).toHaveAttribute("aria-hidden", "false");
+      expect(afterFlip.light).toHaveClass("hidden");
+      expect(afterFlip.dark).not.toHaveClass("hidden");
+      // ...but they are the SAME DOM nodes — no remount means no image refetch,
+      // which is what eliminates the "logo disappears" flicker.
+      expect(afterFlip.light).toBe(initial.light);
+      expect(afterFlip.dark).toBe(initial.dark);
+    });
+  });
+
   describe("empty state", () => {
     it("shows welcome message when thread is empty", () => {
       render(<PlaygroundMain {...defaultProps} />);

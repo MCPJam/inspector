@@ -24,7 +24,6 @@ import {
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
 import {
   disambiguateLabels,
@@ -296,11 +295,11 @@ export function useEvalHandlers({
   const getAccessToken = useConvexAccessToken();
   // Environment names for env-suite fan-out toasts/labels only — env plans
   // never derive servers from this list (the server resolves them at launch).
-  // Queried only when the feature flag is on; a flag-off env suite still
-  // fans out correctly with ids as display fallbacks.
-  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  // Not flag-gated: a suite composed from the strip attaches nameless ad-hoc
+  // cells on any deployment that accepts them, and a run labeled by a bare id
+  // is not a label. Fan-out width never depended on this list.
   const projectEnvironments = useProjectEnvironments(
-    projectEnvironmentsEnabled ? projectId : null,
+    projectId,
     // Ad-hoc rows included: a suite composed from the header bar attaches
     // nameless ones, and a run labeled by a bare id is not a label.
     { includeAdhoc: true }
@@ -310,7 +309,7 @@ export function useEvalHandlers({
   // would otherwise render as the same string, which is exactly the case the
   // composer makes common.
   const environmentLabelContext = useEnvironmentLabelContext(
-    projectEnvironmentsEnabled ? projectId : null,
+    projectId,
     projectEnvironments
   );
   const labeledProjectEnvironments = useMemo(() => {
@@ -677,6 +676,23 @@ export function useEvalHandlers({
          * existing suites.
          */
         refreshSnapshot?: boolean;
+        /**
+         * Run only these cases. Used by "Run test" on the case page, which
+         * needs a SUITE run (not a quick run) because the judge is keyed by
+         * `suiteRunId`. The plans, cap payload and snapshot handling are
+         * otherwise identical to a full rerun.
+         *
+         * A case-scoped launch also STAYS ON THE PAGE and never takes the
+         * replay fallback. Both matter. The Evaluate tab tracks the returned
+         * run IDs to request judging after completion. Staying on the case
+         * keeps its result visible. And a replay sends the old run
+         * id alone — it would silently re-run the whole historical suite
+         * instead of the one case that was asked for, spending on tests the
+         * author did not launch.
+         */
+        caseIds?: string[];
+        /** The selected case explicitly opts out of launch-triggered judging. */
+        skipJudge?: boolean;
       }
     ) => {
       if (rerunningSuiteId) return;
@@ -700,6 +716,9 @@ export function useEvalHandlers({
         (selectedSuiteEntry?.suite._id === suite._id
           ? selectedSuiteEntry.latestRun
           : null);
+      // A launch scoped to specific cases must not degrade into a replay of
+      // the whole suite: the replay path carries only the old run id.
+      const caseScoped = Boolean(options?.caseIds?.length);
       const rerunEligibility = getSuiteReplayEligibility({
         suiteServers,
         connectedServerNames,
@@ -707,7 +726,7 @@ export function useEvalHandlers({
       });
 
       if (!isEnvironmentSuite && suiteServers.length === 0) {
-        if (rerunEligibility.replayableLatestRun?._id) {
+        if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
@@ -720,7 +739,7 @@ export function useEvalHandlers({
           const readiness = await ensureServersReady(suiteServers);
           if (!hasUnavailableServers(readiness)) {
             // Continue with the live rerun now that the servers are ready.
-          } else if (rerunEligibility.replayableLatestRun?._id) {
+          } else if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
             await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
             return;
           } else {
@@ -822,6 +841,22 @@ export function useEvalHandlers({
           testCaseId: (test as { testCaseId?: string }).testCaseId,
         }));
 
+        // Narrow to the requested cases before anything launches. The server
+        // filters its own snapshot by `caseIds` too; sending the whole list
+        // would make the run's own payload disagree with what it executes.
+        const wantedCaseIds = options?.caseIds;
+        const narrowedTests = wantedCaseIds?.length
+          ? testsPayload.filter(
+              (test) =>
+                test.testCaseId && wantedCaseIds.includes(test.testCaseId),
+            )
+          : testsPayload;
+        if (wantedCaseIds?.length && narrowedTests.length === 0) {
+          setRerunningSuiteId(null);
+          toast.error("That case is not in this suite.");
+          return;
+        }
+
         // Partial-failure tolerant: a failure on one host shouldn't cancel
         // runs already started against other hosts. We collect failures
         // and toast a summary at the end.
@@ -832,7 +867,7 @@ export function useEvalHandlers({
               suiteId: suite._id,
               suiteName: suite.name,
               suiteDescription: suite.description,
-              tests: testsPayload,
+              tests: narrowedTests,
               serverIds: plan.serverIds,
               modelApiKeys:
                 Object.keys(executionContext.modelApiKeys).length > 0
@@ -842,6 +877,7 @@ export function useEvalHandlers({
               passCriteria: { minimumPassRate },
               notes: criteriaNote,
               suiteRerun: true,
+              ...(wantedCaseIds?.length ? { caseIds: wantedCaseIds } : {}),
               iterationOverride: options?.iterationOverride,
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
@@ -921,7 +957,9 @@ export function useEvalHandlers({
           // results without hunting through the runs list. Multi-host
           // fan-outs land on the suite's runs view instead, since there
           // are multiple sibling runs to pick from.
-          if (runPlans.length === 1) {
+          if (caseScoped) {
+            // Keep the case visible while the tab tracks its new runs.
+          } else if (runPlans.length === 1) {
             const firstSettled = settled[0];
             const newRunId =
               firstSettled?.status === "fulfilled"
@@ -1000,6 +1038,13 @@ export function useEvalHandlers({
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
+        return settled.flatMap((result) => {
+          const runId =
+            result.status === "fulfilled"
+              ? (result.value as { runId?: unknown } | null)?.runId
+              : undefined;
+          return typeof runId === "string" && runId.length > 0 ? [runId] : [];
+        });
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         if (openEvalIterationWall(error)) {

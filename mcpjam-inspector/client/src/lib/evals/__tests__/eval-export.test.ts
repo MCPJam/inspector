@@ -119,7 +119,7 @@ describe("eval-export", () => {
       "export MCP_SERVER_URL_CALENDAR=<replace-with-server-url>"
     );
     expect(envSnippet.snippet).toContain(
-      "export MCP_SERVER_URL_WEATHER=https://weather.example.com/mcp"
+      "export MCP_SERVER_URL_WEATHER='https://weather.example.com/mcp'"
     );
     // Reporting runs on MCPJam API keys (sk_); the retired mcpjam_ project
     // keys must never resurface in generated snippets.
@@ -129,10 +129,31 @@ describe("eval-export", () => {
     expect(envSnippet.snippet).not.toContain("MCPJAM_PROJECT_ID");
   });
 
+  it("shell-quotes server URLs so a pasted snippet cannot run them", () => {
+    // This snippet exists to be copied into a terminal, so a saved URL is
+    // input to a shell, not just a string. Stripping line terminators is not
+    // enough on its own: `$(...)`, backticks and `;` all run unquoted.
+    const url = "https://x/$(id)/`whoami`/;touch /tmp/pwned/'q'";
+    const hostile = { name: "weather", config: { url } } as unknown as ServerWithName;
+
+    const { snippet } = buildSdkEnvSnippet(["weather"], { weather: hostile });
+    const line = snippet
+      .split("\n")
+      .find((l) => l.startsWith("export MCP_SERVER_URL_WEATHER="))!;
+
+    // The whole value is single-quoted runs and escaped quotes, nothing else —
+    // which is precisely what leaves no room for the shell to expand anything.
+    expect(line).toMatch(
+      /^export MCP_SERVER_URL_WEATHER=(?:'[^']*'|\\')+$/
+    );
+    // And the URL is preserved rather than sanitized away.
+    expect(line).toContain("$(id)");
+  });
+
   it("pins exported env snippets to the project the export came from", () => {
     const envSnippet = buildSdkEnvSnippet([], {}, "jd7fromexport");
     expect(envSnippet.snippet).toContain(
-      "export MCPJAM_PROJECT_ID=jd7fromexport",
+      "export MCPJAM_PROJECT_ID='jd7fromexport'",
     );
   });
 

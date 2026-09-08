@@ -17,6 +17,7 @@
 import type { EvalMatchOptions, EvalToolCallMatchResult } from "../matchers.js";
 import type { EvalExpectedToolCall } from "../eval-reporting-types.js";
 import type { Predicate, PredicateResult } from "../predicates/types.js";
+import { checkRole, stripCheckPolicy } from "../predicates/policy.js";
 import { canonicalDigest } from "./canonical.js";
 import { finalizeScoreResult } from "./derive.js";
 import {
@@ -53,10 +54,12 @@ export function generatedPredicateScorerId(
 /**
  * The definition for one authored predicate.
  *
- * `implementationHash` is the canonicalized predicate itself: editing
- * `responseContains "refund issued"` to `"refund processed"` changes what the
- * scorer does, so it must change the evaluation config hash even though the
- * scorer id, version and threshold are untouched.
+ * `implementationHash` is the canonicalized predicate itself, minus check
+ * policy: editing `responseContains "refund issued"` to `"refund processed"`
+ * changes what the scorer does, so it must change the evaluation config hash
+ * even though the scorer id, version and threshold are untouched. Flipping
+ * `role` / `severity` does not — those are policy, not implementation.
+ * Ids stay positional ({@link generatedPredicateScorerId}).
  */
 export function predicateScoreDefinition(
   predicate: Predicate,
@@ -67,11 +70,11 @@ export function predicateScoreDefinition(
     scorerId: explicit || generatedPredicateScorerId(predicate, options.ordinal),
     idSource: explicit ? "explicit" : "generated",
     scorerVersion: PREDICATES_VERSION,
-    implementationHash: canonicalDigest(predicate),
+    implementationHash: canonicalDigest(stripCheckPolicy(predicate)),
     label: predicate.type,
     deterministic: true,
     passThreshold: 1,
-    role: options.role ?? "gating",
+    role: options.role ?? checkRole(predicate),
   };
 }
 

@@ -470,3 +470,50 @@ describe("createTabViewport — the mask does not outlive the hand that set it",
     expect(masks(sent)).toEqual([1]);
   });
 });
+
+
+/**
+ * V-4a. Three drop paths existed and every one was silent, so a pane showing a
+ * stale picture and a pane on a healthy quiet page looked identical from
+ * outside the box. Each of these fails when its counter is reverted.
+ */
+describe("counting what the viewport threw away", () => {
+  it("counts a byte-identical frame as a dedupe drop", async () => {
+    const { viewport, emitFrame } = make({ minIntervalMs: 0 });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    emitFrame(JPEG_1PX, 1);
+    emitFrame(JPEG_1PX, 2);
+    const counters = viewport.counters();
+    expect(counters.framesIn).toBe(2);
+    expect(counters.dropped.dedupe).toBe(1);
+    expect(counters.framesOut).toBe(1);
+  });
+
+  it("counts an oversized frame as its own kind of drop", async () => {
+    const { viewport, emitFrame } = make({ minIntervalMs: 0, maxFrameBytes: 8 });
+    viewport.subscribe(() => {});
+    await Promise.resolve();
+    emitFrame(JPEG_1PX, 1);
+    expect(viewport.counters().dropped.oversize).toBe(1);
+    expect(viewport.counters().dropped.dedupe).toBe(0);
+    expect(viewport.counters().framesOut).toBe(0);
+  });
+
+  it("counts a transport's own drop against the same viewport", () => {
+    // The pacer's overwrite is one layer up, but it is the same loss and
+    // belongs in the same number — one figure describes the whole way out.
+    const { viewport } = make();
+    viewport.noteTransportDrop();
+    viewport.noteTransportDrop();
+    expect(viewport.counters().dropped.pacer).toBe(2);
+  });
+
+  it("hands out a snapshot, not the live object", () => {
+    const { viewport } = make();
+    const first = viewport.counters();
+    viewport.noteTransportDrop();
+    expect(first.dropped.pacer).toBe(0);
+    expect(viewport.counters().dropped.pacer).toBe(1);
+  });
+});

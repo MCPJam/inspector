@@ -388,9 +388,10 @@ async function recordEphemeralServer(
  * and the author-facing markdown for the check output, neither of which has any
  * verdict authority.
  *
- * The one message match that survives is the backend's canonical
- * `billing_limit_reached` code — an MCPJam-side limit, worth naming plainly in
- * the check output so nobody debugs their build over it.
+ * The only message matches that survive are the backend's canonical
+ * MCPJam-side limits — `billing_limit_reached` and the organization spend
+ * budget — worth naming plainly in the check output so nobody debugs their
+ * build over one.
  */
 export function describeCheckFailure(error: unknown): {
   failureReason: string;
@@ -429,6 +430,11 @@ export function describeCheckFailure(error: unknown): {
   const message = error instanceof Error ? error.message : String(error);
   if (/billing_limit_reached/i.test(message)) {
     return { failureReason: "billing_limit_reached" };
+  }
+  // Both canonical markers for the org spend budget: the `/stream` wire code
+  // and the launch mutation's ConvexError code.
+  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+    return { failureReason: "spend_budget_reached" };
   }
   return { failureReason: message.slice(0, 200) };
 }

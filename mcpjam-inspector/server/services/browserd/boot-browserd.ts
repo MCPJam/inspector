@@ -64,6 +64,23 @@ export interface BootBrowserdOptions {
   contextMode?: "persistent" | "ephemeral";
   /** The X display browserd's Chromium draws on. Defaults to `:0`. */
   display?: string;
+  /**
+   * Make the window cover the display, with no chrome.
+   *
+   * The static half of the video gate: the encoder grabs the WHOLE display, so
+   * "the display IS the page" only holds if the window fills it. Without it the
+   * grab is a desktop with a browser somewhere on it, and every click the pane
+   * mapped would be off by the window's origin.
+   */
+  kiosk?: boolean;
+  /**
+   * The device pixel ratio the box renders at.
+   *
+   * Sent only when a deployment is trying a candidate — the shipped default is
+   * 1 — and applied to the X screen and to Chromium together, or the browser
+   * paints past the edge of what is captured.
+   */
+  deviceScaleFactor?: number;
 }
 
 export interface BrowserdHandle {
@@ -74,6 +91,14 @@ export interface BrowserdHandle {
   port: number;
   /** `https://<getHost(port)>` — where the inspector reaches browserd. */
   publicOrigin: string;
+  /**
+   * The wire compatibility number this daemon announced, if it announced one.
+   *
+   * Absent from a daemon predating V-4a. Recorded with the session so a later
+   * lookup can answer "can I talk to it?" without a probe — and so a hash-only
+   * difference can be told from an incompatible one.
+   */
+  protocolVersion?: number;
   /** Reap the daemon. Idempotent and never throws. */
   stop: () => Promise<void>;
 }
@@ -86,8 +111,18 @@ const DEFAULT_READY_TIMEOUT_MS = 30_000;
  */
 export const BROWSERD_DISPLAY = ":0";
 
-/** `@e2b/desktop`'s own default geometry, for the same parity reason. */
-const DISPLAY_GEOMETRY = "1024x768x24";
+/**
+ * `@e2b/desktop`'s own default geometry, for the same parity reason.
+ *
+ * ALSO THE TEMPLATE'S. The desktop image's start command brings up Xvfb at this
+ * size (`templates/desktop/geometry.json` in the backend repo), and this is the
+ * fallback used when a box has no X server yet. The two must agree: a browser
+ * painting a page larger than the display it is captured from is a picture with
+ * its right-hand edge missing, and nothing in either repository would say so.
+ * `boot-browserd.test.ts` pins the value on this side; the backend's
+ * `desktopTemplateBuild.test.ts` pins it on the other.
+ */
+export const DISPLAY_GEOMETRY = "1024x768x24";
 const DISPLAY_READY_ATTEMPTS = 20;
 const DISPLAY_POLL_MS = 500;
 
@@ -133,11 +168,21 @@ async function displayIsUp(
 export async function ensureDisplay(
   sandbox: BrowserdSandbox,
   display: string = BROWSERD_DISPLAY,
+  /**
+   * Device pixels per CSS pixel, when this boot is asking for a sharper one.
+   *
+   * The display and the page are the SAME rectangle: a browser rendering at
+   * 1.5× on a 1024×768 screen paints past the edge of what is captured, and the
+   * missing strip is on the right-hand side where nothing looks obviously
+   * wrong. Only used on the fallback path — a box whose template already
+   * brought X up keeps the geometry the template chose.
+   */
+  deviceScaleFactor = 1,
 ): Promise<void> {
   if (await displayIsUp(sandbox, display)) return;
 
   await sandbox.runBackground(
-    `Xvfb ${display} -ac -screen 0 ${DISPLAY_GEOMETRY} -retro -dpi 96 -nolisten tcp -nolisten unix`,
+    `Xvfb ${display} -ac -screen 0 ${geometryFor({ deviceScaleFactor })} -retro -dpi 96 -nolisten tcp -nolisten unix`,
     { envs: {}, onStdout: () => {} },
   );
 
@@ -162,9 +207,36 @@ export async function ensureDisplay(
   );
 }
 
+/**
+ * The X screen geometry for a boot.
+ *
+ * Scaled by the device scale factor, because the display and the page are the
+ * SAME rectangle: a browser rendering at 1.5× on a 1024×768 screen paints past
+ * the edge of what is captured, and the missing strip is on the right-hand side
+ * where nothing looks obviously wrong.
+ */
+function geometryFor(options: { deviceScaleFactor?: number }): string {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (dpr === 1) return DISPLAY_GEOMETRY;
+  const [width, height, depth] = DISPLAY_GEOMETRY.split("x").map(Number);
+  return `${Math.round((width ?? 1024) * dpr)}x${Math.round(
+    (height ?? 768) * dpr,
+  )}x${depth ?? 24}`;
+}
+
 interface BrowserdReadyLine {
   port: number;
   bootId: string;
+  /**
+   * The daemon's wire compatibility number, when it printed one.
+   *
+   * VALIDATED WHEN PRESENT, OPTIONAL WHEN ABSENT. A daemon baked into an older
+   * image prints the pre-V-4a line, and refusing that would turn a boot into a
+   * hard failure over a field nothing needs to boot. Absent means "unknown",
+   * which the reuse ladder treats as "cannot prove compatibility" — a relaunch
+   * — rather than as a match.
+   */
+  protocolVersion?: number;
 }
 
 function parseReadyLine(line: string): BrowserdReadyLine | null {
@@ -182,7 +254,23 @@ function parseReadyLine(line: string): BrowserdReadyLine | null {
   if (typeof record.port !== "number") return null;
   if (typeof record.bootId !== "string" || record.bootId.length === 0)
     return null;
-  return { port: record.port, bootId: record.bootId };
+  const protocolVersion = record.protocolVersion;
+  if (
+    protocolVersion !== undefined &&
+    (typeof protocolVersion !== "number" ||
+      !Number.isSafeInteger(protocolVersion) ||
+      protocolVersion < 1)
+  ) {
+    // A field that IS there and is nonsense is a daemon we do not understand.
+    // Refusing the line is the loud failure; treating it as absent would let a
+    // garbled build be adopted as a compatible one.
+    return null;
+  }
+  return {
+    port: record.port,
+    bootId: record.bootId,
+    ...(typeof protocolVersion === "number" ? { protocolVersion } : {}),
+  };
 }
 
 function buildEnv(
@@ -197,6 +285,16 @@ function buildEnv(
     // variable alone: E2B command shells do not inherit the image's Dockerfile
     // `ENV`, so an image-level `DISPLAY` would not reach the daemon.
     DISPLAY: options.display ?? BROWSERD_DISPLAY,
+    // Kiosk is what makes "the display IS the page" true for the video
+    // encoder, and it is the static half of the daemon's own h264 gate.
+    ...(options.kiosk ? { MCPJAM_BROWSERD_KIOSK: "1" } : {}),
+    // Sent only when a deployment is trying a candidate: the shipped default
+    // is 1, and a value the daemon does not receive is one it cannot
+    // misinterpret.
+    ...(options.deviceScaleFactor !== undefined &&
+    options.deviceScaleFactor !== 1
+      ? { MCPJAM_BROWSERD_DPR: String(options.deviceScaleFactor) }
+      : {}),
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";
@@ -252,6 +350,9 @@ export function bootBrowserd(
         bootId: outcome.bootId,
         port: outcome.port,
         publicOrigin: `https://${sandbox.getHost(outcome.port)}`,
+        ...(outcome.protocolVersion !== undefined
+          ? { protocolVersion: outcome.protocolVersion }
+          : {}),
         stop: kill,
       });
     };
@@ -259,7 +360,7 @@ export function bootBrowserd(
     // Chained rather than awaited before this promise is built: the boot's
     // ready-line choreography (and its timeout) must own every failure path,
     // including "the box never got an X server".
-    void ensureDisplay(sandbox, options.display)
+    void ensureDisplay(sandbox, options.display, options.deviceScaleFactor)
       .then(() =>
         sandbox.runBackground(`node ${JSON.stringify(options.scriptPath)}`, {
           envs: env,

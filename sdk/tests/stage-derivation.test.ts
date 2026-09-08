@@ -93,6 +93,7 @@ describe("shape invariants", () => {
   });
 
   test("stamps the analyzer version on every derivation", () => {
+    expect(STAGE_ANALYZER_VERSION).toBe(10);
     expect(derive().stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
     expect(
       derive({ iteration: { status: "cancelled" } }).stageAnalyzerVersion
@@ -1257,27 +1258,35 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
     }
   });
 
-  test("the derivation routes exactly the three kinds it routed before", () => {
+  test("the derivation routes exactly the kinds it is meant to route", () => {
     // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is now
     // COMPUTED from the map, so a mistake in the derivation would silently
     // widen or narrow what the analyzer routes — and the 93 behavioural tests
     // above would still pass if it only widened. Naming the set makes either
     // direction a failure.
+    //
+    // `onlyToolsCalled` joined the set deliberately: a tool outside the
+    // allowed set is the same observed fact as a forbidden tool, so it routes
+    // to `unexpectedToolCall` beside `toolNeverCalled`. Widening this list is
+    // a decision, never a side effect — every other addition still fails here
+    // first.
     const routed = (PREDICATE_KINDS as readonly string[])
       .filter((kind) => isSelectionPredicateKind(kind))
       .sort();
     expect(routed).toEqual([
       "firstToolWas",
+      "onlyToolsCalled",
       "toolCalledAtLeastOnce",
       "toolNeverCalled",
     ]);
   });
 
-  test("the analyzer version did not move", () => {
-    // B7 is a REFACTOR of where the routing lives, not a change to it. A bump
-    // here would mean historical failures are attributed differently, which is
-    // a re-derivation, not a refactor.
-    expect(STAGE_ANALYZER_VERSION).toBe(8);
+  test("the analyzer version is advisory exclusion", () => {
+    // A2 (advisory exclusion) bumped the analyzer to 10: Warn/Report
+    // checks no longer consume selection, fail-predicate precedence, or
+    // userValue. B7's routing set is unchanged; the version moved for
+    // the skip, not the route table.
+    expect(STAGE_ANALYZER_VERSION).toBe(10);
   });
 });
 
@@ -1703,6 +1712,26 @@ describe("stageDerivationToMetadata", () => {
     // Nothing failed, so neither optional key is invented.
     expect("firstFailedStage" in meta).toBe(false);
     expect("failureCategory" in meta).toBe(false);
+  });
+
+  test("advisory predicate failures do not move a stage", () => {
+    const baseline = derive();
+    const advised = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: [
+          { passed: true, reason: "ok" },
+          {
+            passed: false,
+            reason: "advisory miss",
+            predicate: { type: "responseContains", role: "advisory" },
+          },
+        ],
+      },
+    });
+    expect(advised.stageResults).toEqual(baseline.stageResults);
+    expect(advised.firstFailedStage).toBeUndefined();
   });
 
   test("carries the failure keys when something failed", () => {

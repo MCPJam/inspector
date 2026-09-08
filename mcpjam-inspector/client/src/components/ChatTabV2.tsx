@@ -92,6 +92,7 @@ import {
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
+import { isSpendBudgetReachedCode } from "@/lib/mcpjam-limit";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
@@ -1766,6 +1767,11 @@ export function ChatTabV2({
   const canShowTopupCta =
     isConvexAuthenticated &&
     errorMessage?.canTopUp === true &&
+    // Explicit even though the positive test below already excludes it: a
+    // spend-budget refusal must never offer credits, because buying them
+    // does not raise the cap. Stated here so loosening the code check
+    // cannot silently reintroduce a "buy credits" button for it.
+    !isSpendBudgetReachedCode(errorMessage?.code) &&
     errorMessage?.code === "user_rate_limit";
 
   const handleOpenTopupDialog = useCallback(() => {

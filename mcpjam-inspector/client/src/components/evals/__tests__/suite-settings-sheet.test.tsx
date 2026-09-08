@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { renderSettingsSheet } from "./settings-sheet-harness";
-import { GLOBAL_GATE_CATALOG } from "@/shared/predicate-kinds";
+import userEvent from "@testing-library/user-event";
+import {
+  ciOwnedSuite,
+  openSettingsRow,
+  renderSettingsSheet,
+  baseSuite,
+} from "./settings-sheet-harness";
 
 /**
  * The settings sheet as a DRAFT (S1).
@@ -39,9 +44,18 @@ vi.mock("convex/react", () => ({
 // pre-capabilities behaviour, which is what every assertion in this file was
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -54,7 +68,11 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
 }));
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  useGithubChecksAvailability: () => ({ status: "disabled" }),
+  useGithubChecksAvailability: () => ({ state: "disabled" }),
+  useGithubChecksSettings: () => ({
+    availability: { state: "disabled" },
+    repos: [],
+  }),
 }));
 vi.mock("../suite-github-checks-section", () => ({
   SuiteGithubChecksSection: () => <div data-testid="github-checks-section" />,
@@ -77,20 +95,62 @@ vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
-vi.mock("../suite-header", () => ({
-  SuiteHeader: () => <div data-testid="suite-header" />,
-}));
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
 }));
+vi.mock("@mcpjam/design-system/popover", () => ({
+  Popover: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  PopoverContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  PopoverTrigger: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: vi.fn(() => false),
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 function editName(value: string) {
+  if (!screen.queryByRole("textbox", { name: "Suite name" })) {
+    const button = document.querySelector(
+      '[data-setting-key="name"] button',
+    ) as HTMLButtonElement | null;
+    if (!button) throw new Error("no header name button");
+    fireEvent.click(button);
+  }
   fireEvent.change(screen.getByLabelText("Suite name"), { target: { value } });
+}
+
+function expectSuiteName(value: string) {
+  const input = screen.queryByRole("textbox", { name: "Suite name" });
+  if (input) {
+    expect((input as HTMLInputElement).value).toBe(value);
+    return;
+  }
+  expect(screen.getByRole("button", { name: value })).toBeTruthy();
+}
+
+function editMinIterations(value: string) {
+  openSettingsRow(document.body, "policy");
+  fireEvent.change(
+    screen.getByLabelText("Minimum iterations per case for every run"),
+    { target: { value } },
+  );
 }
 
 describe("nothing is written until the person says so", () => {
@@ -122,10 +182,7 @@ describe("nothing is written until the person says so", () => {
     editName("R");
     editName("Re");
     editName("Renamed");
-    fireEvent.change(
-      screen.getByLabelText("Minimum iterations per case for every run"),
-      { target: { value: "5" } },
-    );
+    editMinIterations("5");
 
     // Two settings, four interactions. The old sheet would have written four
     // times and toasted four times.
@@ -137,19 +194,19 @@ describe("nothing is written until the person says so", () => {
 
 describe("adding a check does not break the sheet", () => {
   it("Add check appends a check and the sheet keeps rendering", async () => {
-    renderSettingsSheet();
+    const user = userEvent.setup();
+    const { container } = renderSettingsSheet();
+    openSettingsRow(container, "checks");
 
     // The regression this covers: the menu passes an UPDATER, and a setter
     // that stored it verbatim put a function where a list belongs. Everything
     // that iterates `defaultPredicates` then threw, taking the sheet down.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add whole-run check" }),
-    );
-    const menuItem = await screen.findByText(GLOBAL_GATE_CATALOG[0].label);
-    fireEvent.click(menuItem);
+    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(await screen.findByTestId("add-scorer-noToolErrors"));
 
     // Still standing, and the edit registered as one drafted change.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
+    openSettingsRow(container, "name");
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
   });
 });
@@ -158,10 +215,7 @@ describe("saving sends exactly what changed", () => {
   it("one mutation carrying only the edited keys", async () => {
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.change(
-      screen.getByLabelText("Minimum iterations per case for every run"),
-      { target: { value: "5" } },
-    );
+    editMinIterations("5");
 
     fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -259,12 +313,8 @@ describe("a note belongs to one change", () => {
     expect(
       (mocks.applySuiteSettings.mock.calls[0][0] as { name: string }).name,
     ).toBe("Renamed");
-    // And the input agrees, rather than holding whitespace the server dropped.
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText("Suite name") as HTMLInputElement).value,
-      ).toBe("Renamed"),
-    );
+    // And the header agrees, rather than holding whitespace the server dropped.
+    await waitFor(() => expectSuiteName("Renamed"));
   });
 
   it("announces the count on the text, not on the whole bar", () => {
@@ -292,9 +342,7 @@ describe("a note belongs to one change", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull(),
     );
-    expect(
-      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
-    ).toBe("Renamed");
+    expectSuiteName("Renamed");
   });
 });
 
@@ -331,14 +379,114 @@ describe("degrading and refusing", () => {
     // outcome the precondition exists to PREVENT, not one to implement on its
     // refusal.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
-    expect(
-      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
-    ).toBe("Renamed");
+    expectSuiteName("Renamed");
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
   });
 
   it("a read-only suite offers no bar to save from", () => {
     renderSettingsSheet({ readOnlyConfig: true } as never);
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+  });
+});
+
+/**
+ * A CI-managed suite renders the sheet as a viewer.
+ *
+ * The lock's whole point is that a person can still SEE what the suite is
+ * configured to do — the settings are the documentation — while the app stops
+ * offering to change something the backend will refuse.
+ */
+describe("a suite managed by CI", () => {
+  it("RENDERS THE SHEET — the settings are the documentation", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The regression this pins: an earlier revision folded the lock into
+    // `isEditMode`, which gates the whole sheet, so a CI-owned suite navigated
+    // to `suite-edit` and nothing appeared. The settings are exactly what a
+    // person opens in order to understand what CI is running.
+    expect(screen.getByTestId("suite-settings-locked")).toBeTruthy();
+  });
+
+  it("disables every control in it, not just the ones with a reason", () => {
+    const { container } = renderSettingsSheet({
+      suite: ciOwnedSuite,
+      configLocked: true,
+    });
+
+    // A `fieldset[disabled]` is the mechanism, so a row added later is locked
+    // without anybody remembering. The browser applies it to every nested form
+    // control; a control in a portal (a dialog's body) escapes the subtree, but
+    // its trigger does not, so the entry point is still blocked.
+    //
+    // Asserted on the fieldset rather than on each input: the DOM `disabled`
+    // PROPERTY of a child reflects only its own attribute, so a per-input check
+    // would read `false` here and say nothing about what a browser does.
+    const locked = screen.getByTestId("suite-settings-locked");
+    expect(locked.tagName).toBe("FIELDSET");
+    expect((locked as HTMLFieldSetElement).disabled).toBe(true);
+    expect(
+      container.querySelectorAll(
+        "fieldset[data-testid='suite-settings-locked'] input",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not offer the name at all — it lives outside the fieldset", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The name is rendered by `SuiteHeader`, ABOVE the settings column's
+    // `fieldset[disabled]`, so the fieldset cannot reach it and it needs its
+    // own lock. Static text, not a button that opens an input: editing it fed
+    // the settings draft and put the suite in the commit flow.
+    expect(screen.queryByRole("textbox", { name: "Suite name" })).toBeNull();
+    expect(
+      document.querySelector('[data-setting-key="name"] button'),
+    ).toBeNull();
+  });
+
+  it("cannot be committed even if a control is driven directly", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The second line of defence, and the one that does not depend on the
+    // browser honouring `fieldset[disabled]`: jsdom does not enforce it, so
+    // this change event reaches the field exactly as a synthetic one would.
+    // There is still nothing to save.
+    editMinIterations("7");
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
+    expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  });
+
+  it("says why, and offers the way out, at the top of the sheet", () => {
+    const onDuplicateSuite = vi.fn();
+    renderSettingsSheet({
+      suite: ciOwnedSuite,
+      configLocked: true,
+      onDuplicateSuite,
+    });
+
+    // At the top, not on the control that refuses: someone opens Settings to
+    // change something specific, and a reason reachable only by clicking the
+    // thing that does not work is a reason most people never read.
+    expect(screen.getByTestId("suite-settings-ci-owned")).toHaveTextContent(
+      /Managed by CI/i,
+    );
+    fireEvent.click(screen.getByTestId("suite-settings-duplicate-to-edit"));
+    expect(onDuplicateSuite).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no commit bar, because there is nothing a commit could do", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
+    expect(mocks.updateTestSuite).not.toHaveBeenCalled();
+  });
+
+  it("still commits for an app-authored suite", () => {
+    // The guard against over-locking: the same sheet, unlocked, is unchanged.
+    renderSettingsSheet();
+    expect(screen.queryByTestId("suite-settings-ci-owned")).toBeNull();
+    editName("Renamed");
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
   });
 });

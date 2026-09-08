@@ -125,6 +125,9 @@ export function CspWorkbench({
             baseUriDomains: sandboxInfo?.baseUriDomains,
             source: "declared",
           },
+      appliedPoliciesByMount: isRecorded
+        ? undefined
+        : sandboxInfo?.appliedPoliciesByMount,
       widgetDeclared: isRecorded
         ? recordedDeclaration(recordedPolicy)
         : sandboxInfo?.widgetDeclared ?? null,
