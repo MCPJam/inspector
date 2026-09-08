@@ -32,7 +32,7 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { apiKeyTail, resolveRunOrigin } from "@/lib/evals/run-origin";
+import { apiKeyTail, runAgentName } from "@/lib/evals/run-origin";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import {
@@ -75,11 +75,16 @@ type RunResultBadgeKind =
  * person has nothing to add, and a backend that predates run provenance sends
  * neither field.
  */
-function runCredentialLabel(run: EvalSuiteRun): string | null {
-  const origin = resolveRunOrigin(run);
-  if (origin === "mcp" && run.launcher?.client) {
-    return `via ${run.launcher.client}`;
-  }
+/**
+ * "via claude-code" / "via API key ····3f9a" — WHICH CREDENTIAL made this run.
+ *
+ * Exported for its own test: it is the only place the run-by cell says
+ * anything beyond a person's name, and it has to keep answering for a run
+ * whose creator cannot be resolved.
+ */
+export function runCredentialLabel(run: EvalSuiteRun): string | null {
+  const agent = runAgentName(run);
+  if (agent) return `via ${agent}`;
   const tail = apiKeyTail(run.attribution?.apiKeyId);
   return tail ? `via API key ${tail}` : null;
 }
@@ -828,47 +833,59 @@ export function RunOverview({
                           {(() => {
                             const creator =
                               run.createdBy && userMap?.get(run.createdBy);
-                            if (creator) {
+                            /*
+                              WHICH CREDENTIAL, not just which person. A run
+                              made with an API key is attributed to the key's
+                              owner, so an automated launch and that person
+                              clicking Run showed the same avatar and the same
+                              name. The key id is minted by the backend from
+                              the credential the request authenticated with —
+                              a fact, not a claim.
+
+                              Resolved OUTSIDE the creator branch. An
+                              unresolvable creator (a member who left, a
+                              `userMap` that hasn't loaded) is the case where
+                              knowing the credential matters most, and nesting
+                              this under the avatar meant those runs — the
+                              automated ones — were the ones that showed
+                              nothing.
+                            */
+                            const credential = runCredentialLabel(run);
+                            if (!creator && !credential) {
                               return (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Avatar className="size-6">
+                                <Avatar className="size-6">
+                                  <AvatarFallback className="text-[10px]">
+                                    ?
+                                  </AvatarFallback>
+                                </Avatar>
+                              );
+                            }
+                            return (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Avatar className="size-6">
+                                    {creator ? (
                                       <AvatarImage
                                         src={creator.imageUrl}
                                         alt={creator.name}
                                       />
-                                      <AvatarFallback className="text-[10px]">
-                                        {getInitials(creator.name)}
-                                      </AvatarFallback>
-                                    </Avatar>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p className="text-xs">{creator.name}</p>
-                                    {/*
-                                      WHICH CREDENTIAL, not just which person.
-                                      A run made with an API key is attributed
-                                      to the key's owner, so an automated launch
-                                      and that person clicking Run showed the
-                                      same avatar and the same name. The key id
-                                      is minted by the backend from the
-                                      credential the request authenticated with
-                                      — a fact, not a claim.
-                                    */}
-                                    {runCredentialLabel(run) ? (
-                                      <p className="text-[10px] opacity-70">
-                                        {runCredentialLabel(run)}
-                                      </p>
                                     ) : null}
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            }
-                            return (
-                              <Avatar className="size-6">
-                                <AvatarFallback className="text-[10px]">
-                                  ?
-                                </AvatarFallback>
-                              </Avatar>
+                                    <AvatarFallback className="text-[10px]">
+                                      {creator ? getInitials(creator.name) : "?"}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {creator ? (
+                                    <p className="text-xs">{creator.name}</p>
+                                  ) : null}
+                                  {credential ? (
+                                    <p className="text-[10px] opacity-70">
+                                      {credential}
+                                    </p>
+                                  ) : null}
+                                </TooltipContent>
+                              </Tooltip>
                             );
                           })()}
                         </span>

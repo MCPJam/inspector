@@ -305,6 +305,25 @@ describe("ProjectRunsTable — who ran it, and with what", () => {
     expect(inTable().queryByText(/via API key/)).toBeNull();
   });
 
+  it("names the agent on a Slack-attributed MCP run too", () => {
+    setRows([
+      makeRow({
+        source: "api",
+        createdByName: "Ada",
+        launcher: { kind: "mcp", client: "mcpjam-slack/2.0.0" },
+        attribution: { surface: "slack", apiKeyId: "key_abcd3f9a" },
+      }),
+    ]);
+    render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);
+
+    // `resolveRunOrigin` answers `slack` here — verified attribution outranks
+    // the declared launcher, on purpose — so asking the ORIGIN whether this is
+    // "an MCP run" said no, and hid the agent name for exactly the runs that
+    // have one. The name lives on `launcher.client` either way.
+    expect(inTable().getByText("via mcpjam-slack/2.0.0")).toBeTruthy();
+    expect(inTable().queryByText(/via API key/)).toBeNull();
+  });
+
   it("says nothing extra for a run someone started in the app", () => {
     setRows([makeRow({ source: "ui", createdByName: "Ada" })]);
     render(<ProjectRunsTable projectId="proj_1" onSelectRun={vi.fn()} />);

@@ -75,6 +75,13 @@
   --diagram-sandbox-foreground: oklch(0.99 0.01 75);
   --diagram-view: oklch(0.6 0.1 290);
   --diagram-view-foreground: oklch(0.99 0.01 290);
+  /* Run-origin accent tokens — the two launch origins the runs table has to
+     tell apart from the API rows they are stamped as: the mcpjam CLI and an
+     MCP client's agent (Slack and Discord included). Role-based; used only by
+     `lib/evals/run-origin.ts`, as tinted borders and backgrounds behind
+     --foreground text. */
+  --run-origin-cli: oklch(0.65 0.11 195);
+  --run-origin-agent: oklch(0.62 0.21 330);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -226,6 +233,10 @@
   --diagram-sandbox-foreground: oklch(0.2 0.04 75);
   --diagram-view: oklch(0.8 0.09 290);
   --diagram-view-foreground: oklch(0.2 0.04 290);
+  /* Run-origin accent tokens — lifted, like the diagram hues above, so the
+     tints stay legible against the dark canvas. */
+  --run-origin-cli: oklch(0.78 0.1 195);
+  --run-origin-agent: oklch(0.74 0.18 330);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:

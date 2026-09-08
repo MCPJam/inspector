@@ -24,7 +24,7 @@ import { RunSourceBadge } from "./run-source-badge";
 import {
   apiKeyTail,
   originsForFilters,
-  resolveRunOrigin,
+  runAgentName,
   RUN_ORIGIN_FILTERS,
 } from "@/lib/evals/run-origin";
 import type { EvalSuiteRun } from "./types";
@@ -425,9 +425,7 @@ export function ProjectRunsTable({
  */
 function RunByCell({ row }: { row: ProjectRunRow }) {
   const name = row.createdByName ?? "—";
-  const origin = resolveRunOrigin(row);
-  const agent =
-    origin === "mcp" && row.launcher?.client ? row.launcher.client : null;
+  const agent = runAgentName(row);
   const keyTail = agent ? null : apiKeyTail(row.attribution?.apiKeyId);
   return (
     <span className="flex flex-col leading-tight">

@@ -2,7 +2,7 @@ import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import {
   RUN_ORIGIN_META,
-  resolveRunOrigin,
+  resolveRunOriginDetail,
   runOriginTitle,
   type RunOriginInput,
 } from "@/lib/evals/run-origin";
@@ -30,12 +30,15 @@ export function RunSourceBadge({
   run: RunOriginInput;
   className?: string;
 }) {
-  const origin = resolveRunOrigin(run);
-  const meta = RUN_ORIGIN_META[origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
+  // The BASIS, not just the value: an `mcp` run resolved from verified
+  // attribution and one resolved from a client's own claim are the same badge
+  // and must not carry the same tooltip.
+  const resolved = resolveRunOriginDetail(run);
+  const meta = RUN_ORIGIN_META[resolved?.origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
   return (
     <Badge
       variant="outline"
-      title={runOriginTitle(origin)}
+      title={runOriginTitle(resolved?.origin, resolved?.basis)}
       className={cn(
         "shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide",
         meta.className,

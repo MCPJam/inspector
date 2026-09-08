@@ -313,6 +313,36 @@ export function pickBacktestableRun(runs: EvalSuiteRun[]): EvalSuiteRun | null {
   );
 }
 
+/**
+ * Why the settings below cannot be changed here, and the way forward.
+ *
+ * At the TOP of the sheet, not on the control that refuses: someone opens
+ * Settings to change something specific, and a reason discoverable only by
+ * clicking the thing that does not work is a reason most people never read.
+ */
+function SuiteCiOwnedNotice({ onDuplicate }: { onDuplicate?: () => void }) {
+  return (
+    <div
+      data-testid="suite-settings-ci-owned"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/40 px-4 py-3"
+    >
+      <p className="text-xs text-muted-foreground">{CI_OWNED_REASON_COPY}</p>
+      {onDuplicate ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 shrink-0"
+          onClick={onDuplicate}
+          data-testid="suite-settings-duplicate-to-edit"
+        >
+          Duplicate to edit
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 export function SuiteIterationsView({
   suite,
   cases,
@@ -340,9 +370,9 @@ export function SuiteIterationsView({
   organizationId = null,
   navigation,
   onSetupCi,
-  onCreateTestCase,
-  onRecordTestCase,
-  onGenerateTestCases,
+  onCreateTestCase: onCreateTestCaseProp,
+  onRecordTestCase: onRecordTestCaseProp,
+  onGenerateTestCases: onGenerateTestCasesProp,
   canGenerateTestCases = false,
   isGeneratingTestCases = false,
   caseListInSidebar = false,
@@ -364,7 +394,7 @@ export function SuiteIterationsView({
   evaluateCaseEditor = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
-  onDeleteTestCasesBatch,
+  onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
   onRunTestCase,
   runningTestCaseId = null,
   onContinueInChat,
@@ -512,19 +542,51 @@ export function SuiteIterationsView({
   // read-only in exactly the same way, but keeps its Run controls.
   //
   // Derived from the SUITE ROW (`isCiOwnedSuite`, resolved by the caller), NOT
-  // from `getSuiteCapabilities.ownership`. Two reasons, and the second is the
-  // hard one:
-  //
-  //   * the row is complete — `declaredSuiteId` and `source` are both on it,
-  //     so the capabilities read would confirm what is already known;
-  //   * `useSuiteCapabilities` below is called with `isEditMode ? … : null`,
-  //     and `isEditMode` is computed HERE. Feeding capabilities back into it
-  //     would make edit mode depend on a query that only runs in edit mode.
-  //
-  // The backend refuses the write regardless; the settings sheet still uses
-  // `capabilities.ownership` for its per-row reason, where it is already read.
+  // from `getSuiteCapabilities.ownership` — the row is complete
+  // (`declaredSuiteId` and `source` both live on it), and it is available
+  // before any query resolves. The settings sheet still reads
+  // `capabilities.ownership` for its per-row reason, where it is loaded anyway.
   const editingDisabled = readOnlyConfig || configLocked;
-  const isEditMode = route.type === "suite-edit" && !editingDisabled;
+
+  // ── CASE AUTHORING, WITHHELD RATHER THAN GATED ────────────────────────────
+  //
+  // `case.create`, `case.edit` and `case.delete` are all in the platform's
+  // locked set, so on a CI-owned suite every one of these ends in a `409`
+  // after the click. The affordance is the bug, not the refusal.
+  //
+  // Withheld at the top rather than gated at each render site, for the same
+  // reason the settings column is one `fieldset[disabled]` rather than thirty
+  // `disabled` props: these callbacks reach the header, the dashboard, the
+  // folded dashboard, the sidebar case list and the run page — five call sites
+  // today, and the sixth is the one somebody forgets. Every consumer already
+  // hides its control when the prop is absent, because a surface that cannot
+  // author cases is not a new state for any of them.
+  //
+  // `onDuplicateSuite` is deliberately NOT in here: duplicating is the way out
+  // of the lock, and it writes a new suite rather than this one.
+  const onCreateTestCase = configLocked ? undefined : onCreateTestCaseProp;
+  const onRecordTestCase = configLocked ? undefined : onRecordTestCaseProp;
+  const onGenerateTestCases = configLocked
+    ? undefined
+    : onGenerateTestCasesProp;
+  const onDeleteTestCasesBatch = configLocked
+    ? undefined
+    : onDeleteTestCasesBatchProp;
+  // `isEditMode` is whether the settings SHEET renders, and it deliberately
+  // does NOT include `configLocked`.
+  //
+  // A CI-owned suite's settings are its documentation: they are exactly what a
+  // person needs to read to understand what CI is running, and the sheet is the
+  // only surface that shows them. Folding the lock in here made the whole sheet
+  // unreachable while the Settings control still navigated to `suite-edit` — the
+  // URL changed and nothing appeared. `readOnlyConfig` is different: it means
+  // this surface offers no suite settings at all (desktop CI), so it still
+  // closes the sheet.
+  //
+  // What the lock does instead is make the sheet a VIEWER: `editingDisabled`
+  // hides the commit bar and `settingsLockedReason` disables every control
+  // inside, so nothing there can be typed into and then silently dropped.
+  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -1882,7 +1944,7 @@ export function SuiteIterationsView({
                           iteration: iterationId,
                         })
                       }
-                      {...(onEditTestCase
+                      {...(onEditTestCase && !editingDisabled
                         ? { onEditCase: onEditTestCase }
                         : {})}
                       fallbackBody={runDetailView}
@@ -2173,8 +2235,27 @@ export function SuiteIterationsView({
               activeId={activeGroupId}
               onSelect={selectSettingsGroup}
             />
+            {configLocked ? (
+              <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
+            ) : null}
             <div className="flex flex-col gap-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:gap-x-12">
-              <div className="min-w-0 md:col-start-1">
+              {/*
+                A `fieldset[disabled]` rather than a `disabled` prop threaded
+                into ~30 rows. Two reasons it is the better instrument here:
+                the browser disables EVERY nested form control natively, so a
+                row added later is locked without anybody remembering; and a
+                threaded prop that one row forgot would leave a control that
+                looks editable, accepts input, and drops it — which is worse
+                than no lock at all. The UA border/padding/margin are reset so
+                this is invisible in the unlocked case.
+              */}
+              <fieldset
+                disabled={editingDisabled}
+                className="m-0 min-w-0 border-0 p-0 md:col-start-1"
+                data-testid={
+                  editingDisabled ? "suite-settings-locked" : undefined
+                }
+              >
                 {activeGroupId === "grading" ? (
                   <section data-step-id="grading">
                     <SuiteSettingsSectionChain>
@@ -2634,7 +2715,7 @@ export function SuiteIterationsView({
                     ]}
                   />
                 )}
-              </div>
+              </fieldset>
               <SuiteSettingsSubsectionNav
                 subsections={activeGroupId === "runs" ? [] : activeSubsections}
                 onSelect={selectSettingsSubsection}

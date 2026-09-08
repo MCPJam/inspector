@@ -195,6 +195,22 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runsViewMode === "test-cases" ||
     (unifiedSuiteDashboard && viewMode === "overview");
 
+  /**
+   * The AUTHORING half of the case toolbar — Generate and New case.
+   *
+   * Split from `showTestCaseCtas` rather than folded into it, because that flag
+   * also gates **Run all**, which is a run control and must survive the lock:
+   * running a CI-owned suite from the app is the point. Both buttons here start
+   * flows that end in a `case.create` the platform refuses with
+   * `CI_OWNED_SUITE_READ_ONLY`, so offering them is offering work that cannot
+   * land.
+   *
+   * This is the Evals path specifically. Evaluate hides Add case through
+   * `SuiteDetailOverview`; the unified dashboard renders its case tools from
+   * this header instead, so the same rule has to be stated twice.
+   */
+  const showCaseAuthoringCtas = showTestCaseCtas && !configLocked;
+
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
   const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
@@ -663,8 +679,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   const overviewHasCaseTools =
     overviewRunAllCta != null ||
-    (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
-    (showTestCaseCtas && Boolean(onCreateTestCase));
+    (showCaseAuthoringCtas && Boolean(onGenerateTestCases)) ||
+    (showCaseAuthoringCtas && Boolean(onCreateTestCase));
 
   const overviewSuiteNavButtons =
     overviewHasSuiteNav ? (
@@ -730,7 +746,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewGenerateButton =
-    showTestCaseCtas && onGenerateTestCases ? (
+    showCaseAuthoringCtas && onGenerateTestCases ? (
       <div className="inline-flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -782,7 +798,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewNewCaseButton =
-    showTestCaseCtas && onCreateTestCase ? (
+    showCaseAuthoringCtas && onCreateTestCase ? (
       <Button
         type="button"
         size="sm"

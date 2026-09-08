@@ -590,3 +590,92 @@ describe("SuiteHeader", () => {
     });
   });
 });
+
+/**
+ * The Evals unified dashboard renders its case toolbar from THIS header, while
+ * Evaluate renders it from `SuiteDetailOverview`. So the CI-owned rule has to
+ * be stated in both places, and this is the half that was missed: Generate and
+ * New case start flows that end in a `case.create` the platform refuses with
+ * `CI_OWNED_SUITE_READ_ONLY`.
+ */
+describe("SuiteHeader — a suite managed by CI", () => {
+  const overviewProps = {
+    suite: {
+      _id: "suite-1",
+      createdBy: "user-1",
+      name: "Asana MCP Evals",
+      description: "CI suite",
+      configRevision: "1",
+      environment: { servers: ["asana"] },
+      createdAt: 1,
+      updatedAt: 1,
+      source: "sdk" as const,
+      declaredSuiteId: "s_from_file",
+    },
+    viewMode: "overview" as const,
+    selectedRunDetails: null,
+    isEditMode: false,
+    onRerun: vi.fn(),
+    onReplayRun: vi.fn(),
+    onCancelRun: vi.fn(),
+    onViewModeChange: vi.fn(),
+    connectedServerNames: new Set<string>(["asana"]),
+    hasServersConfigured: true,
+    rerunningSuiteId: null,
+    cancellingRunId: null,
+    runs: [],
+    allIterations: [],
+    aggregate: null,
+    testCases: [],
+    availableModels: [],
+    runsViewMode: "test-cases" as const,
+    onGenerateTestCases: vi.fn(),
+    onCreateTestCase: vi.fn(),
+    canGenerateTestCases: true,
+    hideRunActions: true,
+    unifiedSuiteDashboard: true,
+  };
+
+  it("offers no case authoring", () => {
+    renderWithProviders(<SuiteHeader {...(overviewProps as never)} configLocked />);
+
+    expect(screen.queryByRole("button", { name: /Generate/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /New case/i })).toBeNull();
+  });
+
+  it("still offers case authoring on an app-authored suite", () => {
+    // The guard against over-locking: the same header, unlocked, is unchanged.
+    renderWithProviders(<SuiteHeader {...(overviewProps as never)} />);
+
+    expect(screen.getByRole("button", { name: /Generate/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /New case/i })).toBeTruthy();
+  });
+
+  it("keeps Run all — running a CI-owned suite is the point", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...(overviewProps as never)}
+        testCases={[{ _id: "case-1" } as never]}
+        configLocked
+      />,
+    );
+
+    // `showTestCaseCtas` gates Run all as well as the authoring buttons, which
+    // is why the lock keys off a separate derivation rather than that flag.
+    expect(screen.getByRole("button", { name: /Run all/i })).toBeTruthy();
+  });
+
+  it("offers no Setup CI or Settings on a locked suite", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...(overviewProps as never)}
+        onSetupCi={vi.fn()}
+        configLocked
+      />,
+    );
+
+    // Setup CI wires a suite INTO CI; a suite CI already owns has nothing to
+    // wire, and the flow writes suite configuration.
+    expect(screen.queryByRole("button", { name: /Setup CI/i })).toBeNull();
+  });
+});

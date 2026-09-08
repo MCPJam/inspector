@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   suiteIterationsView: vi.fn(),
   updateSuiteMutation: vi.fn(),
   handleGenerateTests: vi.fn(),
+  handleDuplicateSuite: vi.fn(),
   handleRerun: vi.fn(),
   handleCancelRun: vi.fn(),
   confirmDelete: vi.fn(async () => true),
@@ -200,6 +201,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
     isGeneratingTests: false,
     handleGenerateTests: mocks.handleGenerateTests,
     handleCreateTestCase: vi.fn(),
+    handleDuplicateSuite: mocks.handleDuplicateSuite,
     handleRerun: mocks.handleRerun,
     handleCancelRun: mocks.handleCancelRun,
     handleDelete: vi.fn(),
@@ -835,10 +837,19 @@ describe("EvalsTab — CI-managed suites", () => {
     render(<EvalsTab projectId="ws-1" />);
 
     expect(lastProps().configLocked).toBe(true);
-    // The escape hatch has to be WIRED, not merely rendered: `duplicateTestSuite`
-    // stamps the copy `source: 'ui'` and drops the declared id, which is what
-    // makes the copy editable.
-    expect(typeof lastProps().onDuplicateSuite).toBe("function");
+    // The escape hatch has to be WIRED, not merely rendered — so CALL it.
+    // `onDuplicateSuite` is an arrow closing over the handler, which means a
+    // `typeof … === "function"` check passes whether or not anything is
+    // behind it; invoking it is the only assertion that can fail.
+    (lastProps().onDuplicateSuite as () => void)();
+    expect(mocks.handleDuplicateSuite).toHaveBeenCalledTimes(1);
+    // With the suite the lock is being shown for. `duplicateTestSuite` is
+    // what stamps the copy `source: 'ui'` and drops the declared id, and it
+    // can only do that for the suite it is handed.
+    expect(mocks.handleDuplicateSuite.mock.calls[0]?.[0]).toMatchObject({
+      _id: "suite-a",
+      declaredSuiteId: "s_from_file",
+    });
   });
 
   it("locks an SDK-created suite the same way", () => {

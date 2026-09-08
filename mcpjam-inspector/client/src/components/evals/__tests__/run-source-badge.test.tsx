@@ -98,4 +98,31 @@ describe("RunSourceBadge", () => {
     render(<RunSourceBadge run={{ suiteSource: "sdk" }} />);
     expect(screen.getByText("SDK")).toBeTruthy();
   });
+
+  it("calls a VERIFIED mcp run verified, not declared", () => {
+    // `mcp` is the one origin that arrives both ways. Reading claim-vs-proof
+    // off the origin VALUE labelled a run the backend had verified from its
+    // credential as something the client merely said — which is the exact
+    // distinction the two-layer design exists to keep.
+    render(
+      <RunSourceBadge
+        run={{
+          source: "api",
+          launcher: { kind: "mcp", client: "claude-code" },
+          attribution: { surface: "mcp" },
+        }}
+      />,
+    );
+    expect(screen.getByTitle(/verified from the credential/i)).toBeTruthy();
+    expect(screen.queryByTitle(/declared by the launching client/i)).toBeNull();
+  });
+
+  it("still calls an unverified mcp run declared", () => {
+    render(
+      <RunSourceBadge
+        run={{ source: "api", launcher: { kind: "mcp", client: "some-agent" } }}
+      />,
+    );
+    expect(screen.getByTitle(/declared by the launching client/i)).toBeTruthy();
+  });
 });

@@ -52,6 +52,22 @@ export type RunOrigin =
   | "discord";
 
 /**
+ * WHICH FIELD ANSWERED — the thing the tooltip must not get wrong.
+ *
+ * `mcp` can arrive two ways: verified, from `attribution.surface` the backend
+ * minted off the credential, or declared, from a `launcher.kind` the client
+ * sent. Reading claim-vs-proof off the ORIGIN VALUE said "declared by the
+ * launching client" for both, which is precisely the distinction the two-layer
+ * design exists to keep — erased in the one place a person reads it.
+ */
+export type RunOriginBasis = "verified" | "declared" | "stamped";
+
+export type ResolvedRunOrigin = {
+  origin: RunOrigin;
+  basis: RunOriginBasis;
+};
+
+/**
  * The verified surfaces that outrank a declared launcher.
  *
  * Only three, because only three are MORE SPECIFIC than what the launcher
@@ -84,17 +100,26 @@ export type RunOriginInput = {
  * no `launcher` and no `attribution` at all, and this resolver has to keep
  * answering `source` for those rows rather than rendering a blank cell.
  */
-export function resolveRunOrigin(run: RunOriginInput): RunOrigin | undefined {
+export function resolveRunOriginDetail(
+  run: RunOriginInput,
+): ResolvedRunOrigin | undefined {
   const surface = run.attribution?.surface;
   if (typeof surface === "string" && PROMOTED_SURFACES.has(surface)) {
-    return surface as RunOrigin;
+    return { origin: surface as RunOrigin, basis: "verified" };
   }
   const kind = run.launcher?.kind;
   if (typeof kind === "string" && LAUNCHER_KINDS.has(kind)) {
-    return kind as RunOrigin;
+    return { origin: kind as RunOrigin, basis: "declared" };
   }
   const stamped = run.source ?? run.suiteSource;
-  return typeof stamped === "string" ? (stamped as RunOrigin) : undefined;
+  return typeof stamped === "string"
+    ? { origin: stamped as RunOrigin, basis: "stamped" }
+    : undefined;
+}
+
+/** The origin alone, for readers that only need to pick a label or a colour. */
+export function resolveRunOrigin(run: RunOriginInput): RunOrigin | undefined {
+  return resolveRunOriginDetail(run)?.origin;
 }
 
 export type RunOriginMeta = {
@@ -117,6 +142,13 @@ export type RunOriginMeta = {
  * foreground keeps its contrast ratio in both themes — the same rule
  * `SuiteSourceBadge` follows, because this is a label on a dense row and not a
  * status.
+ *
+ * The two origins this file ADDED (`cli`, and the agent surfaces) tint from
+ * `--run-origin-cli` / `--run-origin-agent` in `design-system/src/tokens.css`,
+ * which are redefined under `.dark` and so track the theme. The Tailwind
+ * palette classes on `api`, `schedule` and `github_check` predate this file
+ * and are left as they were found; converting them would restyle badges this
+ * change has no business restyling.
  */
 export const RUN_ORIGIN_META: Record<RunOrigin, RunOriginMeta> = {
   ui: {
@@ -159,36 +191,50 @@ export const RUN_ORIGIN_META: Record<RunOrigin, RunOriginMeta> = {
     label: "CLI",
     title: "Launched by the mcpjam CLI",
     className:
-      "border-teal-500/50 bg-teal-500/10 text-foreground dark:bg-teal-500/15",
+      "border-[color-mix(in_oklab,var(--run-origin-cli)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-cli)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-cli)_15%,transparent)]",
     declared: true,
   },
   mcp: {
     label: "MCP",
     title: "Launched by an MCP client's agent",
     className:
-      "border-fuchsia-500/50 bg-fuchsia-500/10 text-foreground dark:bg-fuchsia-500/15",
+      "border-[color-mix(in_oklab,var(--run-origin-agent)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-agent)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-agent)_15%,transparent)]",
     declared: true,
   },
   slack: {
     label: "Slack",
     title: "Launched by the MCPJam Slack agent",
     className:
-      "border-fuchsia-500/50 bg-fuchsia-500/10 text-foreground dark:bg-fuchsia-500/15",
+      "border-[color-mix(in_oklab,var(--run-origin-agent)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-agent)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-agent)_15%,transparent)]",
   },
   discord: {
     label: "Discord",
     title: "Launched by the MCPJam Discord agent",
     className:
-      "border-fuchsia-500/50 bg-fuchsia-500/10 text-foreground dark:bg-fuchsia-500/15",
+      "border-[color-mix(in_oklab,var(--run-origin-agent)_50%,transparent)] bg-[color-mix(in_oklab,var(--run-origin-agent)_10%,transparent)] text-foreground dark:bg-[color-mix(in_oklab,var(--run-origin-agent)_15%,transparent)]",
   },
 };
 
 const DECLARED_SUFFIX = " — declared by the launching client";
+const VERIFIED_SUFFIX = " — verified from the credential the run authenticated with";
 
-/** The tooltip for one origin, saying whether it is a claim or a stamp. */
-export function runOriginTitle(origin: RunOrigin | undefined): string {
+/**
+ * The tooltip for one origin, saying whether it is a claim or a proof.
+ *
+ * `basis` comes from `resolveRunOriginDetail`, because the same origin value
+ * can be either. Without one, the table's `declared` flag stands in — the
+ * conservative read, since understating a proof as a claim is the harmless
+ * direction and overstating a claim as a proof is not.
+ */
+export function runOriginTitle(
+  origin: RunOrigin | undefined,
+  basis?: RunOriginBasis,
+): string {
   const meta = RUN_ORIGIN_META[origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
-  return meta.declared ? `${meta.title}${DECLARED_SUFFIX}` : meta.title;
+  if (basis === "verified") return `${meta.title}${VERIFIED_SUFFIX}`;
+  if (basis === "stamped") return meta.title;
+  const declared = basis === "declared" || meta.declared === true;
+  return declared ? `${meta.title}${DECLARED_SUFFIX}` : meta.title;
 }
 
 /**
@@ -238,6 +284,24 @@ export function originsForFilters(selected: readonly string[]): RunOrigin[] {
     }
   }
   return [...out];
+}
+
+/**
+ * The agent that launched an MCP run, when it named itself.
+ *
+ * Keyed on the DECLARED `launcher.kind`, never on the resolved origin. A run
+ * made through the Slack or Discord agent resolves to `slack`/`discord` —
+ * verified attribution outranks the claim, on purpose — so asking the origin
+ * whether this was "an MCP run" answered no for exactly the runs that carry an
+ * agent name. `launcher.client` is where the name lives either way.
+ */
+export function runAgentName(run: RunOriginInput): string | null {
+  const launcher = run.launcher;
+  if (!launcher || launcher.kind !== "mcp") return null;
+  const client = launcher.client;
+  if (typeof client !== "string") return null;
+  const trimmed = client.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**

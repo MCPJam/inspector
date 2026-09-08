@@ -609,6 +609,45 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     expect(screen.getByTestId("suite-header")).toBeInTheDocument();
   });
 
+  it("passes case authoring through on the legacy dashboard for an app-authored suite", () => {
+    // The guard against over-locking, and the reason the next test means
+    // something: these callbacks reach the header to begin with.
+    const onCreateTestCase = vi.fn();
+    const onGenerateTestCases = vi.fn();
+    renderOverview({ onCreateTestCase, onGenerateTestCases });
+
+    const props = mocks.suiteHeader.mock.calls.at(-1)?.[0];
+    expect(props.onCreateTestCase).toBe(onCreateTestCase);
+    expect(props.onGenerateTestCases).toBe(onGenerateTestCases);
+  });
+
+  it("withholds case authoring on the legacy dashboard when CI owns the suite", () => {
+    // The legacy Evals surface never renders `suite-detail-overview`, so a
+    // lock that lived only on the opted-in overview missed it entirely — Add
+    // case, Generate and batch delete stayed reachable on exactly the suite
+    // the platform answers with `CI_OWNED_SUITE_READ_ONLY`.
+    //
+    // Asserted as WITHHELD CALLBACKS rather than as absent buttons: the
+    // callbacks are dropped once, at the top of the view, so every consumer
+    // below — header, dashboard, folded dashboard, sidebar case list, run
+    // page — is covered by the same act, including the one added next.
+    renderOverview({
+      configLocked: true,
+      onCreateTestCase: vi.fn(),
+      onGenerateTestCases: vi.fn(),
+      onRecordTestCase: vi.fn(),
+      onDeleteTestCasesBatch: vi.fn(),
+    });
+
+    const props = mocks.suiteHeader.mock.calls.at(-1)?.[0];
+    expect(props.onCreateTestCase).toBeUndefined();
+    expect(props.onGenerateTestCases).toBeUndefined();
+    expect(props.configLocked).toBe(true);
+    // Running is NOT withheld: running a CI-owned suite from the app is the
+    // whole point of locking edits rather than the suite.
+    expect(props.onRerun).toBeTypeOf("function");
+  });
+
   it("renders the Evaluate (New) suite-detail identity row when opted in", () => {
     renderOverview({ suiteDetailOverview: true });
 
