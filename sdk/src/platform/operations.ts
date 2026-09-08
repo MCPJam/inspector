@@ -7757,6 +7757,19 @@ function checkRepoOrganizationOrThrow(project: PlatformProject): string {
 // them here would let a caller retarget a repository away from the suite it is
 // standing on.
 
+// The two GitHub-check operations' descriptions, declared once: the canonical
+// pair below reads them as-is, and the deprecated pair prefixes a line saying
+// which name replaced it. One body, so the two spellings cannot describe the
+// same behaviour differently.
+const EVAL_GITHUB_REPOS_LIST_DESCRIPTION =
+  'List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.';
+const EVAL_GITHUB_REPO_CONNECT_DESCRIPTION =
+  "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.";
+const DEPRECATED_EVAL_CHECK_REPOS_PREFIX =
+  "Deprecated spelling of list_eval_github_repos, which does exactly this — `check` here means a GITHUB check, never a case's grading check. ";
+const DEPRECATED_EVAL_CHECK_REPO_CONNECT_PREFIX =
+  "Deprecated spelling of connect_eval_github_repo, which does exactly this — `check` here means a GITHUB check, never a case's grading check. ";
+
 const listEvalCheckReposInput = z.object({
   project: z
     .string()
@@ -7781,7 +7794,7 @@ export const listEvalCheckReposOperation: PlatformOperation<
   name: "list_eval_check_repos",
   title: "List MCPJam GitHub Checks repositories",
   description:
-    "Deprecated spelling of list_eval_github_repos, which does exactly this — `check` here means a GITHUB check, never a case's grading check. List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
+    DEPRECATED_EVAL_CHECK_REPOS_PREFIX + EVAL_GITHUB_REPOS_LIST_DESCRIPTION,
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -7838,7 +7851,8 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
   name: "connect_eval_check_repo",
   title: "Run an MCPJam eval suite on a repository's pull requests",
   description:
-    "Deprecated spelling of connect_eval_github_repo, which does exactly this — `check` here means a GITHUB check, never a case's grading check. Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+    DEPRECATED_EVAL_CHECK_REPO_CONNECT_PREFIX +
+    EVAL_GITHUB_REPO_CONNECT_DESCRIPTION,
   readOnly: false,
   // Not `spend`: it costs an eval run per pull request, but the hazard a
   // surface needs to warn about here is REACH — it changes what happens in a
@@ -7886,6 +7900,11 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
 // which name is canonical now. Each new operation spreads its old sibling, so
 // the two names share one implementation and cannot diverge.
 
+// The spread carries `execute`, the schema, the risk and the permalink — one
+// implementation for both names. `description` is NOT inherited: its sibling's
+// says "deprecated spelling of THIS operation", which spread onto the
+// canonical one would have it introduce itself to an agent as the deprecated
+// spelling of itself.
 export const listEvalGithubReposOperation: PlatformOperation<
   ListEvalCheckReposInput,
   ListEvalCheckReposResult
@@ -7893,6 +7912,7 @@ export const listEvalGithubReposOperation: PlatformOperation<
   ...listEvalCheckReposOperation,
   name: "list_eval_github_repos",
   title: "List MCPJam GitHub check repositories",
+  description: EVAL_GITHUB_REPOS_LIST_DESCRIPTION,
 };
 
 export const connectEvalGithubRepoOperation: PlatformOperation<
@@ -7902,6 +7922,7 @@ export const connectEvalGithubRepoOperation: PlatformOperation<
   ...connectEvalCheckRepoOperation,
   name: "connect_eval_github_repo",
   title: "Run an MCPJam eval suite on a GitHub repository's pull requests",
+  description: EVAL_GITHUB_REPO_CONNECT_DESCRIPTION,
 };
 
 const evalRunStepsInput = evalRunScopedInput.extend({

@@ -340,13 +340,13 @@ describe("model-factory", () => {
 
       expect(ids.length).toBeGreaterThan(100);
 
+      // Parsing at all is the whole assertion: no custom providers are
+      // registered here, so the only outcomes are a builtin/OpenRouter
+      // resolution or the throw this change exists to remove.
       const failures: string[] = [];
       for (const id of ids) {
         try {
-          const parsed = parseLLMString(id);
-          if (parsed.type !== "builtin") {
-            failures.push(`${id}: resolved to a custom provider`);
-          }
+          parseLLMString(id);
         } catch (error) {
           failures.push(`${id}: ${(error as Error).message}`);
         }

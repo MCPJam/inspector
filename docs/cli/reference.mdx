@@ -1271,19 +1271,19 @@ you pass is a catalog id, the error says so and points at `--client`.
 how much to spend, so:
 
 - **nothing attached** → the suite's saved server selection runs (unchanged);
-- **exactly one** attached environment or host → that one runs automatically,
-  and the run is stamped with its configuration;
+- **exactly one** attached environment or client → that one runs
+  automatically, and the run is stamped with its configuration;
 - **several attached** → the run fails with `TARGET_REQUIRED`, listing every
-  choice. Name one with `--environment` / `--host`, several by repeating the
+  choice. Name one with `--environment` / `--client`, several by repeating the
   flag, or run all of them with `--all-targets`.
 
 `--all-targets` expands **one axis**: attached environments if the suite has
-any, otherwise attached hosts — never a cross product, because an environment
-already resolves a host. It starts **one paid run per target**, launched as a
+any, otherwise attached clients — never a cross product, because an environment
+already resolves a client. It starts **one paid run per target**, launched as a
 single group that occupies one concurrency slot rather than N.
 
-`--environment` / `--host` and `--server` are mutually exclusive: an
-environment or host supplies a closed server set that an override cannot
+`--environment` / `--client` and `--server` are mutually exclusive: an
+environment or client supplies a closed server set that an override cannot
 change.
 
 <Warning>

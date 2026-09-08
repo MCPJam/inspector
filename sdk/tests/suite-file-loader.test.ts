@@ -449,6 +449,24 @@ describe("case checks", () => {
     expect(JSON.stringify(result)).toContain("assertions");
   });
 
+  it("serializes `checks` in canonical key order, not after `import`", () => {
+    // A key missing from CASE_KEY_ORDER falls through to the remainder and is
+    // appended last, so an authored file would reorder itself on its first
+    // write-back — diff churn on a file a customer keeps in review.
+    const authored = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, checks: [CHECK] } : entry
+      ),
+    } as EvalSuiteFile;
+
+    const text = serializeEvalSuiteFile(authored);
+    expect(text.indexOf("checks:")).toBeGreaterThan(text.indexOf("steps:"));
+
+    // And it is STABLE: serializing the reparsed file returns the same bytes.
+    expect(serializeEvalSuiteFile(loadOrThrow(text).authored)).toBe(text);
+  });
+
   it("leaves a case with neither empty in the runner view", () => {
     const loaded = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
     expect(loaded.resolved.cases[0]?.assertions).toEqual([]);

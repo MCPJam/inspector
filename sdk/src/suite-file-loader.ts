@@ -641,6 +641,10 @@ const CASE_KEY_ORDER = [
   "isNegativeTest",
   "expectedOutput",
   "steps",
+  "checks",
+  // Beside `checks`, its deprecated spelling. A key missing from this list
+  // serializes into the remainder AFTER `import`, so an authored `checks`
+  // would move on the first write-back and churn the diff.
   "assertions",
   "import",
 ] as const;

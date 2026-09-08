@@ -2290,6 +2290,84 @@ test("eval update rejects an unknown --json key as a usage error", async () => {
   }
 });
 
+/**
+ * The flag REPLACES the body's attachment list, as it always did.
+ *
+ * `--client` writes the operation's `clients` field while a `--json` body
+ * carrying the pre-rename `hosts` would stay put beside it. Two replace-all
+ * attachment lists is a refusal by design, so leaving both would turn a body
+ * that used to be silently overridden into a hard failure.
+ */
+test("eval update --client replaces a --json body's hosts rather than colliding", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--json",
+            JSON.stringify({ hosts: [{ host: "From The File" }] }),
+            "--client",
+            "From The Flag"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      hosts?: Array<{ host: string }>;
+    };
+    assert.deepEqual(patchBody.hosts, [{ host: "From The Flag" }]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --host replaces a --json body's hosts too", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--json",
+            JSON.stringify({ hosts: [{ host: "From The File" }] }),
+            "--host",
+            "From The Flag"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      hosts?: Array<{ host: string }>;
+    };
+    assert.deepEqual(patchBody.hosts, [{ host: "From The Flag" }]);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval update --judge on writes enabled AND autoRun together", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -6311,6 +6389,38 @@ test("eval run names --client when --host is given a host-compat catalog id", as
     assert.match(run.stderr, /host-compat catalog id/);
     assert.match(run.stderr, /--client/);
     assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run does not blame the client for an unrelated not-found", async () => {
+  // The hint answers "your --host is a catalog id, not a saved client". A
+  // MISSING SUITE is a different failure, and a run resolves the suite before
+  // it ever looks at the client — so wrapping the whole operation would tell
+  // someone their mistyped suite name is a host-compat catalog id.
+  const fixture = await startEvalFixture({
+    suiteDetail: { hosts: [{ id: "host-1", name: "claude" }] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "no-such-suite",
+          "--host",
+          "claude"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.doesNotMatch(run.stderr, /host-compat catalog id/);
   } finally {
     await fixture.close();
   }

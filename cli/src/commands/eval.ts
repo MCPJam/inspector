@@ -257,8 +257,16 @@ function annotateCatalogHostConfusion(
     (isPlatformApiError(error) || error instanceof CliError) &&
     error.code === "NOT_FOUND";
   if (!isNotFound) return error;
-  const catalogIds = (selectors ?? []).filter((selector) =>
-    (HOST_TEMPLATE_IDS as readonly string[]).includes(selector.trim())
+  const catalogIds = (selectors ?? []).filter(
+    (selector) =>
+      (HOST_TEMPLATE_IDS as readonly string[]).includes(selector.trim()) &&
+      // The CLIENT lookup is the only one this advice is about. A run resolves
+      // the project, the suite and the cases first, and any of those can miss
+      // with its own NOT_FOUND — telling someone their mistyped SUITE name is
+      // a host-compat catalog id would be a confident non-sequitur. The SDK's
+      // resolver names what it was looking for, so match on that plus the
+      // selector rather than on the code alone.
+      error.message.includes(`Suite host "${selector.trim()}"`)
   );
   if (catalogIds.length === 0) return error;
   const named = catalogIds.map((id) => `"${id}"`).join(", ");
@@ -1011,8 +1019,15 @@ function buildSuiteUpdateInput(
     };
   }
   const clientAttachments = clientSelectorOf<string[]>(options);
-  if (clientAttachments !== undefined)
+  if (clientAttachments !== undefined) {
+    // The flag REPLACES the body's list, as it always did when both spelled it
+    // `hosts`. Now that the flag writes `clients`, a body carrying `hosts` has
+    // to be dropped: leaving both would send two replace-all attachment lists
+    // and the operation refuses that — so a --file body that used to be
+    // overridden would start failing instead.
+    delete input.hosts;
     input.clients = clientAttachments.map((client: string) => ({ client }));
+  }
 
   const exec = { ...(input.executionConfig ?? {}) };
   if (options.model !== undefined) exec.model = options.model;
