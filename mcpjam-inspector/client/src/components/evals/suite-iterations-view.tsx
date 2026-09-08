@@ -394,6 +394,7 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
+  evaluateObserveFirst = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -413,7 +414,15 @@ export function SuiteIterationsView({
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
-  onRerun: (suite: EvalSuite) => void;
+  onRerun: (
+    suite: EvalSuite,
+    opts?: {
+      matchOptionsOverride?: EvalMatchOptions;
+      iterationOverride?: number;
+      caseIds?: string[];
+      skipJudge?: boolean;
+    },
+  ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
@@ -528,6 +537,8 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
+  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
+  evaluateObserveFirst?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -724,18 +735,29 @@ export function SuiteIterationsView({
       opts?: {
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
+        caseIds?: string[];
+        skipJudge?: boolean;
       },
-    ) =>
-      (
-        onRerun as (
-          suite: EvalSuite,
-          opts?: {
-            matchOptionsOverride?: EvalMatchOptions;
-            iterationOverride?: number;
-          },
-        ) => void
-      )(s, opts),
+    ) => onRerun(s, opts),
     [onRerun],
+  );
+
+  /**
+   * "Run test" on one case: a SUITE run narrowed to it.
+   *
+   * Not a quick run, and the difference is the whole point. Every judge
+   * surface is keyed by `suiteRunId` — the request mutation, the `autoRun`
+   * trigger, the verdict store and the client reader — and a quick run has
+   * none, so a quick run can never answer "did it accomplish the goal?".
+   */
+  const onRunCase = useCallback(
+    async (
+      caseId: string,
+      opts?: { iterationOverride?: number; skipJudge?: boolean },
+    ) => {
+      await onRerunWithOverride(suite, { ...opts, caseIds: [caseId] });
+    },
+    [onRerunWithOverride, suite],
   );
 
   const onRunTestCaseWithOverride = useMemo<
@@ -1955,6 +1977,8 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
+                  observeFirst={evaluateObserveFirst}
+                  onRunCase={onRunCase}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}

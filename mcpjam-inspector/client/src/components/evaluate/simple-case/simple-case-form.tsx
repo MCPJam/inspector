@@ -1,48 +1,32 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, Plus, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@mcpjam/design-system/toggle-group";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import {
-  resolveCasePredicates,
   resolveMatchOptions,
   type CasePredicates,
   type EvalMatchOptions,
+  type Predicate,
 } from "@/shared/eval-matching";
-import type { Predicate } from "@/shared/eval-matching";
-import type { TestStep } from "@/shared/steps";
+import { isInteractStep, newStepId, type TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import type {
+  EvalJudgeConfig,
+  EvalJudgeConfigOverride,
+  EvalJudgeRubric,
+} from "../../evals/types";
 import {
-  ChecksSection,
-  ToolCalledWithFields,
-} from "../../evals/checks-section";
-import {
-  caseHasOwnAssertion,
-  displayCaseKind,
   inAppStepLabel,
   initialToolsChoice,
   isPromptFirst,
   leftoverSteps,
   matchOptionsForKind,
-  MORE_CHECK_GROUPS,
-  NEGATIVE_CONTRADICTING_KINDS,
   readSimpleCase,
-  readStepChecks,
   removeStepById,
-  resolveToolsQuestion,
   turnOrdinalByStepId,
-  UNSET_TOOLS_BLOCK_REASON,
   updateStepCheck,
   writeSimpleCase,
   type CaseKind,
@@ -50,8 +34,14 @@ import {
   type SimpleCaseTool,
   type ToolsChoice,
 } from "./simple-case-model";
+import {
+  appendCaseScorer,
+  removeCaseScorer,
+  updateCaseScorer,
+  withCaseJudgeSkipped,
+} from "../case-scorecard/case-scorecard-model";
+import { CaseScorecard } from "../case-scorecard/case-scorecard";
 import { AlsoInThisCase } from "./also-in-this-case";
-import { StepCheckRows } from "./step-check-rows";
 import { StatusDot, overlayStatus, type SimpleCaseOverlay } from "./status-dot";
 
 export type { SimpleCaseOverlay };
@@ -100,6 +90,25 @@ export type SimpleCaseFormProps = {
   inspectHeader?: ReactNode;
   overlay?: SimpleCaseOverlay | null;
   onSelectInAppStep?: (stepId: string) => void;
+  /**
+   * The one per-case judge control the backend admits (opt out). Absent on a
+   * surface that cannot write it, and the switch then does not render.
+   */
+  judgeConfigOverride?: EvalJudgeConfigOverride;
+  onJudgeConfigOverrideChange?: (
+    next: EvalJudgeConfigOverride | undefined,
+  ) => void;
+  /** Read-only judge facts: which model grades this, and against what. */
+  suiteJudgeConfig?: EvalJudgeConfig;
+  suiteJudgeRubric?: EvalJudgeRubric;
+  /** Gates the role control. Unavailable behaves exactly like unsupported. */
+  capabilities?: SuiteCapabilities | null;
+  /**
+   * The RESOLVED list a frozen trial was graded against. Supplying it replaces
+   * the case and suite rows, because that list cannot say which was which.
+   */
+  snapshotPredicates?: Predicate[];
+  onOpenSuiteSettings?: () => void;
 };
 
 export function SimpleCaseForm({
@@ -134,13 +143,19 @@ export function SimpleCaseForm({
   inspectHeader,
   overlay,
   onSelectInAppStep,
+  judgeConfigOverride,
+  onJudgeConfigOverrideChange,
+  suiteJudgeConfig,
+  suiteJudgeRubric,
+  capabilities,
+  snapshotPredicates,
+  onOpenSuiteSettings,
 }: SimpleCaseFormProps) {
   const view = useMemo(() => readSimpleCase(steps), [steps]);
   const resolvedMatch = resolveMatchOptions(
     suiteDefaultMatchOptions,
     matchOptions,
   );
-  const kind = displayCaseKind(persistedKind, resolvedMatch);
 
   const [uncontrolledToolsChoice, setUncontrolledToolsChoice] =
     useState<ToolsChoice>(() =>
@@ -160,61 +175,62 @@ export function SimpleCaseForm({
     onStashedToolsChange?.(next);
   };
 
-  const stepChecks = useMemo(() => readStepChecks(steps), [steps]);
   const leftovers = useMemo(() => leftoverSteps(steps), [steps]);
   const turnOrdinals = useMemo(() => turnOrdinalByStepId(steps), [steps]);
   const promptFirst = isPromptFirst(steps);
-  /**
-   * A case that does not open on a prompt has no model turn for a route claim
-   * to be about — a pinned `toolCall` render check grades the call the SPEC
-   * makes, not one the model chose. Lock the whole question rather than only
-   * its buttons: leaving Add reachable let a `toolCalledWith` assert be
-   * appended to a pinned turn, where it can never match.
+  /*
+   * "In the app" lists what the recorder captured — clicks and typing. A
+   * widget assertion is a CHECK, and it now files under Scorers with every
+   * other check rather than sitting apart from the things it is graded with.
+   * Its position in `steps` is untouched, so it still runs where it ran.
    */
-  const routeLocked = readOnly || !promptFirst;
-
-  // Open on load when the case already has checks, so a case whose whole
-  // grading lives here does not read as an empty form with a disclosure.
-  const [moreOpen, setMoreOpen] = useState(
-    () => stepChecks.length > 0 || (predicates?.list.length ?? 0) > 0,
+  const inAppInteractions = useMemo(
+    () => view.inApp.filter(isInteractStep),
+    [view.inApp],
   );
 
+  /**
+   * A newly added scorer opens expanded. A blank check has empty fields and a
+   * one-line row would show only its kind, leaving nothing to fill in.
+   */
+  const [addedRowKey, setAddedRowKey] = useState<string | null>(null);
+
+  const scorecardInput = useMemo(
+    () => ({
+      steps,
+      toolsChoice,
+      kind: persistedKind,
+      matchOptions,
+      suiteDefaultMatchOptions,
+      predicates,
+      suiteDefaultPredicates,
+      snapshotPredicates,
+      expectedOutput,
+      judgeConfigOverride,
+      suiteJudgeConfig,
+      suiteJudgeRubric,
+    }),
+    [
+      steps,
+      toolsChoice,
+      persistedKind,
+      matchOptions,
+      suiteDefaultMatchOptions,
+      predicates,
+      suiteDefaultPredicates,
+      snapshotPredicates,
+      expectedOutput,
+      judgeConfigOverride,
+      suiteJudgeConfig,
+      suiteJudgeRubric,
+    ],
+  );
   useEffect(() => {
     if (view.tools.length > 0 && toolsChoice !== "tools") {
       setToolsChoice("tools");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.tools, toolsChoice]);
-
-  const resolvedPredicates =
-    resolveCasePredicates(suiteDefaultPredicates, predicates) ?? [];
-
-  /**
-   * What the tool question shows. `"checks"` means the case names no route but
-   * is still graded by something it carries — the shape every CLI- and
-   * SDK-authored case has.
-   */
-  const question = resolveToolsQuestion({
-    choice: toolsChoice,
-    hasToolAsserts: view.tools.length > 0,
-    hasOwnAssertion: caseHasOwnAssertion({
-      steps,
-      expectedOutput,
-      predicates,
-    }),
-  });
-
-  // A negative case cannot also require a tool call — from the suite, this
-  // case, or a step. Advisory: the author's steps are never deleted to satisfy
-  // a toggle, and only `toolCalledWith` is rejected outright by the backend.
-  const negativeContradiction =
-    question === "noTool" &&
-    (resolvedPredicates.some((predicate) =>
-      NEGATIVE_CONTRADICTING_KINDS.has(predicate.type),
-    ) ||
-      stepChecks.some((check) =>
-        NEGATIVE_CONTRADICTING_KINDS.has(check.predicate.type),
-      ));
 
   const setKind = (next: CaseKind) => {
     if (readOnly) return;
@@ -279,26 +295,14 @@ export function SimpleCaseForm({
     setTools([
       ...view.tools,
       {
-        id: `assert-${Date.now()}-${view.tools.length + 1}`,
+        id: newStepId("assert"),
         toolName: name,
         arguments: {},
       },
     ]);
   };
 
-  const caseList = predicates?.list ?? [];
-  const setCaseList = (list: Predicate[]) => {
-    if (readOnly) return;
-    onPredicatesChange(
-      list.length === 0 ? undefined : { mode: "extend", list },
-    );
-  };
-
-  const predicatesByGroup = (kinds: ReadonlyArray<Predicate["type"]>) =>
-    caseList.filter((predicate) => kinds.includes(predicate.type));
-
   const promptReady = view.prompt.trim().length > 0;
-  const showUnsetError = validationAttempted && question === "unset";
 
   return (
     <div className="space-y-6" data-testid="simple-case-form">
@@ -382,9 +386,9 @@ export function SimpleCaseForm({
             </Button>
           )}
         </div>
-        {view.inApp.length === 0 ? null : (
+        {inAppInteractions.length === 0 ? null : (
           <div className="space-y-2">
-            {view.inApp.map((step) => (
+            {inAppInteractions.map((step) => (
               <InAppRow
                 key={step.id}
                 step={step}
@@ -402,278 +406,46 @@ export function SimpleCaseForm({
         )}
       </section>
 
-      <section className="space-y-4" data-testid="simple-case-check-the-result">
-        <Label className="text-[11px] font-medium text-foreground">
-          Check the result
-        </Label>
-        <div className="space-y-2">
-          <ToggleGroup
-            type="single"
-            value={kind}
-            onValueChange={(value) => {
-              if (value === "capability" || value === "regression") {
-                setKind(value);
-              }
-            }}
-            className="gap-0.5"
-            aria-label="Case kind"
-          >
-            <ToggleGroupItem
-              value="capability"
-              className="h-7 px-2.5 text-xs"
-              disabled={readOnly}
-            >
-              Capability
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="regression"
-              className="h-7 px-2.5 text-xs"
-              disabled={readOnly}
-            >
-              Regression
-            </ToggleGroupItem>
-          </ToggleGroup>
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            {kind === "regression"
-              ? "This case must take one exact route — order and no extra calls."
-              : "This case should reach the right tool. Extra calls are allowed."}
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <Label className="text-[11px] font-medium text-foreground">
-            {kind === "regression"
-              ? "Which route should it take?"
-              : "Which tool should handle it?"}
-          </Label>
-          {promptFirst ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant={question === "noTool" ? "secondary" : "outline"}
-                size="sm"
-                className="h-7 text-xs"
-                onClick={chooseNoTool}
-                disabled={readOnly}
-              >
-                No tool should be called
-              </Button>
-              {question === "noTool" ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={chooseTools}
-                  disabled={readOnly}
-                >
-                  Use tools instead
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <p
-              className="text-[11px] text-muted-foreground"
-              data-testid="simple-case-route-locked"
-            >
-              This case runs a pinned tool call, so no model route applies. Edit
-              it in Steps.
-            </p>
-          )}
-          {question === "checks" && promptFirst ? (
-            <p
-              className="text-[11px] text-muted-foreground"
-              data-testid="simple-case-tools-checks-hint"
-            >
-              No specific tool is required. This case is graded by the checks
-              below.
-            </p>
-          ) : null}
-          {showUnsetError ? (
-            <p
-              className="text-[11px] text-destructive"
-              data-testid="simple-case-tools-unset"
-            >
-              {UNSET_TOOLS_BLOCK_REASON}
-            </p>
-          ) : null}
-          {negativeContradiction ? (
-            <p
-              className="text-[11px] text-destructive"
-              data-testid="simple-case-negative-contradiction"
-            >
-              This case says no tool should be called, but a check that requires
-              a tool call still applies — from the suite, this case, or a step.
-              Those cannot both hold.
-            </p>
-          ) : null}
-
-          {question !== "noTool" ? (
-            <div className="space-y-3">
-              {view.tools.map((tool, index) => (
-                <div
-                  key={tool.id}
-                  className="space-y-2 rounded-md border border-border bg-muted/20 p-3"
-                  data-testid="simple-case-tool-row"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[11px] font-medium text-muted-foreground">
-                      {kind === "regression" ? `Step ${index + 1}` : "Tool"}
-                    </p>
-                    <div className="flex items-center gap-1">
-                      <StatusDot status={overlayStatus(overlay, tool.id)} />
-                      {routeLocked ? null : (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-muted-foreground"
-                          aria-label={`Remove ${tool.toolName || "tool"}`}
-                          onClick={() =>
-                            setTools(
-                              view.tools.filter((row) => row.id !== tool.id),
-                            )
-                          }
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  <ToolCalledWithFields
-                    predicate={{
-                      type: "toolCalledWith",
-                      toolName: tool.toolName,
-                      args: {
-                        args: kind === "regression" ? tool.arguments : {},
-                      },
-                    }}
-                    onChange={(next) => {
-                      if (next.type !== "toolCalledWith") return;
-                      setTools(
-                        view.tools.map((row) =>
-                          row.id === tool.id
-                            ? {
-                                ...row,
-                                toolName: next.toolName,
-                                arguments:
-                                  kind === "regression"
-                                    ? (next.args.args ?? {})
-                                    : {},
-                              }
-                            : row,
-                        ),
-                      );
-                    }}
-                    availableTools={availableTools}
-                    readOnly={routeLocked}
-                  />
-                </div>
-              ))}
-              {routeLocked ? null : (
-                <AddToolRow availableTools={availableTools} onAdd={addTool} />
-              )}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="space-y-2">
-          <Label
-            htmlFor="simple-case-rubric"
-            className="text-[11px] font-medium text-foreground"
-          >
-            What does a good answer accomplish?
-          </Label>
-          <Input
-            id="simple-case-rubric"
-            value={expectedOutput ?? ""}
-            onChange={(event) => onExpectedOutputChange(event.target.value)}
-            placeholder="One sentence the model grader can score against"
-            className="h-8 font-mono text-xs"
-            readOnly={readOnly}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Model grader · advisory. Setting this changes what the judge grades
-            against.
-          </p>
-        </div>
-
-        <Collapsible open={moreOpen} onOpenChange={setMoreOpen}>
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-0 text-xs text-muted-foreground"
-            >
-              More checks
-              <ChevronDown
-                className={cn(
-                  "h-3.5 w-3.5 transition-transform",
-                  moreOpen && "rotate-180",
-                )}
-              />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-4 pt-3">
-            {MORE_CHECK_GROUPS.map((group) => {
-              const rows = predicatesByGroup(group.kinds);
-              const stepRows = stepChecks.filter((check) =>
-                group.kinds.includes(check.predicate.type),
-              );
-              const inherited = resolvedPredicates.filter(
-                (predicate) =>
-                  group.kinds.includes(predicate.type) &&
-                  !caseList.includes(predicate),
-              );
-              return (
-                <section key={group.id} className="space-y-2">
-                  <h4 className="text-[11px] font-medium text-foreground">
-                    {group.label}
-                  </h4>
-                  {/*
-                   * Step-authored checks first, in execution order: they are
-                   * graded inline and fail-fast, so a failure here can stop the
-                   * case-level checks below from running at all. Editing one
-                   * rewrites its step in place — it never becomes a predicate.
-                   */}
-                  <StepCheckRows
-                    checks={stepRows}
-                    onChange={(stepId, next) =>
-                      onStepsChange(updateStepCheck(steps, stepId, next))
-                    }
-                    onRemove={(stepId) =>
-                      onStepsChange(removeStepById(steps, stepId))
-                    }
-                    availableTools={availableTools}
-                    readOnly={readOnly}
-                    overlay={overlay}
-                  />
-                  <ChecksSection
-                    value={rows}
-                    onChange={(next) => {
-                      const kept = caseList.filter(
-                        (predicate) => !group.kinds.includes(predicate.type),
-                      );
-                      setCaseList([...kept, ...next]);
-                    }}
-                    availableTools={availableTools}
-                    title=""
-                    hideEmptyState
-                    allowedKinds={group.kinds}
-                    readOnly={readOnly}
-                  />
-                  {inherited.length > 0 ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      {inherited.length} inherited from the suite
-                    </p>
-                  ) : null}
-                </section>
-              );
-            })}
-          </CollapsibleContent>
-        </Collapsible>
-      </section>
+      <CaseScorecard
+        input={scorecardInput}
+        availableTools={availableTools}
+        readOnly={readOnly}
+        checkPolicy={capabilities?.scorers?.checkPolicy === true}
+        overlay={overlay}
+        validationAttempted={validationAttempted}
+        addedRowKey={addedRowKey}
+        onStepPredicateChange={(stepId, next) =>
+          onStepsChange(updateStepCheck(steps, stepId, next))
+        }
+        onRemoveStep={(stepId) => onStepsChange(removeStepById(steps, stepId))}
+        onSelectStep={onSelectInAppStep}
+        onCasePredicateChange={(index, next) =>
+          onPredicatesChange(updateCaseScorer(predicates, index, next))
+        }
+        onRemoveCasePredicate={(index) =>
+          onPredicatesChange(removeCaseScorer(predicates, index))
+        }
+        onAddScorer={(predicate) => {
+          const next = appendCaseScorer(predicates, predicate);
+          setAddedRowKey(`case:${next.list.length - 1}`);
+          onPredicatesChange(next);
+        }}
+        onExpectedOutputChange={onExpectedOutputChange}
+        onJudgeSkippedChange={
+          onJudgeConfigOverrideChange
+            ? (skipped) =>
+                onJudgeConfigOverrideChange(
+                  withCaseJudgeSkipped(judgeConfigOverride, skipped),
+                )
+            : undefined
+        }
+        onOpenSuiteSettings={onOpenSuiteSettings}
+        onSetTools={setTools}
+        onChooseNoTool={chooseNoTool}
+        onChooseTools={chooseTools}
+        onAddTool={addTool}
+        onSetKind={setKind}
+      />
 
       <AlsoInThisCase
         steps={leftovers}
@@ -738,53 +510,3 @@ function InAppRow({
   );
 }
 
-function AddToolRow({
-  availableTools,
-  onAdd,
-}: {
-  availableTools: string[];
-  onAdd: (toolName: string) => void;
-}) {
-  const [name, setName] = useState("");
-  return (
-    <div className="flex items-center gap-2">
-      {availableTools.length > 0 ? (
-        <select
-          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          aria-label="Add a tool"
-        >
-          <option value="">Pick a tool…</option>
-          {availableTools.map((tool) => (
-            <option key={tool} value={tool}>
-              {tool}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <Input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Tool name"
-          aria-label="Add a tool"
-          className="h-8 flex-1 text-xs"
-        />
-      )}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 gap-1 text-xs"
-        onClick={() => {
-          onAdd(name);
-          setName("");
-        }}
-        disabled={!name.trim()}
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Add
-      </Button>
-    </div>
-  );
-}

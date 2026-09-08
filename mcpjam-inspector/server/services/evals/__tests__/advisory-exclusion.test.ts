@@ -40,6 +40,8 @@ const FAILING_ADVISORY: Predicate = {
 
 /** hostedCriterionId literals pinned 2026-09-06. */
 const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
+  "onlyToolsCalled — an allow-list of tools": "onlyToolsCalled-ef1d9ea3488c",
+  "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)": "onlyToolsCalled-01ce35d01165",
   "toolCalledWith — minimal (only required fields)":
     "toolCalledWith-bb535809fe86",
   "toolCalledWith — all optional fields populated":
