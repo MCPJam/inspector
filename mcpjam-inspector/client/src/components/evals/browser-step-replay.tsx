@@ -114,6 +114,10 @@ export type ReplayVideoMeta = EvalTraceVideoMeta;
  * The local widget harness reports none of this, and gets no line at all —
  * better than a made-up one.
  */
+// NOTE for the row that renders this: an empty list does NOT mean there is
+// nothing to say. A take can report `truncated` and nothing else — the
+// recorder knows it stopped at the cap without knowing how long it ran — and
+// that badge is the one thing the header must never swallow.
 export function summarizeRecording(
   meta: ReplayVideoMeta | null | undefined,
 ): Array<{ key: string; label: string; title?: string }> {
@@ -464,7 +468,9 @@ export function BrowserStepFilmstrip({
             screen recording of the app interactions in this run
           </span>
         </h3>
-        {resolvedVideoUrl && !videoFailed && videoSummary.length > 0 ? (
+        {resolvedVideoUrl &&
+        !videoFailed &&
+        (videoSummary.length > 0 || videoMeta?.truncated) ? (
           <p
             className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground"
             data-testid="browser-replay-video-meta"
@@ -481,7 +487,7 @@ export function BrowserStepFilmstrip({
               // rather than as a toast, because it qualifies everything the
               // player below shows.
               <span
-                className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-px font-medium text-amber-700 dark:text-amber-400"
+                className="rounded-sm border border-warning/30 bg-warning/10 px-1.5 py-px font-medium text-warning-foreground"
                 data-testid="browser-replay-truncated-badge"
                 title="The recorder stopped at its size limit, so this video covers the beginning of the run and not the end of it."
               >

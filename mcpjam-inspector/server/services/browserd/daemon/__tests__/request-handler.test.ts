@@ -907,7 +907,7 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
       { kind: "navigate", url: "https://x.test/" },
       { kind: "back" },
       { kind: "reload" },
-      { kind: "act", verb: "scroll", direction: "down" },
+      { kind: "act", verb: "scroll" },
     ] as Array<BrowserCommand["action"]>) {
       expect((await handler.handle(commandReq(action))).status).toBe(200);
     }
@@ -990,6 +990,49 @@ describe("BrowserdRequestHandler — the frame rate follows the page, not the ha
     );
 
     expect(res.status).toBe(423);
+    expect(boosts).toEqual([]);
+  });
+
+  it("does not boost an outcome in which nothing ran", async () => {
+    // `busy` was refused at the depth cap, `expired` lost its result to
+    // eviction, `at_capacity` was never admitted. No page moved in any of
+    // them, so boosting spends 45 JPEG encodes on a still picture — on the
+    // cores the agent is using.
+    for (const outcome of [
+      { status: "busy" as const, bootId: BOOT },
+      { status: "expired" as const, bootId: BOOT },
+      { status: "at_capacity" as const, bootId: BOOT },
+    ]) {
+      const { boosts, viewport } = boostSpy();
+      const { handler } = makeHandler({
+        outcome,
+        viewportIfWatched: () => Promise.resolve(viewport),
+      });
+
+      await handler.handle(commandReq({ kind: "reload" }));
+
+      expect(boosts, `status=${outcome.status}`).toEqual([]);
+    }
+  });
+
+  it("does not boost a command the queue ran and the driver refused", async () => {
+    // A lease refusal re-asked at dequeue, or a stale-observation guard: the
+    // queue reports `ok` and the RESULT says nothing was done. By
+    // construction neither touched the page.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      outcome: {
+        status: "ok",
+        result: { ok: false, staleObservation: true, error: "stale_observation" },
+        bootId: BOOT,
+      },
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(
+      commandReq({ kind: "act", verb: "scroll" }),
+    );
+
     expect(boosts).toEqual([]);
   });
 

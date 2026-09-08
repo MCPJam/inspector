@@ -671,7 +671,7 @@ export class BrowserdRequestHandler {
     // for the same reason. Awaited so a test can observe it, but it never
     // decides the response: a boost that cannot be applied is a slower
     // picture, not a failed command.
-    await this.boostAfterMotion(parsed.command);
+    await this.boostAfterMotion(parsed.command, outcome);
     return this.mapOutcome(outcome);
   }
 
@@ -691,8 +691,23 @@ export class BrowserdRequestHandler {
    * same two cores the agent is using. A driver too old to answer the question
    * (or a fake that does not implement it) simply gets no boost.
    */
-  private async boostAfterMotion(command: BrowserCommand): Promise<void> {
+  private async boostAfterMotion(
+    command: BrowserCommand,
+    outcome: BrowserCommandOutcome,
+  ): Promise<void> {
     if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    // NOTHING RAN, NOTHING MOVED. `busy` was refused at the depth cap,
+    // `expired` lost its result to eviction, `at_capacity` was never admitted;
+    // and inside `ok`, a failed result is a lease refusal or a stale
+    // observation, which by construction touched no page. Boosting after any
+    // of them spends 45 JPEG encodes on a picture that did not change — on the
+    // cores the agent is using.
+    //
+    // A duplicate resolved from the queue's cache does still boost: it reports
+    // `ok` with the original result and the queue does not say which of the two
+    // it was. That is the honest limit of what is knowable here, and the cost
+    // is a second boost over a repaint that did happen.
+    if (outcome.status !== "ok" || !outcome.result.ok) return;
     try {
       const viewport = await this.driver.viewportIfWatched?.(command.tabId);
       viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);

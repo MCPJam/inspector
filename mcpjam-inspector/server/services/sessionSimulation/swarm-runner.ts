@@ -81,6 +81,37 @@ import type {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+
+/**
+ * Deadline on the attempt-terminal artifact flush that carries a hosted
+ * recording. Matches the session core's own terminal flush budget.
+ *
+ * `ConvexHttpClient.mutation` has no timeout of its own, and this one sits
+ * inside the `finally` that must reach `releaseAttemptSandbox`: a hung attach
+ * would hold a paid box open for as long as it hangs. Whatever does not land
+ * stays unattached — the screenshots are still the record.
+ */
+const ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve `work`, or give up at the deadline. The abandoned promise keeps
+ * running (nothing here can cancel a Convex mutation) — it just stops holding
+ * the release. Rejections are swallowed for the same reason: this is a
+ * terminal path observing an outcome, never deciding one.
+ */
+async function withArtifactFlushDeadline(work: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ATTEMPT_ARTIFACT_FLUSH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 /** Bounded target-worker pool: at most this many execution targets run
  * concurrently. A target is one `snapshot.hosts[]` entry — a legacy host OR a
  * project environment (two environments may share a host and still count as
@@ -1368,8 +1399,16 @@ async function runJourneyFanOut(
                 // Through the SAME outbox the local harness's replay uses:
                 // `stageVideo` uploads and holds the blob id, and the flush
                 // below attaches it — riding an artifact write if one is left,
-                // or going as a video-only write if not. Idempotent, so an
-                // attempt that somehow staged twice keeps the first.
+                // or going as a video-only write if not.
+                //
+                // PRECEDENCE, and it is the same one evals state explicitly:
+                // the local harness wins. `stageVideo` is first-write-wins and
+                // the session core has already staged its `.webm` by the time
+                // this `finally` runs, so an attempt that produced both keeps
+                // the local recording and this call no-ops. That ordering is
+                // load-bearing rather than incidental — `videoBlobId` is
+                // first-write-wins on the backend too, so two videos racing
+                // would otherwise be decided by network timing.
                 await browserArtifacts.stageVideo(recording.bytes, {
                   mime: recording.mime,
                   meta: {
@@ -1380,7 +1419,12 @@ async function runJourneyFanOut(
                     truncated: recording.truncated,
                   },
                 });
-                await browserArtifacts.flush();
+                // BOUNDED, like the session core's own terminal flush.
+                // `ConvexHttpClient.mutation` carries no timeout, and this sits
+                // in the `finally` that must reach `releaseAttemptSandbox` — a
+                // hung attach would hold a paid box open indefinitely, which is
+                // exactly the cost the release exists to avoid.
+                await withArtifactFlushDeadline(browserArtifacts.flush());
               }
             } catch (err) {
               logger.warn("[swarm.runner] hosted recording not collected", {

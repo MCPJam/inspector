@@ -314,13 +314,40 @@ describe("BrowserdClient — /v1/record", () => {
   });
 
   it("refuses a half-decoded recording rather than inventing its fields", async () => {
-    // A partially-decoded take would flow into the evidence pipe as a video
-    // with a zero duration and no frame count, which reads on the trace page
-    // as a broken recording rather than as a daemon that answered oddly.
-    const { client } = makeClient(json(200, { ok: true, recording: { bytes: 5 } }));
-    expect(await client.record({ action: "stop" })).toEqual({
+    // EVERY field, or none. Defaulting a missing `durationMs` to 0 and a
+    // missing `truncated` to false does not degrade gracefully — it invents
+    // the two claims a reader most relies on, and they travel into the trace
+    // page as a stated duration and an absent badge. "This take completed and
+    // ran for no time" is a worse answer than "I could not read that".
+    const complete = {
+      path: "/rec/run-1.mp4",
+      bytes: 5,
+      durationMs: 9_000,
+      distinctFrames: 42,
+      truncated: false,
+    };
+    for (const missing of [
+      "path",
+      "bytes",
+      "durationMs",
+      "distinctFrames",
+      "truncated",
+    ] as const) {
+      const partial: Record<string, unknown> = { ...complete };
+      delete partial[missing];
+      const { client } = makeClient(
+        json(200, { ok: true, recording: partial }),
+      );
+      expect(
+        await client.record({ action: "stop" }),
+        `missing ${missing}`,
+      ).toEqual({ ok: true, recording: null });
+    }
+    // ...and the complete one still reads back whole.
+    const whole = makeClient(json(200, { ok: true, recording: complete }));
+    expect(await whole.client.record({ action: "stop" })).toEqual({
       ok: true,
-      recording: null,
+      recording: complete,
     });
   });
 

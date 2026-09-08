@@ -189,7 +189,10 @@ MCPJAM_BROWSERD_RECORD_MAX_BYTES=…       # default and ceiling 60 MiB
 MCPJAM_HOSTED_BROWSER_RECORDING=0        # inspector: never start a take
 ```
 
-Both are read at call time, so flipping either needs no relaunch.
+Only `MCPJAM_HOSTED_BROWSER_RECORDING` is read at call time — flip it and the
+next run stops recording, no deploy. The three daemon-side ones are read ONCE,
+by `readBrowserdConfig()` at boot, and `features` is computed from that
+snapshot: changing them needs the daemon relaunched before they take effect.
 
 Local engines do not record yet. They have no display and no encoder, so the
 design there is a second `Page.startScreencast` on a **dedicated flattened CDP

@@ -431,6 +431,24 @@ describe("BrowserStepFilmstrip — the recording's own numbers", () => {
     );
   });
 
+  it("shows the badge even when the take reports nothing else", async () => {
+    // A recorder can know it stopped at the cap without knowing how long it
+    // ran. Gating the whole row on a duration or an fps would swallow the one
+    // thing the header must never swallow: that this file is a PREFIX of the
+    // run, not the run.
+    render(
+      <BrowserStepFilmstrip
+        steps={[]}
+        videoUrl="https://example.test/run.mp4"
+        videoMeta={{ source: "hosted", truncated: true }}
+      />,
+    );
+
+    expect(
+      await screen.findByTestId("browser-replay-truncated-badge"),
+    ).toBeTruthy();
+  });
+
   it("renders nothing extra for a recording that reports nothing", async () => {
     // Every run made before recordings reported anything, and every local
     // widget replay: Playwright writes its `.webm` and tells us nothing about

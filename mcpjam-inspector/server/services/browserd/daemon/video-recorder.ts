@@ -133,6 +133,9 @@ export interface VideoRecorder {
    * means the process never leaves and the box is never released. A file cut
    * short by the SIGKILL is still playable — that is what the fragmented
    * container is for.
+   *
+   * SEALS the recorder: the server is still accepting requests while this
+   * awaits, and a take started during shutdown is one nothing would finalise.
    */
   finalize(args?: { graceMs?: number }): Promise<void>;
   dispose(): void;
@@ -229,27 +232,55 @@ export function recorderArgs(options: {
     String(options.maxBytes),
     "-f",
     "mp4",
+    // OVERWRITE. Without it ffmpeg stops at an interactive "File exists?"
+    // prompt on a reused id — with stdin ignored that is a process that writes
+    // nothing and exits, AFTER `start` has already answered `ok`. A take that
+    // reuses an id means the previous one is finished with; replacing it is
+    // the only reading under which the answer stays true.
+    "-y",
     options.outputPath,
   ];
 }
 
 /**
- * Read `frame=<n>` off an ffmpeg `-progress` chunk.
+ * Read `frame=<n>` off an ffmpeg `-progress` stream, across chunk boundaries.
  *
- * The pipe is line-oriented `key=value`, written in blocks ending `progress=`;
- * a chunk can split a line, so this takes the LAST complete `frame=` it can
- * see and ignores the rest. A monotonic counter, so a partial read that finds
- * nothing simply leaves the previous value standing.
+ * The pipe is line-oriented `key=value`, written in blocks ending `progress=`,
+ * and a `data` event can split a line anywhere — `fra` in one chunk and `me=19`
+ * in the next. Parsing each chunk independently drops BOTH halves, and at a
+ * high enough frame rate the split is not rare: it would quietly under-report
+ * `distinctFrames` on exactly the busy recordings where the number matters.
+ *
+ * So this is a stateful reader: it holds the trailing partial line and prefixes
+ * it onto the next chunk. Returns the LAST complete `frame=` it can see, or
+ * `undefined` — the caller keeps a monotonic counter, so a chunk carrying no
+ * complete line simply leaves the previous value standing.
  */
-export function parseProgressFrames(chunk: string): number | undefined {
-  let found: number | undefined;
-  for (const line of chunk.split("\n")) {
-    const match = /^frame=\s*(\d+)\s*$/.exec(line.trim());
-    if (!match) continue;
-    const value = Number(match[1]);
-    if (Number.isFinite(value)) found = value;
-  }
-  return found;
+export function createProgressReader(): {
+  push(chunk: string): number | undefined;
+} {
+  let pending = "";
+  return {
+    push(chunk) {
+      const text = pending + chunk;
+      // Everything up to the last newline is complete; the remainder is a
+      // partial line waiting for the rest of itself.
+      const lastBreak = text.lastIndexOf("\n");
+      if (lastBreak < 0) {
+        pending = text;
+        return undefined;
+      }
+      pending = text.slice(lastBreak + 1);
+      let found: number | undefined;
+      for (const line of text.slice(0, lastBreak).split("\n")) {
+        const match = /^frame=\s*(\d+)\s*$/.exec(line.trim());
+        if (!match) continue;
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) found = value;
+      }
+      return found;
+    },
+  };
 }
 
 interface ActiveTake {
@@ -283,6 +314,17 @@ export function createVideoRecorder(
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as never));
 
   let take: ActiveTake | undefined;
+  /**
+   * A take whose `stop` is still in flight.
+   *
+   * `stop` clears `take` before its first await — deliberately, so a hang on
+   * the filesystem cannot wedge the recorder in "active" forever. That alone
+   * would let a `start` arriving during the stop spawn a SECOND ffmpeg while
+   * the first is still writing: two encoders on one display, and the loser
+   * overwrites the winner's file. This sentinel keeps the slot occupied for
+   * exactly as long as the old process is still around.
+   */
+  let stopping: Promise<unknown> | undefined;
   let disposed = false;
 
   const start = (
@@ -292,8 +334,9 @@ export function createVideoRecorder(
     // IDEMPOTENCE IS THE CALLER'S, not ours. A second start is refused rather
     // than silently replacing the take, because replacing one would truncate a
     // file the caller believes it is still filling — and the caller cannot see
-    // that from a 200.
-    if (take) return { ok: false, error: "record_active" };
+    // that from a 200. `stopping` covers the window after `stop` cleared
+    // `take` and before the old ffmpeg is actually gone.
+    if (take || stopping) return { ok: false, error: "record_active" };
     const path = join(options.dir, `${args.id}.mp4`);
     let child: RecorderProcess;
     try {
@@ -350,8 +393,9 @@ export function createVideoRecorder(
       // than answering `null` as if nothing had ever been recorded.
       entry.endedEarly = true;
     });
+    const progress = createProgressReader();
     child.stderr.on("data", (chunk: Buffer | string) => {
-      const frames = parseProgressFrames(String(chunk));
+      const frames = progress.push(String(chunk));
       if (frames !== undefined) entry.distinctFrames = frames;
     });
     return { ok: true };
@@ -365,6 +409,18 @@ export function createVideoRecorder(
     // otherwise have made. This is the reference recorder's own lesson.
     take = undefined;
     if (!entry) return null;
+    const settled = runStop(entry);
+    // Held until the old process is gone, so a `start` in this window is
+    // refused rather than spawning a second encoder onto the same display.
+    stopping = settled;
+    try {
+      return await settled;
+    } finally {
+      if (stopping === settled) stopping = undefined;
+    }
+  };
+
+  const runStop = async (entry: ActiveTake): Promise<RecordingResult> => {
     if (!entry.endedEarly) {
       try {
         // SIGINT, not SIGTERM: ffmpeg treats it as "finish the file", which
@@ -400,9 +456,14 @@ export function createVideoRecorder(
     start,
     stop,
     status() {
+      // `endedEarly` means ffmpeg is gone — the size cap, or a crash. The take
+      // is still the recorder's to report on (`stop` owes the caller its file),
+      // but saying `active: true` would tell a poller that a recording is
+      // still being made when nothing is being written. The id and the numbers
+      // stay, so the answer is "this take, and it has stopped".
       if (!take) return { active: false };
       return {
-        active: true,
+        active: !take.endedEarly,
         id: take.id,
         fps: take.fps,
         startedAtMs: take.startedAtMs,
@@ -410,6 +471,13 @@ export function createVideoRecorder(
       };
     },
     async finalize(args) {
+      // SEALED FIRST. The HTTP server is still accepting while this awaits its
+      // grace, so a `POST /v1/record start` landing here would spawn an ffmpeg
+      // nothing will ever finalise — `process.exit(0)` is moments away, and it
+      // would leave a zero-length file and an orphan process on a box that is
+      // about to be reclaimed. After finalize there is no more recording to be
+      // had from this daemon, so saying so is the honest state.
+      disposed = true;
       const entry = take;
       if (!entry) return;
       take = undefined;

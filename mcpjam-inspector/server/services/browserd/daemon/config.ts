@@ -198,7 +198,10 @@ function readDeviceScaleFactor(env: NodeJS.ProcessEnv): number {
  */
 function readRecordMaxBytes(env: NodeJS.ProcessEnv): number {
   const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  // `< 1`, not `<= 0`: a positive fraction floors to zero, and `-fs 0` tells
+  // ffmpeg to stop at the first byte — a switch meant to bound a recording
+  // would silently abolish it. A cap under one byte cannot be meant.
+  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 

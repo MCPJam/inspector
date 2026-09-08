@@ -604,14 +604,21 @@ export class BrowserdClient {
 function decodeRecording(value: unknown): BrowserdRecording | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
+  // EVERY field, or none. Defaulting a missing `durationMs` to 0 and a missing
+  // `truncated` to `false` does not degrade gracefully — it INVENTS the two
+  // claims a reader most relies on, and they travel into the trace page as a
+  // stated duration and an absent badge. "This take completed and ran for no
+  // time" is a worse answer than "this daemon said something I cannot read".
   if (typeof raw.path !== "string") return null;
   if (typeof raw.bytes !== "number") return null;
+  if (typeof raw.durationMs !== "number") return null;
+  if (typeof raw.distinctFrames !== "number") return null;
+  if (typeof raw.truncated !== "boolean") return null;
   return {
     path: raw.path,
     bytes: raw.bytes,
-    durationMs: typeof raw.durationMs === "number" ? raw.durationMs : 0,
-    distinctFrames:
-      typeof raw.distinctFrames === "number" ? raw.distinctFrames : 0,
-    truncated: raw.truncated === true,
+    durationMs: raw.durationMs,
+    distinctFrames: raw.distinctFrames,
+    truncated: raw.truncated,
   };
 }

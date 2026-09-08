@@ -342,18 +342,36 @@ function recorderArgs(options) {
     String(options.maxBytes),
     "-f",
     "mp4",
+    // OVERWRITE. Without it ffmpeg stops at an interactive "File exists?"
+    // prompt on a reused id — with stdin ignored that is a process that writes
+    // nothing and exits, AFTER `start` has already answered `ok`. A take that
+    // reuses an id means the previous one is finished with; replacing it is
+    // the only reading under which the answer stays true.
+    "-y",
     options.outputPath
   ];
 }
-function parseProgressFrames(chunk) {
-  let found;
-  for (const line2 of chunk.split("\n")) {
-    const match = /^frame=\s*(\d+)\s*$/.exec(line2.trim());
-    if (!match) continue;
-    const value = Number(match[1]);
-    if (Number.isFinite(value)) found = value;
-  }
-  return found;
+function createProgressReader() {
+  let pending = "";
+  return {
+    push(chunk) {
+      const text = pending + chunk;
+      const lastBreak = text.lastIndexOf("\n");
+      if (lastBreak < 0) {
+        pending = text;
+        return void 0;
+      }
+      pending = text.slice(lastBreak + 1);
+      let found;
+      for (const line2 of text.slice(0, lastBreak).split("\n")) {
+        const match = /^frame=\s*(\d+)\s*$/.exec(line2.trim());
+        if (!match) continue;
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) found = value;
+      }
+      return found;
+    }
+  };
 }
 function createVideoRecorder(options) {
   const spawnProcess = options.spawnProcess ?? ((command, args, spawnOptions) => spawn(command, [...args], {
@@ -365,10 +383,11 @@ function createVideoRecorder(options) {
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   let take;
+  let stopping;
   let disposed = false;
   const start = (args) => {
     if (disposed) return { ok: false, error: "record_unavailable" };
-    if (take) return { ok: false, error: "record_active" };
+    if (take || stopping) return { ok: false, error: "record_active" };
     const path = join(options.dir, `${args.id}.mp4`);
     let child;
     try {
@@ -416,8 +435,9 @@ function createVideoRecorder(options) {
       if (take !== entry) return;
       entry.endedEarly = true;
     });
+    const progress = createProgressReader();
     child.stderr.on("data", (chunk) => {
-      const frames = parseProgressFrames(String(chunk));
+      const frames = progress.push(String(chunk));
       if (frames !== void 0) entry.distinctFrames = frames;
     });
     return { ok: true };
@@ -426,6 +446,15 @@ function createVideoRecorder(options) {
     const entry = take;
     take = void 0;
     if (!entry) return null;
+    const settled = runStop(entry);
+    stopping = settled;
+    try {
+      return await settled;
+    } finally {
+      if (stopping === settled) stopping = void 0;
+    }
+  };
+  const runStop = async (entry) => {
     if (!entry.endedEarly) {
       try {
         entry.child.kill("SIGINT");
@@ -454,7 +483,7 @@ function createVideoRecorder(options) {
     status() {
       if (!take) return { active: false };
       return {
-        active: true,
+        active: !take.endedEarly,
         id: take.id,
         fps: take.fps,
         startedAtMs: take.startedAtMs,
@@ -462,6 +491,7 @@ function createVideoRecorder(options) {
       };
     },
     async finalize(args) {
+      disposed = true;
       const entry = take;
       if (!entry) return;
       take = void 0;
@@ -1061,7 +1091,7 @@ var BrowserdRequestHandler = class {
       };
     }
     const outcome = await this.queue.submit(parsed.command);
-    await this.boostAfterMotion(parsed.command);
+    await this.boostAfterMotion(parsed.command, outcome);
     return this.mapOutcome(outcome);
   }
   /**
@@ -1080,8 +1110,9 @@ var BrowserdRequestHandler = class {
    * same two cores the agent is using. A driver too old to answer the question
    * (or a fake that does not implement it) simply gets no boost.
    */
-  async boostAfterMotion(command) {
+  async boostAfterMotion(command, outcome) {
     if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    if (outcome.status !== "ok" || !outcome.result.ok) return;
     try {
       const viewport = await this.driver.viewportIfWatched?.(command.tabId);
       viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
@@ -5054,7 +5085,7 @@ function readDeviceScaleFactor(env) {
 }
 function readRecordMaxBytes(env) {
   const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {

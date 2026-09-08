@@ -87,7 +87,11 @@ describe("readBrowserdConfig", () => {
         withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: "1048576" }),
       ).recordMaxBytes,
     ).toBe(1_048_576);
-    for (const raw of ["", "lots", "-5", "0", String(1024 ** 4)]) {
+    // `0.5` is the one that mattered: it is positive, so a `<= 0` guard let it
+    // through, and `Math.floor` then made it `0` — `-fs 0` tells ffmpeg to
+    // stop at the first byte, so a switch meant to BOUND a recording would
+    // have silently abolished it.
+    for (const raw of ["", "lots", "-5", "0", "0.5", String(1024 ** 4)]) {
       expect(
         readBrowserdConfig(
           withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: raw }),

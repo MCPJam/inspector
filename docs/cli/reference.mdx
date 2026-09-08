@@ -1823,7 +1823,8 @@ nothing else about it; a hosted run records an `.mp4` and reports its duration,
 rate, and distinct-frame count. `--format json` returns `videoMeta` when the
 recording carried one.
 
-`MCPJAM_HOSTED_BROWSER_RECORDING=0` on the runner turns hosted recording off.
+Recording can be turned off for a deployment, in which case hosted runs simply
+have no recording to fetch.
 
 | Flag | Required | Description |
 |------|----------|-------------|

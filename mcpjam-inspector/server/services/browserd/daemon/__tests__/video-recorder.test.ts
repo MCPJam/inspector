@@ -12,8 +12,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import {
+  createProgressReader,
   createVideoRecorder,
-  parseProgressFrames,
   recorderArgs,
 } from "../video-recorder";
 
@@ -136,6 +136,15 @@ describe("the ffmpeg arguments", () => {
     expect(line).toContain(`-fs ${60 * 1024 * 1024}`);
   });
 
+  it("overwrites an existing file rather than stalling on a prompt", () => {
+    // Without `-y` ffmpeg asks "File exists. Overwrite?" — and with stdin
+    // ignored that is a process which writes nothing and exits, AFTER `start`
+    // has already answered `ok`. A reused id means the previous take is
+    // finished with.
+    expect(args).toContain("-y");
+    expect(args.indexOf("-y")).toBeLessThan(args.length - 1);
+  });
+
   it("pins one encoder thread, as the live encoder does", () => {
     expect(args.filter((arg) => arg === "-threads")).toHaveLength(1);
     expect(args[args.indexOf("-threads") + 1]).toBe("1");
@@ -164,16 +173,36 @@ describe("the ffmpeg arguments", () => {
 
 describe("reading the progress pipe", () => {
   it("takes the last complete frame count in a chunk", () => {
+    const reader = createProgressReader();
     expect(
-      parseProgressFrames("frame=12\nfps=15\nframe=19\nprogress=continue\n"),
+      reader.push("frame=12\nfps=15\nframe=19\nprogress=continue\n"),
     ).toBe(19);
   });
 
-  it("ignores a line a chunk boundary cut in half", () => {
-    // A monotonic counter: a partial read that finds nothing leaves the
-    // previous value standing rather than resetting it to zero.
-    expect(parseProgressFrames("fps=15\nfra")).toBeUndefined();
-    expect(parseProgressFrames("me=19\n")).toBeUndefined();
+  it("rejoins a line a chunk boundary cut in half", () => {
+    // THE LOAD-BEARING ONE. A `data` event can split anywhere, and at a real
+    // frame rate that is not rare — parsing each chunk on its own drops BOTH
+    // halves and under-reports `distinctFrames` on exactly the busy recordings
+    // where the number matters. Revert the reader to a per-chunk parse and
+    // this fails.
+    const reader = createProgressReader();
+    expect(reader.push("fps=15\nfra")).toBeUndefined();
+    expect(reader.push("me=19\nprogress=continue\n")).toBe(19);
+  });
+
+  it("holds a partial line across several chunks", () => {
+    const reader = createProgressReader();
+    expect(reader.push("fr")).toBeUndefined();
+    expect(reader.push("am")).toBeUndefined();
+    expect(reader.push("e=7")).toBeUndefined();
+    expect(reader.push("\n")).toBe(7);
+  });
+
+  it("leaves the previous value standing when a chunk carries no count", () => {
+    // A monotonic counter upstream: `undefined` means "nothing new", never
+    // "zero frames".
+    const reader = createProgressReader();
+    expect(reader.push("bitrate=800k\nspeed=1x\n")).toBeUndefined();
   });
 });
 
@@ -231,6 +260,42 @@ describe("a take's lifecycle", () => {
   it("answers null when nothing was recording", async () => {
     const { recorder } = build();
     expect(await recorder.stop()).toBeNull();
+  });
+
+  it("stops calling a dead take `active`", async () => {
+    // `-fs` makes ffmpeg stop itself. Until `stop` is called the take is still
+    // the recorder's to report on — but a poller asking "is a recording being
+    // made?" must not be told yes when nothing is being written.
+    const { recorder, ffmpeg } = build();
+    recorder.start({ id: "run-1", fps: 15 });
+    expect(recorder.status()).toMatchObject({ active: true, id: "run-1" });
+
+    ffmpeg.latest().exit(0);
+
+    expect(recorder.status()).toMatchObject({ active: false, id: "run-1" });
+  });
+
+  it("refuses a start while the previous stop is still in flight", async () => {
+    // `stop` clears `take` before its first await so a filesystem hang cannot
+    // wedge the recorder — which alone would let a start in that window spawn
+    // a SECOND ffmpeg onto the same display, the loser overwriting the
+    // winner's file.
+    const { recorder, ffmpeg } = build();
+    recorder.start({ id: "run-1", fps: 15 });
+
+    const stopping = recorder.stop();
+    await Promise.resolve();
+    expect(recorder.start({ id: "run-2", fps: 15 })).toEqual({
+      ok: false,
+      error: "record_active",
+    });
+    expect(ffmpeg.spawned).toHaveLength(1);
+
+    ffmpeg.latest().exit(0);
+    await stopping;
+
+    // ...and the slot frees once the old process is actually gone.
+    expect(recorder.start({ id: "run-2", fps: 15 })).toEqual({ ok: true });
   });
 
   it("reports a take the size cap ended, and clears state anyway", async () => {
@@ -328,6 +393,30 @@ describe("shutdown", () => {
       await finalizing;
 
       expect(ffmpeg.latest().signals).toEqual(["SIGINT", "SIGKILL"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("seals the recorder, so a start during shutdown spawns nothing", async () => {
+    // The HTTP server is still accepting while `finalize` awaits its grace. A
+    // take started here is one nothing will finalise — `process.exit(0)` is
+    // moments away — leaving a zero-length file and an orphan on a box about
+    // to be reclaimed.
+    vi.useFakeTimers();
+    try {
+      const { recorder, ffmpeg } = build();
+      recorder.start({ id: "run-1", fps: 15 });
+
+      const finalizing = recorder.finalize({ graceMs: 2_000 });
+      expect(recorder.start({ id: "run-2", fps: 15 })).toEqual({
+        ok: false,
+        error: "record_unavailable",
+      });
+      ffmpeg.latest().exit(0);
+      await finalizing;
+
+      expect(ffmpeg.spawned).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }

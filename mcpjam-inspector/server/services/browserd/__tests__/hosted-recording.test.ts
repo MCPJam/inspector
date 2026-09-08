@@ -29,17 +29,34 @@ function fakeHandle(
   over: {
     features?: readonly string[];
     statusKind?: "ok" | "unhealthy";
+    /** What a `start` answers. */
     record?: unknown;
+    /**
+     * What a `stop` answers, when it differs from the start's reply.
+     *
+     * Split from `record` because the module captures `client.record` at START
+     * time — a take belongs to the client that began it, so reassigning the
+     * handle's method afterwards (which an earlier version of these tests did)
+     * no longer reaches the stop. Saying it here says what the daemon
+     * answered, rather than depending on when the reference was read.
+     */
+    stopResult?: unknown;
     omitRecord?: boolean;
+    bootId?: string;
+    /** What `GET /v1/record` says is recording right now. */
+    recordState?: unknown;
   } = {},
 ) {
   const calls: Array<{ action: string; id?: string; fps?: number }> = [];
   const record = vi.fn(async (args: { action: string; id?: string; fps?: number }) => {
     calls.push(args);
+    if (args.action === "stop") {
+      if (over.stopResult) return over.stopResult as never;
+      if (over.record) return over.record as never;
+      return { ok: true, recording: RECORDING } as never;
+    }
     if (over.record) return over.record as never;
-    return args.action === "stop"
-      ? { ok: true, recording: RECORDING }
-      : { ok: true };
+    return { ok: true } as never;
   });
   const handle = {
     engine: "hosted",
@@ -47,7 +64,7 @@ function fakeHandle(
     sessionId: "sess-1",
     sandboxRowId: "row-1",
     sandboxId: "sbx-1",
-    bootId: "boot-1",
+    bootId: over.bootId ?? "boot-1",
     contextMode: "ephemeral",
     reused: false,
     client: {
@@ -58,6 +75,7 @@ function fakeHandle(
       }),
       sendCommand: async () => ({ kind: "ok" }) as never,
       ...(over.omitRecord ? {} : { record }),
+      recordStatus: async () => over.recordState ?? { active: false },
     },
   } as unknown as SandboxHostedBrowserSessionHandle;
   return { handle, record, calls };
@@ -150,20 +168,88 @@ describe("hosted recording — starting", () => {
     expect(on.record).toHaveBeenCalled();
   });
 
-  it("registers a 409 anyway — the file exists and only a stop ends it", async () => {
+  it("registers a 409 that names OUR take — a racing start from this run", async () => {
     const { handle } = fakeHandle({
       record: { ok: false, status: 409, error: "record_active" },
+      recordState: { active: true, id: "sess-1", fps: 15 },
+      stopResult: { ok: true, recording: RECORDING },
     });
     const sandbox = fakeSandbox();
     await startHostedRecording(handle, { connect: async () => sandbox.sandbox });
 
     // Not registering it would leave a daemon recording for the rest of the
     // box's life, into a file nothing ever reads.
-    handle.client.record = (async () => ({
-      ok: true,
-      recording: RECORDING,
-    })) as never;
     expect(await collectHostedRecordingBeforeRelease("row-1")).not.toBeNull();
+  });
+
+  it("walks away from a 409 that belongs to somebody else's take", async () => {
+    // THE ONE THAT MATTERS. A daemon reused across iterations can still hold
+    // the PREVIOUS iteration's take. Registering blind makes the collector
+    // stop that take and upload it as THIS run's video — evidence of the wrong
+    // run, which is worse than no evidence because nothing about it looks
+    // wrong. Revert the ownership check and this fails.
+    const { handle } = fakeHandle({
+      record: { ok: false, status: 409, error: "record_active" },
+      recordState: { active: true, id: "some-earlier-iteration", fps: 15 },
+    });
+    await startHostedRecording(handle, {
+      connect: async () => fakeSandbox().sandbox,
+    });
+
+    expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+  });
+
+  it("walks away from a 409 whose owner the daemon will not name", async () => {
+    const { handle } = fakeHandle({
+      record: { ok: false, status: 409, error: "record_active" },
+      recordState: { active: false },
+    });
+    await startHostedRecording(handle, {
+      connect: async () => fakeSandbox().sandbox,
+    });
+    expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+  });
+
+  it("starts a fresh take when the daemon was relaunched under the run", async () => {
+    // A per-run daemon can be relaunched mid-run: a new process, no recording,
+    // a new bearer. Keyed on the row alone, the stale entry would read as
+    // "already recording" — so the rest of the run goes unrecorded and the
+    // collector later stops a client pointed at a boot that is gone.
+    const deps = { connect: async () => fakeSandbox().sandbox };
+    const first = fakeHandle({ bootId: "boot-1" });
+    await startHostedRecording(first.handle, deps);
+    expect(first.record).toHaveBeenCalledTimes(1);
+
+    const second = fakeHandle({ bootId: "boot-2" });
+    await startHostedRecording(second.handle, deps);
+    expect(second.record).toHaveBeenCalledWith({
+      action: "start",
+      id: "sess-1",
+      fps: 15,
+    });
+  });
+
+  it("gives up on a start that outlasts its deadline", async () => {
+    // `ensureLiveBrowserSession` is on the critical path of the turn's FIRST
+    // browser action, and the browserd client's own timeout is 75s. Inheriting
+    // that would let an unresponsive recorder endpoint hold the agent for over
+    // a minute to decide whether to film it.
+    vi.useFakeTimers();
+    try {
+      const { handle } = fakeHandle();
+      handle.client.status = (() => new Promise(() => {})) as never;
+
+      const starting = startHostedRecording(handle, {
+        connect: async () => fakeSandbox().sandbox,
+        timeoutMs: 5_000,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await starting;
+
+      expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not register a start the daemon refused for any other reason", async () => {
@@ -265,16 +351,32 @@ describe("hosted recording — collecting before release", () => {
   });
 
   it("answers null when the stop fails, and forgets the take", async () => {
-    const { handle } = fakeHandle();
-    await startHostedRecording(handle, { connect: async () => fakeSandbox().sandbox });
-    handle.client.record = (async () => ({
-      ok: false,
-      status: 503,
-      error: "record_unavailable",
-    })) as never;
+    const { handle } = fakeHandle({
+      stopResult: { ok: false, status: 503, error: "record_unavailable" },
+    });
+    await startHostedRecording(handle, {
+      connect: async () => fakeSandbox().sandbox,
+    });
 
     expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
     expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+  });
+
+  it("stops through the client that STARTED the take", async () => {
+    // A take belongs to the daemon holding its file. Reading `client.record`
+    // afresh at stop time would send the stop to whatever the handle points at
+    // by then — after a relaunch, a boot that has no such take — and the file
+    // would never be finalised.
+    const { handle, record } = fakeHandle();
+    await startHostedRecording(handle, {
+      connect: async () => fakeSandbox().sandbox,
+    });
+    const replacement = vi.fn(async () => ({ ok: true, recording: null }));
+    handle.client.record = replacement as never;
+
+    expect(await collectHostedRecordingBeforeRelease("row-1")).not.toBeNull();
+    expect(replacement).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith({ action: "stop" });
   });
 
   it("answers null when the read throws, and still disconnects", async () => {

@@ -1223,15 +1223,27 @@ function resolveIterationVideoPath(
   iterationId: string,
   meta: IterationVideoMeta | undefined
 ): string {
-  const looksLikeDir =
-    out.endsWith("/") || (existsSync(out) && statSync(out).isDirectory());
-  if (!looksLikeDir) {
-    throw usageError(
-      "--out must be a directory when --video is set, so the recording can be saved beside the screenshots."
-    );
-  }
   const safeId = iterationId.replace(/[^a-zA-Z0-9_-]+/g, "-") || "iteration";
   return join(out, `${safeId}.${iterationVideoExtension(meta)}`);
+}
+
+/**
+ * `--video` needs somewhere to put a SECOND file, so `--out` names a directory.
+ *
+ * Checked BEFORE anything is downloaded. The screenshot loop tolerates an
+ * `--out` that names a single file, so without this the command would fetch
+ * every PNG, write them, and only then refuse — leaving the caller with half
+ * the evidence and an error. And a path that does not exist yet is the
+ * ORDINARY way to ask for an output directory (`--out ./evidence`): only an
+ * existing non-directory is a real conflict.
+ */
+function requireVideoOutDirectory(out: string): void {
+  if (existsSync(out) && !statSync(out).isDirectory()) {
+    throw usageError(
+      `--out must be a directory when --video is set (${out} is a file), so the recording can be saved beside the screenshots.`
+    );
+  }
+  mkdirSync(out, { recursive: true });
 }
 
 /** A recording saved beside an iteration's screenshots. */
@@ -5140,6 +5152,17 @@ export function registerEvalCommands(program: Command): void {
           }
         );
 
+        // BEFORE any download, so a misuse costs nothing and a caller is never
+        // left with half the evidence and an error.
+        if (options.video) {
+          if (options.out === undefined) {
+            throw usageError(
+              "--video needs --out: the recording is a file to save, not something to print. Use `eval video --run … --iteration …` for the URL."
+            );
+          }
+          requireVideoOutDirectory(options.out);
+        }
+
         let shots = extractRenderedScreenshots(result);
         if (index !== undefined) {
           if (index > shots.length) {
@@ -5238,11 +5261,7 @@ export function registerEvalCommands(program: Command): void {
           }
           return;
         }
-        if (options.video && options.out === undefined) {
-          throw usageError(
-            "--video needs --out: the recording is a file to save, not something to print. Use `eval video --run … --iteration …` for the URL."
-          );
-        }
+
 
         // JSON without --out: structured screenshot URLs, no image bytes.
         if (isJson) {

@@ -53,6 +53,20 @@ export const HOSTED_RECORDING_FPS = 15;
  */
 export const HOSTED_RECORDING_COLLECT_TIMEOUT_MS = 45_000;
 
+/**
+ * The whole start — status probe, then the start call — inside this.
+ *
+ * `ensureLiveBrowserSession` is on the critical path of the FIRST hosted
+ * `browser_*` call of a turn, and `BrowserdClient`'s own timeout is 75s (long
+ * on purpose: it backstops a navigation that legitimately takes a minute).
+ * Inheriting that here would let an unresponsive recorder endpoint delay the
+ * agent's first action by over a minute to decide whether to record it. Five
+ * seconds is generous for two small JSON round trips to a box that is already
+ * answering, and the failure mode past it is the one this module is built for:
+ * no video, and the run proceeds.
+ */
+export const HOSTED_RECORDING_START_TIMEOUT_MS = 5_000;
+
 /** What one collected recording carries into the evidence pipe. */
 export interface HostedRecording {
   bytes: Buffer;
@@ -77,6 +91,18 @@ export interface HostedRecording {
 /** A take in flight, keyed by the control-plane row that owns the box. */
 interface ActiveRecording {
   sandboxId: string;
+  /**
+   * The daemon boot this take belongs to.
+   *
+   * A per-run daemon can be relaunched mid-run (the supervisor's recovery
+   * path), and the new boot is a new process with no recording and a new
+   * bearer. Keyed only by `sandboxRowId`, the registry would treat the stale
+   * entry as "already recording", never start a take on the new daemon, and
+   * then hand the collector a client pointed at a boot that is gone — a run
+   * whose browser work happened entirely after the relaunch would report no
+   * video and no reason for it.
+   */
+  bootId: string;
   connect: () => Promise<SessionSandbox>;
   stop: () => Promise<BrowserdRecordResult>;
   fps: number;
@@ -129,49 +155,83 @@ export async function startHostedRecording(
   deps: {
     connect: (sandboxId: string) => Promise<SessionSandbox>;
     now?: () => number;
+    timeoutMs?: number;
   },
 ): Promise<void> {
   if (!recordingEnabled()) return;
-  const { client, sandboxRowId, sandboxId, sessionId } = handle;
+  const { client, sandboxRowId, sandboxId, sessionId, bootId } = handle;
   // IDEMPOTENT at the registry, before any network. `ensureLiveBrowserSession`
   // is called once per turn by the lazy browser-tool path, so an iteration
   // with ten browser turns would otherwise send ten starts and read nine
   // `record_active` refusals — noise that looks exactly like a real conflict.
-  if (active.has(sandboxRowId)) return;
-  if (!client.record) return;
+  //
+  // Keyed by the BOOT as well as the row: a relaunched daemon is a new process
+  // with no take on it, and treating the stale entry as "already recording"
+  // would leave the rest of the run unrecorded with nothing to say why.
+  const existing = active.get(sandboxRowId);
+  if (existing?.bootId === bootId) return;
+  // Captured rather than re-read inside the closure below: `client.record` is
+  // optional on `SessionClient` (a client that only sends commands is still
+  // one), and narrowing it here is what lets the take's `stop` hold a
+  // reference that cannot have become undefined.
+  const record = client.record;
+  if (!record) return;
   const now = deps.now ?? Date.now;
+  const id = recordingIdFor(sessionId);
   try {
-    const status = await client.status();
-    if (status.kind !== "ok" || !status.features?.includes("record")) return;
-    const started = await client.record({
-      action: "start",
-      id: recordingIdFor(sessionId),
-      fps: HOSTED_RECORDING_FPS,
-    });
-    if (!started.ok) {
-      // 409 means this box is already recording — a daemon reused across
-      // iterations whose previous take was never collected, or a racing start
-      // this process did not make. Registered anyway: the file exists and the
-      // collector is the only thing that will ever stop it.
-      if (started.status !== 409) {
-        logger.info("[browser-session] browser.sandbox_recording_skipped", {
-          sandboxRowId,
-          status: started.status,
-          error: started.error,
+    await withDeadline(
+      (async () => {
+        const status = await client.status();
+        if (status.kind !== "ok" || !status.features?.includes("record")) return;
+        const started = await record({
+          action: "start",
+          id,
+          fps: HOSTED_RECORDING_FPS,
         });
-        return;
-      }
-    }
-    active.set(sandboxRowId, {
-      sandboxId,
-      connect: () => deps.connect(sandboxId),
-      stop: () => client.record!({ action: "stop" }),
-      fps: HOSTED_RECORDING_FPS,
-      startedAtMs: now(),
-    });
+        if (!started.ok) {
+          if (started.status !== 409) {
+            logger.info("[browser-session] browser.sandbox_recording_skipped", {
+              sandboxRowId,
+              status: started.status,
+              error: started.error,
+            });
+            return;
+          }
+          // 409 SAYS SOMETHING IS RECORDING — NOT THAT IT IS OURS. A daemon
+          // reused across iterations can still be holding the PREVIOUS
+          // iteration's take. Registering it blind would make the collector
+          // stop that take and upload it as this run's video: evidence of the
+          // wrong run, which is worse than no evidence, because nothing about
+          // it looks wrong. So ask whose it is, and walk away when it is not
+          // ours.
+          const state = await client.recordStatus?.();
+          if (!state?.active || state.id !== id) {
+            logger.info("[browser-session] browser.sandbox_recording_skipped", {
+              sandboxRowId,
+              status: 409,
+              error: "another take is already recording on this daemon",
+              activeId: state?.id,
+            });
+            return;
+          }
+          // It IS ours — a racing start from this same run. Fall through and
+          // register: the file exists and the collector is the only thing that
+          // will ever stop it.
+        }
+        active.set(sandboxRowId, {
+          sandboxId,
+          bootId,
+          connect: () => deps.connect(sandboxId),
+          stop: () => record({ action: "stop" }),
+          fps: HOSTED_RECORDING_FPS,
+          startedAtMs: now(),
+        });
+      })(),
+      deps.timeoutMs ?? HOSTED_RECORDING_START_TIMEOUT_MS,
+    );
   } catch (err) {
-    // An unreachable daemon, a timed-out status probe: the run has no video.
-    // It must not have no browser.
+    // An unreachable daemon, a status probe past the deadline: the run has no
+    // video. It must not have no browser, and it must not WAIT for one.
     logger.info("[browser-session] browser.sandbox_recording_skipped", {
       sandboxRowId,
       error: err instanceof Error ? err.message : String(err),
@@ -296,7 +356,7 @@ function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`hosted recording collect timed out after ${ms}ms`)),
+      () => reject(new Error(`hosted recording call timed out after ${ms}ms`)),
       ms,
     );
   });

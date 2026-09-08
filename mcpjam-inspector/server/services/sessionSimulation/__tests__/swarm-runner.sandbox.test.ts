@@ -1417,6 +1417,29 @@ describe("swarm runner — the attempt's recording comes off before the box does
     );
   });
 
+  it("still releases the box when the artifact flush never settles", async () => {
+    // THE MONEY ONE. `ConvexHttpClient.mutation` carries no timeout, and this
+    // flush sits inside the `finally` that must reach `releaseAttemptSandbox`.
+    // Unbounded, a hung attach holds a paid box open for as long as it hangs.
+    // Remove the deadline and this test hangs rather than failing — which is
+    // exactly what the production path would do.
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+    outboxFlushMock.mockImplementation(() => new Promise(() => {}));
+
+    vi.useFakeTimers();
+    try {
+      const run = startJourneyRun(baseOpts());
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+
   it("still releases the box when staging the video throws", async () => {
     collectHostedRecordingMock.mockResolvedValue(RECORDING);
     stageVideoMock.mockRejectedValue(new Error("convex down"));
