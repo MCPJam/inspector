@@ -13,7 +13,7 @@ import { blankPredicate } from "@/shared/predicate-kinds";
 import type { Predicate } from "@/shared/eval-matching";
 import { SuiteScorerLibraryMenu } from "@/components/evals/suite-scorer-library-menu";
 import {
-  caseLibraryKinds,
+  spineLibraryKinds,
   type CaseScorecard,
 } from "../case-scorecard/case-scorecard-model";
 import { ScorecardRowView } from "../case-scorecard/scorecard-row";
@@ -63,7 +63,7 @@ export function AfterTheRunSection({
         </div>
         {readOnly ? null : (
           <SuiteScorerLibraryMenu
-            kinds={caseLibraryKinds()}
+            kinds={spineLibraryKinds()}
             triggerLabel="Add a check on the whole run"
             onAdd={(kind) => onAddScorer(blankPredicate(kind))}
           />

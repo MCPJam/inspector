@@ -73,6 +73,7 @@ import {
 } from "@/shared/predicate-kinds";
 import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import {
+  LIBRARY_OPT_IN_KINDS,
   ROLE_LEGEND,
   roleOfJudgeSlot,
   roleOfPredicate,
@@ -120,13 +121,37 @@ export const WIDGET_ASSERT_STAGE: UserValueStage = "userValue";
 export const ROUTE_OWNED_KINDS: ReadonlySet<PredicateKind> =
   new Set<PredicateKind>(["toolCalledWith"]);
 
-/** What the case page's "+ Add scorer" library may offer. */
+/**
+ * What the case page's "+ Add scorer" library may offer.
+ *
+ * Excludes the route's own kind (offering it twice would let a reader author a
+ * route the route row then contradicts) and the opt-in kinds, which are
+ * offered only where they replace an existing control rather than sit beside
+ * it — see {@link spineLibraryKinds}.
+ */
 export function caseLibraryKinds(
   kinds: readonly PredicateKind[] = Object.keys(
     PREDICATE_KIND_LABELS,
   ) as PredicateKind[],
 ): PredicateKind[] {
-  return kinds.filter((kind) => !ROUTE_OWNED_KINDS.has(kind));
+  return kinds.filter(
+    (kind) => !ROUTE_OWNED_KINDS.has(kind) && !LIBRARY_OPT_IN_KINDS.has(kind),
+  );
+}
+
+/**
+ * What the SPINE may offer: the case library plus the opt-in kinds.
+ *
+ * `onlyToolsCalled` belongs here and nowhere else. On the spine it is the
+ * honest way to say "and nothing else was called", a claim that otherwise
+ * lives only in the matcher's options and the case-level negative flag —
+ * neither of which an author can scope to a turn or demote to a warning.
+ */
+export function spineLibraryKinds(): PredicateKind[] {
+  return [
+    ...caseLibraryKinds(),
+    ...([...LIBRARY_OPT_IN_KINDS] as PredicateKind[]),
+  ];
 }
 
 export type ScorecardProvenance =
@@ -340,6 +365,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   toolCalledWith: "Require this tool, with these arguments",
   toolCalledAtLeastOnce: "Require this tool on future runs",
   toolNeverCalled: "Catch this tool being called",
+  onlyToolsCalled: "Require that nothing else is called",
   firstToolWas: "Require this tool to be reached first",
   responseContains: "Check what the answer says",
   responseMatches: "Check the answer's shape",

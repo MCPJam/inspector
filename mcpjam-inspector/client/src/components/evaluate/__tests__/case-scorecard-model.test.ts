@@ -5,14 +5,21 @@ import {
 } from "@mcpjam/sdk/contract";
 import {
   blankPredicate,
+  formatCriterion,
   PREDICATE_KIND_LABELS,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
 import { hostedCriterionId } from "@/shared/hosted-criterion-id";
-import { resolveCasePredicates } from "@/shared/eval-matching";
+import {
+  resolveCasePredicates,
+  type CasePredicates,
+} from "@/shared/eval-matching";
 import type { Predicate } from "@/shared/eval-matching";
 import { WIDGET_ASSERTION_LABELS, type TestStep } from "@/shared/steps";
-import { scorerLibraryCategories } from "@/components/evals/suite-scorer-table-model";
+import {
+  LIBRARY_OPT_IN_KINDS,
+  scorerLibraryCategories,
+} from "@/components/evals/suite-scorer-table-model";
 import {
   appendCaseScorer,
   buildCaseScorecard,
@@ -22,6 +29,7 @@ import {
   ROUTE_OWNED_KINDS,
   purposeOf,
   scorerRowLabel,
+  spineLibraryKinds,
   stepScope,
   updateCaseScorer,
   withCaseJudgeSkipped,
@@ -487,9 +495,25 @@ describe("the scorer library", () => {
       (category) => category.kinds,
     );
     expect(new Set(offered).size).toBe(offered.length);
-    const covered = new Set([...offered, ...ROUTE_OWNED_KINDS]);
+    // Three buckets now, and every kind is in exactly one: offered here,
+    // owned by the route row, or opt-in (offered only where it replaces an
+    // existing control — the spine).
+    const covered = new Set([
+      ...offered,
+      ...ROUTE_OWNED_KINDS,
+      ...LIBRARY_OPT_IN_KINDS,
+    ]);
     for (const kind of Object.keys(PREDICATE_KIND_LABELS)) {
       expect(covered.has(kind as never)).toBe(true);
+    }
+  });
+
+  it("offers every kind on the spine except the one the route owns", () => {
+    const offered = new Set(spineLibraryKinds());
+    for (const kind of Object.keys(PREDICATE_KIND_LABELS)) {
+      expect(
+        offered.has(kind as never) || ROUTE_OWNED_KINDS.has(kind as never),
+      ).toBe(true);
     }
   });
 
@@ -580,7 +604,10 @@ describe("writers", () => {
   });
 
   it("clears the envelope when the last case scorer is removed", () => {
-    const one = { mode: "extend", list: [{ type: "noToolErrors" } as Predicate] } as const;
+    const one: CasePredicates = {
+      mode: "extend",
+      list: [{ type: "noToolErrors" }],
+    };
     expect(removeCaseScorer(one, 0)).toBeUndefined();
     expect(
       updateCaseScorer(one, 0, { type: "responseContains", needle: "x" } as Predicate),
@@ -669,5 +696,55 @@ describe("purposeOf", () => {
 
   it("falls back to the type for a kind this build does not know", () => {
     expect(purposeOf({ type: "notARealKind" } as never)).toBe("notARealKind");
+  });
+});
+
+describe("onlyToolsCalled is offered on the spine and nowhere else", () => {
+  it("is not in the suite settings library", () => {
+    // The suite page still has the matcher's exclusivity option; offering this
+    // beside it would give a reader two controls for one claim.
+    const kinds = scorerLibraryCategories().flatMap(
+      (category) => category.kinds,
+    );
+    expect(kinds).not.toContain("onlyToolsCalled");
+  });
+
+  it("is not in the pre-spine case library", () => {
+    // That page still has the route row's "No tool should be called".
+    expect(caseLibraryKinds()).not.toContain("onlyToolsCalled");
+  });
+
+  it("IS in the spine's library, which is where it replaces them", () => {
+    expect(spineLibraryKinds()).toContain("onlyToolsCalled");
+  });
+
+  it("keeps the route's own kind out of every library", () => {
+    expect(caseLibraryKinds()).not.toContain("toolCalledWith");
+    expect(spineLibraryKinds()).not.toContain("toolCalledWith");
+  });
+
+  it("reads as the negative case when the list is empty", () => {
+    expect(
+      formatCriterion({
+        predicate: { type: "onlyToolsCalled", toolNames: [] },
+      }),
+    ).toBe("No tool should be called");
+  });
+
+  it("names the allowed tools when the list is not empty", () => {
+    expect(
+      formatCriterion({
+        predicate: { type: "onlyToolsCalled", toolNames: ["search", "get"] },
+      }),
+    ).toBe("Only these tools may be called: search, get");
+  });
+
+  it("starts blank, so a new check does not assert the negative case", () => {
+    // An empty list is a REAL claim; a freshly added check must not make it
+    // before the author has said so.
+    expect(blankPredicate("onlyToolsCalled")).toEqual({
+      type: "onlyToolsCalled",
+      toolNames: [],
+    });
   });
 });

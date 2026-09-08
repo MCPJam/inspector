@@ -51,7 +51,7 @@ import {
 import { SuiteScorerLibraryMenu } from "@/components/evals/suite-scorer-library-menu";
 import {
   buildCaseScorecard,
-  caseLibraryKinds,
+  spineLibraryKinds,
   appendCaseScorer,
   removeCaseScorer,
   updateCaseScorer,
@@ -631,7 +631,7 @@ export function CaseSpine({
 
             {readOnly ? null : (
               <SuiteScorerLibraryMenu
-                kinds={caseLibraryKinds()}
+                kinds={spineLibraryKinds()}
                 triggerLabel="Add a check after this"
                 onAdd={(kind) =>
                   addCheckAfter(action.step.id, blankPredicate(kind))

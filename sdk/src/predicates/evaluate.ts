@@ -307,6 +307,39 @@ export function evaluatePredicate(
           );
     }
 
+    case "onlyToolsCalled": {
+      // A non-array would make `includes` throw or silently allow substrings,
+      // so fail closed rather than grade a malformed predicate.
+      if (!Array.isArray(predicate.toolNames)) {
+        return fail(
+          predicate,
+          `onlyToolsCalled requires toolNames (array of tool names)`
+        );
+      }
+      const allowed = new Set(predicate.toolNames);
+      const offenders = [
+        ...new Set(
+          (transcript.toolCalls ?? [])
+            .map((call) => call.toolName)
+            .filter((name) => typeof name === "string" && !allowed.has(name))
+        ),
+      ];
+      if (offenders.length > 0) {
+        return fail(
+          predicate,
+          allowed.size === 0
+            ? `expected no tool call, but ${offenders.join(", ")} was called`
+            : `tool(s) outside the allowed set were called: ${offenders.join(", ")}`
+        );
+      }
+      return pass(
+        predicate,
+        allowed.size === 0
+          ? `no tool was called`
+          : `only allowed tools were called`
+      );
+    }
+
     case "responseContains": {
       // `includes("")` is always true, so an empty/missing needle would PASS for
       // any message — fail closed on a malformed predicate instead.

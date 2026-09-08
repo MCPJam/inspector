@@ -683,6 +683,25 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   properties: {
                                     type: {
                                       type: "string",
+                                      const: "onlyToolsCalled",
+                                    },
+                                    toolNames: {
+                                      type: "array",
+                                      items: { type: "string", minLength: 1 },
+                                    },
+                                    role: {
+                                      type: "string",
+                                      enum: ["gating", "advisory"],
+                                    },
+                                    severity: { type: "string", const: "warn" },
+                                  },
+                                  required: ["type", "toolNames"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    type: {
+                                      type: "string",
                                       const: "firstToolWas",
                                     },
                                     toolName: { type: "string", minLength: 1 },
@@ -921,6 +940,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     severity: { type: "string", const: "warn" },
                   },
                   required: ["type", "toolName"],
+                },
+                {
+                  type: "object",
+                  properties: {
+                    type: { type: "string", const: "onlyToolsCalled" },
+                    toolNames: {
+                      type: "array",
+                      items: { type: "string", minLength: 1 },
+                    },
+                    role: { type: "string", enum: ["gating", "advisory"] },
+                    severity: { type: "string", const: "warn" },
+                  },
+                  required: ["type", "toolNames"],
                 },
                 {
                   type: "object",
