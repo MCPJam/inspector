@@ -2348,6 +2348,69 @@ describe("buildBrowserTools — first-class page tools", () => {
     );
   });
 
+  it("ABORT WHILE QUEUED IN THIS PROCESS: reports a cancellation, sends nothing", async () => {
+    // The per-turn send lock is a SECOND queue, in front of the daemon's: two
+    // calls in one model step serialize here so they reach the daemon in the
+    // order the model emitted them. A Stop that lands while a page tool is
+    // waiting on that lock rejects the acquire, and without handling it the
+    // turn surfaces a raw AbortError instead of the cancellation the card and
+    // the model are told to expect.
+    //
+    // And NOTHING may go out: the invoke was never sent, so there is no
+    // invocation id, and a `webmcp_cancel` naming this command would ask the
+    // daemon to stop something that never started.
+    const commands: any[] = [];
+    const controller = new AbortController();
+    let releaseFirst: (() => void) | undefined;
+    const { ensureSession } = fakeSession(async (command) => {
+      commands.push(command);
+      if (command.action?.kind === "observe") {
+        // Hold the lock until the second call is parked behind it.
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return { status: "ok", result: { ok: true, output: {} } };
+    });
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+
+    const holding = (built.tools.browser_observe as any).execute(
+      { mode: "url" },
+      {},
+    );
+    // Let the holder reach the transport and take the lock.
+    while (!releaseFirst) await new Promise((r) => setTimeout(r, 0));
+    const queued = (built.tools.webmcp_add_topping as any).execute(
+      { topping: "pepperoni" },
+      { abortSignal: controller.signal },
+    );
+    // Parked behind the holder. Stop lands HERE.
+    await new Promise((r) => setTimeout(r, 0));
+    controller.abort();
+    const result = await queued;
+    releaseFirst();
+    await holding;
+
+    expect(result.error).toContain("webmcp_cancelled");
+    expect(
+      commands.some((command) => command.action?.kind === "webmcp_invoke"),
+      "the invoke must never have been sent",
+    ).toBe(false);
+    expect(
+      commands.some((command) => command.action?.kind === "webmcp_cancel"),
+      "nothing to cancel: the browser never saw this call",
+    ).toBe(false);
+  });
+
   it("prefixes a page tool whose stem matches a verb, so it cannot collide", () => {
     const { ensureSession } = fakeSession(async () => OK);
     const built = withFlag("first_class", () =>
