@@ -39,6 +39,7 @@
  * closed pipe, and ffmpeg exits on the EPIPE rather than filling a disk).
  */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
@@ -97,7 +98,7 @@ export interface VideoRecorderOptions {
   display: string;
   width: number;
   height: number;
-  /** Where recordings are written. One file per take, named for its id. */
+  /** Where recordings are written. One file per take, per boot. */
   dir: string;
   /** `-fs`: the encoder stops itself here rather than filling the disk. */
   maxBytes: number;
@@ -113,6 +114,11 @@ export interface VideoRecorderOptions {
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  /**
+   * Namespaces this process's take files. Random per recorder, which is per
+   * daemon boot; injected only so a test can assert an exact path.
+   */
+  nonce?: string;
 }
 
 export interface VideoRecorder {
@@ -310,6 +316,7 @@ export function createVideoRecorder(
   const statFile =
     options.statFile ?? (async (path: string) => stat(path));
   const now = options.now ?? Date.now;
+  const nonce = options.nonce ?? randomBytes(4).toString("hex");
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as never));
 
@@ -346,6 +353,14 @@ export function createVideoRecorder(
    * uses it rather than rebuilding the name.
    */
   let takeSeq = 0;
+  /**
+   * And the counter alone is not enough, because it RESETS when the daemon
+   * restarts. A relaunched browserd mid-run writes `<id>-1.mp4` again, and
+   * `-y` truncates the previous boot's take under whoever is still reading it
+   * — the collector then uploads bytes that are not the take whose size and
+   * duration were reported to it. The recording directory outlives the
+   * process, so the name has to say WHICH process wrote it.
+   */
   let disposed = false;
 
   const start = (
@@ -359,9 +374,10 @@ export function createVideoRecorder(
     // `take` and before the old ffmpeg is actually gone.
     if (take || stopping) return { ok: false, error: "record_active" };
     takeSeq += 1;
-    // `-y` stays alongside this: the counter resets when the daemon restarts,
-    // so a file from a previous boot can still be in the way.
-    const path = join(options.dir, `${args.id}-${takeSeq}.mp4`);
+    // `-y` stays, but as a belt rather than the braces: it makes ffmpeg
+    // overwrite instead of stalling on a prompt, and overwriting is precisely
+    // what must never reach another boot's file — hence the nonce.
+    const path = join(options.dir, `${args.id}-${nonce}-${takeSeq}.mp4`);
     let child: RecorderProcess;
     try {
       child = spawnProcess(

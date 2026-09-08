@@ -288,6 +288,7 @@ function constantTimeEquals(a, b) {
 
 // server/services/browserd/daemon/video-recorder.ts
 import { spawn } from "node:child_process";
+import { randomBytes as randomBytes2 } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 var MIN_RECORD_FPS = 1;
@@ -380,6 +381,7 @@ function createVideoRecorder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const statFile = options.statFile ?? (async (path) => stat(path));
   const now = options.now ?? Date.now;
+  const nonce = options.nonce ?? randomBytes2(4).toString("hex");
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   let take;
@@ -390,7 +392,7 @@ function createVideoRecorder(options) {
     if (disposed) return { ok: false, error: "record_unavailable" };
     if (take || stopping) return { ok: false, error: "record_active" };
     takeSeq += 1;
-    const path = join(options.dir, `${args.id}-${takeSeq}.mp4`);
+    const path = join(options.dir, `${args.id}-${nonce}-${takeSeq}.mp4`);
     let child;
     try {
       child = spawnProcess(
@@ -5027,7 +5029,7 @@ function adaptContext(context, options = {}) {
 import { mkdirSync } from "node:fs";
 
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes2 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
@@ -5090,7 +5092,7 @@ function readRecordMaxBytes(env) {
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
-  const token = randomBytes2(32).toString("hex");
+  const token = randomBytes3(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;

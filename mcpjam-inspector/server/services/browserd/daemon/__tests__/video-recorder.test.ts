@@ -76,6 +76,8 @@ function build(over: Record<string, unknown> = {}) {
     spawnProcess: ffmpeg.spawnProcess,
     statFile: async () => ({ size: 4_096 }),
     now: () => clock,
+    // Pinned so a path is assertable. Production takes a random one per boot.
+    nonce: "b00t",
     ...over,
   });
   return {
@@ -211,7 +213,7 @@ describe("a take's lifecycle", () => {
     const { recorder, ffmpeg } = build();
     expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
     expect(ffmpeg.spawned).toHaveLength(1);
-    expect(ffmpeg.spawned[0]!.args).toContain("/rec/run-1-1.mp4");
+    expect(ffmpeg.spawned[0]!.args).toContain("/rec/run-1-b00t-1.mp4");
     expect(recorder.status()).toMatchObject({
       active: true,
       id: "run-1",
@@ -247,7 +249,7 @@ describe("a take's lifecycle", () => {
     ffmpeg.latest().exit(0);
 
     expect(await stopping).toEqual({
-      path: "/rec/run-1-1.mp4",
+      path: "/rec/run-1-b00t-1.mp4",
       bytes: 1_234,
       durationMs: 9_000,
       // AFTER decimation: the honest measure of how much the recording shows.
@@ -502,12 +504,53 @@ describe("each take writes its own file", () => {
     expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
 
     const paths = ffmpeg.spawned.map((s) => s.args[s.args.length - 1]);
-    expect(paths).toEqual(["/rec/run-1-1.mp4", "/rec/run-1-2.mp4"]);
+    expect(paths).toEqual(["/rec/run-1-b00t-1.mp4", "/rec/run-1-b00t-2.mp4"]);
     expect(new Set(paths).size).toBe(2);
 
     releaseStat?.();
     // The first take still reports ITS file, not the one now being written.
-    expect((await stopping)?.path).toBe("/rec/run-1-1.mp4");
+    expect((await stopping)?.path).toBe("/rec/run-1-b00t-1.mp4");
+  });
+
+  it("does not reuse the previous BOOT's path when the counter resets", async () => {
+    // The counter is per-process; the recording directory is not. A relaunched
+    // browserd starts again at take 1, and `-y` would truncate the earlier
+    // boot's file under a collector still reading it — which then uploads
+    // bytes that are not the take whose size it was told.
+    const first = build();
+    first.recorder.start({ id: "run-1", fps: 15 });
+
+    // A whole new daemon over the same directory. Nothing is shared but `dir`.
+    const second = build({ nonce: "b00t2" });
+    second.recorder.start({ id: "run-1", fps: 15 });
+
+    const pathOf = (f: ReturnType<typeof fakeFfmpeg>) =>
+      f.spawned[0]!.args[f.spawned[0]!.args.length - 1];
+    expect(pathOf(first.ffmpeg)).toBe("/rec/run-1-b00t-1.mp4");
+    expect(pathOf(second.ffmpeg)).toBe("/rec/run-1-b00t2-1.mp4");
+    expect(pathOf(first.ffmpeg)).not.toBe(pathOf(second.ffmpeg));
+  });
+
+  it("names every take for the process that wrote it, without being told", () => {
+    // No `nonce` here — the real one. Two recorders over one directory must
+    // still not collide, or the guarantee holds only in tests.
+    const paths = new Set<string>();
+    for (let i = 0; i < 8; i += 1) {
+      const ffmpeg = fakeFfmpeg();
+      const recorder = createVideoRecorder({
+        display: ":0",
+        width: 1024,
+        height: 768,
+        dir: "/rec",
+        maxBytes: 1_000,
+        spawnProcess: ffmpeg.spawnProcess,
+        statFile: async () => ({ size: 1 }),
+      });
+      recorder.start({ id: "run-1", fps: 15 });
+      const args = ffmpeg.spawned[0]!.args;
+      paths.add(args[args.length - 1]!);
+    }
+    expect(paths.size).toBe(8);
   });
 
   it("reports the path it actually wrote, so a reader never rebuilds it", async () => {
@@ -518,7 +561,7 @@ describe("each take writes its own file", () => {
     ffmpeg.latest().exit(0);
 
     const result = await stopping;
-    expect(result?.path).toBe("/rec/run-1-1.mp4");
+    expect(result?.path).toBe("/rec/run-1-b00t-1.mp4");
     expect(ffmpeg.spawned[0]!.args).toContain(result!.path);
   });
 });
