@@ -62,6 +62,18 @@ export interface PinnedHostExecutionSpec {
   serverIds: string[];
   optionalServerIds?: string[];
   builtInToolIds?: string[];
+  /**
+   * What THIS target's `browser_*` tools may do, pinned from the host config
+   * at launch. A swarm session never pauses to ask, so approval — the gate
+   * every interactive surface uses — does not exist here and this declared
+   * policy is the ONLY thing that can authorize a browser tool. Absent or
+   * malformed ⇒ no browser tools are advertised (fail-closed).
+   *
+   * `unknown` on purpose: the snapshot is member-readable JSON, so it is
+   * parsed by `parseBrowserToolPolicy` at the point of use rather than trusted
+   * as a shape here.
+   */
+  browserToolPolicy?: unknown;
   computer?: HostComputerResource;
   /**
    * PRESENCE-ONLY signal that this target has a bootable environment image

@@ -61,6 +61,39 @@ export const LOCAL_HARNESS_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
 
 /**
+ * Scheduled eval runs — the deployment switch over ENABLING one, enforced on
+ * the write path rather than on the screen.
+ *
+ * Default OFF. Schedule has not been thoroughly tested, and the PostHog flag
+ * `scheduled-evals-enabled` only hides the UI: `PATCH .../eval-suites/:id/
+ * schedule` is reachable by any API-key holder, and the SDK client, the
+ * `set_eval_suite_schedule` MCP tool, `mcpjam cloud eval schedule` and
+ * proposal execution all self-dispatch through it. One switch here is what
+ * makes "not yet tested" true for every writer instead of only the screen.
+ *
+ * GATES ENABLING ONLY, ON THE ROUTE — `enabled: false` passes through
+ * untouched. Precedent is the `trace-destinations` flag: delete, pause and
+ * disable stay ungated so an org that loses the feature can still switch a
+ * live one off. A gate that strands a running schedule with no way to stop it
+ * is the worse failure.
+ *
+ * THE AGENT IS STRICTER, and it is worth being plain about the asymmetry: the
+ * org policy withholds `set_eval_suite_schedule` outright (see
+ * `org-agent-policy.ts`), so the agent loses DISABLE as well as enable. That
+ * set gates by operation name and cannot read an argument, so the choice there
+ * is between an agent that can still enable and one that can do neither. The
+ * route above is what keeps a live schedule stoppable — by a person, through
+ * the API or the CLI.
+ *
+ * NOT the only gate, and not the one that stops a schedule already running:
+ * `SCHEDULED_EVALS_ENABLED` on the Convex deployment refuses every writer
+ * including the UI's direct mutation, and `SCHEDULED_EVALS_WORKER_ENABLED`
+ * stops execution.
+ */
+export const SCHEDULED_EVALS_WRITE_ENABLED =
+  process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+
+/**
  * WebMCP Inspector (a managed browser the user points at a page, so its WebMCP
  * tools can be listed and invoked) — server-side kill switch, in BOTH modes.
  * `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false` is the emergency/managed-install off

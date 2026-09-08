@@ -30,8 +30,8 @@ function IterationIdChip({ id }: { id: string }) {
         setTimeout(() => setCopied(false), 1200);
       }}
       className="inline-flex shrink-0 items-center gap-1 rounded-sm font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-foreground"
-      title={`Iteration ${id} — click to copy`}
-      aria-label={`Copy iteration id ${id}`}
+      title={`Trial ${id} — click to copy`}
+      aria-label={`Copy trial id ${id}`}
     >
       {copied ? (
         <Check className="h-2.5 w-2.5 text-success" aria-hidden />
@@ -64,7 +64,7 @@ export function InspectStrip({
           Viewing run
         </span>
         <span className="truncate">
-          Iter #{iteration.iterationNumber}
+          Trial #{iteration.iterationNumber}
           <span aria-hidden> · </span>
           {formatTimeAgo(ranAt)}
         </span>

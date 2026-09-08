@@ -36,7 +36,7 @@ export type CreateSuitePayload = {
   name: string;
   /**
    * Hosts the suite runs against. Each attachment fans out into its own
-   * run on "Run all hosts" — the host's snapshotted config is the source
+   * run on "Run all clients" — the client's snapshotted config is the source
    * of truth for model, system prompt, temperature, and servers. There is
    * no longer a suite-level flat server list or model override.
    */
@@ -363,7 +363,7 @@ export function CreateSuiteDialog({
                     Servers
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Server group all hosts run against.
+                    Server group all clients run against.
                   </p>
                 </div>
                 <div className="shrink-0">

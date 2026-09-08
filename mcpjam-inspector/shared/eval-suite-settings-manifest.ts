@@ -176,8 +176,8 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     // organization's GitHub App installation, and the suite only decides which
     // suite that repository answers for. So it has its own route family and its
     // own operations rather than a field on `update_eval_suite`. The op named
-    // here is the WRITE this row performs; `list_eval_check_repos` is its read.
-    op: "connect_eval_check_repo",
+    // here is the WRITE this row performs; `list_eval_github_repos` is its read.
+    op: "connect_eval_github_repo",
   },
   {
     key: "deleteSuite",
