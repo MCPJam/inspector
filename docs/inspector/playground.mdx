@@ -91,6 +91,18 @@ Open the **Tools** tab in the left rail to invoke any tool by hand:
 
 When multiple servers are selected at the same time, the Tools rail aggregates every server's tools into one list and routes each execution to the right server automatically.
 
+### WebMCP page tools in the Tools pane
+
+When the agent browser is open and the current page declares [WebMCP](https://webmcp.dev) tools, a **Declared by the page** section appears below the browser's built-in tools. Each entry shows:
+
+- The name the **model calls** — a `webmcp_*` tool the model can invoke directly on its next step, with the page's own name and origin shown beneath it.
+- A **"page says read-only"** badge when the page's registration carries that annotation. This is the page's own claim and is shown as such — the approval classifier does not rely on it.
+- A **"Not offered to the model"** notice for any tool the server could not advertise (for example, a schema no provider can express as tool arguments, or tools past the per-turn cap).
+
+A **live** badge appears on the section header when a browser stream is open and the list is following the page in real time — it updates automatically as the model navigates, with no polling and no manual refresh needed. The badge is absent when no stream is open; the list shown is the last one read.
+
+Tool cards in the chat thread show a **from `origin`** chip for page tool calls, identifying which page's tool produced the result. The chip reads from the result itself, so it stays accurate even after the browser has navigated elsewhere.
+
 ## Model Picker
 
 The model picker in the chat input lets you choose which LLM to use. Models are organized into two tabs:
