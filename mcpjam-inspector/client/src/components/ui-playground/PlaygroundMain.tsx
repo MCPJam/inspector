@@ -411,6 +411,7 @@ interface PlaygroundMainProps {
   /** When true, Send / Enter are blocked until the playground server is connected. */
   blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
+  /** Legacy #1689 NUX branch, pinned `false` in production — see below. */
   showPostConnectGuide?: boolean;
   /**
    * Swaps the welcome hero's heading for the post-connect guide copy, so the

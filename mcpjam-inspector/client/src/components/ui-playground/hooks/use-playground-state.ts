@@ -110,6 +110,8 @@ export interface UsePlaygroundStateOptions {
   isConvexAuthenticated?: boolean;
   isProjectProvisioned?: boolean;
   isClientConfigSyncPending?: boolean;
+  /** False while the Convex servers query is still in flight. */
+  areServersHydrated?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
@@ -182,6 +184,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     isConvexAuthenticated = false,
     isProjectProvisioned = true,
     isClientConfigSyncPending = false,
+    areServersHydrated = true,
     hasSeenFirstRunOnboarding,
     isServerSyncing = false,
     onConnect,
@@ -212,6 +215,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     canPersistRemoteOnboarding: isConvexAuthenticated,
     isProjectProvisioned,
     isClientConfigSyncPending,
+    areServersHydrated,
   });
 
   const firstRunComposerSeed =
@@ -981,6 +985,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   // Playground rather than hanging forever with no escape. See issue #3352.
   const wantsFirstRunSkeleton =
     isResolvingRemoteCompletion ||
+    onboarding.isAwaitingFirstRunServers ||
     isConnectingFirstRunExcalidraw ||
     isBootstrappingFirstRunConnection ||
     isWaitingForServerSync;

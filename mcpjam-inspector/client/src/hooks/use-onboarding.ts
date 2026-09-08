@@ -29,6 +29,8 @@ interface UseOnboardingOptions {
   canPersistRemoteOnboarding?: boolean;
   isProjectProvisioned?: boolean;
   isClientConfigSyncPending?: boolean;
+  /** False while the Convex servers query is still in flight. */
+  areServersHydrated?: boolean;
 }
 
 interface UseOnboardingReturn {
@@ -36,6 +38,8 @@ interface UseOnboardingReturn {
   isGuidedPostConnect: boolean;
   /** The run is this device's to finish — see the derivation for why it is wider. */
   isFirstRunUnfinished: boolean;
+  /** The phase is only retired because the servers map has not landed yet. */
+  isAwaitingFirstRunServers: boolean;
   isResolvingRemoteCompletion: boolean;
   /** True before the Excalidraw server row exists (auto-connect not yet dispatched). */
   isBootstrappingFirstRunConnection: boolean;
@@ -44,6 +48,11 @@ interface UseOnboardingReturn {
   completeOnboarding: () => void;
   connectError: string | null;
   retryConnect: () => void;
+}
+
+/** Phases that mean a first run is still on screen. */
+function isUnfinishedFirstRunPhase(phase: OnboardingPhase): boolean {
+  return phase !== "completed" && phase !== "dismissed";
 }
 
 /** A run that painted or started but never completed still owns this device. */
@@ -60,12 +69,14 @@ function getInitialLocalPhase(
     isWorkOsAuthLoading,
     hasRemoteOnboardingState = false,
     hasSeenOnboarding = false,
+    areServersHydrated = true,
   }: Pick<
     UseOnboardingOptions,
     | "isSignedInWithWorkOs"
     | "isWorkOsAuthLoading"
     | "hasRemoteOnboardingState"
     | "hasSeenOnboarding"
+    | "areServersHydrated"
   >,
 ): OnboardingPhase {
   if (isWorkOsAuthLoading) return "dismissed";
@@ -82,6 +93,11 @@ function getInitialLocalPhase(
   if (hasRemoteOnboardingState && hasSeenOnboarding && !isUnfinishedHere) {
     return "dismissed";
   }
+
+  // Every branch below reads the servers map, and a map that is still loading
+  // is empty — "unknown", not "no servers". Deciding on it pins a phase the
+  // recompute effect below can no longer correct, so stay undecided (BB-112).
+  if (!areServersHydrated) return "dismissed";
 
   const serverEntries = Object.entries(servers);
   const hasAnyServers = serverEntries.length > 0;
@@ -117,6 +133,7 @@ export function useOnboarding({
   canPersistRemoteOnboarding = false,
   isProjectProvisioned = true,
   isClientConfigSyncPending = false,
+  areServersHydrated = true,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const markOnboardingAsShownMutation = useMutation(
     "users:markOnboardingShown" as any,
@@ -132,6 +149,7 @@ export function useOnboarding({
       isWorkOsAuthLoading,
       hasRemoteOnboardingState,
       hasSeenOnboarding,
+      areServersHydrated,
     }),
   );
 
@@ -194,10 +212,12 @@ export function useOnboarding({
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState,
         hasSeenOnboarding,
+        areServersHydrated,
       });
     });
   }, [
     servers,
+    areServersHydrated,
     isWorkOsAuthLoading,
     isSignedInWithWorkOs,
     hasRemoteOnboardingState,
@@ -339,7 +359,22 @@ export function useOnboarding({
   // Wider than `isGuidedPostConnect` on purpose: a sent first message finishes
   // the run from ANY unfinished phase. An unfinished run now resumes across
   // reloads (BB-112), so one whose Excalidraw never connects has no other exit.
-  const isFirstRunUnfinished = phase !== "completed" && phase !== "dismissed";
+  const isFirstRunUnfinished = isUnfinishedFirstRunPhase(phase);
+
+  // A retired run and one still waiting for its servers both read "dismissed".
+  // Deriving as if the map had landed tells them apart, so the caller can hold
+  // the first-run skeleton instead of flashing the empty state at it.
+  const isAwaitingFirstRunServers =
+    !areServersHydrated &&
+    isUnfinishedFirstRunPhase(
+      getInitialLocalPhase(servers, {
+        isSignedInWithWorkOs,
+        isWorkOsAuthLoading,
+        hasRemoteOnboardingState,
+        hasSeenOnboarding,
+        areServersHydrated: true,
+      }),
+    );
 
   const isBootstrappingFirstRunConnection =
     phase === "connecting_excalidraw" && !servers[EXCALIDRAW_SERVER_NAME];
@@ -348,6 +383,7 @@ export function useOnboarding({
     phase,
     isGuidedPostConnect,
     isFirstRunUnfinished,
+    isAwaitingFirstRunServers,
     isResolvingRemoteCompletion,
     isBootstrappingFirstRunConnection,
     connectExcalidraw,

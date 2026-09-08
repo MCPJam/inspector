@@ -112,6 +112,47 @@ describe("usePlaygroundState — first-run NUX lifecycle", () => {
   });
 });
 
+describe("usePlaygroundState — first-run servers hydration", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  function renderWhileServersLoad() {
+    return renderHook(
+      ({ areServersHydrated }: { areServersHydrated: boolean }) =>
+        usePlaygroundState({
+          servers: {},
+          onConnect: vi.fn(),
+          areServersHydrated,
+        }),
+      { wrapper, initialProps: { areServersHydrated: false } },
+    );
+  }
+
+  it("holds the first-run skeleton while the servers map is still loading", () => {
+    const { result, rerender } = renderWhileServersLoad();
+
+    // Undecided reads as "dismissed" so the recompute effect can still correct
+    // it, but the screen must not fall through to the empty state meanwhile.
+    expect(result.current.onboarding.phase).toBe("dismissed");
+    expect(result.current.loadingState.kind).toBe("skeleton");
+
+    rerender({ areServersHydrated: true });
+
+    expect(result.current.onboarding.phase).toBe("connecting_excalidraw");
+    expect(result.current.loadingState.kind).toBe("skeleton");
+  });
+
+  it("does not hold the skeleton for a run that already finished", () => {
+    writeOnboardingState({ status: "completed", completedAt: Date.now() });
+
+    const { result } = renderWhileServersLoad();
+
+    expect(result.current.onboarding.phase).toBe("completed");
+    expect(result.current.loadingState.kind).not.toBe("skeleton");
+  });
+});
+
 describe("usePlaygroundState — first-run submit gate", () => {
   beforeEach(() => {
     localStorage.clear();

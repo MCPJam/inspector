@@ -100,6 +100,10 @@ export function PlaygroundCenter({
         blockSubmitUntilServerConnected={state.firstRunSubmitBlocked}
         ensureServersReady={ensureServersReady}
         pulseSubmit={state.firstRunComposerSeed}
+        // Stays false: this branch replaces the hero rather than adding to it,
+        // so flipping it drops the logo and the selectors again — the BB-112
+        // bug. The nudge alone rides on `showPostConnectGuideCopy` (see its
+        // JSDoc).
         showPostConnectGuide={false}
         showPostConnectGuideCopy={isGuidedPostConnect}
         // The copy needs the server up; retiring the run does not. A message

@@ -402,6 +402,81 @@ describe("useOnboarding", () => {
     expect(result.current.isFirstRunUnfinished).toBe(true);
   });
 
+  it("does not decide a resumed run from a servers map that is still hydrating", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const onConnect = vi.fn();
+    const hydratedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "disconnected"
+      ),
+      "existing-server": createServer("existing-server", "connected"),
+    };
+
+    const { result, rerender } = renderHook(
+      ({
+        servers,
+        areServersHydrated,
+      }: {
+        servers: Record<string, ServerWithName>;
+        areServersHydrated: boolean;
+      }) =>
+        useOnboarding({
+          servers,
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          areServersHydrated,
+        }),
+      {
+        initialProps: {
+          servers: {} as Record<string, ServerWithName>,
+          areServersHydrated: false,
+        },
+      }
+    );
+
+    // An empty map that is still loading means "unknown", not "no servers":
+    // a phase committed here is one the recompute effect can never correct.
+    expect(result.current.phase).toBe("dismissed");
+    expect(result.current.isAwaitingFirstRunServers).toBe(true);
+
+    rerender({ servers: hydratedServers, areServersHydrated: true });
+
+    expect(result.current.phase).toBe("dismissed");
+    expect(result.current.isFirstRunUnfinished).toBe(false);
+    expect(result.current.isAwaitingFirstRunServers).toBe(false);
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("starts the guided run once an empty servers map has hydrated", async () => {
+    const onConnect = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ areServersHydrated }: { areServersHydrated: boolean }) =>
+        useOnboarding({
+          servers: {},
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          areServersHydrated,
+        }),
+      { initialProps: { areServersHydrated: false } }
+    );
+
+    expect(onConnect).not.toHaveBeenCalled();
+
+    rerender({ areServersHydrated: true });
+
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
   it("resumes guided mode when the remote row is seen but this device never finished", () => {
     localStorage.setItem(
       "mcp-onboarding-state",
