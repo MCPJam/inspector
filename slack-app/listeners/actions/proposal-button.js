@@ -71,19 +71,20 @@ export function announcementFor(outcome, userId) {
       break;
   }
 
-  // URL fallback for kinds this build does not recognise (newer server).
-  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
-
   // A kind we do not recognise means a NEWER server, and the operation-name
   // table below is older than the kind vocabulary — consulting it would let a
   // brand-new action be announced as "it's away" on the strength of a name
-  // this build happens to recognise. Claim nothing instead.
+  // this build happens to recognise. Claim nothing instead, but use the URL
+  // if the server returned one.
   if (outcome.kind != null) {
+    if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
     return `:white_check_mark: Approved by <@${userId}>.`;
   }
 
-  // No `kind` at all — an OLDER server. Fall back to the operation names this
-  // build knows, then to copy that claims nothing.
+  // No `kind` at all — an OLDER server. Check operation names first so a
+  // cancel_eval_run with a resource URL is announced as "Cancelled", not
+  // "Approved". Fall through to the URL fallback for other legacy operations
+  // that happen to return a resource link.
   if (outcome.operation === 'cancel_eval_run') {
     return `:white_check_mark: Cancelled by <@${userId}>.`;
   }
@@ -93,7 +94,8 @@ export function announcementFor(outcome, userId) {
   if (outcome.operation === 'run_eval_suite' || outcome.operation === 'run_eval_case') {
     return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
   }
-  return `:white_check_mark: Approved by <@${userId}>.`;
+  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+  return `:white_check_mark: Approved by <@${userId}>`.concat('.');
 }
 
 /**

@@ -273,6 +273,19 @@ describe('announcementFor', () => {
     assert.match(announcementFor({ operation: 'run_eval_suite' }, 'U1'), /it's away/);
   });
 
+  it('announces cancel_eval_run as Cancelled even when a resource URL is present', () => {
+    // Without this fix, a legacy server returning cancel_eval_run + resource.url
+    // would be announced as "Approved — follow it here" because the URL fallback
+    // ran before the operation-name check.
+    const text = announcementFor(
+      { operation: 'cancel_eval_run', resource: { url: 'https://app/run/1' } },
+      'U1',
+    );
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/Approved/.test(text), 'cancellation must not say Approved');
+    assert.ok(!/follow it here/.test(text), 'cancellation must not show the run URL');
+  });
+
   it('claims nothing for an operation and kind it has never seen', () => {
     const text = announcementFor({ operation: 'some_new_op', kind: 'teleport' }, 'U1');
     assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
