@@ -1150,6 +1150,21 @@ export async function executeEvalRunFromFile(
     fileEnvironment,
   });
 
+  // The LAUNCH runs on a client that declares itself this file's sync.
+  //
+  // `--compose --save-targets` appends the cells it just minted to the suite,
+  // and `suite.environments` is one of the CI-locked actions — so on the suite
+  // this very command just made file-owned, the append 409s without the
+  // marker. (The single-cell fallback on a backend without ephemeral launch
+  // attaches too, so it is not only the multi-model case.)
+  //
+  // Threaded through the CLIENT rather than added to `run_eval_suite`'s input,
+  // because that input is published verbatim as an MCP tool input: a field
+  // there is one a model could set to claim it is the owning file. The client
+  // is out of a model's reach — the MCP worker builds its own and never calls
+  // this.
+  const launchClient = context.client.withFileSync(authored.suite.id);
+
   return runEvalSuiteOperation.execute(
     {
       project: project.id,
@@ -1189,7 +1204,7 @@ export async function executeEvalRunFromFile(
       ...(importApprovals ? { importApprovals } : {}),
     },
     {
-      client: context.client,
+      client: launchClient,
       signal: context.signal,
       onDisclosure: context.onDisclosure,
       onDisclosureUnavailable: context.onDisclosureUnavailable,

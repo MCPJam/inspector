@@ -206,6 +206,11 @@ export interface PlatformApiClientOptions {
    * inside Actions had no baseline at all.
    */
   ci?: PlatformCiMetadata;
+  /**
+   * The suite file this process syncs, if it is one. See
+   * {@link PlatformFileSync} for why this lives here and not on an operation.
+   */
+  fileSync?: PlatformFileSync;
 }
 
 /** The three origins a client may declare. See `launcher` above. */
@@ -238,6 +243,23 @@ export interface PlatformCiMetadata {
  * predates it — self-hosted and staging included — while an unknown header is
  * ignored everywhere. A cosmetic label must never be able to fail a launch.
  */
+/**
+ * The suite FILE this process is the sync for.
+ *
+ * A client-construction option rather than an operation input, and that is the
+ * whole point. `declaredSuiteId` exempts a write from the CI-owned suite lock,
+ * and every `PlatformOperation` input is published verbatim as an MCP tool
+ * input — so a field there is one a model can assert about itself. The same
+ * argument that put `launcher` here puts this here: the PROCESS knows whether
+ * it is a file sync; the caller of a tool does not get to claim it.
+ *
+ * Set it with {@link PlatformApiClient.withFileSync} on the client the file
+ * sync uses, and leave it unset everywhere else.
+ */
+export interface PlatformFileSync {
+  declaredSuiteId: string;
+}
+
 export const PLATFORM_LAUNCH_HEADERS = {
   launcher: "x-mcpjam-launcher",
   ci: "x-mcpjam-ci",
@@ -355,8 +377,14 @@ export class PlatformApiClient {
   /** Pre-encoded `x-mcpjam-ci`, or absent when nothing was detected. */
   private readonly ciHeader?: string;
   private readonly extraHeaders?: Record<string, string>;
+  /** The suite file this client syncs, if any. See {@link PlatformFileSync}. */
+  private readonly fileSync?: PlatformFileSync;
+  /** Kept so {@link withFileSync} can clone without re-deriving every field. */
+  private readonly options: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    this.options = options;
+    this.fileSync = options.fileSync;
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
@@ -385,6 +413,22 @@ export class PlatformApiClient {
           ])
         )
       : undefined;
+  }
+
+  /**
+   * A copy of this client that also declares itself the sync for one suite
+   * file, so its writes carry the marker that exempts them from the CI-owned
+   * suite lock.
+   *
+   * A COPY, not a mutation: the caller holds one client for a whole command,
+   * and flipping a flag on it would leave every later call — including ones
+   * about other suites — claiming to be this file's sync.
+   */
+  withFileSync(declaredSuiteId: string): PlatformApiClient {
+    return new PlatformApiClient({
+      ...this.options,
+      fileSync: { declaredSuiteId },
+    });
   }
 
   getMe(options?: RequestOptions): Promise<PlatformMe> {
@@ -1885,7 +1929,18 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/environments`,
-      { body: { environmentId: params.environmentId } },
+      {
+        body: {
+          environmentId: params.environmentId,
+          // The owning FILE appending a cell it just minted.
+          // `suite.environments` is one of the locked actions, so without this
+          // a `--file` run with `--save-targets` 409s on a write the file is
+          // entitled to make.
+          ...(this.fileSync
+            ? { declaredSuiteId: this.fileSync.declaredSuiteId }
+            : {}),
+        },
+      },
       options
     );
   }

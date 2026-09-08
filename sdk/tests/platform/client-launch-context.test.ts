@@ -142,3 +142,76 @@ describe("launch-context headers", () => {
     );
   });
 });
+
+/**
+ * The file-sync marker travels the same road as the launcher, for the same
+ * reason: a `PlatformOperation` input becomes an MCP tool input verbatim, so
+ * `declaredSuiteId` on one is a field a model could set to claim it is the
+ * owning file. The CLIENT knows whether this process is a file sync; a tool
+ * caller does not.
+ */
+describe("withFileSync", () => {
+  const bodyOf = (fetchMock: FetchMock, call = 0): Record<string, unknown> =>
+    JSON.parse(fetchMock.mock.calls[call][1].body as string);
+
+  it("marks the environment attach as the owning file's write", async () => {
+    // `--compose --save-targets` appends cells the file's own run just minted,
+    // and `suite.environments` is CI-locked — so without the marker this 409s
+    // on the suite the same command just made file-owned.
+    const fetchMock = vi.fn().mockResolvedValue(ok({ attached: true }));
+    await makeClient(fetchMock)
+      .withFileSync("s_checkout")
+      .attachEvalSuiteEnvironment({
+        projectId: "proj_1",
+        suiteId: "suite_1",
+        environmentId: "env_1",
+      });
+    expect(bodyOf(fetchMock)).toEqual({
+      environmentId: "env_1",
+      declaredSuiteId: "s_checkout",
+    });
+  });
+
+  it("sends nothing extra when the process is not a file sync", async () => {
+    // The ordinary case, and the one that must stay clean: an agent or an app
+    // attaching an environment has no file to speak for.
+    const fetchMock = vi.fn().mockResolvedValue(ok({ attached: true }));
+    await makeClient(fetchMock).attachEvalSuiteEnvironment({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      environmentId: "env_1",
+    });
+    expect(bodyOf(fetchMock)).toEqual({ environmentId: "env_1" });
+  });
+
+  it("returns a COPY, leaving the original client unmarked", async () => {
+    // One client serves a whole command. Mutating it would leave every later
+    // call — including ones about other suites — claiming to be this file.
+    const fetchMock = vi.fn().mockResolvedValue(ok({ attached: true }));
+    const client = makeClient(fetchMock);
+    const synced = client.withFileSync("s_checkout");
+    expect(synced).not.toBe(client);
+
+    await client.attachEvalSuiteEnvironment({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      environmentId: "env_1",
+    });
+    expect(bodyOf(fetchMock)).toEqual({ environmentId: "env_1" });
+  });
+
+  it("keeps the launcher and CI declarations across the copy", async () => {
+    // The copy is the client the LAUNCH runs on, so losing these would trade
+    // one bug for another: the run would attach fine and badge as `API`.
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    await makeClient(fetchMock, {
+      launcher: { kind: "cli", client: "mcpjam-cli" },
+      ci: { provider: "github_actions", commitSha: "abc123" },
+    })
+      .withFileSync("s_checkout")
+      .createEvalRun({ projectId: "proj_1", body: { suiteId: "suite_1" } });
+    const headers = headersOf(fetchMock);
+    expect(JSON.parse(headers["x-mcpjam-launcher"]).kind).toBe("cli");
+    expect(JSON.parse(headers["x-mcpjam-ci"]).commitSha).toBe("abc123");
+  });
+});
