@@ -140,6 +140,9 @@ describe("ScenarioShareSection", () => {
       screen.queryByRole("button", { name: "Invite", exact: true }),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("scenario-copy-tester-link")).toBeInTheDocument();
+    // Hiding the field must not orphan people invited before the switch: the
+    // roster is what still revokes them.
+    expect(screen.getByText("Has access")).toBeInTheDocument();
   });
 
   /**
