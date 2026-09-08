@@ -19,7 +19,10 @@ export {
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
   PlatformApiClient,
+  RUN_LAUNCH_HEADERS,
   type PlatformApiClientOptions,
+  type PlatformCiMetadataOption,
+  type PlatformRunLauncherOption,
 } from "./client.js";
 
 export type {
@@ -168,6 +171,8 @@ export type {
   PlatformEvalRunGroupEntry,
   PlatformEvalRunGroupTarget,
   PlatformEvalRunEnvironment,
+  PlatformEvalRunLauncher,
+  PlatformEvalRunAttribution,
   PlatformEvalRunDisclosure,
   PlatformDisclosureRailDestination,
   PlatformManagedRailDisclosure,

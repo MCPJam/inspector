@@ -49,6 +49,7 @@ import {
   type TestCaseType,
 } from "@/shared/probe-config";
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
+import type { LaunchContext } from "../../utils/launch-context.js";
 import {
   createEvalCasesInBatches,
   partialResultOf,
@@ -624,6 +625,20 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * retry) rather than pairing a stale manager with a newer run snapshot.
    */
   resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+  /**
+   * WHO SAYS IT LAUNCHED THIS RUN, and from which CI job.
+   *
+   * Server-internal like `source`: it is NOT on `RunEvalsRequestSchema`, so an
+   * API caller cannot put it in the body. It arrives on
+   * `x-mcpjam-launcher` / `x-mcpjam-ci` and is parsed at the `/v1` boundary
+   * (`utils/launch-context.ts`), which is also where a malformed or
+   * out-of-allowlist value is dropped — a label must never fail a launch.
+   *
+   * A LABEL. `source` is still stamped `"api"` and the verified attribution is
+   * still what the audit reads; this is what lets the Runs table stop showing
+   * a CLI run, an Actions job and an MCP agent as one indistinguishable `API`.
+   */
+  launchContext?: LaunchContext;
 } & EvalRunProvenance;
 
 export const RunTestCaseRequestSchema = z.object({
@@ -1645,15 +1660,42 @@ export async function authorEvalSuite(args: {
     // frozen execution snapshot. Only update when explicitly refreshing or
     // on first-run (non-rerun) writes.
     const shouldUpdateSnapshot = !suiteRerun || refreshSnapshot === true;
-    await convexClient.mutation("testSuites:updateTestSuite" as any, {
-      suiteId: resolvedSuiteId,
-      name: suiteName,
-      description: suiteDescription,
+    // …and when there is nothing to update, DON'T CALL AT ALL.
+    //
+    // A plain rerun carries no snapshot (above) and no name or description of
+    // its own — a bare `{ suiteId }` rerun has neither on the wire — so this
+    // was a mutation whose whole argument list was `undefined`. Harmless while
+    // every suite was writable; not harmless now that a CI-owned suite refuses
+    // suite edits, because it would make EVERY rerun of a suite managed by CI
+    // fail on a write it never needed to make. Running a CI-owned suite is
+    // exactly what the lock is meant to keep working.
+    //
+    // What still refuses, on purpose: `refreshSnapshot`, and a non-rerun
+    // inline-test launch. Both really do rewrite the suite's persisted
+    // configuration, and that is the drift the lock exists to stop.
+    //
+    // Name and description are NOT exempt from that. A rerun echoes back the
+    // suite's OWN name and description — the web client reads them off the
+    // suite row it is looking at and sends them straight back — so writing
+    // them stores what is already stored, and the only thing that write can
+    // do is fail. Renaming a suite has its own route (`PATCH
+    // /eval-suites/:suiteId`); a rerun is not it.
+    const suiteWriteFields = {
+      ...(!suiteRerun && suiteName !== undefined ? { name: suiteName } : {}),
+      ...(!suiteRerun && suiteDescription !== undefined
+        ? { description: suiteDescription }
+        : {}),
       ...(shouldUpdateSnapshot ? { environment: persistedEnvironment } : {}),
       ...(shouldUpdateSnapshot && refreshSnapshot === true
         ? { refreshHostConfigFromEnvironment: true }
         : {}),
-    });
+    };
+    if (Object.keys(suiteWriteFields).length > 0) {
+      await convexClient.mutation("testSuites:updateTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+        ...suiteWriteFields,
+      });
+    }
 
     // On a suite rerun, do NOT upsert per-case fields. The wire payload
     // contains values derived from suite.defaultConfig (model substituted in
@@ -2117,6 +2159,7 @@ export async function prepareEvalRun(
     importApprovals,
     extraHeaders,
     benchmarkWriteGuard,
+    launchContext,
   } = request;
 
   /**
@@ -2340,6 +2383,13 @@ export async function prepareEvalRun(
     // and an approval that never arrives is reported to the caller as the
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
+    // Same rule, same reason. Spread apart rather than as one `launchContext`
+    // object because the recorder's parameter list is the mutation's argument
+    // list, and the backend takes the two as siblings of `source`.
+    ...(launchContext?.launcher ? { launcher: launchContext.launcher } : {}),
+    ...(launchContext?.ciMetadata
+      ? { ciMetadata: launchContext.ciMetadata }
+      : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??

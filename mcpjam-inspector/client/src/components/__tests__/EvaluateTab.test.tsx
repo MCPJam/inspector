@@ -258,6 +258,7 @@ function makeSuiteEntry(
   suiteId: string,
   overrides?: {
     source?: "ui" | "sdk";
+    declaredSuiteId?: string;
     latestRun?: { _id: string; completedAt: number } | null;
   },
 ) {
@@ -272,6 +273,9 @@ function makeSuiteEntry(
       createdAt: 1,
       updatedAt: 1,
       source: overrides?.source ?? ("ui" as const),
+      ...(overrides?.declaredSuiteId
+        ? { declaredSuiteId: overrides.declaredSuiteId }
+        : {}),
       tags: ["explore"],
     },
     latestRun: overrides?.latestRun ?? null,
@@ -309,6 +313,35 @@ function makeQueryState(selectedSuiteId: string | null) {
     enableOverviewQuery: true,
     enableSuiteDetailsQuery: Boolean(selectedSuiteId),
   };
+}
+
+/**
+ * Make the suite every agent-command spec addresses ("Suite suite-a") CI-owned,
+ * by the row alone — no capability query, which is also what an older backend
+ * answers forever.
+ */
+function withCiOwnedSuiteA() {
+  mocks.useEvalQueries.mockImplementation(
+    ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+      const state = makeQueryState(selectedSuiteId);
+      const ciOwned = makeSuiteEntry(["server-a"], "suite-a", {
+        source: "sdk",
+      });
+      const sortedSuites = state.sortedSuites.map((entry) =>
+        entry.suite._id === "suite-a" ? ciOwned : entry,
+      );
+      const selectedSuiteEntry =
+        sortedSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
+        null;
+      return {
+        ...state,
+        suiteOverview: sortedSuites,
+        sortedSuites,
+        selectedSuiteEntry,
+        selectedSuite: selectedSuiteEntry?.suite ?? null,
+      };
+    },
+  );
 }
 
 describe("EvaluateTab", () => {
@@ -953,6 +986,68 @@ describe("EvaluateTab", () => {
       expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
     });
 
+    /*
+     * AN AGENT COMMAND IS A SECOND DOOR INTO THE SAME MUTATIONS.
+     *
+     * The CI-owned lock lives in the rendered controls — withheld callbacks, a
+     * disabled fieldset, a withdrawn Delete. An agent command passes none of
+     * them: it resolves a suite by name and calls the handler directly. So a
+     * lock that only hides affordances leaves `case.create` and `suite.delete`
+     * — both in the platform's locked set — reachable, and the agent gets a
+     * `409` it can do nothing with.
+     *
+     * `resolveSuiteEntry` now takes a REQUIRED intent, so a command added later
+     * cannot compile without deciding which of these two groups it is in.
+     */
+    it("generateEvalTests refuses a CI-owned suite instead of earning a 409", async () => {
+      mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+      withCiOwnedSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "generateEvalTests",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+    });
+
+    it("deleteEvalSuite refuses a CI-owned suite instead of earning a 409", async () => {
+      withCiOwnedSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "deleteEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "invalid_request" },
+      });
+      expect(mocks.setSuiteToDelete).not.toHaveBeenCalled();
+      expect(mocks.confirmDelete).not.toHaveBeenCalled();
+    });
+
+    it("still runs a CI-owned suite — the lock is on edits, not on the suite", async () => {
+      mocks.getEffectiveSuiteServers.mockImplementation(() => ["server-a"]);
+      withCiOwnedSuiteA();
+      render(<EvaluateTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "runEvalSuite",
+        payload: { suite: "Suite suite-a" },
+      });
+
+      // The guard against over-refusing, and the reason the two above mean
+      // something: `"read"` is not a weaker check, it is a different question.
+      expect(response).toMatchObject({ status: "success" });
+    });
+
     it("openEvalSuiteForm opens the create page with a name-only prefill — no suite is created", async () => {
       render(<EvaluateTab projectId="ws-1" />);
 
@@ -1019,5 +1114,73 @@ describe("EvaluateTab", () => {
         },
       });
     });
+  });
+});
+
+/**
+ * A suite whose configuration lives in a repository reaches the detail view
+ * already locked.
+ *
+ * The TAB is the only place that can answer this: it holds the suite row, and
+ * the row is where both halves of the predicate live (`declaredSuiteId` from a
+ * committed suite file, `source: 'sdk'` from ingest). Getting it wrong here
+ * means every control below is offered against a backend that will refuse it.
+ */
+describe("EvaluateTab — CI-managed suites", () => {
+  // This describe sits OUTSIDE the suite that owns the shared `beforeEach`, so
+  // it restores the two pieces of module state its tests depend on itself —
+  // otherwise a `selectedSuite` override from one case leaks into the next and
+  // the unlocked assertion reads a locked suite.
+  beforeEach(() => {
+    mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+  });
+
+  function lockedQueryState(overrides: {
+    source?: "ui" | "sdk";
+    declaredSuiteId?: string;
+  }) {
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+        const state = makeQueryState(selectedSuiteId);
+        if (!state.selectedSuite) return state;
+        return {
+          ...state,
+          selectedSuite: { ...state.selectedSuite, ...overrides },
+        };
+      },
+    );
+  }
+
+  function lastProps(): Record<string, unknown> {
+    return (mocks.suiteIterationsView.mock.calls.at(-1)?.[0] ?? {}) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it("locks a file-declared suite and wires the way out", () => {
+    lockedQueryState({ declaredSuiteId: "s_from_file" });
+    render(<EvaluateTab projectId="ws-1" />);
+
+    expect(lastProps().configLocked).toBe(true);
+    // The escape hatch has to be WIRED, not merely rendered: `duplicateTestSuite`
+    // stamps the copy `source: 'ui'` and drops the declared id, which is what
+    // makes the copy editable.
+    expect(typeof lastProps().onDuplicateSuite).toBe("function");
+  });
+
+  it("locks an SDK-created suite the same way", () => {
+    lockedQueryState({ source: "sdk" });
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(lastProps().configLocked).toBe(true);
+  });
+
+  it("leaves an app-authored suite unlocked", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(lastProps().configLocked).toBe(false);
   });
 });

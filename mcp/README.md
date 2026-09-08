@@ -305,6 +305,32 @@ The verified bearer token is forwarded to the Platform API
 the API sees the same WorkOS identity the main app does and applies its own
 per-project authorization to listings, probes, and eval runs.
 
+### How a run this worker starts is attributed
+
+Every eval run started through a tool here lands on the Platform API, which
+stamps its `source` as `api` — the same stamp a curl script gets, because from
+the API's side that is what this is. So a Runs table could not tell an agent's
+run from anyone else's.
+
+The worker closes that gap by DECLARING itself: each Platform API client it
+builds carries `launcher: { kind: "mcp", client: <the request's user-agent> }`,
+which the platform stores beside the stamp and the Runs table renders as
+**MCP**, naming the calling agent.
+
+Three things about that are deliberate:
+
+- **It is a label, not a claim of authority.** `source` is still stamped
+  server-side, and the platform separately records the verified credential the
+  request authenticated with. Nothing reads the declaration to decide access.
+- **It is set on the client, not on the tool's input.** An operation's input
+  schema is exposed verbatim as the MCP tool's own input, so a `launcher` field
+  there would let the agent whose run it is choose its own badge.
+- **`client` comes from the request's `user-agent`, not from `initialize`.**
+  `createMcpHandler` builds a fresh `McpServer` per HTTP request, so by the time
+  a tool call runs there is no session that remembers the handshake's
+  `clientInfo`. An absent header leaves the launcher unnamed rather than
+  guessed.
+
 ### AuthKit domains
 
 | Target | `AUTHKIT_DOMAIN` |

@@ -839,6 +839,20 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
+    // Declared on every eval-run launch this call may make, so a run started
+    // by an agent reads as MCP rather than as the generic API badge every
+    // hosted launch used to show. `client` names WHICH agent, when the request
+    // said; see `PlatformToolContext.callerUserAgent` on why it is the
+    // request's user-agent and not the `initialize` handshake's `clientInfo`.
+    //
+    // Set on the CLIENT rather than on the operation's input, deliberately: an
+    // operation's `inputSchema` is exposed verbatim as the MCP tool's own
+    // input, so a launcher field there would let the agent whose run it is
+    // choose its own badge.
+    launcher: {
+      kind: "mcp",
+      ...(context.callerUserAgent ? { client: context.callerUserAgent } : {}),
+    },
   });
 
   try {

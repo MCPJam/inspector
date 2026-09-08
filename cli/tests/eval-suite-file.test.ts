@@ -1635,18 +1635,30 @@ async function startFileRunFixture(options?: {
   authHeaders: string[];
   fromFileBodies: unknown[];
   batchBodies: unknown[];
+  /**
+   * The QUERY STRING of each file-sync write. `declaredSuiteId` rides here,
+   * never the body: these `/v1` bodies are strict on every Inspector that
+   * predates the CI-owned lock, so a body field is a 400 against one that has
+   * not been upgraded in lockstep with the CLI.
+   */
+  batchQueries: Record<string, string>[];
   updateBodies: unknown[];
+  updateQueries: Record<string, string>[];
   deletedCaseIds: string[];
   suitePatches: unknown[];
+  suitePatchQueries: Record<string, string>[];
   runBodies: unknown[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
   const fromFileBodies: unknown[] = [];
   const batchBodies: unknown[] = [];
+  const batchQueries: Record<string, string>[] = [];
   const updateBodies: unknown[] = [];
+  const updateQueries: Record<string, string>[] = [];
   const deletedCaseIds: string[] = [];
   const suitePatches: unknown[] = [];
+  const suitePatchQueries: Record<string, string>[] = [];
   const runBodies: unknown[] = [];
   let environmentIds: string[] = [];
   let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
@@ -1761,6 +1773,7 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       batchBodies.push(body);
+      batchQueries.push(Object.fromEntries(url.searchParams));
       const created: Array<{
         index: number;
         id: string;
@@ -1814,6 +1827,7 @@ async function startFileRunFixture(options?: {
       method === "PATCH"
     ) {
       updateBodies.push(raw ? JSON.parse(raw) : {});
+      updateQueries.push(Object.fromEntries(url.searchParams));
       if (options?.failUpdates) {
         res.statusCode = 500;
         res.end(
@@ -1917,6 +1931,7 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       suitePatches.push(body);
+      suitePatchQueries.push(Object.fromEntries(url.searchParams));
       if (Array.isArray(body.environmentIds)) {
         environmentIds = body.environmentIds;
       }
@@ -1991,9 +2006,12 @@ async function startFileRunFixture(options?: {
     authHeaders,
     fromFileBodies,
     batchBodies,
+    batchQueries,
     updateBodies,
+    updateQueries,
     deletedCaseIds,
     suitePatches,
+    suitePatchQueries,
     runBodies,
     close: () =>
       new Promise<void>((resolve, reject) =>
@@ -2252,8 +2270,24 @@ describe("eval run --file", () => {
         assert.equal(fixture.batchBodies.length, 1);
         const batch = fixture.batchBodies[0] as {
           cases: Array<{ id: string }>;
+          declaredSuiteId?: string;
         };
         assert.equal(batch.cases[0].id, "c_refund");
+        // A suite with a declared id is CI-owned and refuses case writes; the
+        // sync is the exception, and this marker is how it says so. Without it
+        // the platform refuses and nothing this file declares ever lands.
+        //
+        // On the QUERY STRING, never the body: these bodies are strict on every
+        // Inspector that predates the lock, so a body field would be a 400
+        // against one older than this CLI — and the CLI is a published package
+        // upgraded on its own schedule.
+        assert.equal(fixture.batchQueries[0]?.declaredSuiteId, "s_billing");
+        assert.equal(batch.declaredSuiteId, undefined);
+        // One marker for the batch, never one per case.
+        assert.equal(
+          (batch.cases[0] as Record<string, unknown>).declaredSuiteId,
+          undefined
+        );
         assert.equal(fixture.runBodies.length, 1);
         const launched = fixture.runBodies[0] as Record<string, unknown>;
         assert.equal(launched.suiteId, "suite-file-1");
@@ -2296,6 +2330,13 @@ describe("eval run --file", () => {
           modelId: "anthropic/claude-sonnet-4-6",
           systemPrompt: "Be terse.",
           temperature: 0.2,
+        });
+        // The suite is CI-owned by virtue of its declared id, so the file's own
+        // write has to name that id or the platform refuses it — on the QUERY
+        // STRING, because these bodies are strict on every Inspector older than
+        // the lock and a body field would be a 400 there.
+        assert.deepEqual(fixture.suitePatchQueries[0], {
+          declaredSuiteId: "s_billing",
         });
         assert.deepEqual(fixture.suitePatches, [
           {
@@ -2393,6 +2434,10 @@ describe("eval run --file", () => {
         assert.equal(updated.title, "Refunds a duplicate charge");
         assert.equal(updated.isNegative, false);
         assert.equal(updated.checks, null);
+        // The update door needs the same marker the create door does, in the
+        // same place: the query string.
+        assert.equal(fixture.updateQueries[0]?.declaredSuiteId, "s_billing");
+        assert.equal(updated.declaredSuiteId, undefined);
       });
     } finally {
       await fixture.close();

@@ -100,6 +100,10 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
+import {
+  CI_OWNED_REASON_COPY,
+  isCiOwnedSuite,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -691,7 +695,22 @@ function EvaluateTabContent({
   // Exact (case-insensitive) matches only against the loaded overview: the
   // suite id, the stored name, or the switcher's display name (timestamp
   // suffix stripped). Unknown or ambiguous → invalid_request, never a guess.
-  const resolveSuiteEntry = (raw: unknown): EvalSuiteOverviewEntry => {
+  //
+  // `intent` IS REQUIRED, deliberately with no default, so a command cannot be
+  // added without deciding. An agent command is a second door into the same
+  // mutations the buttons call, and it passes none of the rendered controls
+  // the CI-owned lock lives in — so a lock that only hides affordances is no
+  // lock at all here. `case.create` (generate) and `suite.delete` are both in
+  // the platform's locked set: an agent pointed at a CI-owned suite gets a
+  // `409`, which is the same offer-then-refuse this whole change removes.
+  //
+  // `"read"` is not "harmless" — it is "writes no configuration". Running and
+  // cancelling stay readable on a CI-owned suite, because running one from the
+  // app is exactly what locking edits rather than the suite exists to keep.
+  const resolveSuiteEntry = (
+    raw: unknown,
+    intent: "read" | "write",
+  ): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
@@ -709,7 +728,14 @@ function EvaluateTabContent({
       );
     });
     if (matches.length === 1) {
-      return matches[0];
+      const entry = matches[0];
+      if (intent === "write" && isCiOwnedSuite(entry.suite)) {
+        throw createInspectorCommandClientError(
+          "invalid_request",
+          `Suite "${suiteDisplayName(entry.suite)}" is managed by CI — ${CI_OWNED_REASON_COPY}. Running it is still available.`,
+        );
+      }
+      return entry;
     }
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
@@ -793,7 +819,7 @@ function EvaluateTabContent({
       runEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "read");
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -846,7 +872,7 @@ function EvaluateTabContent({
       generateEvalTests: async (command) => {
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "write");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -882,7 +908,7 @@ function EvaluateTabContent({
       deleteEvalSuite: async (command) => {
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
-        const entry = resolveSuiteEntry(payload.suite);
+        const entry = resolveSuiteEntry(payload.suite, "write");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -1135,7 +1161,16 @@ function EvaluateTabContent({
             onRerun={handleRerunWithQuota}
             onCancelRun={handlers.handleCancelRun}
             onDelete={handlers.handleDelete}
-            canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
+            /*
+             * Role AND ownership. `suite.delete` is CI-locked, so offering the
+             * trash on a CI-owned suite is offering a `409`. Answered from the
+             * suite ROW rather than capabilities: this is a grid, and asking
+             * the backend per card would be one query per suite for a question
+             * the row already carries in full.
+             */
+            canDeleteSuite={(suite) =>
+              canDeleteArtifact(suite.createdBy) && !isCiOwnedSuite(suite)
+            }
             rerunningSuiteId={rerunningSuiteId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
@@ -1163,6 +1198,18 @@ function EvaluateTabContent({
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
           aggregate={suiteAggregate}
+          /*
+           * The suite's configuration lives in a repository (a committed suite
+           * file, or SDK ingest), so this surface offers no edits for it.
+           *
+           * Read from the SUITE ROW, which this page already holds. The
+           * backend's own answer (`getSuiteCapabilities.ownership`) is ORed in
+           * inside `SuiteIterationsView`, which is where capabilities are read
+           * — and is absent on a deployment that predates the lock, which is
+           * exactly why this row-derived answer has to exist too.
+           */
+          configLocked={isCiOwnedSuite(selectedSuite)}
+          onDuplicateSuite={() => handlers.handleDuplicateSuite(selectedSuite)}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
             playgroundNavigation.toTestEdit(selectedSuite._id, testCaseId, {

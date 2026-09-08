@@ -5046,6 +5046,13 @@ function buildCreateCaseBody(
 ): Record<string, unknown> {
   const body = buildCaseBody(input);
   if (input.id !== undefined) body.id = input.id;
+  // Not a case field — the marker that says this write IS the suite file, the
+  // same one the batch form sends. Without it a CI-owned suite refuses
+  // `case.create`, so single-case file sync could not write what the batch
+  // could.
+  if (input.declaredSuiteId !== undefined) {
+    body.declaredSuiteId = input.declaredSuiteId;
+  }
   return body;
 }
 
@@ -5266,6 +5273,26 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
 
 // STRICT: the reported silent no-op (`hostIds` / top-level `servers`)
 // was stripped here before the HTTP body was ever built.
+/**
+ * The suite file's own `suite.id`, when a write IS that file syncing itself.
+ *
+ * A CI-owned suite (one with a declared id, or created by SDK ingest) refuses
+ * configuration writes from the app and from the API alike. The file's own sync
+ * is the exception, and this is how it says so: the platform allows the write
+ * iff the id names the suite's own. Naming any other id refuses exactly as
+ * loudly as naming none, so it is not a capability — omit it for an ordinary
+ * edit, and the refusal you get on a CI-owned suite is the correct one.
+ */
+const declaredSuiteIdField = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .optional()
+  .describe(
+    "The suite file's `suite.id`, when this write is that file syncing itself. Required to edit a CI-managed suite (one whose configuration lives in a repository); omit it otherwise."
+  );
+
 const updateEvalSuiteInput = z.strictObject({
   project: z
     .string()
@@ -5274,6 +5301,7 @@ const updateEvalSuiteInput = z.strictObject({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().optional(),
   environment: z
@@ -5498,6 +5526,8 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "settings",
       "expectedRevisionNumber",
       "revisionNote",
+      // Not an edit — the marker that says this edit IS the suite file.
+      "declaredSuiteId",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }
@@ -5516,6 +5546,7 @@ const deleteEvalSuiteInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
 });
 export type DeleteEvalSuiteInput = z.infer<typeof deleteEvalSuiteInput>;
 
@@ -5537,7 +5568,13 @@ export const deleteEvalSuiteOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.deleteEvalSuite(
-      { projectId: project.id, suiteId: suite.id },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        ...(input.declaredSuiteId !== undefined
+          ? { declaredSuiteId: input.declaredSuiteId }
+          : {}),
+      },
       { signal }
     );
   },
@@ -5551,6 +5588,7 @@ const setEvalSuiteScheduleInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   enabled: z.boolean().describe("Turn scheduled runs on or off."),
   intervalMinutes: z
     .number()
@@ -5619,6 +5657,11 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
             ? { intervalMinutes: input.intervalMinutes }
             : {}),
           ...(environment ? { environmentId: environment.id } : {}),
+          // Not a schedule field — the marker that says this write IS the
+          // suite file. A CI-owned suite refuses `suite.schedule` without it.
+          ...(input.declaredSuiteId !== undefined
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
         },
       },
       { signal }
@@ -5634,6 +5677,7 @@ const setEvalSuiteEnvironmentsInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   environments: z
     .union([z.array(z.string().trim().min(1)).min(1), z.null()])
     .describe(
@@ -5743,7 +5787,12 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
       {
         projectId: project.id,
         suiteId: suite.id,
-        body: { environmentIds },
+        body: {
+          environmentIds,
+          ...(input.declaredSuiteId
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
+        },
       },
       { signal }
     );
@@ -5844,6 +5893,7 @@ const createEvalCaseInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   ...caseFieldsShape,
   title: z.string().trim().min(1).describe("Short case label."),
   id: declaredCaseIdField,
@@ -5889,6 +5939,7 @@ const createEvalCasesInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   cases: z
     .array(
       z.object({
@@ -5977,6 +6028,9 @@ export const createEvalCasesOperation: PlatformOperation<
           ...(input.overrideReason
             ? { overrideReason: input.overrideReason }
             : {}),
+          ...(input.declaredSuiteId
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
         },
       },
       { signal }
@@ -5997,6 +6051,7 @@ const updateEvalCaseInput = z.object({
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   ...caseFieldsShape,
   // UPDATE-only nullability, matching the route: PATCH accepts `null` to clear
   // the claim, create does not. `buildCaseBody` keeps `null` and drops
@@ -6056,7 +6111,16 @@ export const updateEvalCaseOperation: PlatformOperation<
           projectId: project.id,
           suiteId: suite.id,
           caseId: testCase.id,
-          body: buildCaseBody(input),
+          // `buildCaseBody` copies only `caseFieldsShape` keys, which is what
+          // keeps a selector (`project`, `suite`, `case`) out of the case
+          // definition. The marker is not one of those keys and not a case
+          // field either, so it is added here rather than widening that shape.
+          body: {
+            ...buildCaseBody(input),
+            ...(input.declaredSuiteId
+              ? { declaredSuiteId: input.declaredSuiteId }
+              : {}),
+          },
         },
         { signal }
       ),
@@ -6074,6 +6138,7 @@ const deleteEvalCaseInput = z.object({
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
 });
 export type DeleteEvalCaseInput = z.infer<typeof deleteEvalCaseInput>;
 
@@ -6102,7 +6167,14 @@ export const deleteEvalCaseOperation: PlatformOperation<
       signal
     );
     return client.deleteEvalCase(
-      { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        caseId: testCase.id,
+        ...(input.declaredSuiteId
+          ? { declaredSuiteId: input.declaredSuiteId }
+          : {}),
+      },
       { signal }
     );
   },

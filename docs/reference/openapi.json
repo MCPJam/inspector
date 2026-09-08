@@ -1752,10 +1752,16 @@
         "operationId": "createEvalRun",
         "tags": ["Eval runs"],
         "summary": "Create an eval run (async)",
-        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
           }
         ],
         "requestBody": {
@@ -2599,6 +2605,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -3370,10 +3379,16 @@
         "operationId": "createEvalRunGroup",
         "tags": ["Eval runs"],
         "summary": "Launch one run per target as a group (async)",
-        "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.",
+        "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.\n\n`x-mcpjam-launcher` and `x-mcpjam-ci` are read once and applied to EVERY sibling: one fan-out is one launch by one process, so the targets badge identically.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
           }
         ],
         "requestBody": {
@@ -3717,6 +3732,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -3770,13 +3788,16 @@
         "operationId": "deleteEvalSuite",
         "tags": ["Eval runs"],
         "summary": "Delete an eval suite",
-        "description": "Deletes the suite and its cases. Past runs are not deleted.",
+        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send its file's `suite.id` as `declaredSuiteId` to delete as the file.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -3962,6 +3983,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4055,6 +4079,9 @@
               "type": "string",
               "maxLength": 256
             }
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4297,6 +4324,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4350,7 +4380,7 @@
         "operationId": "deleteEvalCase",
         "tags": ["Eval runs"],
         "summary": "Delete an eval case",
-        "description": "Removes the case from the suite. Past runs that executed it are not affected.",
+        "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nA case in a CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send the suite file's `suite.id` as `declaredSuiteId` to delete as the file.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4366,6 +4396,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -11625,6 +11658,36 @@
       }
     },
     "parameters": {
+      "declaredSuiteIdQuery": {
+        "name": "declaredSuiteId",
+        "in": "query",
+        "required": false,
+        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id refuses exactly as loudly as naming none, so it is not a capability — omit it for an ordinary edit.\n\nA QUERY PARAMETER on every route that takes it, never a body field. These request bodies are strict, here and on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment — which would break `mcpjam cloud eval run --file` for anyone whose CLI is newer than their Inspector. A query parameter is read by the deployments that know it and ignored by those that do not, which is the right degradation: an Inspector with no lock has no exception to make.",
+        "schema": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "launcherHeader": {
+        "name": "x-mcpjam-launcher",
+        "in": "header",
+        "required": false,
+        "description": "The launching process's own DECLARED identity, as compact JSON: `{\"kind\":\"cli\"|\"mcp\"|\"github_action\",\"client\":\"…\",\"version\":\"…\"}`. Stored on the run as `launcher` and used only as a display label — `source` stays `api` and the audit trail reads the platform-minted `attribution` instead.\n\nA header rather than a body field so that sending it never breaks against an older deployment: both eval-run bodies reject unknown properties, while an unknown header is ignored everywhere. For the same reason a malformed value, or a `kind` outside the three above, is DROPPED rather than rejected — a label must never fail a launch. Max 512 bytes.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "{\"kind\":\"github_action\",\"client\":\"mcpjam-cli\",\"version\":\"8.2.0\"}"
+      },
+      "ciHeader": {
+        "name": "x-mcpjam-ci",
+        "in": "header",
+        "required": false,
+        "description": "The CI job this run was launched from, as compact JSON. Recognized keys: `provider`, `pipelineId` (or `runId`), `jobId` (or `job`), `runUrl`, `branch`, `commitSha`. Stored on the run as `ciMetadata`, which is what makes a run resolvable by commit for baseline comparison. Unrecognized keys are dropped.\n\nA header for the same compatibility reason as `x-mcpjam-launcher`, and dropped rather than rejected when malformed. Max 2048 bytes.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "{\"provider\":\"github_actions\",\"commitSha\":\"a1b2c3d\",\"branch\":\"main\",\"runId\":\"1234.1\",\"job\":\"evals\"}"
+      },
       "organizationId": {
         "name": "organizationId",
         "in": "path",
@@ -12132,6 +12195,11 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -12247,6 +12315,11 @@
         "required": ["cases"],
         "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "cases": {
             "type": "array",
             "minItems": 1,
@@ -12503,6 +12576,11 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -13761,7 +13839,13 @@
       },
       "EvalSuiteDetail": {
         "type": "object",
-        "required": ["id", "environment", "hosts", "settings", "schedule"],
+        "required": [
+          "id",
+          "environment",
+          "hosts",
+          "settings",
+          "schedule"
+        ],
         "description": "One eval suite's full configuration. Distinct from the `EvalSuite` summary returned by the list route, which carries run rollups instead of settings.",
         "properties": {
           "id": {
@@ -13770,6 +13854,11 @@
           "declaredId": {
             "type": "string",
             "description": "The suite's declared file identity (`suite.id` in a suite file). Present on file-owned suites; absent on UI-authored suites, which have no declared id and cannot be claimed by `eval run --file`."
+          },
+          "managedBy": {
+            "type": "string",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it — name, settings, environments, schedule, models, skills, execution config and cases — from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying and comparing are unaffected. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "enum": ["ci", "app"]
           },
           "name": {
             "type": ["string", "null"]
@@ -14662,8 +14751,55 @@
           },
           "source": {
             "type": "string",
-            "description": "Run origin. API-created runs are `api`.",
-            "enum": ["ui", "api", "sdk"]
+            "description": "Run origin, STAMPED BY THE SERVER and not settable by a caller. Every run created through this API is `api` — including one launched by the CLI, by a GitHub Actions job, or by an MCP agent, because from the server's side all three are API calls. The caller's own claim about which of those it is rides on `launcher`. `schedule` and `github_check` are written by the platform's scheduled-eval and PR-check workers; `benchmark` marks a Connector Bench matrix cell and is hidden from project run lists.",
+            "enum": [
+              "ui",
+              "api",
+              "sdk",
+              "schedule",
+              "github_check",
+              "benchmark"
+            ]
+          },
+          "launcher": {
+            "type": "object",
+            "description": "The run's DECLARED launcher — what the launching process says it is, sent as the `x-mcpjam-launcher` request header at launch. A LABEL, never an authorization input: `source` above is the stamped, unforgeable answer and `attribution` below is the verified one. Allowlisted to the three origins the server cannot observe for itself. ABSENT when the launcher declared nothing, which is not the same as `ui`.",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["cli", "mcp", "github_action"]
+              },
+              "client": {
+                "type": "string",
+                "description": "Name of the launching program, e.g. `mcpjam-cli`, or an MCP client's user-agent."
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "attribution": {
+            "type": "object",
+            "description": "VERIFIED agent attribution, minted by the platform from the credential this run authenticated with — never from anything the caller sent. The audit-grade half of the pair: `launcher` says what the client called itself, `surface` says what the credential proved. Descriptive only; nothing reads it to decide access. ABSENT when the credential carried no attribution claims.",
+            "required": ["surface"],
+            "properties": {
+              "surface": {
+                "type": "string",
+                "enum": [
+                  "rest",
+                  "cli",
+                  "mcp",
+                  "slack",
+                  "discord",
+                  "workspace"
+                ]
+              },
+              "apiKeyId": {
+                "type": "string",
+                "description": "The API key id the request authenticated with. The KEY, never the secret."
+              }
+            }
           },
           "notes": {
             "type": ["string", "null"]
@@ -17301,6 +17437,11 @@
         "required": ["enabled"],
         "description": "Enable, repoint, or disable a suite's recurring runs. Disabling PRESERVES the existing environment pin — send `enabled: true` with a new `environmentId` to repoint it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -17322,6 +17463,11 @@
         "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
         "additionalProperties": false,
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+          },
           "name": {
             "type": "string",
             "minLength": 1

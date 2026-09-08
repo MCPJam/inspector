@@ -39,6 +39,10 @@ import {
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
+import {
+  readLaunchContext,
+  type LaunchContext,
+} from "../../utils/launch-context.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
@@ -1562,6 +1566,31 @@ function toRunDto(run: RunDoc) {
     result: run.result,
     summary: run.summary ?? null,
     source: run.source ?? "ui",
+    // The run's DECLARED launcher, beside the stamped `source` above.
+    //
+    // The two answer different questions and neither replaces the other:
+    // `source` says what the SERVER saw (every hosted launch is an API call),
+    // `launcher` says what the launching process called itself. A client
+    // rendering an origin resolves them in that order — verified attribution,
+    // then declared launcher, then the stamp.
+    //
+    // OMITTED, never defaulted: a run with no launcher was not launched by any
+    // of the three declarable origins, and inventing one would be a claim
+    // nobody made.
+    ...(run.launcher ? { launcher: run.launcher } : {}),
+    // The VERIFIED half — the channel and API key the credential proved, as
+    // minted by the backend. Narrowed to those two: `agentActionId` and
+    // `requestId` are gateway-log joins with no meaning to an API caller.
+    ...(run.attribution?.surface
+      ? {
+          attribution: {
+            surface: run.attribution.surface,
+            ...(run.attribution.apiKeyId
+              ? { apiKeyId: run.attribution.apiKeyId }
+              : {}),
+          },
+        }
+      : {}),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(typeof run.runGroupId === "string"
@@ -2042,6 +2071,27 @@ function toCaseDto(testCase: CaseDoc) {
 
 type SuiteDoc = Record<string, any>;
 
+/**
+ * Whether the platform will refuse configuration writes to this suite.
+ *
+ * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
+ * clauses — a committed suite file's `declaredSuiteId`, or `source: 'sdk'` from
+ * ingest. This copy is DESCRIPTIVE ONLY: Convex is the guard, and no route here
+ * refuses anything on the strength of this predicate. Its whole job is to let
+ * the DTO say so before the caller finds out from a 409.
+ *
+ * NOT `lastSdkRunAt`. CI reporting a result into a UI-authored suite does not
+ * make that suite CI-owned, and saying otherwise here would advertise a lock
+ * the platform does not apply.
+ */
+function isCiOwnedSuiteDoc(suite: SuiteDoc): boolean {
+  const declared = suite.declaredSuiteId;
+  return (
+    (typeof declared === "string" && declared.length > 0) ||
+    suite.source === "sdk"
+  );
+}
+
 function toSuiteDetailDto(
   suite: SuiteDoc,
   execConfig: any,
@@ -2053,6 +2103,21 @@ function toSuiteDetailDto(
     ...(typeof suite.declaredSuiteId === "string"
       ? { declaredId: suite.declaredSuiteId }
       : {}),
+    /**
+     * WHERE THIS SUITE'S CONFIGURATION LIVES — `"ci"` when it is owned by a
+     * committed suite file or by SDK ingest, `"app"` otherwise.
+     *
+     * An API caller could not see this at all before. `declaredId` above is
+     * only half the answer (a suite created by SDK ingest has none), and
+     * without the whole answer the first sign that a suite is read-only was a
+     * 409 on a write the caller had no way to know would be refused.
+     *
+     * A CI-owned suite still RUNS from here. What it refuses is configuration:
+     * name, settings, environments, schedule, models, skills, host config and
+     * cases. Send `declaredSuiteId` to write as the file, or duplicate the
+     * suite for an editable copy.
+     */
+    managedBy: isCiOwnedSuiteDoc(suite) ? "ci" : "app",
     name: suite.name ?? null,
     description: suite.description ?? null,
     projectId: suite.projectId ? String(suite.projectId) : null,
@@ -2508,6 +2573,62 @@ const publicCaseBodyShape = {
  */
 const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
 
+/**
+ * The suite-file sync marker, on every write route a `mcpjam cloud eval run
+ * --file` sync makes.
+ *
+ * A CI-owned suite (one with a `declaredSuiteId`, or created by SDK ingest) is
+ * read-only from the app AND from this API — the platform refuses the write.
+ * The file's own sync is the exception, and this is how it says so: by naming
+ * the declared id, which only something holding the file can know. The platform
+ * allows the write iff the id is the suite's own.
+ *
+ * NOT A CAPABILITY, and no route-level check. Naming an id you do not own gets
+ * you nothing, and the guard is Convex's — a second copy of the ownership rule
+ * here would be a copy that can disagree with the one that decides.
+ *
+ * ============================================================================
+ * IT RIDES THE QUERY STRING, NOT THE BODY
+ * ============================================================================
+ *
+ * Every body on these routes is `.strict()`, here and on every Inspector that
+ * predates this change. A strict object REFUSES an unknown key, so a body field
+ * is a 400 against an older deployment — the same reason the launcher rides a
+ * header rather than the run-launch body.
+ *
+ * That matters far more here than it does for the launcher. A dropped launcher
+ * costs a badge; a rejected `--file` sync costs the CLI's whole CI command,
+ * against any self-hosted Inspector the user has not upgraded in lockstep with
+ * their `@mcpjam/cli`. And the CLI sends this on EVERY file-sync write, so the
+ * break would not be occasional. A query parameter is read by the deployments
+ * that know it and ignored by the ones that do not, which is exactly the
+ * degradation this needs: an Inspector with no lock has nothing to make an
+ * exception to.
+ *
+ * The body shape below is kept so this server accepts either spelling. Nothing
+ * has shipped sending the body form, but a route that refuses a marker it
+ * understands would be its own compatibility break.
+ */
+const fileSyncBodyShape = {
+  declaredSuiteId: z.string().min(1).max(128).optional(),
+} as const;
+
+/**
+ * The `fileSync` mutation argument, or nothing.
+ *
+ * Nothing, rather than `fileSync: undefined`: a platform deployment that
+ * predates the CI-owned lock does not know this argument and rejects the whole
+ * call for an unknown field, so sending it unconditionally would break every
+ * suite edit against an older backend.
+ */
+function fileSyncArg(
+  declaredSuiteId: string | undefined | null,
+): { fileSync?: { declaredSuiteId: string } } {
+  const trimmed =
+    typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
+  return trimmed.length > 0 ? { fileSync: { declaredSuiteId: trimmed } } : {};
+}
+
 const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
@@ -2531,6 +2652,7 @@ const createCaseSchema = z.strictObject({
 });
 const updateCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
+  ...fileSyncBodyShape,
   /**
    * The converter's CLAIM about this case, or `null` to remove one.
    *
@@ -2547,7 +2669,17 @@ const updateCaseSchema = z.strictObject({
  */
 const batchCaseSchema = createCaseSchema;
 
+/**
+ * The single-create REQUEST: a case body plus the sync marker.
+ *
+ * The marker is on the request, never on `batchCaseSchema`. A batch is one
+ * write to one suite, so one marker covers it; a per-item marker would invite
+ * a batch whose items disagreed about which suite is being synced.
+ */
+const createCaseRequestSchema = createCaseSchema.extend(fileSyncBodyShape);
+
 const createCasesBatchSchema = z.strictObject({
+  ...fileSyncBodyShape,
   cases: z
     .array(batchCaseSchema)
     .min(1, "cases must contain at least one case.")
@@ -2573,6 +2705,7 @@ const createCasesBatchSchema = z.strictObject({
  * here. Nothing else should import it — the route is the only writer.
  */
 export const updateSuiteSchema = z.strictObject({
+  ...fileSyncBodyShape,
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
@@ -2813,6 +2946,7 @@ const requestRunJudgeSchema = z
   .strict();
 
 const scheduleSchema = z.strictObject({
+  ...fileSyncBodyShape,
   enabled: z.boolean(),
   intervalMinutes: z.number().int().min(5).max(10080).optional(),
   // A schedule fires exactly ONE run, so an environment-based suite must pin
@@ -3363,6 +3497,15 @@ async function launchEvalRun(params: {
    * protocol pins, timeouts and advertised capabilities entirely.
    */
   hostConfig?: Record<string, unknown>;
+  /**
+   * The DECLARED launcher and CI envelope, read off this request's headers.
+   *
+   * Headers, not body: both `/v1` eval-run bodies are `.strict()`, so a new
+   * body field is a 400 on any server that predates it — self-hosted and
+   * staging included — while an unknown header is ignored everywhere. See
+   * `utils/launch-context.ts`.
+   */
+  launchContext?: LaunchContext;
   onSettled: () => void;
 }): Promise<LaunchedEvalRun> {
   const {
@@ -3459,7 +3602,11 @@ async function launchEvalRun(params: {
       projectId,
       suiteRerun,
       convexAuthToken,
+      // STAMPED, and deliberately unchanged. Everything that reaches this
+      // route is an API call, whatever it calls itself; `launchContext` below
+      // carries the caller's own claim as a separate, clearly-labelled field.
       source: "api",
+      ...(params.launchContext ? { launchContext: params.launchContext } : {}),
       // Reuse this exact resolution (and its revision) rather than letting
       // the shared path resolve again — the run must be pinned to the
       // revision whose servers the manager just connected.
@@ -3792,6 +3939,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       projectId,
       convexAuthToken,
       hostConfig: runHostConfig,
+      launchContext: readLaunchContext(c),
       body,
       suiteRerun,
       environmentId,
@@ -4111,6 +4259,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   const runGroupId = deriveRunGroupId(body.suiteId, body.idempotencyKey);
   const callerContext = callerContextFromHono(c);
   const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+  // Read ONCE for the whole group: every sibling of a fan-out was launched by
+  // the same process from the same CI job, so they must badge identically.
+  const launchContext = readLaunchContext(c);
   const matchOptionsOverride = normalizeRunMatchOptionsOverride(
     body.matchOptionsOverride,
   );
@@ -4132,6 +4283,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         projectId,
         convexAuthToken,
         hostConfig,
+        launchContext,
         body: {
           suiteId: body.suiteId,
           tests: [],
@@ -6537,6 +6689,9 @@ evals.post(
 
     const callerContext = callerContextFromHono(c);
     const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+    // Both arms of the experiment are one launch by one process; a badge that
+    // differed between them would make the comparison look like two things.
+    const launchContext = readLaunchContext(c);
     const armBodyBase = {
       suiteId,
       tests: [] as PublicInlineTest[],
@@ -6554,6 +6709,7 @@ evals.post(
         xaaIssuer,
         projectId,
         convexAuthToken: token,
+        launchContext,
         body: {
           ...armBodyBase,
           idempotencyKey: `${experimentId}:original`,
@@ -6583,6 +6739,7 @@ evals.post(
         xaaIssuer,
         projectId,
         convexAuthToken: token,
+        launchContext,
         body: {
           ...armBodyBase,
           idempotencyKey: `${experimentId}:rewrite`,
@@ -7185,6 +7342,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           ...revision,
           note: body.revisionNote,
         },
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -7201,6 +7359,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         ...updateArgs,
         revision,
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -7226,6 +7385,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           body.hosts,
         ),
         revision,
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -7282,6 +7442,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("hostConfigsV2:setSuiteConfig" as any, {
         suiteId,
         input,
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7301,6 +7462,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         suiteId,
         environmentIds: body.environmentIds,
         revision,
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7396,6 +7558,8 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   try {
     await convexClient.mutation("testSuites:deleteTestSuite" as any, {
       suiteId,
+      // Query param, for the same reason the case delete uses one.
+      ...fileSyncArg(c.req.query("declaredSuiteId")),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7486,6 +7650,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       ...(scheduleEnvironmentId
         ? { environmentId: scheduleEnvironmentId }
         : {}),
+      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7555,7 +7720,10 @@ evals.get(
 evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(createCaseSchema, await readJsonObjectBody(c));
+  const body = parseWithSchema(
+    createCaseRequestSchema,
+    await readJsonObjectBody(c),
+  );
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
@@ -7591,6 +7759,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     result = await createEvalCasesInBatches(convexClient, {
       suiteId,
       cases: [item],
+      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7716,6 +7885,7 @@ evals.post(
           ? { duplicatePolicy: body.duplicatePolicy }
           : {}),
         ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7802,6 +7972,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
+          ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         },
       );
     } catch (error) {
@@ -7839,6 +8010,10 @@ evals.delete(
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {
         testCaseId: caseId,
+        // A QUERY PARAM, not a body: this DELETE reads no body at all, and
+        // giving one route a body-carrying delete while its siblings have none
+        // is a shape callers get wrong.
+        ...fileSyncArg(c.req.query("declaredSuiteId")),
       });
     } catch (error) {
       throw translateConvexWriteError(error);

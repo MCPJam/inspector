@@ -756,6 +756,28 @@ export interface PlatformGateWaiverRead {
 }
 
 /**
+ * The DECLARED launcher on a run — see `PlatformEvalRun.launcher`.
+ *
+ * `kind` is allowlisted to the three origins the platform cannot observe for
+ * itself. The stamped origins (`ui`, `api`, `sdk`, `schedule`, `github_check`,
+ * `benchmark`) are deliberately NOT declarable: a client that could restate one
+ * could paint a `ui` badge on an API run.
+ */
+export interface PlatformEvalRunLauncher {
+  kind: "cli" | "mcp" | "github_action";
+  /** The launching program, e.g. `"mcpjam-cli"` or an MCP client's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+/** The VERIFIED attribution on a run — see `PlatformEvalRun.attribution`. */
+export interface PlatformEvalRunAttribution {
+  surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+  /** The API key id the request authenticated with. The KEY, never the secret. */
+  apiKeyId?: string;
+}
+
+/**
  * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
  * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
@@ -791,8 +813,36 @@ export interface PlatformEvalRun {
     failed?: number;
     passRate?: number;
   } | null;
-  /** Run origin: "ui" | "api" | "sdk". */
+  /**
+   * Run origin, STAMPED BY THE PLATFORM: `"ui" | "api" | "sdk" | "schedule" |
+   * "github_check" | "benchmark"`.
+   *
+   * Everything created through the public API is `"api"` — including a run
+   * launched by the CLI, by a GitHub Actions job, or by an MCP agent, because
+   * from the server's side all three are API calls. That is what makes this
+   * field usable as audit truth and what makes it useless as a badge; read
+   * `launcher` for the caller's own claim about which of the three it was.
+   */
   source: string;
+  /**
+   * The run's DECLARED launcher — what the launching process said it was, sent
+   * as `x-mcpjam-launcher` at launch time.
+   *
+   * A LABEL, never an authorization input. ABSENT when the launcher declared
+   * nothing, which is NOT the same as `"ui"`: a run with no launcher was not
+   * launched by any of the three declarable origins, and reading absence as
+   * "the app did it" would invent a claim nobody made.
+   */
+  launcher?: PlatformEvalRunLauncher;
+  /**
+   * VERIFIED agent attribution, minted by the platform from the credential the
+   * run authenticated with — never from anything the caller sent.
+   *
+   * The audit-grade half of the pair: `launcher` says what the client called
+   * itself, `attribution.surface` says what the credential proved. Absent when
+   * the credential carried no attribution claims.
+   */
+  attribution?: PlatformEvalRunAttribution;
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -1584,6 +1634,27 @@ export interface PlatformEvalSuiteDetail {
    * declared id and cannot be claimed by `eval run --file`.
    */
   declaredId?: string;
+  /**
+   * Where this suite's configuration lives.
+   *
+   * `"ci"` means it is owned by a committed suite file or by SDK ingest, and
+   * the platform REFUSES configuration writes to it — name, settings,
+   * environments, schedule, models, skills, execution config and cases — with
+   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying
+   * and comparing are unaffected.
+   *
+   * To change one: edit its file and send that file's `suite.id` as
+   * `declaredSuiteId` on the write, or duplicate the suite for an editable
+   * copy. `declaredId` alone is not this answer — a suite created by SDK
+   * ingest is CI-owned and has no declared id.
+   *
+   * OPTIONAL because it is additive: this package is versioned independently
+   * of the Inspector deployment it talks to, and one that predates the suite
+   * lock omits the field entirely. `undefined` means "this deployment does not
+   * say", which is not the same as `"app"` — a reader that needs the
+   * distinction should treat it as unknown rather than as editable.
+   */
+  managedBy?: "ci" | "app";
   name: string | null;
   description: string | null;
   projectId: string | null;

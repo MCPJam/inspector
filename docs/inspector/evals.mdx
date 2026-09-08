@@ -324,6 +324,37 @@ The metric label shown in run headers, the runs table, charts, and hero stats fo
 
 On a mixed suite (one that has received both CI and playground runs), the label updates to match the most recent run. Legacy runs without a recorded source fall back to the suite's creation source.
 
+### CI-managed suites
+
+A suite marked **CI** keeps its configuration somewhere other than this app —
+either a suite file committed to a repository (`mcpjam cloud eval run --file`), or a
+suite the MCPJam SDK created when it reported a run. Those suites are
+**read-only here**: name, settings, environments, schedule, models, skills,
+execution config and cases all refuse edits, in the app and through the API
+alike, with `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`.
+
+One caller is exempt, and only one: the suite file itself. A write that sends
+the suite's own `suite.id` as `declaredSuiteId` is the file syncing what it
+already declares, so it is allowed through — which is how `mcpjam cloud eval
+run --file` keeps working. Naming any other id refuses exactly as loudly as
+naming none, so it is not a way in.
+
+That is not a permission problem, and no role change lifts it. The reason is
+that an edit made here would not survive: the file sync deletes any case the
+file does not name, and an SDK suite's cases are regenerated from the next
+report. Before this, such an edit lasted until the next CI run and then vanished
+with nothing recording why.
+
+Two ways forward, both offered on the suite:
+
+- **Edit the test file** in your repository and run it again. The suite keeps its
+  history and its CI wiring.
+- **Duplicate to edit.** The copy is app-owned and fully editable, and CI can
+  never target it.
+
+Everything that is not a configuration edit is unchanged: run it, replay a run,
+compare runs, waive a gate, read every setting.
+
 ### CI-synced test cases
 
 Test cases written by a CI report carry a **CI** chip next to their name in the cases list. Opening such a case in the editor shows a notice: "Synced from CI — the next CI report may overwrite manual edits." Manual edits to these cases are preserved until the next CI ingest, which may overwrite them.
@@ -349,6 +380,31 @@ Opening the Evaluate tab takes you directly into the most recent suite's dashboa
 When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
 
 The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
+
+#### Where a run came from
+
+Every run carries an origin badge — **UI**, **SDK**, **API**, **CLI**, **MCP**,
+**GitHub**, **Scheduled** — and the Source chips above the Runs table filter on
+it. The filter runs on the server, so an empty result means the project has no
+such runs, not that they were further down the list.
+
+Two different things go into that badge, and the distinction matters if you are
+using it as evidence:
+
+- **Stamped.** The platform decides a run's `source` itself, and a caller cannot
+  set it. That is what makes it trustworthy — and also why everything launched
+  through the public API is `API`: from the server's side, a CLI run, a GitHub
+  Actions job and an agent's MCP call are all API calls.
+- **Declared.** The launching process says which of those it is. The CLI declares
+  `CLI` (or `GitHub` inside an Actions job, with the commit and job filling the
+  CI column); the hosted MCP worker declares `MCP` and names the calling agent.
+  Hovering a declared badge says so.
+
+A declared origin is a label, not proof, so nothing is authorized on the
+strength of it. Alongside both, the platform records the credential the request
+actually authenticated with — which is what lets the **Run by** column say *via
+API key ····3f9a* under the key owner's name, rather than making an automated
+launch look like that person clicking Run.
 
 #### Cross-host matrix
 
