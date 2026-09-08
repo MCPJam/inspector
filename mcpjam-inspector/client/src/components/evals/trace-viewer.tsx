@@ -40,7 +40,11 @@ import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
 import { hasReplayArtifacts } from "./browser-step-replay";
-import { StepReplayView } from "./step-replay-view";
+import {
+  StepReplayView,
+  type StepPresentation,
+} from "./step-replay-view";
+import type { EvalStepReplay } from "@/shared/eval-step-replay";
 import { buildFrozenScreenshotOverrides } from "./frozen-screenshot-overrides";
 import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-app-invocations";
 import type { TestStep } from "@/shared/steps";
@@ -116,6 +120,12 @@ interface TraceViewerProps {
   syncedStepId?: string | null;
   /** Fired on Steps-row hover/select, to drive the synced highlight. */
   onSyncStep?: (stepId: string | null) => void;
+  /** Steps-tab presentation. Pass-through; see `StepReplayView`. */
+  stepPresentation?: StepPresentation;
+  /** Per-step verdicts WITH reasons, so a failed row can say why. */
+  stepResults?: ReadonlyArray<EvalStepReplay>;
+  /** The verdict word the page already computed, so this tab does not derive a second. */
+  verdictWord?: string;
   /** Force a single mode (used when TraceViewer is embedded into a larger shell).
    *  Chat host shells force only timeline/chat/raw/tools. The eval RunColumn
    *  (quick-run result panel) additionally forces "browser" so it can surface
@@ -325,6 +335,9 @@ export function TraceViewer({
   iterationResult = null,
   syncedStepId,
   onSyncStep,
+  stepPresentation = "legacy",
+  stepResults,
+  verdictWord,
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
@@ -867,6 +880,9 @@ export function TraceViewer({
               hoveredStepId={syncedStepId}
               onHoverStep={onSyncStep}
               onSelectStep={onSyncStep}
+              presentation={stepPresentation}
+              stepResults={stepResults}
+              verdictWord={verdictWord}
             />
           </div>
         )}

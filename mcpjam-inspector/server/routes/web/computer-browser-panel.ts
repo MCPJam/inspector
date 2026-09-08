@@ -8,6 +8,9 @@
  *   POST /lease              → take control / keep it / hand it back
  *   POST /input              → the held browser gets this person's pointer/keys
  *   POST /keepalive          → "this panel is still open"
+ *   GET  /page-tools         → the WebMCP tools the current page offers, read
+ *                              with the same observation the model's
+ *                              `browser_webmcp_tools` sends (Tools pane)
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -40,7 +43,7 @@ import {
 import {
   lookupBrowserSession,
   touchBrowserSession,
-  type BrowserSessionRecord,
+  type ComputerBrowserSessionRecord,
 } from "../../services/browserd/browser-sessions-client.js";
 import {
   BrowserdClient,
@@ -52,7 +55,15 @@ import {
   liveBrowserSessionDeps,
 } from "../../services/browserd/live-session-deps.js";
 import { attachBrowserSession } from "../../services/browserd/browser-session.js";
+import {
+  pageToolsFromCommandResponse,
+  webmcpToolsObserveCommand,
+} from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  isBrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
 import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -64,63 +75,17 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 const LEASE_TTL_MS = 2 * 60_000;
 
 /**
- * The most events one input request may carry.
+ * The most events one input request may carry, and what counts as one.
  *
- * The daemon enforces the same number (`MAX_INPUT_EVENTS`) and is the real
- * gate; this only keeps a well-behaved pane's batches from being rejected
- * wholesale at the far end.
+ * Both now live in `shared/browser-pane-input.ts`, because the frame socket
+ * validates the same shape (V-2) and the local route validates it too. Three
+ * copies drifted silently: an event type added in one place was dropped by the
+ * others with a 200 and no page change.
  */
-const INPUT_BATCH_LIMIT = 64;
-
-/**
- * Is this actually an input event?
- *
- * The cast alone let anything through: the daemon's dispatcher ignores a type
- * it does not recognise, so a batch of nonsense came back 200 having done
- * nothing — and was then counted as REAL USE, which is what defers the idle
- * sweep on a metered machine. A caller with a valid token could hold a box
- * awake indefinitely without touching the browser at all.
- *
- * Deliberately shape-only. What the coordinates MEAN is the daemon's business;
- * this just refuses to call something an event when it has no type, or a type
- * with none of the fields that type needs.
- */
-function isInputEvent(value: unknown): value is ViewportInputEvent {
-  if (typeof value !== "object" || value === null) return false;
-  const event = value as Record<string, unknown>;
-  const xy =
-    typeof event.x === "number" &&
-    Number.isFinite(event.x) &&
-    typeof event.y === "number" &&
-    Number.isFinite(event.y);
-  switch (event.type) {
-    case "mouse_move":
-      return xy;
-    case "mouse_down":
-    case "mouse_up":
-      return (
-        xy &&
-        (event.button === "left" ||
-          event.button === "middle" ||
-          event.button === "right")
-      );
-    case "wheel":
-      return (
-        xy &&
-        typeof event.deltaX === "number" &&
-        Number.isFinite(event.deltaX) &&
-        typeof event.deltaY === "number" &&
-        Number.isFinite(event.deltaY)
-      );
-    case "key_down":
-    case "key_up":
-      return typeof event.key === "string" && event.key.length > 0;
-    case "text":
-      return typeof event.text === "string";
-    default:
-      return false;
-  }
-}
+const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
+const isInputEvent = isBrowserPaneInputEvent as (
+  value: unknown,
+) => value is ViewportInputEvent;
 
 type Claims = { userId: string; computerId: string; projectId: string };
 
@@ -153,7 +118,10 @@ export interface BrowserPanelDeps {
   createClient?: (session: {
     publicOrigin: string;
     browserdToken: string;
-  }) => Pick<BrowserdClient, "lease" | "leaseAction" | "sendInput">;
+  }) => Pick<
+    BrowserdClient,
+    "lease" | "leaseAction" | "sendInput" | "sendCommand"
+  >;
   configured?: () => boolean;
 }
 
@@ -228,7 +196,7 @@ export function createComputerBrowserPanelRoutes(
   /** The live session row for this computer, or null. */
   async function currentSession(
     computerId: string,
-  ): Promise<BrowserSessionRecord | null> {
+  ): Promise<ComputerBrowserSessionRecord | null> {
     const lookup = await lookupSession({
       computerId,
       expectedBundleHash: bundleHash(),
@@ -245,7 +213,10 @@ export function createComputerBrowserPanelRoutes(
    *  whole request: a panel that cannot say who holds the browser is still
    *  useful for watching it. */
   async function readLease(
-    session: BrowserSessionRecord,
+    // COMPUTER-typed: this route only ever looks a session up by computer, and
+    // narrowing here is what keeps the log line below honest about which box
+    // could not answer.
+    session: ComputerBrowserSessionRecord,
   ): Promise<BrowserdLeaseState | { state: "unknown" }> {
     try {
       return await createClient(session).lease();
@@ -562,6 +533,63 @@ export function createComputerBrowserPanelRoutes(
         { ok: false, error: "Failed to record panel activity." },
         502,
       );
+    }
+  });
+
+  /**
+   * The WebMCP tools of the page the browser is on — what the Tools pane lists
+   * beside the MCP servers' tools.
+   *
+   * READ-ONLY, and sent as the same `observe {mode:"webmcp_tools"}` the model's
+   * `browser_webmcp_tools` tool sends, so the pane shows exactly the list the
+   * model would be told. Goes through the daemon's ordinary command queue (an
+   * observation is admitted between the agent's own commands) and is refused
+   * under a held lease like any other observation — UNLESS the lease is this
+   * caller's, in which case the read is re-sent as their own `manual` command,
+   * because a person signing in should still be able to see what the page
+   * offers. Never touches activity: a pane polling a tool list is not use, and
+   * must not hold a metered box awake.
+   */
+  app.get("/page-tools", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId, userId } = auth.claims;
+    const tabId = c.req.query("tabId");
+
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const client = createClient(session);
+      const observe = (source: "inspector" | "manual", holder?: string) =>
+        client.sendCommand(
+          webmcpToolsObserveCommand({
+            source,
+            ...(holder ? { holder } : {}),
+            ...(tabId ? { tabId } : {}),
+          }),
+          session.bootId,
+        );
+      let response = await observe("inspector");
+      if (response.status === "lease_blocked") {
+        const lease = await readLease(session);
+        if (heldByCaller(lease, userId)) {
+          response = await observe("manual", userId);
+        }
+      }
+      const mapped = pageToolsFromCommandResponse(response);
+      return c.json(mapped.body, mapped.status);
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "unreachable" }, 502);
+      }
+      reportRouteFailure("browser panel page-tools read failed", error, {
+        source: "computer-browser-panel.page-tools",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json({ ok: false, error: "unreachable" }, 502);
     }
   });
 

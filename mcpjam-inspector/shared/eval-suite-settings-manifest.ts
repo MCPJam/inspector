@@ -74,22 +74,22 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "passOrFail",
-    label: "Pass or fail",
+    label: "Scorers and judges",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
     // settings.judge under the chain stage each one measures, and every one of
     // those is reachable on its own below.
     excluded:
-      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own; the group itself carries no setting.",
+      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own.",
   },
   {
     key: "matchOptions",
-    label: "Tool-call matching",
+    label: "Edit tool-call matching",
     api: "settings.matchOptions",
   },
   {
     key: "checks",
-    label: "Checks",
+    label: "Scorers",
     api: "settings.checks",
   },
   {
@@ -103,24 +103,22 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.judge.rubric",
   },
   {
-    key: "budgets",
-    label: "Budgets",
-    // The token and turn ceilings, lifted out of the user-value group so they
-    // read as a set. They are ordinary checks, authored and edited through the
-    // one Checks editor, so there is nothing here an agent cannot already
-    // write.
+    key: "judgeGroundedness",
+    label: "Groundedness",
+    // Read-only run evidence until R2-C1 wires execution. A writable sample
+    // would claim a PATCH path the schema explicitly refuses.
     excluded:
-      "A presentation subset of settings.checks (token and turn ceilings); reachable through settings.checks.",
+      "Displays on-demand groundedness run evidence and cannot yet author settings while execution is unwired.",
   },
   {
     key: "policy",
-    label: "Policy",
+    label: "Quality gate",
     // The row itself only chooses WHICH policy is on screen. Both policies'
     // fields are reachable: settings.minimumAccuracy and
     // settings.minimumIterations for a legacy suite, settings.repetitions and
     // settings.passThreshold for a v2 one.
     excluded:
-      "A presentation grouping of settings.minimumAccuracy, settings.minimumIterations, settings.repetitions and settings.passThreshold; the row itself only picks which policy's fields are shown.",
+      "A presentation grouping of settings.minimumAccuracy, settings.minimumIterations, settings.repetitions, settings.passThreshold and settings.qualityGate; the row itself only picks which policy's fields are shown.",
   },
   {
     key: "repetitions",
@@ -138,8 +136,33 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.validity",
   },
   {
+    key: "qualityGateBaseline",
+    label: "Baseline",
+    api: "settings.qualityGate.baseline",
+  },
+  {
+    key: "qualityGateAllowedDrop",
+    label: "Allowed drop",
+    api: "settings.qualityGate.maximumPassRateDrop",
+  },
+  {
+    key: "qualityGateNoDeterministicRegressions",
+    label: "Deterministic regressions",
+    api: "settings.qualityGate.noDeterministicRegressions",
+  },
+  {
+    key: "qualityGateMaximumP95LatencyIncreaseMs",
+    label: "p95 latency increase",
+    api: "settings.qualityGate.maximumP95LatencyIncreaseMs",
+  },
+  {
+    key: "qualityGateNoGatingScoreErrors",
+    label: "Any gating scorer errored",
+    api: "settings.qualityGate.noGatingScoreErrors",
+  },
+  {
     key: "schedule",
-    label: "Automations",
+    label: "Schedule",
     // Its own route (`PATCH …/eval-suites/{id}/schedule`) because enabling a
     // schedule has to reject a multi-environment suite that names no
     // environment — a validation the suite PATCH would have to grow a
@@ -153,8 +176,8 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     // organization's GitHub App installation, and the suite only decides which
     // suite that repository answers for. So it has its own route family and its
     // own operations rather than a field on `update_eval_suite`. The op named
-    // here is the WRITE this row performs; `list_eval_check_repos` is its read.
-    op: "connect_eval_check_repo",
+    // here is the WRITE this row performs; `list_eval_github_repos` is its read.
+    op: "connect_eval_github_repo",
   },
   {
     key: "deleteSuite",
@@ -169,3 +192,135 @@ export type EvalSuiteSettingKey =
 
 export const EVAL_SUITE_SETTING_KEYS: readonly EvalSuiteSettingKey[] =
   EVAL_SUITE_SETTINGS_MANIFEST.map((row) => row.key);
+
+/**
+ * One value per `api:` path, of the shape the PATCH schema actually accepts.
+ *
+ * Roles ride the check items themselves — there is no `scorerRoles` row.
+ * The advisory sample exists so a future schema that dropped `role` /
+ * `severity` fails the parity ratchet instead of silently stripping them.
+ */
+export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
+  name: "Renamed",
+  "settings.minimumAccuracy": 80,
+  "settings.minimumIterations": 3,
+  "settings.matchOptions": { toolCallOrder: "exact" },
+  "settings.checks": [
+    { type: "responseContains", needle: "hi" },
+    { type: "noToolErrors", role: "advisory", severity: "warn" },
+  ],
+  "settings.judge": {
+    enabled: true,
+    autoRun: true,
+    threshold: 0.8,
+    severity: "warn",
+  },
+  "settings.judge.rubric": {
+    criteria: [{ id: "cites", label: "Cites a source" }],
+  },
+  "settings.repetitions": 3,
+  "settings.passThreshold": 0.8,
+  "settings.validity": { minCompletionRate: 0.9 },
+  "settings.qualityGate.baseline": { kind: "run", runId: "run_baseline" },
+  "settings.qualityGate.maximumPassRateDrop": 0.03,
+  "settings.qualityGate.noDeterministicRegressions": true,
+  "settings.qualityGate.maximumP95LatencyIncreaseMs": 0,
+  "settings.qualityGate.noGatingScoreErrors": true,
+  "environment.computerEnvironment": "Playwright",
+  environmentIds: ["env_1"],
+};
+
+/**
+ * Full PATCH bodies that exercise `settings.qualityGate` against the
+ * refined schema. A standalone leaf is not enough: the refine requires
+ * `expectedRevisionNumber` and `revisionNote`, and comparative leaves
+ * require a baseline.
+ */
+export const QUALITY_GATE_REQUEST_SAMPLES: ReadonlyArray<{
+  name: string;
+  body: Record<string, unknown>;
+}> = [
+  {
+    name: "full object",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Tighten the release bar for the next cut.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "run", runId: "run_baseline" },
+          maximumPassRateDrop: 0.05,
+          noDeterministicRegressions: true,
+          maximumP95LatencyIncreaseMs: 250,
+          noGatingScoreErrors: true,
+        },
+      },
+    },
+  },
+  {
+    name: "baseline only",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Pin the comparison run.",
+      settings: {
+        qualityGate: { baseline: { kind: "run", runId: "run_baseline" } },
+      },
+    },
+  },
+  {
+    name: "maximum drop",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Cap observed pass-rate drop.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "run", runId: "run_baseline" },
+          maximumPassRateDrop: 0.03,
+        },
+      },
+    },
+  },
+  {
+    name: "deterministic regressions",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Fail a flipped deterministic scorer.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "commit_sha", commitSha: "abc1234" },
+          noDeterministicRegressions: true,
+        },
+      },
+    },
+  },
+  {
+    name: "p95 latency",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Cap p95 growth.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "run", runId: "run_baseline" },
+          maximumP95LatencyIncreaseMs: 0,
+        },
+      },
+    },
+  },
+  {
+    name: "gating-score errors",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Fail on gating scorer errors.",
+      settings: {
+        qualityGate: { noGatingScoreErrors: true },
+      },
+    },
+  },
+  {
+    name: "null clear",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Remove the stored quality-gate policy.",
+      settings: { qualityGate: null },
+    },
+  },
+];

@@ -60,6 +60,19 @@ export interface LocalBrowserStatus {
    * so a bug report names it without anyone having to guess.
    */
   runtime?: "playwright" | "electron";
+  /**
+   * How this pane will SEE the browser.
+   *
+   * `native` means a real `WebContentsView` is parented into the app's own
+   * window at this pane's bounds — the page itself, not a picture of it — so
+   * the pane opens NO frame socket and renders no canvas. `frames` is the JPEG
+   * screencast, and the only thing a Playwright browser in another process can
+   * offer.
+   *
+   * Optional because an inspector from before this wave does not send it, and
+   * an absent field must mean the path that has always worked.
+   */
+  surface?: "native" | "frames";
   installed: boolean;
   install: {
     status: "idle" | "installing" | "ready" | "failed";
@@ -102,13 +115,33 @@ async function post<T>(
   const json = (await response.json().catch(() => null)) as
     (T & { error?: string }) | null;
   if (!response.ok) {
-    throw new Error(
+    throw new LocalBrowserRequestError(
       typeof json?.error === "string"
         ? json.error
         : "The local browser could not be reached.",
+      response.status,
     );
   }
   return json as T;
+}
+
+/**
+ * A refusal from the local browser routes, with the status still on it.
+ *
+ * WHICH refusal matters to a caller. A 404 from a route keyed by `bootId` says
+ * that browser is GONE — a fact the pane has to act on by offering to open a
+ * new one — while a 500 or a dropped connection says try again in a moment.
+ * Answering both with a bare `Error` made every caller treat the first as the
+ * second, and wait forever on a browser that had already been reaped.
+ */
+export class LocalBrowserRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "LocalBrowserRequestError";
+  }
 }
 
 export async function fetchLocalBrowserStatus(): Promise<LocalBrowserStatus> {
@@ -150,6 +183,23 @@ export function actOnLocalBrowserLease(
   options?: { keepalive?: boolean },
 ): Promise<{ lease: LocalBrowserLease }> {
   return post("lease", args, consentToken, options);
+}
+
+/**
+ * Tell the server somebody is still looking at this browser, and hear back
+ * who holds it.
+ *
+ * The frame socket's heartbeat did this for every other engine; the native
+ * Electron surface has no socket, so a watcher who is not holding the lease
+ * would otherwise be reaped mid-glance. Failure is ignored by every caller —
+ * a missed heartbeat costs one interval, and an error here would be a red
+ * message over a browser that is working perfectly.
+ */
+export function noteLocalBrowserWatch(
+  args: { bootId: string },
+  consentToken: string | null,
+): Promise<{ watching: boolean; lease?: LocalBrowserLease }> {
+  return post("watch", args, consentToken);
 }
 
 export function sendLocalBrowserInput(
@@ -194,6 +244,8 @@ export function openLocalBrowserFrameStream(args: {
   bootId: string;
   holder: string;
   nonce: string;
+  /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
+  wire?: "binary" | "json";
 }): { socket: WebSocket; close(): void } {
   // The nonce is a bearer capability and the frames are pictures of a
   // signed-in browser; neither goes over an unencrypted non-loopback hop.
@@ -201,8 +253,13 @@ export function openLocalBrowserFrameStream(args: {
   const base = window.location.origin.replace(/^http/, "ws");
   const url = `${base}${LOCAL_BROWSER_FRAMES_PATH}?bootId=${encodeURIComponent(
     args.bootId,
-  )}&holder=${encodeURIComponent(args.holder)}`;
+  )}&holder=${encodeURIComponent(args.holder)}${
+    args.wire === "binary" ? "&wire=binary" : ""
+  }`;
   const socket = new WebSocket(url, [args.nonce]);
+  // See the hosted opener: `blob` would make binary messages arrive
+  // asynchronously and out of order against the control messages beside them.
+  socket.binaryType = "arraybuffer";
   return {
     socket,
     close: () => {

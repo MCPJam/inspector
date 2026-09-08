@@ -16,6 +16,9 @@ vi.mock("../../../config", () => ({
   },
   hostedBrowserEnabled: () => configState.hostedBrowser,
   webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
+  // Composed exactly as `config.ts` composes it, for HOSTED_MODE false: the
+  // hosted gate does not apply locally, so the kill switch is the whole answer.
+  webmcpInspectorReachable: () => configState.enabled,
   HOSTED_MODE: false,
 }));
 

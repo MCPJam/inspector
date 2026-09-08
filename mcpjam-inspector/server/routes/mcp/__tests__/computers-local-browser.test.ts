@@ -74,6 +74,10 @@ const browserState = vi.hoisted(() => ({
   cdpSent: [] as Array<{ method: string }>,
   /** Which Chromium this machine has: a downloaded one, or Electron's own. */
   runtime: "playwright" as "playwright" | "electron",
+  /** Every session a route marked as in use, so "watching" is provable. */
+  touched: [] as string[],
+  /** Whether the desktop app builds its context with views the pane can show. */
+  surface: "native" as "native" | "frames",
 }));
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   listLocalBrowserSessions: () =>
@@ -85,8 +89,21 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     })),
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
-  touchLocalBrowserSession: () => {},
+  // The read-only lookup the Tools pane uses. Deliberately NOT the ensure
+  // path: it answers `undefined` when nothing is running rather than launching
+  // a Chromium, and this fake models exactly that.
+  findLocalBrowserSessionForProject: (projectId: string) => {
+    if (projectId === "bad/project") throw new Error("invalid project key");
+    return [...browserState.sessions.values()][0];
+  },
+  touchLocalBrowserSession: (handle: { bootId: string }) => {
+    browserState.touched.push(handle.bootId);
+  },
   resolveLocalBrowserRuntime: () => browserState.runtime,
+  resolveLocalBrowserSurface: (
+    _env: NodeJS.ProcessEnv,
+    runtime: "playwright" | "electron",
+  ) => (runtime === "electron" ? browserState.surface : "frames"),
   ensureLocalBrowserSession: async () => {
     const { buildBrowserdStack } =
       await import("../../../services/browserd/daemon/server.js");
@@ -167,6 +184,95 @@ beforeEach(() => {
   chromiumState.installed = false;
   chromiumState.installs = 0;
   browserState.runtime = "playwright";
+  browserState.surface = "native";
+  browserState.touched = [];
+});
+
+describe("POST /local-browser/watch", () => {
+  const watch = (body: unknown, token: string | null) =>
+    createApp().request("/api/mcp/computers/local-browser/watch", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("counts a watcher as use, so the idle reap does not close it underneath them", async () => {
+    // The NATIVE Electron surface has no frame socket, and the socket's own
+    // heartbeat was the only thing that said "somebody is looking at this".
+    // Without this route a person watching the agent work — and not holding
+    // the lease — has their browser closed while they are looking at it.
+    const token = await grantConsent();
+    const start = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj" }),
+      },
+    );
+    const { bootId } = (await start.json()) as { bootId: string };
+    browserState.touched.length = 0;
+
+    const res = await watch({ bootId }, token);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      watching: true,
+      lease: { state: "free" },
+    });
+    expect(browserState.touched).toEqual([bootId]);
+  });
+
+  it("says who has the browser, so a refused pane can hear the hand-back", async () => {
+    // The refusal reaches the pane on the frame socket. The HAND-BACK reaches
+    // it as nothing at all — the frames were flowing the whole time — so this
+    // is the only thing that can tell it. Answered HERE rather than by making
+    // the pane call `ensure`, which would START a browser when the watched one
+    // has gone: a Chromium nobody asked for, whose lease belongs to a
+    // different boot than the pane is looking at.
+    const token = await grantConsent();
+    const start = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj" }),
+      },
+    );
+    const { bootId } = (await start.json()) as { bootId: string };
+    const session = browserState.sessions.get(bootId)!;
+    session.lease.acquire("someone-else");
+
+    const held = await watch({ bootId }, token);
+    expect(await held.json()).toMatchObject({
+      watching: true,
+      lease: { state: "held", holder: "someone-else" },
+    });
+
+    session.lease.release("someone-else");
+    expect(await (await watch({ bootId }, token)).json()).toMatchObject({
+      lease: { state: "free" },
+    });
+  });
+
+  it("says so about a browser that has already gone", async () => {
+    const res = await watch({ bootId: "boot-nope" }, await grantConsent());
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ watching: false });
+  });
+
+  it("requires consent, like everything that touches the browser", async () => {
+    expect((await watch({ bootId: "boot-1" }, null)).status).toBe(403);
+  });
 });
 
 describe("GET /local-browser/status", () => {
@@ -185,6 +291,22 @@ describe("GET /local-browser/status", () => {
 
   it("answers without consent, so the consent screen can describe itself", async () => {
     expect((await status()).status).toBe(200);
+  });
+
+  it("says how the pane will see this browser", async () => {
+    // The pane BRANCHES on this: a native surface has no frame socket to open,
+    // and a pane that opened one anyway would make the engine encode JPEGs at
+    // 30 fps that nobody ever draws. A Playwright browser is a separate
+    // process with no view to place, so it is always frames.
+    expect(await (await status()).json()).toMatchObject({ surface: "frames" });
+
+    browserState.runtime = "electron";
+    expect(await (await status()).json()).toMatchObject({ surface: "native" });
+
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` — hidden windows and frames over a
+    // socket, exactly as before this wave.
+    browserState.surface = "frames";
+    expect(await (await status()).json()).toMatchObject({ surface: "frames" });
   });
 
   it("has nothing to install in the desktop app", async () => {
@@ -431,5 +553,125 @@ describe("POST /local-browser/install", () => {
     const res = await install({ [LOCAL_CONSENT_HEADER]: "not-the-capability" });
     expect(res.status).toBe(403);
     expect(chromiumState.installs).toBe(0);
+  });
+});
+
+/**
+ * The Tools pane's read of the local browser's page.
+ *
+ * The gate that matters beyond the usual four: this route must NEVER start a
+ * browser. A tool list appearing in a side panel is not consent to open a
+ * Chromium window on somebody's desk, so a project with nothing running gets a
+ * `no_browser_session` answer rather than a launch.
+ */
+describe("POST /local-browser/page-tools", () => {
+  const pageTools = (body: unknown, token: string | null) =>
+    createApp().request("/api/mcp/computers/local-browser/page-tools", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  async function startBrowser(token: string): Promise<void> {
+    await createApp().request("/api/mcp/computers/local-browser/ensure", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({ projectId: "proj" }),
+    });
+  }
+
+  /**
+   * Drive the browser to a page, the way a chat turn's `browser_navigate`
+   * does. Sent straight to the daemon rather than through a route, because
+   * navigation is a MODEL action — there is no human route for it, which is
+   * exactly why the pane's read has to cope with there being no page yet.
+   */
+  async function openAPage(): Promise<void> {
+    const session = [...browserState.sessions.values()][0];
+    await session.client.sendCommand(
+      {
+        commandId: "open-a-page",
+        source: "chat",
+        action: { kind: "navigate", url: "https://webmcp.dev/" },
+      },
+      session.handle.bootId,
+    );
+  }
+
+  it("requires consent", async () => {
+    const res = await pageTools({ projectId: "proj" }, null);
+    expect(res.status).toBe(403);
+  });
+
+  it("reads the page against a running browser", async () => {
+    const token = await grantConsent();
+    await startBrowser(token);
+    await openAPage();
+
+    const res = await pageTools({ projectId: "proj" }, token);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      tools: unknown[];
+      webmcpSupported: boolean;
+    };
+    expect(body.ok).toBe(true);
+    // The fake page has no WebMCP bridge, which is the ordinary case for most
+    // real pages too — and it must read as an ANSWER, not an error.
+    expect(body.webmcpSupported).toBe(false);
+    expect(body.tools).toEqual([]);
+  });
+
+  it("says a running browser has no page yet, rather than failing", async () => {
+    // The state between a session starting and the model's first navigation.
+    // The driver will not conjure an `about:blank` tab to observe, so the pane
+    // has to be able to say "nothing loaded yet" about a browser that is up.
+    const token = await grantConsent();
+    await startBrowser(token);
+
+    const res = await pageTools({ projectId: "proj" }, token);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: "no_page" });
+  });
+
+  it("does not start a browser to answer", async () => {
+    const token = await grantConsent();
+    // Nothing running for this project.
+    const res = await pageTools({ projectId: "proj" }, token);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "no_browser_session",
+    });
+    expect(browserState.sessions.size).toBe(0);
+  });
+
+  it("400s a malformed project key rather than reporting no browser", async () => {
+    // The two are different things for the caller to do about, and collapsing
+    // an invalid id into "nothing is running" hides a bug in the caller.
+    const token = await grantConsent();
+    const res = await pageTools({ projectId: "bad/project" }, token);
+    expect(res.status).toBe(400);
+  });
+
+  it("does not count the read as use of the machine", async () => {
+    // A pane polling a tool list is not somebody using the browser; counting it
+    // would keep the idle reap from ever closing an abandoned one.
+    const token = await grantConsent();
+    await startBrowser(token);
+    browserState.touched.length = 0;
+
+    await pageTools({ projectId: "proj" }, token);
+
+    expect(browserState.touched).toEqual([]);
   });
 });

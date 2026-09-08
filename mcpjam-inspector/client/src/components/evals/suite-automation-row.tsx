@@ -73,7 +73,7 @@ export function formatNextDue(
 }
 
 /** The chip a schedule's state earns. */
-function stateChip(schedule: SuiteSchedule | undefined): {
+export function stateChip(schedule: SuiteSchedule | undefined): {
   label: string;
   detail: string | null;
   tone: string;
@@ -102,6 +102,7 @@ export function SuiteAutomationRow({
   projectId = null,
   environmentIds,
   canTakeOver = true,
+  editor = "dialog",
 }: {
   suiteId: string;
   schedule: SuiteSchedule | undefined;
@@ -115,6 +116,11 @@ export function SuiteAutomationRow({
   environmentIds?: string[];
   /** False when the caller may not change the schedule. */
   canTakeOver?: boolean;
+  /**
+   * `dialog` is the existing Manage → dialog hop. `inline` mounts the
+   * editor in the row body so the suite-settings ledger has no extra dialog.
+   */
+  editor?: "dialog" | "inline";
 }) {
   const [manageOpen, setManageOpen] = useState(false);
   const [isWriting, setIsWriting] = useState(false);
@@ -260,15 +266,17 @@ export function SuiteAutomationRow({
               Take over
             </Button>
           ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 text-xs"
-            onClick={() => setManageOpen(true)}
-          >
-            Manage
-          </Button>
+          {editor === "dialog" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => setManageOpen(true)}
+            >
+              Manage
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -295,23 +303,32 @@ export function SuiteAutomationRow({
         )}
       </div>
 
-      <Dialog open={manageOpen} onOpenChange={setManageOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Schedule</DialogTitle>
-            <DialogDescription>
-              Saves immediately — this editor writes as you change it, with its
-              own validation.
-            </DialogDescription>
-          </DialogHeader>
-          <ScheduleEditor
-            suiteId={suiteId}
-            schedule={schedule}
-            projectId={projectId}
-            environmentIds={environmentIds}
-          />
-        </DialogContent>
-      </Dialog>
+      {editor === "inline" ? (
+        <ScheduleEditor
+          suiteId={suiteId}
+          schedule={schedule}
+          projectId={projectId}
+          environmentIds={environmentIds}
+        />
+      ) : (
+        <Dialog open={manageOpen} onOpenChange={setManageOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Schedule</DialogTitle>
+              <DialogDescription>
+                Saves immediately — this editor writes as you change it, with its
+                own validation.
+              </DialogDescription>
+            </DialogHeader>
+            <ScheduleEditor
+              suiteId={suiteId}
+              schedule={schedule}
+              projectId={projectId}
+              environmentIds={environmentIds}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

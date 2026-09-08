@@ -9,12 +9,29 @@
  * header for each way a browser can be driven, the one placeholder it owns
  * itself, and what it forgets when a hold ends.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
   BrowserPaneSurface,
   type BrowserPaneSurfaceProps,
 } from "../BrowserPaneSurface";
+import {
+  BROWSER_PANE_STATS_FLAG,
+  paneFrameStats,
+} from "@/lib/browser-pane/frame-stats";
+
+/** A stand-in for a decoded picture, which records being released. */
+function fakeBitmap() {
+  const bitmap = {
+    width: 1024,
+    height: 768,
+    closed: false,
+    close() {
+      bitmap.closed = true;
+    },
+  };
+  return bitmap as unknown as ImageBitmap & { closed: boolean };
+}
 
 const FRAME = {
   data: "Zm9v",
@@ -222,5 +239,95 @@ describe("the pane surface — a hold that ends", () => {
     fireEvent.mouseDown(image(), { clientX: 100, clientY: 100 });
     fireEvent.wheel(image(), { clientX: 100, clientY: 100, deltaY: 20 });
     expect(onInput).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("the pane surface — stats for nerds", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    paneFrameStats.resetFlagForTests();
+  });
+  afterEach(() => {
+    localStorage.clear();
+    paneFrameStats.resetFlagForTests();
+  });
+
+  it("hides the overlay by default", () => {
+    renderSurface();
+    expect(screen.queryByTestId("pane-stats-overlay")).toBeNull();
+  });
+
+  it("shows it when the flag is already set", () => {
+    localStorage.setItem(BROWSER_PANE_STATS_FLAG, "1");
+    paneFrameStats.resetFlagForTests();
+    renderSurface();
+    expect(screen.getByTestId("pane-stats-overlay")).toBeTruthy();
+  });
+
+  it("turning it on from the menu persists the choice", async () => {
+    renderSurface();
+    fireEvent.pointerDown(
+      screen.getByTestId("pane-settings"),
+      new MouseEvent("pointerdown", { bubbles: true }) as never,
+    );
+    fireEvent.click(screen.getByTestId("pane-settings"));
+    const toggle = await screen.findByTestId("pane-stats-toggle");
+    fireEvent.click(toggle);
+    expect(localStorage.getItem(BROWSER_PANE_STATS_FLAG)).toBe("1");
+    expect(screen.getByTestId("pane-stats-overlay")).toBeTruthy();
+  });
+
+  it("records a paint against the relay stamp, not the sandbox clock", () => {
+    localStorage.setItem(BROWSER_PANE_STATS_FLAG, "1");
+    paneFrameStats.resetFlagForTests();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      // The binary wire: the picture arrived decoded, so the draw — and the
+      // moment it is honest to call it painted — is synchronous.
+      renderSurface({
+        frame: {
+          ...FRAME,
+          data: undefined,
+          bitmap: fakeBitmap(),
+          ts: 1,
+          relayTs: 999_980,
+          seq: 4,
+        },
+      });
+      // The sandbox's `ts` is a million milliseconds out; a pane that used it
+      // would report sixteen minutes of latency on a healthy stream.
+      expect(paneFrameStats.report().captureToPaint).toMatchObject({
+        n: 1,
+        p50: 20,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the bitmap a newer frame replaces", () => {
+    // An `ImageBitmap` holds a decoded surface the garbage collector cannot
+    // see the cost of. At 30 fps a pane that never closed them would hold a
+    // second of decoded video at all times.
+    const first = fakeBitmap();
+    const second = fakeBitmap();
+    const { view } = renderSurface({
+      frame: { ...FRAME, data: undefined, bitmap: first, seq: 1 },
+    });
+    expect(first.closed).toBe(false);
+    view.rerender(
+      <BrowserPaneSurface
+        frame={{ ...FRAME, data: undefined, bitmap: second, seq: 2 }}
+        holding
+        control="you"
+        onInput={() => {}}
+      />,
+    );
+    expect(first.closed).toBe(true);
+    // The one on screen is NOT closed — the body that owns the socket closes
+    // the last one, because it is the thing that knows the stream is over.
+    expect(second.closed).toBe(false);
   });
 });

@@ -167,3 +167,42 @@ describe("TrialJudgeReviewPanel trial scoping", () => {
     expect(screen.getByTestId("trial-review-control")).toBeTruthy();
   });
 });
+
+describe("TrialJudgeReviewPanel visibility", () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockSubmit.mockReset();
+    mockSubmit.mockResolvedValue(undefined);
+  });
+
+  it("reports hidden while the read is pending and while unlabeled", async () => {
+    const onVisibilityChange = vi.fn();
+    const settle = deferredReads();
+    render(
+      <TrialJudgeReviewPanel
+        iterationId="it_1"
+        judgeCase={JUDGE_CASE}
+        onVisibilityChange={onVisibilityChange}
+      />,
+    );
+    expect(onVisibilityChange).toHaveBeenCalledWith(true);
+    await settle("it_1", null);
+    expect(onVisibilityChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByTestId("trial-review-control")).toBeTruthy();
+  });
+
+  it("reports visible once a label is loaded", async () => {
+    const onVisibilityChange = vi.fn();
+    const settle = deferredReads();
+    render(
+      <TrialJudgeReviewPanel
+        iterationId="it_1"
+        judgeCase={JUDGE_CASE}
+        onVisibilityChange={onVisibilityChange}
+      />,
+    );
+    await settle("it_1", review("fail"));
+    expect(onVisibilityChange).toHaveBeenLastCalledWith(false);
+    expect(screen.getByText(/The answer never named the file/)).toBeTruthy();
+  });
+});

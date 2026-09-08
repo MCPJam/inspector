@@ -43,8 +43,19 @@ export type RunTargetPlan =
   /**
    * One run. `target` absent means the suite's own saved selection (the legacy
    * path, and the only shape that carries an explicit `serverIds` override).
+   *
+   * `serverNames` is the display-name array PAIRED with `serverIds` by index.
+   * It rides along so the launch can persist the suite's server selection by
+   * NAME: without it the platform falls back to storing the raw ids, and every
+   * surface that reads the suite back shows an opaque id where a server name
+   * belongs.
    */
-  | { kind: "single"; target?: RunTarget; serverIds?: string[] }
+  | {
+      kind: "single";
+      target?: RunTarget;
+      serverIds?: string[];
+      serverNames?: string[];
+    }
   /** One run per target, launched as a group. */
   | { kind: "group"; targets: RunTarget[] }
   /**
@@ -70,6 +81,13 @@ export interface ComputeRunTargetsInput {
   allAttached?: boolean;
   /** An explicit server override, which is a single legacy-path run. */
   serverIds?: string[];
+  /**
+   * Display names for `serverIds`, paired by index. Carried through so the
+   * override persists as names rather than ids; ignored unless it lines up
+   * with `serverIds` exactly, because a mismatched pair would mislabel
+   * servers, which is worse than showing the id.
+   */
+  serverNames?: string[];
 }
 
 /** Dedupe by resolved id, keeping first-seen order. */
@@ -116,7 +134,15 @@ export function computeRunTargets(
   // the suite's selection for ONE run and is mutually exclusive with both
   // target axes (the callers enforce that before getting here).
   if (input.serverIds && input.serverIds.length > 0) {
-    return { kind: "single", serverIds: input.serverIds };
+    const serverNames =
+      input.serverNames && input.serverNames.length === input.serverIds.length
+        ? input.serverNames
+        : undefined;
+    return {
+      kind: "single",
+      serverIds: input.serverIds,
+      ...(serverNames ? { serverNames } : {}),
+    };
   }
 
   const selectedEnvironments = dedupe(

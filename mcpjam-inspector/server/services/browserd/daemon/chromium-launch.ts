@@ -200,6 +200,16 @@ export function wrapPage(page: AnyPage): DriverPage {
       const buffer = await page.screenshot({
         type: "jpeg",
         quality: SCREENSHOT_JPEG_QUALITY,
+        // CSS PIXELS, always — the model's coordinate space (L5). Without
+        // this, Playwright captures at the device scale factor, so raising the
+        // display's sharpness would silently hand the model a 1536×1152 or
+        // 2048×1536 picture while `isPointInViewport` went on refusing
+        // anything past 1023×767. Every click the model computed from that
+        // screenshot would land at a fraction of where it aimed.
+        //
+        // At DPR 1 this produces byte-identical output to the call it
+        // replaces, which is what makes it safe to land before any DPR change.
+        scale: "css",
       });
       return buffer.toString("base64");
     },
@@ -339,6 +349,14 @@ export interface LaunchBrowserdContextOptions {
    */
   contextMode?: "persistent" | "ephemeral";
   /**
+   * Device pixels per CSS pixel, from the box's own configuration.
+   *
+   * Honoured only in `persistent` mode — see `contextOptionsFor`. The CSS
+   * viewport is unchanged either way: the model's coordinate space is 1024×768
+   * whatever the display rasterises at.
+   */
+  deviceScaleFactor?: number;
+  /**
    * Which Chromium build to launch.
    *
    * Unset means Playwright's own default, which is what the hosted desktop
@@ -368,6 +386,27 @@ export interface LaunchBrowserdContextOptions {
  * instance (L8). Chromium cannot start its renderer sandbox as uid 0 (the image
  * builds as root), so the sandbox is disabled only in that case.
  */
+/**
+ * The context options, with the display's scale factor folded in.
+ *
+ * PERSISTENT ONLY. An ephemeral context is an eval or a swarm iteration, where
+ * the whole point of the pinned options is that a screenshot on one host
+ * matches a screenshot on another (L5) — so its scale factor stays 1 whatever
+ * the box is configured for, and hosted and local eval captures stay identical.
+ */
+export function contextOptionsFor(options: {
+  contextMode: "persistent" | "ephemeral";
+  deviceScaleFactor?: number;
+}): Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor"> & {
+  deviceScaleFactor: number;
+} {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (options.contextMode !== "persistent" || dpr === 1) {
+    return BROWSERD_CONTEXT_OPTIONS;
+  }
+  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+}
+
 export async function launchBrowserdContext(
   options: LaunchBrowserdContextOptions,
 ): Promise<DriverContext> {
@@ -395,7 +434,9 @@ export async function launchBrowserdContext(
       context = await browser.newContext({
         acceptDownloads: false,
         permissions: [],
-        ...BROWSERD_CONTEXT_OPTIONS,
+        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+        // whatever the box says, so eval captures match across hosts.
+        ...contextOptionsFor({ contextMode: "ephemeral" }),
       });
     } catch (error) {
       // Ownership of the browser transfers to `adaptContext` below. If we
@@ -426,7 +467,12 @@ export async function launchBrowserdContext(
     ...launchArgs,
     acceptDownloads: false,
     permissions: [],
-    ...BROWSERD_CONTEXT_OPTIONS,
+    ...contextOptionsFor({
+      contextMode: "persistent",
+      ...(options.deviceScaleFactor !== undefined
+        ? { deviceScaleFactor: options.deviceScaleFactor }
+        : {}),
+    }),
   });
   return adaptContext(context as unknown as AnyContext);
 }

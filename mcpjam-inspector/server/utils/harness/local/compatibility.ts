@@ -416,9 +416,12 @@ export function resolveLocalCompatibility(
     return {
       ok: false,
       status: "platform-not-supported",
-      message:
-        `local execution is not supported on this platform. Run the harness ` +
-        `hosted instead.`,
+      // NOT "run the harness hosted instead". A requested-local turn has Send
+      // disabled in this state (`localHarnessBlocksSend`), so nothing falls
+      // back — and on a local Inspector with no cloud data plane there is no
+      // hosted target to switch to either, which makes the instruction
+      // unactionable exactly where it is most likely to be read.
+      message: `local execution is not supported on this platform.`,
     };
   }
 

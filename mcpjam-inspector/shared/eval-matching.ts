@@ -252,6 +252,7 @@ export {
   extractFinalAssistantMessage,
   extractToolErrors,
   predicateSchema,
+  predicateUnion,
   predicateArraySchema,
   argMatcherSchema,
   casePredicatesSchema,
@@ -259,6 +260,10 @@ export {
   PREDICATE_PLACEHOLDER_STRINGS,
   TURN_SCOPABLE_PREDICATE_KINDS,
   isTurnScopablePredicateKind,
+  CHECK_POLICY_KEYS,
+  stripCheckPolicy,
+  checkRole,
+  checkSeverity,
 } from "@mcpjam/sdk/predicates";
 export type {
   Predicate,
@@ -278,6 +283,9 @@ export type {
   PredicatePlaceholder,
   TurnChecksInput,
   TurnTranscriptInput,
+  CheckPolicy,
+  CheckRole,
+  CheckSeverity,
 } from "@mcpjam/sdk/predicates";
 
 import type {

@@ -99,7 +99,10 @@ export interface ChromiumDriverOptions {
    */
   lease?: Pick<
     HandoffLease,
-    "consumeResumedDirty" | "consumeResumedHeldSince" | "resumedFromKind" | "state"
+    | "consumeResumedDirty"
+    | "consumeResumedHeldSince"
+    | "resumedFromKind"
+    | "state"
   >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
@@ -150,6 +153,47 @@ function parseScrollDelta(value: string | undefined): [number, number] {
   return [0, DEFAULT_SCROLL_STEP];
 }
 
+/**
+ * How much of a tab list may ride the heartbeat.
+ *
+ * The heartbeat is a frame-stream record, and a record over 8 KiB is REJECTED
+ * by the reader as `record too large` — which drops an otherwise healthy
+ * pane's whole stream. A page that opens twenty tabs with long URLs is not a
+ * reason for the picture to stop, so the strip is bounded here rather than
+ * discovered at the decoder.
+ */
+const TABS_SNAPSHOT_MAX = 16;
+/** And each URL: the strip shows a HOST, so a path is already more than it needs. */
+const TAB_URL_MAX = 256;
+/**
+ * And the whole strip, in bytes of JSON.
+ *
+ * Counting entries is not the same as bounding cost: a tab id is whatever the
+ * CALLER asked for — `getOrCreateTab` opens a page under any string — so
+ * sixteen tabs named with a kilobyte each is a heartbeat over the reader's
+ * limit and a stream that dies on a record it cannot take. Well under the 8
+ * KiB the reader allows, because the strip is not the only field in that
+ * message.
+ */
+const TABS_SNAPSHOT_BYTES = 4_096;
+/** `{"id":"","url":""},` — what one entry costs beyond its two strings. */
+const TAB_ENTRY_OVERHEAD = 24;
+
+/**
+ * Which entry a bound drops: the last, unless the last is the one on screen.
+ *
+ * The active tab goes only when it is all that is left — one entry over the
+ * bound on its own is not a tab anybody opened by hand, and no strip is better
+ * than no stream.
+ */
+function dropIndex(
+  list: ReadonlyArray<{ id: string }>,
+  activeTabId: string | undefined,
+): number {
+  const last = list.length - 1;
+  return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
+}
+
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
   private readonly settleOptions: SettleOptions;
@@ -167,6 +211,15 @@ export class ChromiumDriver implements BrowserDriver {
       >
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
+  /**
+   * Which tab is on screen.
+   *
+   * Load-bearing only for the HUMAN pane's video, which grabs the X display and
+   * therefore always shows whatever tab Chromium is displaying. A model
+   * `activate_tab` changes what a watching person sees, and without this the
+   * pane could not say so — the picture would simply become a different page.
+   */
+  private activeTabId: string | undefined;
   /**
    * One viewport per tab, created on first watch.
    *
@@ -210,7 +263,8 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
-    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
+    this.pageTextMaxBytes =
+      options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -327,6 +381,7 @@ export class ChromiumDriver implements BrowserDriver {
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
+      this.activeTabId = tabId;
       const frame = await this.snapshot(page);
       return this.observation(tabId, entry, { url: frame.url }, frame, permit);
     }
@@ -619,7 +674,13 @@ export class ChromiumDriver implements BrowserDriver {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+        return this.observation(
+          tabId,
+          entry,
+          { url: frame.url },
+          frame,
+          permit,
+        );
       }
       case "dom": {
         // The token is computed from the SAME snapshot returned as output, so
@@ -865,6 +926,95 @@ export class ChromiumDriver implements BrowserDriver {
    * is the right one: it is the person's own hands, and the lease is what says
    * the hands are theirs.
    */
+  /**
+   * What is open, and which one is on screen.
+   *
+   * For the human pane, not for the model: the video stream grabs the X
+   * display, so a model `activate_tab` silently changes what a watching person
+   * is looking at. The pane draws its own tab strip from this (kiosk hides
+   * Chromium's) and says so when the active one moves.
+   *
+   * Deliberately cheap and synchronous — it reads the driver's own map rather
+   * than asking Chromium — because it runs on every heartbeat of every open
+   * stream.
+   */
+  tabsSnapshot(): {
+    active?: string;
+    list: Array<{ id: string; url: string }>;
+  } {
+    const live = [...this.tabs.entries()]
+      // A page can close ITSELF — `window.close()`, a crashed renderer — with
+      // nothing routed through the driver, and the strip then showed a
+      // phantom tab and could mark the closed id active.
+      .filter(([, entry]) => !entry.page.isClosed());
+    // THE ACTIVE ONE IS NOT WHAT A BOUND DROPS. It is the tab the video is
+    // showing, and cutting at sixteen sent a strip that did not contain it —
+    // so `active` fell away below and the picture changed with nothing
+    // highlighted, which reads as "no tab is on screen". Position is kept:
+    // it takes the last slot rather than jumping to the front, because a
+    // strip that reorders itself when a tab is activated is its own puzzle.
+    const activeAt = this.activeTabId
+      ? live.findIndex(([id]) => id === this.activeTabId)
+      : -1;
+    const ordered =
+      activeAt >= TABS_SNAPSHOT_MAX
+        ? [...live.slice(0, TABS_SNAPSHOT_MAX - 1), live[activeAt]!]
+        : live.slice(0, TABS_SNAPSHOT_MAX);
+    const list = ordered.map(([id, entry]) => ({
+      id,
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX),
+    }));
+    // Then by SIZE, dropping from the end and never the active one. A caller
+    // that invents long tab ids cannot be answered with a truncated id — the
+    // strip matches `active` against it — so what gives is the number of
+    // entries, and in the last resort the strip itself.
+    //
+    // Two passes, and the cheap one first for a reason: a raw-length estimate
+    // is O(1) per entry and gets sixteen megabyte-long ids down to a handful
+    // before anything is serialised, and the exact measure below is then
+    // working on kilobytes rather than megabytes.
+    const costOf = (tab: { id: string; url: string }): number =>
+      tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
+    let estimate = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && estimate > TABS_SNAPSHOT_BYTES) {
+      estimate -= costOf(list[dropIndex(list, this.activeTabId)]!);
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    // Only if it is still there: the strip highlights `active`, and pointing
+    // at a tab that is not in the list reads as "no tab is on screen".
+    const payload = (): {
+      active?: string;
+      list: Array<{ id: string; url: string }>;
+    } => {
+      const active =
+        this.activeTabId && list.some((tab) => tab.id === this.activeTabId)
+          ? this.activeTabId
+          : undefined;
+      return { ...(active ? { active } : {}), list };
+    };
+    // A SOLE ENTRY THAT THE ESTIMATE ALREADY REJECTS never reaches the
+    // serialiser. The estimate only ever undercounts, so "over budget by raw
+    // length" is proof; and the alternative was stringifying a megabyte of
+    // caller-chosen id on every heartbeat of every open stream, only to throw
+    // it away — attacker-priced CPU, several times a second.
+    if (list.length === 1 && estimate > TABS_SNAPSHOT_BYTES) list.length = 0;
+    // MEASURED, not estimated, and in BYTES rather than characters. The
+    // estimate above misses three things, all of them under the caller's
+    // control: the payload repeats the active id in its own field,
+    // `JSON.stringify` expands every quote, backslash and control character in
+    // an id, and a `.length` counts UTF-16 units — so one CJK character is 1
+    // there and 3 on the wire, and an emoji 2 and 4. The wire is where the 8
+    // KiB record limit is enforced, by dropping the stream, so the wire's own
+    // unit is the only one worth counting in.
+    while (
+      list.length > 0 &&
+      Buffer.byteLength(JSON.stringify(payload()), "utf8") > TABS_SNAPSHOT_BYTES
+    ) {
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    return payload();
+  }
+
   async viewport(tabId?: string): Promise<TabViewport | null> {
     const key = tabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
@@ -1093,6 +1243,9 @@ export class ChromiumDriver implements BrowserDriver {
       }
       const entry: TabEntry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
+      // A new tab is the one Chromium shows, which is what the human pane's
+      // video will be grabbing a moment later.
+      this.activeTabId = tabId;
       return entry;
     })();
     this.pendingTabs.set(tabId, creating);
@@ -1116,7 +1269,11 @@ export class ChromiumDriver implements BrowserDriver {
   private async readA11y(
     tabId: string,
     entry: TabEntry,
-    action: { rootSelector?: string; rootRef?: string; filter?: "interactive" | "all" },
+    action: {
+      rootSelector?: string;
+      rootRef?: string;
+      filter?: "interactive" | "all";
+    },
   ): Promise<
     | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
     | { ok: false; error: BrowserCommandResult }
@@ -1238,6 +1395,14 @@ export class ChromiumDriver implements BrowserDriver {
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
     this.tabs.delete(tabId);
+    if (this.activeTabId === tabId) {
+      // Chromium shows SOMETHING after a close, and the most recently
+      // registered remaining tab is the best answer available without asking
+      // the browser — which would be a round trip on a path that runs whenever
+      // a tab goes away.
+      const remaining = [...this.tabs.keys()];
+      this.activeTabId = remaining[remaining.length - 1];
+    }
     // Refs name nodes in a page that is going away. Left behind, they would be
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.
@@ -1258,5 +1423,20 @@ export class ChromiumDriver implements BrowserDriver {
     if (!viewport) return;
     this.viewports.delete(tabId);
     await viewport.then((v) => v?.dispose()).catch(() => {});
+  }
+}
+
+/**
+ * A page's URL, or an empty string.
+ *
+ * `page.url()` throws on a closed page, and this runs on a heartbeat that must
+ * never take a stream down — a tab that is closing is exactly the case where a
+ * snapshot is most likely to be read.
+ */
+function safeUrl(page: { url(): string }): string {
+  try {
+    return page.url();
+  } catch {
+    return "";
   }
 }

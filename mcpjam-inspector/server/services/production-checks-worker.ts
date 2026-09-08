@@ -34,7 +34,9 @@
 
 import { logger } from "../utils/logger";
 import {
+  allPredicatesPassed,
   buildIterationTranscript,
+  checkRole,
   evaluatePredicates,
   summarizeRenderObservations,
 } from "@/shared/eval-matching";
@@ -217,6 +219,7 @@ export async function executeClaimedCheck(
     criterionId: string;
     passed: boolean;
     reason: string;
+    role?: "gating" | "advisory";
   }>;
   try {
     const observations = claim.envelope?.widgetRenderObservations;
@@ -249,15 +252,33 @@ export async function executeClaimedCheck(
     );
     // Positional correlation — both arrays derive from the same
     // `claim.criteria` and `evaluatePredicates` preserves order by contract.
-    criterionResults = claim.criteria.map((entry, index) => ({
-      criterionId: entry.id,
-      passed: results[index]?.passed ?? false,
-      reason: results[index]?.reason ?? "evaluator returned no verdict",
-    }));
+    criterionResults = claim.criteria.map((entry, index) => {
+      const role = checkRole(entry.predicate);
+      return {
+        criterionId: entry.id,
+        passed: results[index]?.passed ?? false,
+        reason: results[index]?.reason ?? "evaluator returned no verdict",
+        // NOT the check policy: `criterionResultValidator` on the backend is
+        // a closed object, so an extra key fails argument validation and the
+        // completion 500s in a lease/retry loop. The advisory reduction is
+        // already carried by `passed` below.
+      };
+    });
   } catch (error) {
     await reportFail(error instanceof Error ? error.message : String(error));
     return;
   }
+
+  // Advisory (Warn/Report) failures stay on the criterion rows so the
+  // panel can show them, but they never fail the synthetic-monitor check
+  // or page. `passed` here is the gating reduction.
+  const passed = allPredicatesPassed(
+    claim.criteria.map((entry, index) => ({
+      predicate: entry.predicate,
+      passed: criterionResults[index]?.passed ?? false,
+      reason: criterionResults[index]?.reason ?? "",
+    })),
+  );
 
   try {
     const { status, body } = await postServiceRoute(
@@ -268,6 +289,7 @@ export async function executeClaimedCheck(
         checkDocId: claim.checkDocId,
         generation: claim.generation,
         criterionResults,
+        passed,
       },
     );
     if (status !== 200 || !body?.ok) {

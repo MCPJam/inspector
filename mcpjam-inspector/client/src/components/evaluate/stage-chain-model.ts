@@ -214,6 +214,11 @@ export interface StageCardView {
   ordinal: string;
   label: string;
   chip: StageChip;
+  /**
+   * Optional fourth line. Settings cards pass a config count
+   * (`2 gates · 1 warn`); run mounts omit it and stay unchanged.
+   */
+  detail?: { label: string; toneClass: string };
 }
 
 export function toStageCardViews(

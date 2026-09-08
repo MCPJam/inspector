@@ -11,9 +11,18 @@ import { describe, expect, it, vi } from "vitest";
 // The helpers are pure, but they live in the view module, which reads
 // per-suite capabilities through Convex. Same isolation as the master-detail
 // suite: nothing here ever renders, so nothing here ever needs the real hook.
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 import {
   pickBacktestableRun,

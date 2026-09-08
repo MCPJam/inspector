@@ -225,9 +225,14 @@ export function humanizeSwarmAttemptErrorMessage(
  * host's own provider key. `spend_cap_exceeded` is the runner's own whole-run
  * finalize code; the rest mirror `USER_OWNED_DENIAL_CODES` in
  * `server/utils/mcpjam-stream-handler.ts`.
+ *
+ * Kept separate from that list: it answers who is at fault, this one whether
+ * another host could escape the limit, and they already disagree on
+ * `mcpjam_rate_limit`. A parity test pins the overlap so a code added there is
+ * not silently missed here.
  */
 const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included|spend_cap_exceeded)\b/i;
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included|spend_cap_exceeded)\b/i;
 
 /**
  * True when a rate-limited attempt was stopped by MCPJam's account-wide limit
