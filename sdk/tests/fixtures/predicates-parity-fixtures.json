@@ -683,6 +683,34 @@
         "role": "advisory",
         "severity": "warn"
       }
+    },
+    {
+      "label": "onlyToolsCalled — an allow-list of tools",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          "search",
+          "get_order"
+        ]
+      }
+    },
+    {
+      "label": "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": []
+      }
+    },
+    {
+      "label": "onlyToolsCalled — advisory, so a miss is highlighted and does not fail the trial",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          "search"
+        ],
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
@@ -1182,6 +1210,31 @@
         "severity": "warn"
       },
       "why": "severity requires role: 'advisory'; omitted role counts as gating"
+    },
+    {
+      "label": "onlyToolsCalled without toolNames",
+      "value": {
+        "type": "onlyToolsCalled"
+      },
+      "why": "toolNames is required; omitting it would read as 'no restriction' while grading as 'no tool allowed'"
+    },
+    {
+      "label": "onlyToolsCalled with a blank tool name",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          ""
+        ]
+      },
+      "why": "nothing can equal an empty name, so the entry reads as an allowance and grades as none"
+    },
+    {
+      "label": "onlyToolsCalled with a non-array toolNames",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": "search"
+      },
+      "why": "a bare string would silently allow only its characters"
     }
   ]
 }

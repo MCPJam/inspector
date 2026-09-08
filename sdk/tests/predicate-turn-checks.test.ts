@@ -117,6 +117,7 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
     expect(isTurnScopablePredicateKind("tokenBudgetUnder")).toBe(false);
     expect(TURN_SCOPABLE_PREDICATE_KINDS).not.toContain("tokenBudgetUnder");
     expect(isTurnScopablePredicateKind("noEndingQuestion")).toBe(true);
+    expect(isTurnScopablePredicateKind("onlyToolsCalled")).toBe(true);
     // Pinned as the COMPLEMENT of the case-only kinds, each named with the
     // reason it is case-only. A bare count went stale the moment the union
     // grew past 12 and said nothing about WHICH kinds it was counting.
@@ -144,4 +145,18 @@ describe("TURN_SCOPABLE_PREDICATE_KINDS", () => {
         .sort(),
     );
   });
+});
+
+it("evaluates onlyToolsCalled separately for each prompt turn", () => {
+  const results = evaluateTurnChecks(
+    ["search", "delete"].map((toolName, promptIndex) => ({
+      promptIndex,
+      checks: [{ type: "onlyToolsCalled" as const, toolNames: ["search"] }],
+      transcript: buildTurnTranscript({
+        toolCalls: [{ toolName, arguments: {} }],
+      }),
+    }))
+  );
+  expect(results.map((r) => r.passed)).toEqual([true, false]);
+  expect(results[1].scope).toMatchObject({ promptIndex: 1 });
 });

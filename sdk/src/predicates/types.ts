@@ -68,6 +68,15 @@ export type Predicate = (
   | { type: "toolCalledAtLeastOnce"; toolName: string }
   /** `toolName` was never called (forbidden tool). */
   | { type: "toolNeverCalled"; toolName: string }
+  /**
+   * No tool OUTSIDE `toolNames` was called.
+   *
+   * Subset semantics: it says nothing about whether the listed tools WERE
+   * called (`toolCalledAtLeastOnce` says that), only that nothing else was.
+   * An EMPTY list means no tool at all was called — the negative case, as a
+   * check that can be turn-scoped and can carry a role.
+   */
+  | { type: "onlyToolsCalled"; toolNames: string[] }
   /** The first tool call observed in the transcript was `toolName`. */
   | { type: "firstToolWas"; toolName: string }
   /** The final assistant message contains `needle`. Case-insensitive unless `caseSensitive`. */
@@ -253,6 +262,7 @@ export const TURN_SCOPABLE_PREDICATE_KINDS = [
   "toolCalledWith",
   "toolCalledAtLeastOnce",
   "toolNeverCalled",
+  "onlyToolsCalled",
   "firstToolWas",
   "responseContains",
   "responseMatches",
@@ -414,6 +424,14 @@ export const predicateUnion = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("toolNeverCalled"),
     toolName: z.string().min(1),
+    ...checkPolicyShape,
+  }),
+  z.object({
+    type: z.literal("onlyToolsCalled"),
+    // An empty array is VALID — it is the "no tool was called" claim. Blank
+    // entries are not: nothing can equal one, so it reads as an allowance and
+    // grades as none.
+    toolNames: z.array(z.string().min(1)),
     ...checkPolicyShape,
   }),
   z.object({

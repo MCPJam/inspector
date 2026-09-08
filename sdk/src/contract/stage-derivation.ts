@@ -330,6 +330,8 @@ const SELECTION_PREDICATE_REASON_BY_KIND: Partial<
   firstToolWas: "unexpectedToolCall",
   /** A forbidden tool was called. */
   toolNeverCalled: "unexpectedToolCall",
+  /** A tool outside the allowed set was called — the same observed fact. */
+  onlyToolsCalled: "unexpectedToolCall",
   // ── Analyzer 11 ────────────────────────────────────────────────────────
   // All four re-use `unexpectedToolCall`, so `STAGE_REASONS` does not move
   // and the backend's hash-pinned mirror needs no re-pin. Each of them is the

@@ -17,9 +17,9 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { isRecommendedDefaultPredicateKind } from "@mcpjam/sdk/contract";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import { WIDGET_ASSERTION_LABELS, type WidgetAssertion } from "@/shared/steps";
 import { SYNTHETIC_MONITOR_KINDS } from "./predicate-kind-meta";
 import {
-  LEGACY_PREDICATE_KINDS,
   NEW_SCORER_KINDS,
   scorerLibraryCategories,
   type ScorerLibraryCategory,
@@ -27,18 +27,52 @@ import {
 
 export function SuiteScorerLibraryMenu({
   onAdd,
+  kinds,
   authorableKinds,
+  triggerLabel = "Add scorer",
+  onAddWidgetCheck,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
   /**
-   * The kinds this deployment accepts (`authorablePredicateKinds`). Offering
+   * Which kinds this surface may offer. Omitted means every kind, which is
+   * the suite's answer. The case page passes a narrowed list because one kind
+   * is already owned by another control there (the route question owns
+   * `toolCalledWith`), and offering it twice would let a reader author a route
+   * that the route row then contradicts.
+   */
+  kinds?: readonly Predicate["type"][];
+  /**
+   * The kinds this DEPLOYMENT accepts (`authorablePredicateKinds`). Offering
    * a kind the backend rejects turns "Add scorer" into a failed save, and one
    * an older runner cannot evaluate fails closed on every trial.
+   *
+   * Independent of `kinds` and intersected with it: that one is about this
+   * SURFACE, this one about the SERVER, and a kind has to clear both. Omitted
+   * means the caller has not resolved the deployment's answer — the callers
+   * that care resolve it themselves, so a default here would quietly narrow
+   * the surfaces that do not.
    */
   authorableKinds?: readonly Predicate["type"][];
+  /**
+   * What the button says. The suite table's "Add scorer" is the default; the
+   * spine says "Add a check after this", because there the menu answers WHERE
+   * as well as what, and a generic label would lose the position.
+   */
+  triggerLabel?: string;
+  /**
+   * Offers DOM-level widget assertions alongside the predicates, under their
+   * own category. Only a surface that can place a check at a position can
+   * accept one — a widget assertion grades the view as it stood at that point,
+   * so it is meaningless as a whole-run check.
+   */
+  onAddWidgetCheck?: (kind: WidgetAssertion["kind"]) => void;
 }) {
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
-  const categories = scorerLibraryCategories(authorableKinds ?? LEGACY_PREDICATE_KINDS).map((category) => ({
+  const offered =
+    kinds && authorableKinds
+      ? kinds.filter((kind) => authorableKinds.includes(kind))
+      : (kinds ?? authorableKinds);
+  const categories = scorerLibraryCategories(offered).map((category) => ({
     ...category,
     kinds: category.kinds.filter(
       (kind) =>
@@ -54,17 +88,17 @@ export function SuiteScorerLibraryMenu({
           variant="outline"
           size="sm"
           aria-haspopup="dialog"
-          aria-label="Add scorer"
+          aria-label={triggerLabel}
           className="h-8 gap-1.5 border-dashed text-xs"
         >
           <Plus className="h-3.5 w-3.5" />
-          Add scorer
+          {triggerLabel}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" sideOffset={4} className="w-72 p-1">
         <div className="px-2 pb-1.5 pt-1">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Add scorer
+            {triggerLabel}
           </span>
         </div>
         <ul className="space-y-2" data-testid="scorer-library">
@@ -75,6 +109,31 @@ export function SuiteScorerLibraryMenu({
               onAdd={onAdd}
             />
           ))}
+          {onAddWidgetCheck ? (
+            <li data-library-category="widget">
+              <div className="px-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                In the view
+              </div>
+              <ul className="space-y-0.5">
+                {(
+                  Object.keys(WIDGET_ASSERTION_LABELS) as Array<
+                    WidgetAssertion["kind"]
+                  >
+                ).map((kind) => (
+                  <li key={kind}>
+                    <button
+                      type="button"
+                      data-testid={`add-widget-check-${kind}`}
+                      onClick={() => onAddWidgetCheck(kind)}
+                      className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent/50"
+                    >
+                      <span>{WIDGET_ASSERTION_LABELS[kind]}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ) : null}
         </ul>
       </PopoverContent>
     </Popover>

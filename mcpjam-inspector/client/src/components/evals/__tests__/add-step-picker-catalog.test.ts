@@ -12,6 +12,7 @@ import {
   isScenarioPredicateKind,
   PREDICATE_KIND_ORDER,
 } from "@/shared/predicate-kinds";
+import { LIBRARY_OPT_IN_KINDS } from "../suite-scorer-table-model";
 
 const EXPECTED_STEP_KINDS = ["prompt", "interact", "toolCall"] as const;
 
@@ -38,7 +39,15 @@ const EXPECTED_WIDGET_CHECK_KINDS = [
 
 describe("add-step-picker-catalog integrity", () => {
   it("covers every scenario predicate kind exactly once", () => {
-    const expected = PREDICATE_KIND_ORDER.filter(isScenarioPredicateKind);
+    // Opt-in kinds are excluded on purpose. `onlyToolsCalled` is turn-scopable,
+    // so it qualifies as a scenario kind, but this picker belongs to /evals —
+    // a surface that still has the matcher's exclusivity option and the
+    // case-level negative flag. Offering it here would put two controls for
+    // one claim on the same page.
+    const expected = PREDICATE_KIND_ORDER.filter(
+      (kind) =>
+        isScenarioPredicateKind(kind) && !LIBRARY_OPT_IN_KINDS.has(kind),
+    );
     const actual = catalogPredicateKinds();
 
     expect(actual).toHaveLength(expected.length);

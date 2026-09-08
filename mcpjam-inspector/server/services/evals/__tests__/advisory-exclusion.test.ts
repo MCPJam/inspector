@@ -46,108 +46,79 @@ const FAILING_ADVISORY: Predicate = {
  * added when the fixture set grows; a changed row is a bug.
  */
 const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
-  "argumentsMatchToolSchema — all tools":
-    "argumentsMatchToolSchema-1133950cdc56",
-  "argumentsMatchToolSchema — one tool":
-    "argumentsMatchToolSchema-b241a938d174",
-  "finalAssistantMessageNonEmpty — no fields beyond type":
-    "finalAssistantMessageNonEmpty-175378843b04",
-  "firstToolWas — alternate tool name":
-    "firstToolWas-a17d6a6f3fbc",
-  "firstToolWas — minimal":
-    "firstToolWas-ab4db9cc6ed9",
-  "firstToolWas — minimal (Phase 2 NEW)":
-    "firstToolWas-3f689e7534ff",
-  "firstToolWas — namespaced":
-    "firstToolWas-faa3941fa463",
-  "noDestructiveToolCalled — minimal":
-    "noDestructiveToolCalled-4d38da27d4c1",
-  "noToolErrors — no fields beyond type":
-    "noToolErrors-037586125822",
-  "responseContains — caseSensitive true":
-    "responseContains-f4c5be13b732",
-  "responseContains — caseSensitive true (2)":
-    "responseContains-9a40ccf7b841",
-  "responseContains — minimal (no caseSensitive)":
-    "responseContains-55e3e23f03b1",
-  "responseMatches — anchored regex":
-    "responseMatches-0095f40480be",
-  "responseMatches — character class regex":
-    "responseMatches-5f159fe0cbd8",
-  "responseMatches — minimal regex":
-    "responseMatches-acad91d7f657",
-  "responseMatches — minimal regex (2)":
-    "responseMatches-fab1d18c0181",
-  "tokenBudgetUnder — large budget":
-    "tokenBudgetUnder-d73c1738301e",
-  "tokenBudgetUnder — large budget (2)":
-    "tokenBudgetUnder-8b5817a6f1fc",
-  "tokenBudgetUnder — minimal":
-    "tokenBudgetUnder-5c2d14380e24",
-  "toolCallCountUnder — all tools":
-    "toolCallCountUnder-8f28c5b8530e",
-  "toolCallCountUnder — one tool":
-    "toolCallCountUnder-8d40f66fe2f2",
-  "toolCalledAtLeastOnce — dotted tool name":
-    "toolCalledAtLeastOnce-59f33db297d8",
-  "toolCalledAtLeastOnce — long tool name":
-    "toolCalledAtLeastOnce-6c7e0df4ece0",
-  "toolCalledAtLeastOnce — minimal":
-    "toolCalledAtLeastOnce-aef5ea86517d",
-  "toolCalledAtLeastOnce — minimal (2)":
-    "toolCalledAtLeastOnce-9afdc368e48e",
-  "toolCalledBefore — minimal":
-    "toolCalledBefore-32c7ea98b93d",
-  "toolCalledWith — all optional fields populated":
-    "toolCalledWith-c09398c31fc9",
-  "toolCalledWith — exact argumentMatching":
-    "toolCalledWith-cefba3aab174",
-  "toolCalledWith — full (argumentMatching=partial with placeholder leaves, minCount)":
-    "toolCalledWith-75853c7f2405",
-  "toolCalledWith — ignore argumentMatching (args still required)":
-    "toolCalledWith-4583a128cfeb",
-  "toolCalledWith — minimal (no minCount)":
-    "toolCalledWith-82112c464770",
   "toolCalledWith — minimal (only required fields)":
     "toolCalledWith-bb535809fe86",
+  "toolCalledWith — all optional fields populated":
+    "toolCalledWith-c09398c31fc9",
+  "toolCalledWith — exact argumentMatching": "toolCalledWith-cefba3aab174",
+  "toolCalledWith — ignore argumentMatching (args still required)":
+    "toolCalledWith-4583a128cfeb",
   "toolCalledWith — partial with placeholder strings":
     "toolCalledWith-4ec7a9274dee",
-  "toolLatencyUnder — all tools":
-    "toolLatencyUnder-a6090b8a9328",
-  "toolNeverCalled — long tool name":
-    "toolNeverCalled-605ce8c81441",
-  "toolNeverCalled — minimal":
-    "toolNeverCalled-8f66a240d084",
-  "toolNeverCalled — minimal (2)":
-    "toolNeverCalled-1097cd0fde9f",
-  "toolNeverCalled — namespaced":
-    "toolNeverCalled-0405b542932e",
-  "toolResultContains — case-sensitive, one tool":
-    "toolResultContains-e9027a7d0d3d",
-  "toolResultContains — minimal":
-    "toolResultContains-25686816ee42",
-  "toolResultMatchesSchema — array root (legal under 2026-07-28)":
-    "toolResultMatchesSchema-48c37c32583d",
-  "toolResultMatchesSchema — object root":
-    "toolResultMatchesSchema-bb67e721141b",
-  "toolResultSizeUnder — all tools":
-    "toolResultSizeUnder-b2b683d7a85c",
-  "turnCountUnder — loose budget":
-    "turnCountUnder-6d441716294f",
+  "toolCalledAtLeastOnce — minimal": "toolCalledAtLeastOnce-aef5ea86517d",
+  "toolCalledAtLeastOnce — long tool name":
+    "toolCalledAtLeastOnce-6c7e0df4ece0",
+  "toolNeverCalled — minimal": "toolNeverCalled-8f66a240d084",
+  "toolNeverCalled — long tool name": "toolNeverCalled-605ce8c81441",
+  "firstToolWas — minimal": "firstToolWas-ab4db9cc6ed9",
+  "firstToolWas — alternate tool name": "firstToolWas-a17d6a6f3fbc",
+  "responseContains — minimal (no caseSensitive)":
+    "responseContains-55e3e23f03b1",
+  "responseContains — caseSensitive true": "responseContains-f4c5be13b732",
+  "responseMatches — minimal regex": "responseMatches-acad91d7f657",
+  "responseMatches — anchored regex": "responseMatches-0095f40480be",
+  "noToolErrors — no fields beyond type": "noToolErrors-037586125822",
+  "finalAssistantMessageNonEmpty — no fields beyond type":
+    "finalAssistantMessageNonEmpty-175378843b04",
+  "tokenBudgetUnder — minimal": "tokenBudgetUnder-5c2d14380e24",
+  "tokenBudgetUnder — large budget": "tokenBudgetUnder-d73c1738301e",
   "turnCountUnder — tight budget (strictly fewer than 3 user turns)":
     "turnCountUnder-20f83ed0ccc6",
+  "turnCountUnder — loose budget": "turnCountUnder-6d441716294f",
+  "widgetRendered — minimal (no toolName filter)":
+    "widgetRendered-68223fde7ae1",
+  "widgetRendered — with toolName filter": "widgetRendered-78fd2ef5d0e0",
+  "widgetRenderLatencyUnder — minimal": "widgetRenderLatencyUnder-24b285bfa69e",
+  "widgetRenderLatencyUnder — with toolName filter":
+    "widgetRenderLatencyUnder-1dc192155096",
   "widgetNoConsoleErrors — minimal (no toolName filter)":
     "widgetNoConsoleErrors-def686b4d83a",
   "widgetNoConsoleErrors — with toolName filter":
     "widgetNoConsoleErrors-19ad36911f9d",
-  "widgetRenderLatencyUnder — minimal":
-    "widgetRenderLatencyUnder-24b285bfa69e",
-  "widgetRenderLatencyUnder — with toolName filter":
-    "widgetRenderLatencyUnder-1dc192155096",
-  "widgetRendered — minimal (no toolName filter)":
-    "widgetRendered-68223fde7ae1",
-  "widgetRendered — with toolName filter":
-    "widgetRendered-78fd2ef5d0e0",
+  "toolLatencyUnder — all tools": "toolLatencyUnder-a6090b8a9328",
+  "toolResultContains — minimal": "toolResultContains-25686816ee42",
+  "toolResultContains — case-sensitive, one tool":
+    "toolResultContains-e9027a7d0d3d",
+  "toolResultMatchesSchema — object root":
+    "toolResultMatchesSchema-bb67e721141b",
+  "toolResultMatchesSchema — array root (legal under 2026-07-28)":
+    "toolResultMatchesSchema-48c37c32583d",
+  "toolResultSizeUnder — all tools": "toolResultSizeUnder-b2b683d7a85c",
+  "argumentsMatchToolSchema — all tools":
+    "argumentsMatchToolSchema-1133950cdc56",
+  "argumentsMatchToolSchema — one tool":
+    "argumentsMatchToolSchema-b241a938d174",
+  "toolCallCountUnder — all tools": "toolCallCountUnder-8f28c5b8530e",
+  "toolCallCountUnder — one tool": "toolCallCountUnder-8d40f66fe2f2",
+  "toolCalledBefore — minimal": "toolCalledBefore-32c7ea98b93d",
+  "noDestructiveToolCalled — minimal": "noDestructiveToolCalled-4d38da27d4c1",
+  "toolCalledWith — minimal (no minCount)": "toolCalledWith-82112c464770",
+  "toolCalledWith — full (argumentMatching=partial with placeholder leaves, minCount)":
+    "toolCalledWith-75853c7f2405",
+  "toolCalledAtLeastOnce — minimal (2)": "toolCalledAtLeastOnce-9afdc368e48e",
+  "toolCalledAtLeastOnce — dotted tool name":
+    "toolCalledAtLeastOnce-59f33db297d8",
+  "toolNeverCalled — minimal (2)": "toolNeverCalled-1097cd0fde9f",
+  "toolNeverCalled — namespaced": "toolNeverCalled-0405b542932e",
+  "firstToolWas — minimal (Phase 2 NEW)": "firstToolWas-3f689e7534ff",
+  "firstToolWas — namespaced": "firstToolWas-faa3941fa463",
+  "responseContains — caseSensitive true (2)": "responseContains-9a40ccf7b841",
+  "responseMatches — minimal regex (2)": "responseMatches-fab1d18c0181",
+  "responseMatches — character class regex": "responseMatches-5f159fe0cbd8",
+  "tokenBudgetUnder — large budget (2)": "tokenBudgetUnder-8b5817a6f1fc",
+  "onlyToolsCalled — an allow-list of tools": "onlyToolsCalled-ef1d9ea3488c",
+  "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)":
+    "onlyToolsCalled-01ce35d01165",
 };
 
 function hostedBase() {
@@ -359,7 +330,7 @@ describe("hostedCriterionId is stable across check policy", () => {
     }
   });
 
-  it("pins today's ids for fixture predicates", () => {
+  it("pins today's ids for fixture predicates", async () => {
     // Literals computed 2026-09-06 against the then-current hasher.
     // Changing one means hostedCriterionId's inputs moved.
     const pinned: Record<string, string> = {};
@@ -375,6 +346,7 @@ describe("hostedCriterionId is stable across check policy", () => {
     for (const row of accept) {
       pinned[row.label] = hostedCriterionId(row.value as Predicate);
     }
+    (await import('node:fs')).writeFileSync('/tmp/claude-0/-home-user/8912323e-f1b1-5d4a-950f-948b4f0dab4c/scratchpad/computed-ids.json', JSON.stringify(pinned, null, 1));
     expect(pinned).toEqual(PINNED_HOSTED_CRITERION_IDS);
   });
 });

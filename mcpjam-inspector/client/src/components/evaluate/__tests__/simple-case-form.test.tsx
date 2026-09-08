@@ -151,12 +151,14 @@ describe("SimpleCaseForm", () => {
       isNegativeTest: false,
     });
 
-    await user.click(screen.getByRole("radio", { name: "Regression" }));
+    // The mode is the ROUTE's strictness, not a page-wide setting, so it lives
+    // on the route row. Same two writes, same wire values.
+    await user.click(screen.getByRole("radio", { name: "Exact route" }));
     expect(onMatchOptionsChange).toHaveBeenCalledWith(
       matchOptionsForKind("regression"),
     );
 
-    await user.click(screen.getByRole("radio", { name: "Capability" }));
+    await user.click(screen.getByRole("radio", { name: "Reach the tool" }));
     expect(onMatchOptionsChange).toHaveBeenCalledWith(MATCH_OPTIONS_DEFAULTS);
   });
 
@@ -348,13 +350,31 @@ describe("SimpleCaseForm step-authored checks", () => {
   it("shows CLI-authored assert steps as check rows, labelled by where they run", () => {
     renderForm({ steps: goldenSteps, isNegativeTest: false });
 
-    const rows = screen.getAllByTestId("simple-case-step-check");
+    const rows = screen
+      .getAllByTestId("case-scorecard-row")
+      .filter((row) => row.getAttribute("data-provenance") === "step");
     expect(rows).toHaveLength(3);
     // "so far": a step assert reads the transcript AT THAT POINT, unlike the
     // whole-run case predicate of the same kind.
     expect(screen.getByText("No tool errors so far")).toBeInTheDocument();
-    expect(screen.getByText("First tool called was…")).toBeInTheDocument();
-    expect(screen.getByText("Response contains…")).toBeInTheDocument();
+    expect(screen.getByText("First tool called was… get_me")).toBeInTheDocument();
+    expect(
+      screen.getByText('Response contains "marcelo@mcpjam.com"'),
+    ).toBeInTheDocument();
+    // Each row says who wrote it, and carries its own step number — the same
+    // number the Steps pane shows for that step.
+    expect(rows.every((row) => row.textContent?.includes("Step"))).toBe(true);
+    // Rows are ordered by the LINK OF THE CHAIN they measure, not by step
+    // number, so the numbers legitimately run out of order: step 4's
+    // `noToolErrors` files at `response` under analyzer 11 and step 3's
+    // `responseContains` at `userValue`, which comes after it.
+    expect(
+      rows.map((row) =>
+        row
+          .querySelector("[data-step-number]")
+          ?.getAttribute("data-step-number"),
+      ),
+    ).toEqual(["2", "4", "3"]);
   });
 
   it("treats a case graded only by its checks as positive, not unset", () => {
@@ -363,9 +383,10 @@ describe("SimpleCaseForm step-authored checks", () => {
       isNegativeTest: false,
       validationAttempted: true,
     });
-    expect(
-      screen.getByTestId("simple-case-tools-checks-hint"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("case-route-row")).toHaveAttribute(
+      "data-route",
+      "checks",
+    );
     expect(
       screen.queryByTestId("simple-case-tools-unset"),
     ).not.toBeInTheDocument();
@@ -378,6 +399,12 @@ describe("SimpleCaseForm step-authored checks", () => {
       isNegativeTest: false,
     });
 
+    // A row is one line; its fields open on demand.
+    await user.click(
+      screen.getByRole("button", {
+        name: 'Edit Response contains "marcelo@mcpjam.com"',
+      }),
+    );
     await user.type(screen.getByLabelText("Needle"), "!");
 
     const next = onStepsChange.mock.calls.at(-1)?.[0] as TestStep[];
@@ -398,9 +425,11 @@ describe("SimpleCaseForm step-authored checks", () => {
     });
 
     const row = screen
-      .getAllByTestId("simple-case-step-check")
+      .getAllByTestId("case-scorecard-row")
       .find((node) => node.getAttribute("data-step-id") === "a3")!;
-    await user.click(within(row).getByRole("button", { name: "Remove check" }));
+    await user.click(
+      within(row).getByRole("button", { name: "Remove No tool errors so far" }),
+    );
 
     const next = onStepsChange.mock.calls.at(-1)?.[0] as TestStep[];
     expect(next.map((step) => step.id)).toEqual(["s1", "a1", "a2"]);
@@ -460,9 +489,10 @@ describe("SimpleCaseForm leftover steps", () => {
     expect(
       screen.queryByRole("button", { name: "Add" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId("simple-case-tools-checks-hint"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("case-route-row")).toHaveAttribute(
+      "data-route",
+      "locked",
+    );
   });
 
   it("keeps a pinned-first case's existing tool rows read-only", () => {

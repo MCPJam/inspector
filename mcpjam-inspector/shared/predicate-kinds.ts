@@ -34,6 +34,7 @@ export const PREDICATE_KIND_LABELS: Record<PredicateKind, string> = {
   toolCalledWith: "Tool was called with…",
   toolCalledAtLeastOnce: "Tool was called at least once",
   toolNeverCalled: "Tool was never called",
+  onlyToolsCalled: "Only these tools may be called",
   firstToolWas: "First tool called was…",
   responseContains: "Response contains…",
   responseMatches: "Response matches regex…",
@@ -100,6 +101,7 @@ export const PREDICATE_KIND_ORDER: PredicateKind[] = [
   "toolCalledWith",
   "toolCalledAtLeastOnce",
   "toolNeverCalled",
+  "onlyToolsCalled",
   "firstToolWas",
   "responseContains",
   "responseMatches",
@@ -228,6 +230,11 @@ export function blankPredicate(kind: PredicateKind): Predicate {
       return { type: "toolCalledAtLeastOnce", toolName: "" };
     case "toolNeverCalled":
       return { type: "toolNeverCalled", toolName: "" };
+    case "onlyToolsCalled":
+      // Blank, not empty-meaning-"no tool": an empty list is a real claim
+      // ("no tool was called"), and a freshly added check must not assert it
+      // before the author has said so. The editor requires a choice.
+      return { type: "onlyToolsCalled", toolNames: [] };
     case "firstToolWas":
       return { type: "firstToolWas", toolName: "" };
     case "responseContains":
@@ -333,6 +340,16 @@ export function formatCriterion(
     case "toolNeverCalled":
     case "firstToolWas":
       return predicate.toolName ? `${base} ${predicate.toolName}` : base;
+    case "onlyToolsCalled": {
+      // A bare `{ type }` reaches here from an older or newer build; an empty
+      // list is a REAL claim ("no tool"), so a missing one must not be read as
+      // making it. Fall back to the kind label instead.
+      const names = predicate.toolNames;
+      if (!Array.isArray(names)) return base;
+      return names.length === 0
+        ? "No tool should be called"
+        : `Only these tools may be called: ${names.join(", ")}`;
+    }
     case "responseContains":
       return `Response contains "${predicate.needle}"`;
     case "responseMatches":

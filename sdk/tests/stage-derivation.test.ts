@@ -1258,7 +1258,7 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
     }
   });
 
-  test("the derivation routes exactly the kinds it is meant to", () => {
+  test("the derivation routes exactly the kinds it is meant to route", () => {
     // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is COMPUTED
     // from the map, so a mistake in the derivation would silently widen or
     // narrow what the analyzer routes — and the behavioural tests above would
@@ -1269,6 +1269,13 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
     // its raw predicate row here would let a residual contradict the
     // adjudicated verdict. Everything else the map files at `selection` is
     // routed.
+    //
+    // Both additions below joined the set deliberately: a tool outside an
+    // allowed set, a call before its prerequisite, one the server marks
+    // deprecated or destructive, one call too many — each is the same observed
+    // fact as a forbidden tool in a different dress. Widening this list is a
+    // decision, never a side effect: every other addition still fails here
+    // first.
     const routed = (PREDICATE_KINDS as readonly string[])
       .filter((kind) => isSelectionPredicateKind(kind))
       .sort();
@@ -1276,6 +1283,7 @@ describe("the grader→stage map is total and agrees with the analyzer", () => {
       "firstToolWas",
       "noDeprecatedToolCalled",
       "noDestructiveToolCalled",
+      "onlyToolsCalled",
       "toolCallCountUnder",
       "toolCalledAtLeastOnce",
       "toolCalledBefore",
