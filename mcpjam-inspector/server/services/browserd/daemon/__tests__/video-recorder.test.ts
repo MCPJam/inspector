@@ -471,6 +471,95 @@ describe("shutdown", () => {
 });
 
 /**
+ * The directory does not grow without bound.
+ *
+ * Nothing else deletes a recording, and `recordDir` outlives the process, so
+ * the per-take name that keeps a retry from overwriting evidence would
+ * otherwise leave one file per boot behind at the size cap.
+ */
+describe("sweeping the takes of dead boots", () => {
+  // The sweep awaits one unlink at a time, so counting microtasks would couple
+  // the test to how many files it walks. A macrotask drains all of them.
+  const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const sweepBuild = (names: string[], nonce = "b00t") => {
+    const removed: string[] = [];
+    const { recorder, ffmpeg } = build({
+      nonce,
+      listDir: async () => names,
+      removeFile: async (path: string) => {
+        removed.push(path);
+      },
+    });
+    return { recorder, ffmpeg, removed };
+  };
+
+  it("removes a previous boot's take, which no reader can name any more", async () => {
+    const { recorder, removed } = sweepBuild([
+      "run-1-old1-1.mp4",
+      "run-1-old1-2.mp4",
+      "run-2-old2-1.mp4",
+    ]);
+    recorder.start({ id: "run-1", fps: 15 });
+    await settled();
+
+    expect(removed.sort()).toEqual([
+      "/rec/run-1-old1-1.mp4",
+      "/rec/run-1-old1-2.mp4",
+      "/rec/run-2-old2-1.mp4",
+    ]);
+  });
+
+  it("NEVER removes a take of this boot, because a reader may still be on it", async () => {
+    // The whole point of the per-take name: take 1's collector can still be
+    // reading while take 2 records. Sweeping it would trade the wrong-file bug
+    // for a missing-file one.
+    const { recorder, removed } = sweepBuild([
+      "run-1-b00t-1.mp4",
+      "run-1-b00t-2.mp4",
+      "run-1-gone-1.mp4",
+    ]);
+    recorder.start({ id: "run-1", fps: 15 });
+    await settled();
+
+    expect(removed).toEqual(["/rec/run-1-gone-1.mp4"]);
+  });
+
+  it("leaves anything that is not a take alone", async () => {
+    const { recorder, removed } = sweepBuild(["SingletonLock", "notes.txt"]);
+    recorder.start({ id: "run-1", fps: 15 });
+    await settled();
+
+    expect(removed).toEqual([]);
+  });
+
+  it("records anyway when the directory cannot be read", async () => {
+    // Tidying up is never worth a run's evidence.
+    const { recorder, ffmpeg } = build({
+      listDir: async () => {
+        throw new Error("EACCES");
+      },
+    });
+    expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
+    await settled();
+    expect(ffmpeg.spawned).toHaveLength(1);
+    expect(recorder.status()?.active).toBe(true);
+  });
+
+  it("records anyway when a file will not unlink", async () => {
+    const { recorder, ffmpeg } = build({
+      listDir: async () => ["run-1-gone-1.mp4"],
+      removeFile: async () => {
+        throw new Error("EPERM");
+      },
+    });
+    expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
+    await settled();
+    expect(ffmpeg.spawned).toHaveLength(1);
+    expect(recorder.status()?.active).toBe(true);
+  });
+});
+
+/**
  * Every take owns its file.
  *
  * The stop lock releases when ffmpeg exits, so a same-id start can spawn while

@@ -40,7 +40,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 
@@ -119,6 +119,9 @@ export interface VideoRecorderOptions {
    * daemon boot; injected only so a test can assert an exact path.
    */
   nonce?: string;
+  /** Injected so the retention sweep needs no filesystem. */
+  listDir?: (dir: string) => Promise<string[]>;
+  removeFile?: (path: string) => Promise<void>;
 }
 
 export interface VideoRecorder {
@@ -317,6 +320,8 @@ export function createVideoRecorder(
     options.statFile ?? (async (path: string) => stat(path));
   const now = options.now ?? Date.now;
   const nonce = options.nonce ?? randomBytes(4).toString("hex");
+  const listDir = options.listDir ?? ((dir: string) => readdir(dir));
+  const removeFile = options.removeFile ?? (async (p: string) => unlink(p));
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle as never));
 
@@ -362,6 +367,47 @@ export function createVideoRecorder(
    * process, so the name has to say WHICH process wrote it.
    */
   let disposed = false;
+
+  /**
+   * Drop the takes of BOOTS THAT ARE GONE, and only those.
+   *
+   * Nothing deletes a recording otherwise: the collector reads the file and
+   * leaves it, and `recordDir` sits beside the Chromium profile, so it
+   * outlives the process. Giving each take its own name — which it needs, so
+   * a retry cannot overwrite evidence still owed to a reader — turned a
+   * directory that held one file per id into one that grows by a take per
+   * boot. A crash-looping daemon would fill the disk at the size cap each
+   * time round.
+   *
+   * The rule is deliberately narrow: a file is swept only when its name
+   * carries a nonce that is not ours. Those are unreachable by construction —
+   * the collector names a file by the `path` a stop returned, and only the
+   * LIVE daemon answers a stop, so no reader can still be asking for a dead
+   * boot's take. This boot's own earlier takes are left alone precisely
+   * because a reader CAN still be on one: that is the race the per-take name
+   * exists to win, and a sweep that undid it would trade a wrong file for a
+   * missing one.
+   *
+   * Best-effort throughout. A directory that cannot be listed, or a file that
+   * will not unlink, must never cost a run its recording.
+   */
+  const sweepDeadBoots = async (): Promise<void> => {
+    let names: string[];
+    try {
+      names = await listDir(options.dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".mp4")) continue;
+      if (name.includes(`-${nonce}-`)) continue;
+      try {
+        await removeFile(join(options.dir, name));
+      } catch {
+        // Someone else's, read-only, already gone — all fine.
+      }
+    }
+  };
 
   const start = (
     args: RecorderStartArgs,
@@ -416,6 +462,10 @@ export function createVideoRecorder(
       endedEarly: false,
     };
     take = entry;
+    // AFTER the spawn, and never awaited: the take is already recording, and a
+    // slow or wedged filesystem must not hold up a run's evidence to tidy up
+    // after a boot that is already gone.
+    void sweepDeadBoots();
     child.on("error", () => {
       if (take !== entry) return;
       // A spawn that failed asynchronously (ENOENT on some platforms arrives
