@@ -24,6 +24,7 @@
  *     its own OAuth-error enrichment if applicable.
  */
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -736,6 +737,9 @@ export async function streamWebChatTurn(
       uiTools: prepare.uiTools,
       pageTools: prepare.pageTools,
       builtInTools: prepare.builtInTools,
+      // The prompt section that explains `webmcp_*` tools has to be there
+      // BEFORE a navigation adds them; the refresher's presence is the fact.
+      pageToolsMayGrow: Boolean(prepare.refreshTools),
 
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
@@ -802,11 +806,10 @@ export async function streamWebChatTurn(
    * else the verb stays, which is the safe direction: an extra tool costs a
    * line in the list, and a missing one costs the page.
    */
-  const refreshingEngineTools = (): ToolSet => {
-    if (!refreshTools) return allTools as ToolSet;
-    const { browser_webmcp_invoke: _retired, ...rest } = allTools as ToolSet;
-    return rest as ToolSet;
-  };
+  const refreshingEngineTools = (): ToolSet =>
+    refreshTools
+      ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+      : (allTools as ToolSet);
   const refreshTools: MCPJamHandlerOptions["refreshTools"] | undefined =
     prepare.refreshTools
       ? async (ctx) => {

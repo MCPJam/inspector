@@ -22,6 +22,7 @@ import {
 } from "../page-tools";
 import type { BrowserAction } from "../../../services/browserd/protocol";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { pageToolBindingOf } from "../page-tools";
 
 const BINDING = { bootId: "boot-1", tabId: "@session", navCounter: 4 };
 
@@ -392,5 +393,118 @@ describe("a tool it cannot bind is not a tool it advertises", () => {
         });
       },
     );
+  });
+});
+
+describe("an approval resumed after the page moved", () => {
+  const FULL_BINDING = {
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 4,
+    frameId: "frame-main",
+    registrationSeq: 3,
+  };
+
+  /** The history a resumed request carries: the call, stamped with a binding. */
+  function historyWith(binding: Record<string, unknown>) {
+    return [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-approved",
+            toolName: "webmcp_add_topping",
+            input: { topping: "pepperoni" },
+            providerOptions: { mcpjam: { pageToolBinding: binding } },
+          },
+        ],
+      },
+    ];
+  }
+
+  it("exposes the binding a built tool will send, keyed by the tool object", () => {
+    const { built } = build();
+    expect(pageToolBindingOf(built.tools.webmcp_add_topping)).toEqual(
+      FULL_BINDING,
+    );
+    // Not for anything else.
+    expect(pageToolBindingOf({ execute: async () => ({}) })).toBeUndefined();
+    expect(pageToolBindingOf(undefined)).toBeUndefined();
+  });
+
+  it("refuses a call approved against a DIFFERENT generation, without sending", async () => {
+    // The approval paused the turn; the page reloaded; the resume rebuilt this
+    // tool from the page as it is now. The name the person approved is carried
+    // by a different registration, and the daemon — handed THIS tool's binding
+    // — would happily run it. The call's own binding says otherwise.
+    const { built, send } = build();
+    const result = (await run(
+      built.tools.webmcp_add_topping,
+      { topping: "pepperoni" },
+      {
+        toolCallId: "call-approved",
+        messages: historyWith({ ...FULL_BINDING, navCounter: 3 }),
+      } as never,
+    )) as { error?: string; pageTool?: unknown };
+    expect(result.error).toMatch(/^stale_binding/);
+    expect(result.pageTool).toBeDefined();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("proceeds when the recorded binding is this tool's own", async () => {
+    const { built, send } = build();
+    await run(
+      built.tools.webmcp_add_topping,
+      { topping: "pepperoni" },
+      {
+        toolCallId: "call-approved",
+        messages: historyWith(FULL_BINDING),
+      } as never,
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("proceeds when the call recorded no binding (nothing to compare)", async () => {
+    const { built, send } = build();
+    await run(
+      built.tools.webmcp_add_topping,
+      { topping: "pepperoni" },
+      {
+        toolCallId: "call-approved",
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-approved",
+                toolName: "webmcp_add_topping",
+                input: {},
+              },
+            ],
+          },
+        ],
+      } as never,
+    );
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a send that throws", () => {
+  it("comes back as an ATTRIBUTED error rather than an anonymous throw", async () => {
+    // A throw here is the transport, not the page. Rethrown, the card renders
+    // an anonymous error under a model-facing name nobody can map back to the
+    // page; returned, it keeps its attribution.
+    const { built } = build({
+      send: async () => {
+        throw new Error("command_unknown_boot");
+      },
+    });
+    const result = (await run(built.tools.webmcp_add_topping, {
+      topping: "pepperoni",
+    })) as { error?: string; pageTool?: { rawName?: string } };
+    expect(result.error).toMatch(/^webmcp_error: command_unknown_boot/);
+    expect(result.pageTool?.rawName).toBe("add_topping");
   });
 });

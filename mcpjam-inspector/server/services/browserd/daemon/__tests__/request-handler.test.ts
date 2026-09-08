@@ -941,4 +941,50 @@ describe("BrowserdRequestHandler — WebMCP capabilities and cancellation", () =
       (seen[0].action as { expectedBinding?: unknown }).expectedBinding,
     ).toEqual(binding);
   });
+
+  it("refuses a binding minted on ANOTHER boot as stale, before the queue", async () => {
+    // `expectedBootId` is the caller's idea of the daemon and is refreshed
+    // whenever it re-acquires a handle; the binding's `bootId` is the daemon
+    // the tool was LISTED on. After a relaunch the two differ, and the driver
+    // (which does not know its own boot) would compare a fresh daemon's
+    // `navCounter: 0` against a previous life's. Checked here, where the boot
+    // is known — and as a command RESULT, the same `stale_binding` the driver
+    // answers, so the caller's one recovery path handles both.
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-invoke",
+            source: "chat",
+            action: {
+              kind: "webmcp_invoke",
+              toolKey: "pay",
+              input: { amount: 1 },
+              expectedBinding: {
+                bootId: "boot-previous-life",
+                tabId: "@session",
+                navCounter: 0,
+                frameId: "frame-main",
+                registrationSeq: 1,
+              },
+            },
+          },
+          expectedBootId: BOOT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { result?: { ok: boolean; error?: string } };
+    expect(body.result?.ok).toBe(false);
+    expect(body.result?.error).toMatch(/^stale_binding/);
+    // Nothing reached the page.
+    expect(seen).toEqual([]);
+  });
 });

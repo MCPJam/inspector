@@ -18,20 +18,19 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
 } from "../browser";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools";
+import { withoutLegacyWebmcpVerbs } from "../browser";
 
 /**
- * What a FIRST-CLASS build advertises: the catalog minus the listing verb.
+ * What a build with no re-advertising engine and no page snapshot advertises:
+ * the whole catalog.
  *
- * `browser_webmcp_tools` exists for `MCPJAM_WEBMCP_PAGE_TOOLS=verbs`, where the
- * model needs somewhere to learn a page's tool names from. Where the page's
- * tools ARE the model's tools it is a step spent re-asking what the last result
- * already said, so the default build drops it — and asserting against the whole
- * catalog here would pin the wrong number for the mode almost every test runs
- * in.
+ * The two by-name WebMCP verbs go together. `browser_webmcp_invoke` takes a
+ * NAME and an untyped `input`; `browser_webmcp_tools` is where the model learns
+ * the name and the shape it expects. They are retired as a PAIR, and only where
+ * the turn can grow first-class `webmcp_*` tools mid-turn — which almost no
+ * test here builds for — so the default build keeps all six.
  */
-const FIRST_CLASS_TOOL_NAMES = BROWSER_TOOL_NAMES.filter(
-  (name) => name !== "browser_webmcp_tools",
-);
+const FIRST_CLASS_TOOL_NAMES = [...BROWSER_TOOL_NAMES];
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
 
 type SendResult = {
@@ -147,15 +146,17 @@ describe("buildBrowserTools — fail-closed advertisement", () => {
 
   it("advertises the verbs on an attested surface, all gated", () => {
     const { result } = build();
-    // FIVE, not six: `browser_webmcp_tools` is gone. A whole model step spent
-    // asking "does this page have tools?" answered a question every
-    // observation's own result now carries.
+    // ALL SIX. A build with no dynamic engine and no page snapshot is one that
+    // cannot re-advertise, so it keeps the by-name pair — and keeps them
+    // TOGETHER: the invoke verb takes a name and an untyped input, and the list
+    // verb is the only place to learn the name and the shape it expects.
     expect(Object.keys(result!.tools).sort()).toEqual([
       "browser_act",
       "browser_navigate",
       "browser_observe",
       "browser_tabs",
       "browser_webmcp_invoke",
+      "browser_webmcp_tools",
     ]);
     // Everything gates by default: a page is third-party code and the browser
     // is signed into things, so there is nothing trustworthy to relax on.
@@ -184,11 +185,15 @@ describe("buildBrowserTools — unattended policy", () => {
         policy: { mode: "read_only" },
       },
     });
-    expect(Object.keys(result!.tools).sort()).toEqual(["browser_observe"]);
+    expect(Object.keys(result!.tools).sort()).toEqual([
+      "browser_observe",
+      "browser_webmcp_tools",
+    ]);
     // Refusing to BUILD the interactive tools is stronger than gating them:
     // with nobody to ask, a gated tool in an unattended run would just run.
     expect([...result!.approvals.freeNames].sort()).toEqual([
       "browser_observe",
+      "browser_webmcp_tools",
     ]);
     expect(result!.approvals.requiredNames.size).toBe(0);
   });
@@ -1812,8 +1817,13 @@ describe("the toolset's context footprint is pinned", () => {
     const { result } = build();
     const bytes = footprintBytes(result!.tools as any);
     expect(bytes).toBeGreaterThan(1_000); // the pin is measuring something real
-    // 4695 bytes today. The headroom is deliberately thin: a ceiling with room
+    // 4872 bytes today. The headroom is deliberately thin: a ceiling with room
     // for another whole tool in it is not a pin, it is a comment.
+    //
+    // +177 (4695 → 4872), NOT raised, for the first-class wording on
+    // `browser_webmcp_invoke`: it tells an engine that keeps the verb to prefer
+    // a typed `webmcp_*` tool when one exists. Under `MCPJAM_WEBMCP_PAGE_TOOLS=
+    // verbs` the shorter sentence comes back and so does the old number.
     //
     // Raised once, from 4_200, when observations started naming elements: the
     // ~400 bytes bought `filter`, `rootRef`, and the sentence that tells the
@@ -2000,10 +2010,12 @@ describe("buildBrowserTools — first-class page tools", () => {
     expect(built.pageTools).toBeUndefined();
   });
 
-  it("FLAG ON: retires the listing verb but keeps a way to ACT", () => {
-    // Asymmetric on purpose. Listing is redundant once every observation
-    // carries `{count, names}`; INVOKING is not, because an engine that cannot
-    // grow its tool set mid-turn still has to reach a page it navigated to.
+  it("FLAG ON, static engine: keeps BOTH verbs beside the page's tools", () => {
+    // An engine that cannot grow its tool set mid-turn still has to reach a
+    // page it navigated to, so the invoke verb stays — and the list verb with
+    // it. An observation's `{count, names}` gives the model the names but not
+    // the schemas; retiring the list verb alone (as an earlier revision did)
+    // left this engine calling page tools blind.
     const { ensureSession } = fakeSession(async () => OK);
     const built = withFlag("first_class", () =>
       buildBrowserTools({
@@ -2014,8 +2026,9 @@ describe("buildBrowserTools — first-class page tools", () => {
         pageTools: PAGE_TOOLS,
       }),
     )!;
-    expect(Object.keys(built.tools)).not.toContain("browser_webmcp_tools");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
     expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+    expect(Object.keys(built.tools)).toContain("webmcp_add_topping");
   });
 
   it("FLAG ON: advertises the page's tools beside the verbs", () => {
@@ -2734,5 +2747,219 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     // appear on the NEXT step, and nothing in the result it is reading now
     // says so — so it reasons with the generic verbs and clicks.
     expect(result.pageToolsNote).toContain("`webmcp_*`");
+  });
+});
+
+describe("buildBrowserTools — the two legacy verbs go together", () => {
+  const SNAPSHOT = {
+    tools: [
+      {
+        name: "add_topping",
+        description: "Add a topping",
+        origin: "https://pizza.test",
+        isMainFrame: true,
+        frameId: "frame-main",
+        registrationSeq: 2,
+      },
+    ],
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 1,
+  };
+
+  function withFirstClass<T>(run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    process.env.MCPJAM_WEBMCP_PAGE_TOOLS = "first_class";
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
+  }
+
+  it("keeps browser_webmcp_tools wherever browser_webmcp_invoke survives", () => {
+    // `browser_webmcp_invoke` takes a NAME and an untyped `input`; the only
+    // place the model learns a name AND the shape it expects is the list verb.
+    // An earlier revision retired the list verb on the flag alone and left
+    // the engines that keep the invoke verb — BYOK, the harness — calling
+    // page tools blind.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFirstClass(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: SNAPSHOT,
+        dynamicPageTools: true,
+        // The route's stance: which engine runs is decided later.
+        retireInvokeVerb: false,
+      }),
+    )!;
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
+    // And the first-class tools are there beside them.
+    expect(Object.keys(built.tools)).toContain("webmcp_add_topping");
+  });
+
+  it("retires BOTH where the engine re-advertises", () => {
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFirstClass(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: SNAPSHOT,
+        dynamicPageTools: true,
+      }),
+    )!;
+    expect(Object.keys(built.tools)).not.toContain("browser_webmcp_invoke");
+    expect(Object.keys(built.tools)).not.toContain("browser_webmcp_tools");
+  });
+
+  it("withoutLegacyWebmcpVerbs strips exactly the pair, at the engine boundary", () => {
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFirstClass(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: SNAPSHOT,
+        dynamicPageTools: true,
+        retireInvokeVerb: false,
+      }),
+    )!;
+    const stripped = Object.keys(withoutLegacyWebmcpVerbs(built.tools));
+    expect(stripped).not.toContain("browser_webmcp_invoke");
+    expect(stripped).not.toContain("browser_webmcp_tools");
+    expect(stripped).toContain("browser_navigate");
+    expect(stripped).toContain("webmcp_add_topping");
+    expect(stripped).toHaveLength(Object.keys(built.tools).length - 2);
+  });
+});
+
+describe("buildBrowserTools — a refresher with NO turn-start snapshot", () => {
+  const PAGE = {
+    name: "book",
+    description: "Book it",
+    origin: "https://x.test",
+    isMainFrame: true,
+    frameId: "frame-main",
+    registrationSeq: 1,
+  };
+
+  function withFirstClass<T>(run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    process.env.MCPJAM_WEBMCP_PAGE_TOOLS = "first_class";
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
+  }
+
+  /** A daemon that boots mid-turn: no peek saw it, the first command does. */
+  function daemon(tools: unknown[]) {
+    const seen: string[] = [];
+    const send = async (command: any): Promise<SendResult> => {
+      const action = command.action;
+      seen.push(
+        action.kind === "observe" ? `observe:${action.mode}` : action.kind,
+      );
+      if (action.kind === "observe" && action.mode === "webmcp_revision") {
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: { url: "https://x.test/" },
+            webmcpTools: {
+              revision: 3,
+              hash: "h3",
+              count: tools.length,
+              supported: true,
+            },
+          } as never,
+        };
+      }
+      if (action.kind === "observe" && action.mode === "webmcp_tools") {
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: { url: "https://x.test/", webmcpSupported: true, tools },
+            stateToken: {
+              tabId: "@session",
+              navCounter: 2,
+              urlHash: "u",
+              domHash: "d",
+            },
+          } as never,
+        };
+      }
+      return OK;
+    };
+    return { seen, send };
+  }
+
+  it("is built, keeps the generic verbs, and adds the page's tools from its first read", async () => {
+    // The turn-start peek fails empty whenever there is nothing to read yet —
+    // no computer awake, no browser session — and that is the ordinary
+    // Playground turn: `browser_navigate` first, then the page's tools.
+    // Requiring a snapshot made exactly that turn the one that could never
+    // grow a single tool.
+    const fake = daemon([PAGE]);
+    const { ensureSession } = fakeSession(fake.send, "boot-live");
+    const built = withFirstClass(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        // No `pageTools`.
+      }),
+    )!;
+    expect(built.refreshPageTools).toBeDefined();
+    // Whether the browser the model boots can bind is unknown until it exists,
+    // so the verbs stay; first-class tools are ADDED beside them.
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
+    expect(built.currentPageToolsBinding!()).toBeUndefined();
+
+    const refresh = await built.refreshPageTools!({});
+    expect(Object.keys(refresh?.add ?? {})).toEqual(["webmcp_book"]);
+    expect(built.tools.webmcp_book).toBeDefined();
+    // Bound to the boot the read actually reached, not to a snapshot that
+    // never existed.
+    expect(built.currentPageToolsBinding!()).toMatchObject({
+      bootId: "boot-live",
+      navCounter: 2,
+    });
+    // The two reads, and no page-touching observation beyond them.
+    expect(fake.seen).toEqual(["observe:webmcp_revision", "observe:webmcp_tools"]);
+  });
+
+  it("is not built when the flag is off, whatever dynamic mode says", () => {
+    const fake = daemon([PAGE]);
+    const { ensureSession } = fakeSession(fake.send);
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    process.env.MCPJAM_WEBMCP_PAGE_TOOLS = "verbs";
+    try {
+      const built = buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+      })!;
+      expect(built.refreshPageTools).toBeUndefined();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
   });
 });

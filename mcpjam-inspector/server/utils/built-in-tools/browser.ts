@@ -288,16 +288,37 @@ export interface BrowserToolsResult {
    * Re-read the page's tools and report what changed, for an engine that can
    * grow its tool set between model steps.
    *
-   * Present only when this turn was built with page tools and a dynamic
-   * engine. The caller hands it to the engine's `refreshTools` hook.
+   * Present only when this turn was built for a dynamic engine under
+   * first-class mode. The caller hands it to the engine's `refreshTools` hook.
    */
   refreshPageTools?: (ctx: {
     signal?: AbortSignal;
   }) => Promise<BrowserPageToolsRefresh | undefined>;
   /** The live minted set, re-read after each refresh, for the turn record. */
   currentPageTools?: () => MintedDeclaredTool[];
-  /** The generation that set is bound to — see `currentBinding`. */
-  currentPageToolsBinding?: () => BrowserPageToolsSnapshot;
+  /**
+   * The generation that set is bound to — see `currentBinding`. Undefined
+   * until a turn that started with no snapshot has read the page once.
+   */
+  currentPageToolsBinding?: () => BrowserPageToolsSnapshot | undefined;
+}
+
+/**
+ * A tool set without the two generic WebMCP verbs.
+ *
+ * For the call sites that hand a set to an engine that CONSUMES `refreshTools`:
+ * that engine gets a page's tools as real tools, so the by-name verbs are a
+ * strictly worse way to reach the same page and are withdrawn there. Applied
+ * at the engine boundary rather than at build time because which engine runs a
+ * turn can be decided after the set is built (see `retireInvokeVerb`). Both
+ * verbs go together — see `LEGACY_WEBMCP_TOOL_NAMES`.
+ */
+export function withoutLegacyWebmcpVerbs(tools: ToolSet): ToolSet {
+  const kept: ToolSet = {};
+  for (const [name, definition] of Object.entries(tools)) {
+    if (!LEGACY_WEBMCP_TOOL_NAMES.has(name)) kept[name] = definition;
+  }
+  return kept;
 }
 
 /** What one mid-turn re-read of the page changed. */
@@ -870,34 +891,36 @@ export function buildBrowserTools(
   // not remove the only way to reach a page the model navigated to after the
   // turn started.
   //
-  // THE LISTING VERB GOES ON THE FIRST-CLASS FLAG ALONE, not on dynamic mode.
-  // `browser_webmcp_invoke` is a way to ACT, and an engine that cannot grow its
-  // set needs it to reach a page it navigated to mid-turn; the list verb is a
-  // way to LOOK, and first-class mode puts `{count, names}` on every
-  // observation, so nothing is lost by dropping it there. Under
-  // `MCPJAM_WEBMCP_PAGE_TOOLS=verbs` neither goes: that mode has to be an exact
-  // rollback, and an invoke verb that takes a tool NAME is unusable beside no
-  // way to learn one.
+  // THE TWO LEGACY VERBS GO TOGETHER OR NOT AT ALL. `browser_webmcp_invoke`
+  // takes a tool NAME and an untyped `input`; the only place the model learns
+  // a name AND the shape that name expects is `browser_webmcp_tools`. An
+  // observation's `{count, names}` gives it the names but not the schemas, so
+  // retiring the list verb while the invoke verb survives (as an earlier
+  // revision did) left the engines that keep the invoke verb — BYOK, the
+  // harness — calling page tools blind. Under `MCPJAM_WEBMCP_PAGE_TOOLS=verbs`
+  // neither goes: that mode has to be an exact rollback.
   //
   // AND ONLY WHERE A PAGE TOOL CAN BE FIRST-CLASS AT ALL. A daemon that cannot
   // say which frame and registration declared a tool gets none of them — the
   // builder refuses to advertise a tool it cannot bind, because the daemon
   // would then resolve the call by name and run whatever carries it. Retiring
-  // the invoke verb there would leave the model with no page tools AND no way
-  // to reach one.
+  // the verbs there would leave the model with no page tools AND no way to
+  // reach one. The same holds when the turn started with NO daemon to read
+  // (`opts.pageTools` absent): whether the browser the model boots mid-turn can
+  // bind is unknown until it exists, so the verbs stay and first-class tools
+  // are ADDED beside them by the refresher once it can tell.
   const canBindPageTools = opts.pageTools?.canBind !== false;
   const retireLegacyWebmcpVerbs =
     firstClassPageTools &&
     canBindPageTools &&
+    opts.pageTools !== undefined &&
     (opts.retireInvokeVerb ?? opts.dynamicPageTools === true) === true;
-  const retireListVerb = firstClassPageTools && canBindPageTools;
   // A read-only run gets ONLY the tools that look. Refusing to build the rest
   // is stronger than gating them: with nobody to ask, an ungated interactive
   // tool would simply run.
   const names = BROWSER_TOOL_NAMES.filter((name) => {
     if (!allowedNames.has(name)) return false;
     if (readOnly && !isObservational(name)) return false;
-    if (name === "browser_webmcp_tools") return !retireListVerb;
     if (retireLegacyWebmcpVerbs && LEGACY_WEBMCP_TOOL_NAMES.has(name)) {
       return false;
     }
@@ -931,6 +954,15 @@ export function buildBrowserTools(
    * letting them write back would be a variable updating itself.
    */
   let modelTabId = "@session";
+  /**
+   * The boot the last command reached.
+   *
+   * The refresher mints bindings against it. A turn that started with no
+   * daemon to peek has no turn-start `bootId` to inherit, and a turn whose
+   * daemon relaunched mid-way must not keep minting against the old one —
+   * every such binding would be refused as `stale_binding`.
+   */
+  let lastBootId: string | undefined;
 
   const send = async (
     action: BrowserAction,
@@ -953,6 +985,7 @@ export function buildBrowserTools(
     },
   ): Promise<CommandOutcome & { tabId: string }> => {
     const handle = await state.handle(args.signal);
+    lastBootId = handle.bootId;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
     const pinned = args.expectedState
@@ -1360,7 +1393,7 @@ export function buildBrowserTools(
   add(
     "browser_webmcp_invoke",
     tool({
-      description: firstClassPageTools
+      description: firstClassPageTools && canBindPageTools
         ? // Kept for the engines that cannot grow their tool set inside a turn
           // (BYOK, the harness): they were handed the page's tools as they were
           // at turn start, so a page the model navigates to DURING the turn is
@@ -1422,22 +1455,42 @@ export function buildBrowserTools(
   // `expectedBinding`, which is the one case the initial gate exists to refuse.
   // A hole that opens on the second read is worse than one that never closed:
   // it looks fixed.
+  //
+  // NOT gated on `opts.pageTools`. The turn-start peek fails empty whenever
+  // there is nothing to read yet — no computer awake, no browser session, a
+  // lease held — and the ordinary Playground turn is exactly one of those: a
+  // blank tab or no browser at all, then `browser_navigate` to a page full of
+  // tools. Requiring a snapshot here made that turn the one that could never
+  // grow a single tool. Without a snapshot the refresher starts empty, learns
+  // the boot and whether it can bind from the first command the model sends,
+  // and adds the page's tools beside the generic verbs that stayed.
   const refresher =
-    firstClassPageTools &&
-    canBindPageTools &&
-    opts.dynamicPageTools &&
-    opts.pageTools
+    firstClassPageTools && canBindPageTools && opts.dynamicPageTools
       ? createPageToolRefresher({
           opts,
           unattended,
           needsApproval,
           send,
           reservedNames: new Set(built),
-          initial: { snapshot: opts.pageTools, minted: page.minted },
+          ...(opts.pageTools
+            ? { initial: { snapshot: opts.pageTools, minted: page.minted } }
+            : {}),
           // Read per refresh, not captured: the model can move between tabs
           // mid-turn, and the tools it should be offered are the ones on the
           // page it is actually looking at.
           currentTabId: () => modelTabId,
+          currentBootId: () => lastBootId,
+          daemonCanBind: async (signal) => {
+            const handle = await state.handle(signal);
+            // A status that cannot be read says nothing either way, and the
+            // snapshot's own rule for "nobody said" is "treated as capable":
+            // every daemon this code ships with binds, and one too old to
+            // answer `webmcp_revision` never gets this far.
+            if (typeof handle.client.status !== "function") return true;
+            const status = await handle.client.status().catch(() => null);
+            if (!status || status.kind !== "ok") return true;
+            return status.features?.includes("webmcp-binding") !== false;
+          },
           install: (name, definition) => {
             tools[name] = definition;
           },
@@ -1491,13 +1544,27 @@ function createPageToolRefresher(args: {
     },
   ) => Promise<CommandOutcome & { tabId: string }>;
   reservedNames: ReadonlySet<string>;
-  initial: {
+  /**
+   * What the turn STARTED with, when the turn-start peek found a daemon.
+   *
+   * Absent when it did not — the refresher then begins with nothing
+   * advertised and no generation, and its first read is unconditionally a
+   * change.
+   */
+  initial?: {
     snapshot: BrowserPageToolsSnapshot;
     minted: MintedDeclaredTool[];
   };
   install: (name: string, definition: ToolSet[string]) => void;
   /** The tab the model is working in NOW; see `modelTabId`. */
   currentTabId: () => string;
+  /** The boot the last command reached; see `lastBootId`. */
+  currentBootId: () => string | undefined;
+  /**
+   * Whether the live daemon enforces `expectedBinding`. Asked once, and only
+   * when no turn-start snapshot already answered it.
+   */
+  daemonCanBind: (signal?: AbortSignal) => Promise<boolean>;
 }): {
   refresh: (ctx: {
     signal?: AbortSignal;
@@ -1510,18 +1577,24 @@ function createPageToolRefresher(args: {
    * refreshed tools' frame and registration ids with the turn-START tab and
    * navCounter would describe an identity that never existed — and the whole
    * point of persisting it is that it is the identity the model was given.
+   *
+   * `undefined` until the first successful read of a turn that started with no
+   * snapshot: there is no generation to report, and inventing one would be the
+   * identity-that-never-was this exists to avoid.
    */
-  currentBinding: () => BrowserPageToolsSnapshot;
+  currentBinding: () => BrowserPageToolsSnapshot | undefined;
 } {
-  let lastRevision = args.initial.snapshot.revision;
-  let lastHash = args.initial.snapshot.hash;
+  let lastRevision = args.initial?.snapshot.revision;
+  let lastHash = args.initial?.snapshot.hash;
   /** The tab the last successful read was of. See `movedTab` below. */
-  let lastTabId = args.initial.snapshot.tabId;
+  let lastTabId: string | undefined = args.initial?.snapshot.tabId;
   /** The generation the currently advertised set belongs to. */
-  let binding: BrowserPageToolsSnapshot = args.initial.snapshot;
+  let binding: BrowserPageToolsSnapshot | undefined = args.initial?.snapshot;
   let advertised = new Map(
-    args.initial.minted.map((tool) => [tool.name, tool] as const),
+    (args.initial?.minted ?? []).map((tool) => [tool.name, tool] as const),
   );
+  /** Resolved once; see `daemonCanBind`. */
+  let canBind: boolean | undefined = args.initial?.snapshot.canBind;
 
   const readRevision = async (tabId: string, signal?: AbortSignal) => {
     const outcome = await args.send(
@@ -1582,20 +1655,30 @@ function createPageToolRefresher(args: {
         // on the previous page's tools for as long as it lasts.
         return undefined;
       }
+      // THE BOOT THE READ REACHED. `readRevision` above went through `send`,
+      // so this is set; a turn-start snapshot's bootId is only the fallback
+      // for a fake that never records one.
+      const bootId = args.currentBootId() ?? args.initial?.snapshot.bootId;
+      if (!bootId) return undefined;
+      // Asked of the live daemon exactly once, and only when the turn-start
+      // peek did not already say. `false` is final: a daemon that cannot bind
+      // gets no first-class tools from this refresher, ever, for the same
+      // reason the initial build refuses them.
+      canBind ??= await args.daemonCanBind(signal);
+      if (canBind === false) return undefined;
       const page = pageToolsFromObservation(observation.output);
       const rebuiltSnapshot: BrowserPageToolsSnapshot = {
         tools: page.tools,
-        bootId: args.initial.snapshot.bootId,
+        bootId,
         tabId,
         // THE GENERATION THESE WERE READ AT. Reusing the turn-start
         // navCounter here would mint bindings for a document that is gone,
         // and every one of them would be refused as `stale_binding`.
         navCounter:
           observation.stateToken?.navCounter ??
-          args.initial.snapshot.navCounter,
-        ...(args.initial.snapshot.canBind !== undefined
-          ? { canBind: args.initial.snapshot.canBind }
-          : {}),
+          args.initial?.snapshot.navCounter ??
+          0,
+        canBind,
       };
       const rebuilt = buildPageToolsFor({
         opts: args.opts,
@@ -1661,6 +1744,17 @@ function tombstoneTool(gone: MintedDeclaredTool): ToolSet[string] {
           `webmcp_tool_gone: the page no longer offers "${gone.rawName}"` +
           `${gone.origin ? ` (it was on ${gone.origin})` : ""}; ` +
           "re-read the page and decide again",
+        // Attributed like every other page-tool result, so the card for a
+        // call that landed on a tombstone still says which page's tool it was
+        // for rather than rendering an anonymous error under a minted name.
+        pageTool: {
+          rawName: gone.rawName,
+          ...(gone.origin !== undefined ? { origin: gone.origin } : {}),
+          ...(gone.frameId !== undefined ? { frameId: gone.frameId } : {}),
+          ...(gone.registrationSeq !== undefined
+            ? { registrationSeq: gone.registrationSeq }
+            : {}),
+        },
       }),
     }),
     toModelOutput: toBrowserModelOutput,
@@ -1716,6 +1810,13 @@ function buildPageToolsFor(args: {
     reservedNames: args.reservedNames,
     ...(args.opts.provider ? { provider: args.opts.provider } : {}),
     onDropped: ({ rawName, reason }) => notices.push({ rawName, reason }),
+    // Attached at BUILD for the same reason the six verbs get it in `add()`:
+    // every page-tool result rides the same `present()` shape, and one that
+    // skipped the mapping would send the model an unreadable base64 string and
+    // lose the page-content fence around the tool's own output. Handed to the
+    // builder rather than spread on afterwards so the tool object it returns
+    // is the one installed — `pageToolBindingOf` is keyed by that object.
+    toModelOutput: toBrowserModelOutput,
     send: async (action, sendArgs) =>
       present(
         await args.send(action, {
@@ -1726,16 +1827,8 @@ function buildPageToolsFor(args: {
         }),
       ),
   });
-  // Attached HERE for the same reason the six verbs get it in `add()`: every
-  // page-tool result rides the same `present()` shape, and one that skipped
-  // the mapping would send the model an unreadable base64 string and lose the
-  // page-content fence around the tool's own output.
-  const tools: ToolSet = {};
-  for (const [name, definition] of Object.entries(built.tools)) {
-    tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
-  }
   return {
-    tools,
+    tools: built.tools,
     approvals: built.approvals,
     minted: built.minted,
     notices,

@@ -1,6 +1,7 @@
 import {
   browserPageToolsKey,
   noteWebmcpStats,
+  useBrowserPageToolsStore,
 } from "@/stores/browser-page-tools-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -927,6 +928,17 @@ export function HostedBrowserBody({
       stream?.close();
     };
   }, [session, tokens, refresh, streamAttempt]);
+
+  // THE SIGNAL DIES WITH THE PANE. It describes the browser this pane was
+  // watching; once the pane is gone (or the project changes under it) the
+  // Tools pane must not keep answering for a stream nobody is reading. Its own
+  // effect, keyed on the project alone, so a reconnect does not clear it — a
+  // cleared key comes back on the next beat as a fresh epoch, which would
+  // refetch the page's tools on every reconnect for nothing.
+  useEffect(() => {
+    const key = browserPageToolsKey(projectId, "hosted");
+    return () => useBrowserPageToolsStore.getState().clear(key);
+  }, [projectId]);
 
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {

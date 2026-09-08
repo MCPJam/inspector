@@ -279,7 +279,16 @@ async function readTools(
       // A person has the browser. NOT retried as their `manual` command: the
       // panel may do that because a person looking at their own page is the
       // point of a lease; a chat turn is not that person.
-      return { tools: [], reason: "lease_held" };
+      //
+      // WITH A BINDING, because the daemon is there and answered. The refresher
+      // needs a boot to start from, and this turn — a person signing in, then
+      // handing back — is one where the page's tools become reachable mid-turn.
+      return {
+        tools: [],
+        reason: "lease_held",
+        binding: { bootId, tabId: tabId ?? "@session", navCounter: 0 },
+        canBind,
+      };
     case "busy":
     case "at_capacity":
     case "expired":
@@ -292,12 +301,23 @@ async function readTools(
     // `unknown_tab` is the ORDINARY state between a session starting and the
     // model's first navigation: the driver refuses to conjure an `about:blank`
     // tab to observe, so there is genuinely no page yet.
-    return {
-      tools: [],
-      reason: result?.error?.startsWith("unknown_tab")
-        ? "no_page"
-        : "unreachable",
-    };
+    //
+    // AND IT STILL CARRIES A BINDING. "No page yet" is the start of the turn
+    // this whole feature exists for — the model navigates on its first step and
+    // the page's tools should exist from its second. The binding is what lets
+    // the refresher be built at all (it needs a boot and a tab to read), and
+    // `navCounter: 0` is honest: no document has been loaded on this tab. A
+    // peek that reported this state as toolless-and-bindingless left exactly
+    // that turn unable to grow a single tool.
+    if (result?.error?.startsWith("unknown_tab")) {
+      return {
+        tools: [],
+        reason: "no_page",
+        binding: { bootId, tabId: tabId ?? "@session", navCounter: 0 },
+        canBind,
+      };
+    }
+    return { tools: [], reason: "unreachable" };
   }
   const observation = pageToolsFromObservation(result.output);
   return {

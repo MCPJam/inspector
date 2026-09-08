@@ -20,6 +20,7 @@ import {
   BROWSERD_PROTOCOL_VERSION,
   BROWSERD_WEBMCP_FEATURES,
   type WebMcpToolsRevision,
+  formatBrowserdError,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
@@ -511,6 +512,36 @@ export class BrowserdRequestHandler {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId },
       };
+    }
+
+    // A BINDING FROM ANOTHER BOOT is a stale binding, whatever its other
+    // fields say. `expectedBootId` above is the CALLER's idea of the daemon it
+    // is talking to and is refreshed whenever it re-acquires a handle; the
+    // binding's `bootId` is the daemon the tool was LISTED on. After a relaunch
+    // the two differ, and the driver — which checks tab, generation, frame and
+    // registration but does not know its own boot — would compare a fresh
+    // daemon's `navCounter: 0` and `registrationSeq` against a previous life's
+    // and could let a stale binding through. Checked here, where the boot is
+    // known, as a command RESULT rather than a transport refusal: it is the
+    // same `stale_binding` the driver answers, and the caller handles it the
+    // same way (re-read the page's tools).
+    const action = parsed.command.action;
+    if (
+      action.kind === "webmcp_invoke" &&
+      action.expectedBinding !== undefined &&
+      action.expectedBinding.bootId !== this.bootId
+    ) {
+      return this.mapOutcome({
+        status: "ok",
+        bootId: this.bootId,
+        result: {
+          ok: false,
+          error: formatBrowserdError(
+            "stale_binding",
+            "this tool was listed on a previous run of this browser; re-read the page's tools",
+          ),
+        },
+      });
     }
 
     const outcome = await this.queue.submit(parsed.command);

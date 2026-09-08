@@ -82,21 +82,27 @@ export const useBrowserPageToolsStore = create<BrowserPageToolsState>(
       // This runs on every heartbeat of a stream that beats several times a
       // second; a store write per beat would re-render every subscriber for a
       // page that has not changed.
-      if (
-        previous &&
+      const sameToolSet =
+        previous !== undefined &&
         previous.revision === signal.revision &&
         previous.hash === signal.hash &&
         previous.count === signal.count &&
-        previous.url === signal.url &&
-        previous.bootId === signal.bootId
-      ) {
+        previous.bootId === signal.bootId;
+      if (sameToolSet && previous.url === signal.url) return;
+      if (sameToolSet) {
+        // THE URL IS NOT THE TOOL SET. A client-side route change moves the
+        // URL and leaves every registration in place — the daemon's revision
+        // says so — and the pane wants the new URL for its label without a
+        // refetch of definitions it already has. So `live` moves and `epoch`
+        // does not.
+        set((state) => ({ live: { ...state.live, [key]: signal } }));
         return;
       }
       set((state) => ({
         live: { ...state.live, [key]: signal },
-        // Bumped on ANY difference, including a revision that went backwards:
-        // a daemon that restarted counts up from zero again, and its tool set
-        // is a different one however small the number looks.
+        // Bumped on ANY difference in the SET, including a revision that went
+        // backwards: a daemon that restarted counts up from zero again, and
+        // its tool set is a different one however small the number looks.
         epoch: { ...state.epoch, [key]: (state.epoch[key] ?? 0) + 1 },
       }));
     },

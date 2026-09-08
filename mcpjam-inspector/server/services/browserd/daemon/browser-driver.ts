@@ -80,6 +80,13 @@ export interface BrowserDriver {
    */
   webmcpToolsSnapshot?(tabId?: string): WebMcpToolsRevision | undefined;
   /**
+   * Hand the driver a way to ask the queue whether a command is admitted but
+   * not yet dequeued, so a `webmcp_cancel` for a QUEUED invoke can be latched
+   * and honoured when that invoke's turn comes. Optional: a driver with no
+   * cancellation path has nothing to latch.
+   */
+  attachCommandProbe?(probe: (commandId: string) => boolean): void;
+  /**
    * Look at a tab WITHOUT acting on it, for a refusal that owes the caller a
    * fresh page (L3's `stale_observation`).
    *

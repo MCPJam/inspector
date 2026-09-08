@@ -1793,4 +1793,26 @@ describe("first-class page tools in prepareChatV2", () => {
     } as any);
     expect(result.enhancedSystemPrompt).not.toContain("Tools this page declares");
   });
+
+  it("explains page tools AHEAD of their arrival when the set may grow", async () => {
+    // The model navigates on one step and sees `webmcp_*` tools on the next.
+    // A section that appeared only once a tool existed would leave it reading
+    // a `[WebMCP page tool — origin]` header nobody had explained, on the
+    // step it matters most.
+    const result = await prepareChatV2({
+      ...base(),
+      mcpClientManager: mockManager({}),
+      builtInTools: {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: { jsonSchema: { type: "object" } },
+          execute: async () => ({}),
+        },
+      },
+      pageToolsMayGrow: true,
+    } as any);
+    expect(result.enhancedSystemPrompt).toContain("## Tools this page declares");
+    expect(result.enhancedSystemPrompt).toContain("None are available right now");
+    expect(result.enhancedSystemPrompt).toContain("UNTRUSTED");
+  });
 });

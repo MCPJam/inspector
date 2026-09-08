@@ -186,7 +186,9 @@ export type DeclaredToolDiagnosticCode =
   | "schema_unsupported_keyword"
   | "provider_unsupported"
   | "name_truncated"
-  | "name_suffixed";
+  | "name_suffixed"
+  /** Past `WEBMCP_MAX_PAGE_TOOLS`; not offered to the model. */
+  | "over_cap";
 
 /**
  * Something we could not do faithfully.
@@ -368,6 +370,18 @@ const CANONICAL_JSON_BUDGET_CHARS = WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES * 4;
  * opens it.
  */
 export const WEBMCP_MAX_PAGE_TOOLS = 64;
+
+/**
+ * The one sentence for a tool past the cap — the server's drop reason and the
+ * pane's diagnostic are the SAME words, so a person reading one beside the
+ * other is not left wondering whether they describe the same thing.
+ */
+export function overCapMessage(cap: number): string {
+  return (
+    `this page declares more than ${cap} tools; this one is past the cap and ` +
+    "is not offered to the model."
+  );
+}
 
 /** Digest of one input schema. Stable across key reordering. */
 export function declaredSchemaHash(
@@ -773,8 +787,12 @@ export function pageToolRowsFromRecords(
     name: record.name,
     description:
       `[WebMCP page tool — ${safeDeclaredOrigin(record.origin)}] ` +
-      `${record.rawName}. Advertised on this turn; its schema is not replayed ` +
-      `here (digest ${record.schemaHash}).`,
+      // THE PAGE'S OWN NAME, sanitized like every other page-authored string
+      // that lands in a description: it sits beside the one header the model
+      // is meant to trust, and a name is a fine place to write a sentence.
+      `${sanitizeDeclaredText(record.rawName, 128) || "(unnamed)"}. ` +
+      `Advertised on this turn; its schema is not replayed here ` +
+      `(digest ${record.schemaHash}).`,
   }));
 }
 
@@ -1278,7 +1296,10 @@ function checkObject(
 ): void {
   const required = Array.isArray(schema.required) ? schema.required : [];
   for (const key of required) {
-    if (typeof key === "string" && !(key in value)) {
+    // `hasOwn`, not `in`: a required property called `constructor` or
+    // `toString` is satisfied by every object under `in`, and an argument the
+    // model forgot would pass as present.
+    if (typeof key === "string" && !Object.hasOwn(value, key)) {
       state.errors.push(
         `${at(path)} is missing the required property \`${key}\`.`,
       );

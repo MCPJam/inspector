@@ -1,6 +1,7 @@
 import {
   browserPageToolsKey,
   noteWebmcpStats,
+  useBrowserPageToolsStore,
 } from "@/stores/browser-page-tools-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -539,6 +540,13 @@ export function LocalBrowserBody({
       stream?.close();
     };
   }, [session, projectId, consentToken, holder, streamAttempt, native]);
+
+  // THE SIGNAL DIES WITH THE PANE — see HostedBrowserBody for why this is its
+  // own effect, keyed on the project alone.
+  useEffect(() => {
+    const key = browserPageToolsKey(projectId, "local");
+    return () => useBrowserPageToolsStore.getState().clear(key);
+  }, [projectId]);
 
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {

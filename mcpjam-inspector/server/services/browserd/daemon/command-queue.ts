@@ -311,6 +311,19 @@ export class CommandQueue {
     return this.commands.size + this.evicted.size;
   }
 
+  /**
+   * Is this command admitted and not yet settled — queued behind its tab's
+   * FIFO or running right now?
+   *
+   * For the driver's cancellation latch: a `webmcp_cancel` skips the FIFO, so
+   * it can arrive for an invoke the driver has not been handed yet, and only
+   * the queue knows that invoke exists. Reads and cancels are never tracked
+   * (see `isReplayable`), so they answer false.
+   */
+  isPending(commandId: string): boolean {
+    return this.commands.get(commandId)?.state === "running";
+  }
+
   private lookup(commandId: string): CommandEntry | undefined {
     const entry = this.commands.get(commandId);
     if (!entry) return undefined;

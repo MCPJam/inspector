@@ -1,4 +1,7 @@
-import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
+import {
+  withoutLegacyWebmcpVerbs,
+  type BrowserPageToolsSnapshot,
+} from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
@@ -1357,7 +1360,9 @@ chatV2.post("/", async (c) => {
     const withPageToolsAtTurn = (
       trace: PersistedTurnTrace,
     ): PersistedTurnTrace =>
-      pageToolsSnapshot
+      // A turn that started with no snapshot but grew tools mid-turn has a
+      // record worth keeping too — the refresher's, read at persist time.
+      pageToolsSnapshot || pageToolRefresh
         ? {
             ...trace,
             // Filtered by the same collision policy the model's own set was,
@@ -1389,7 +1394,7 @@ chatV2.post("/", async (c) => {
             signal?: AbortSignal;
           }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
-          currentPageToolsBinding: () => BrowserPageToolsSnapshot;
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
         }
       | undefined;
     const builtInTools = resolveHostTools(
@@ -1430,17 +1435,20 @@ chatV2.post("/", async (c) => {
               browserToolApprovals = approvals;
             },
             ...(pageToolsSnapshot
-              ? {
-                  browserPageTools: pageToolsSnapshot,
-              // ONLY WHERE THE SET CAN ACTUALLY GROW. Dynamic mode retires
-                  // `browser_webmcp_invoke`, on the grounds that an engine which
-                  // re-advertises between steps does not need a generic verb to
-                  // reach a page it navigated to. A harness takes its toolset as a
-                  // constructor argument and never re-reads it, so claiming it here
-                  // would withdraw the fallback and put nothing in its place.
-                  browserDynamicPageTools: !resolvedExecution.harness,
-                }
+              ? { browserPageTools: pageToolsSnapshot }
               : {}),
+            // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset
+            // as a constructor argument and never re-reads it, so claiming it
+            // here would build a refresher nothing consumes. NOT gated on the
+            // snapshot: the ordinary turn starts on a blank tab or with no
+            // browser at all, and is exactly the one whose set has to grow.
+            browserDynamicPageTools: !resolvedExecution.harness,
+            // KEPT HERE, dropped later. Two of the engines this route can hand
+            // the set to consume `refreshTools` and two (BYOK direct, harness)
+            // do not; retiring the verbs at build time took the page away from
+            // the ones that cannot re-advertise. The two refreshing call sites
+            // below strip them with `withoutLegacyWebmcpVerbs`.
+            browserRetireInvokeVerb: false as const,
             onBrowserPageTools: ({ minted }) => {
               advertisedPageTools = minted;
             },
@@ -1615,6 +1623,9 @@ chatV2.post("/", async (c) => {
           : {}),
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
+        // The prompt section that explains `webmcp_*` tools has to be there
+        // BEFORE a navigation adds them; the refresher's presence is the fact.
+        pageToolsMayGrow: Boolean(pageToolRefresh),
         // A harness turn takes its skills on-box and must be handed none here —
         // the two delivery channels are deliberately disjoint.
         skillsSource: resolvedExecution.harness
@@ -1850,7 +1861,12 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        // WITHOUT the by-name WebMCP verbs when this engine refreshes: it gets
+        // the page's tools as real tools, so the generic pair is a strictly
+        // worse way to reach the same page. Kept everywhere else.
+        tools: pageToolRefresh
+          ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+          : (allTools as ToolSet),
         progressivePlan,
         discoveryState,
         authHeader,
@@ -2132,7 +2148,10 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        // Same rule as the free-model call above.
+        tools: pageToolRefresh
+          ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+          : (allTools as ToolSet),
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,

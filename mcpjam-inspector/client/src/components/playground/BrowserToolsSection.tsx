@@ -36,10 +36,18 @@ import {
   WEBMCP_TOOL_NAME_PREFIX,
   declaredToolsFromWebmcp,
   mintDeclaredToolNames,
+  overCapMessage,
+  safeDeclaredOrigin,
   toProviderToolSchema,
   WEBMCP_MAX_PAGE_TOOLS,
 } from "@/shared/declared-tools";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+
+/** ` · host` for the row's subtitle, or nothing when the origin is not one. */
+function displayOrigin(origin: string | undefined): string {
+  const safe = safeDeclaredOrigin(origin);
+  return safe === "unknown" ? "" : ` · ${safe.replace(/^https?:\/\//, "")}`;
+}
 
 interface BrowserToolsSectionProps {
   /** The `browser_*` definitions, as the model is shown them. */
@@ -125,9 +133,7 @@ export function BrowserToolsSection({
             ? [
                 {
                   code: "over_cap" as const,
-                  message:
-                    `this page declares more than ${WEBMCP_MAX_PAGE_TOOLS} tools; ` +
-                    "this one is past the cap and is not offered to the model.",
+                  message: overCapMessage(WEBMCP_MAX_PAGE_TOOLS),
                   blocking: true as const,
                 },
               ]
@@ -261,9 +267,10 @@ export function BrowserToolsSection({
               </div>
               <p className="text-[10px] text-muted-foreground/80 mt-0.5 truncate font-mono">
                 {tool.rawName}
-                {tool.origin
-                  ? ` \u00b7 ${tool.origin.replace(/^https?:\/\//, "")}`
-                  : ""}
+                {/* REDUCED, not echoed: the origin is page-reported, and this
+                    label sits outside any fence. `safeDeclaredOrigin` keeps
+                    scheme + host and nothing a page could write. */}
+                {displayOrigin(tool.origin)}
                 {tool.isMainFrame ? "" : " \u00b7 embedded frame"}
               </p>
               {tool.diagnostics.length > 0 && (

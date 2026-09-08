@@ -30,16 +30,16 @@ import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools.js";
 
 /**
- * What a first-class build advertises: the catalog minus the listing verb.
+ * What the definitions route describes: the whole catalog.
  *
- * `browser_webmcp_tools` exists for `MCPJAM_WEBMCP_PAGE_TOOLS=verbs`, where the
- * model needs somewhere to learn a page's tool names from. The default mode
- * puts `{count, names}` on every observation instead, so it is not built — and
- * this pane describes what the model is given, not the catalog it came from.
+ * `describeBrowserTools` builds with no engine that re-advertises and no page
+ * snapshot, which is the shape that keeps both by-name WebMCP verbs — and they
+ * go together: the invoke verb takes a name and an untyped input, and the list
+ * verb is where the model learns the name and the shape it expects. An engine
+ * that grows its set mid-turn has the pair stripped at the engine boundary,
+ * not here; this pane describes the catalog a turn starts from.
  */
-const FIRST_CLASS_TOOL_NAMES = BROWSER_TOOL_NAMES.filter(
-  (name) => name !== "browser_webmcp_tools",
-);
+const FIRST_CLASS_TOOL_NAMES = [...BROWSER_TOOL_NAMES];
 
 type Definition = {
   name: string;
@@ -69,10 +69,7 @@ describe("GET /built-in-tools/:builtInToolId/definitions", () => {
       "/api/v1/built-in-tools/browser/definitions",
     );
     // The whole set the model is GIVEN, not a curated subset: a pane listing
-    // four of five tools would be a quietly wrong account of what it can do.
-    // `browser_webmcp_tools` is not among them under the default first-class
-    // mode, because the model is not given it — every observation already
-    // carries what the page offers.
+    // five of six tools would be a quietly wrong account of what it can do.
     expect(items.map((item) => item.name).sort()).toEqual(
       [...FIRST_CLASS_TOOL_NAMES].sort(),
     );

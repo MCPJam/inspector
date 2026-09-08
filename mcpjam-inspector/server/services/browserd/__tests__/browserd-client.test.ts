@@ -248,3 +248,38 @@ describe("BrowserdClient — what it refuses to do at all", () => {
     ).not.toThrow();
   });
 });
+
+describe("BrowserdClient — a body that is not JSON vs a body that failed", () => {
+  it("reads a malformed body as an empty reply", async () => {
+    // A proxy's HTML error page, a truncated reply: the daemon did not answer
+    // in its protocol, and `{}` is the honest decoding of that.
+    const { client } = makeClient(
+      new Response("<html>bad gateway</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    // Decodes as SOMETHING rather than throwing; the exact mapping of an
+    // empty envelope is the codec's business.
+    await expect(client.sendCommand(CMD, "boot-1")).resolves.toBeDefined();
+  });
+
+  it("rethrows a body that FAILED to arrive", async () => {
+    // A network error mid-body is a failed request. Decoding it as a
+    // successful empty reply hid the failure behind "the page has no tools".
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new TypeError("network reset mid-body"));
+      },
+    });
+    const { client } = makeClient(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await expect(client.sendCommand(CMD, "boot-1")).rejects.toThrow(
+      /network reset/,
+    );
+  });
+});

@@ -1696,7 +1696,7 @@ chatV2.post("/", async (c) => {
             signal?: AbortSignal;
           }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
-          currentPageToolsBinding: () => BrowserPageToolsSnapshot;
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
         }
       | undefined;
     const builtInTools = resolveHostTools(
@@ -1743,23 +1743,20 @@ chatV2.post("/", async (c) => {
           browserToolApprovals = approvals;
         },
         ...(pageToolsSnapshot
-          ? {
-              browserPageTools: pageToolsSnapshot,
-              // ONLY WHERE THE SET CAN ACTUALLY GROW. Dynamic mode retires
-              // `browser_webmcp_invoke`, on the grounds that an engine which
-              // re-advertises between steps does not need a generic verb to
-              // reach a page it navigated to. A harness takes its toolset as a
-              // constructor argument and never re-reads it, so claiming it here
-              // would withdraw the fallback and put nothing in its place.
-              browserDynamicPageTools: !resolvedExecution.harness,
-              // KEPT HERE, dropped later. Which engine runs this turn depends
-              // on a Convex-backed runtime resolution that has not happened
-              // yet, and one of them — local BYOK — does not consume refreshes;
-              // retiring the verb from here took the page away from it.
-              // `runWebChatTurn` drops it on the paths that do refresh.
-              browserRetireInvokeVerb: false as const,
-            }
+          ? { browserPageTools: pageToolsSnapshot }
           : {}),
+        // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
+        // a constructor argument and never re-reads it, so claiming it here
+        // would build a refresher nothing consumes. NOT gated on the snapshot:
+        // the ordinary turn starts on a blank tab or with no browser at all,
+        // and is exactly the one whose set has to grow.
+        browserDynamicPageTools: !resolvedExecution.harness,
+        // KEPT HERE, dropped later. Which engine runs this turn depends on a
+        // Convex-backed runtime resolution that has not happened yet, and one
+        // of them — local BYOK — does not consume refreshes; retiring the
+        // verbs from here took the page away from it. `runWebChatTurn` drops
+        // them on the paths that do refresh.
+        browserRetireInvokeVerb: false as const,
         onBrowserPageTools: ({ minted }) => {
           advertisedPageTools = minted;
         },
@@ -2013,7 +2010,9 @@ chatV2.post("/", async (c) => {
           // A THUNK: the set is read when the turn is persisted, not when
           // these options are built. On a turn that navigated the two differ,
           // and the later one is the one its last steps actually used.
-          ...(pageToolsSnapshot
+          // A turn that started with no snapshot but grew tools mid-turn has
+          // a record worth keeping too — the refresher's, read at persist time.
+          ...(pageToolsSnapshot || pageToolRefresh
             ? {
                 pageToolsAtTurn: () =>
                   toMintedPageToolRecords(

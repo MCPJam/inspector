@@ -218,7 +218,14 @@ describe("peekPageTools — the lease", () => {
       projectId: "p1",
       bearer: "t",
     });
-    expect(peek).toEqual({ tools: [], reason: "lease_held" });
+    expect(peek).toEqual({
+      tools: [],
+      reason: "lease_held",
+      // The daemon is there and answered, so the refresher gets a boot to
+      // start from once the person hands back.
+      binding: { bootId: "boot-1", tabId: "@session", navCounter: 0 },
+      canBind: false,
+    });
     // The panel routes DO retry as `manual`, and are right to: a person
     // looking at their own page is what a lease is for. A chat turn is not
     // that person, and re-sending the model's read under their lease would
@@ -244,7 +251,65 @@ describe("peekPageTools — fail-empty", () => {
       projectId: "p1",
       bearer: "t",
     });
-    expect(peek).toEqual({ tools: [], reason: "no_page" });
+    // WITH A BINDING. This is the start of the turn the feature exists for —
+    // navigate on step one, call the page's tools on step two — and the
+    // binding is what lets the refresher be built. `navCounter: 0` says no
+    // document has loaded yet, which is true.
+    expect(peek).toEqual({
+      tools: [],
+      reason: "no_page",
+      binding: { bootId: "boot-1", tabId: "@session", navCounter: 0 },
+      canBind: false,
+    });
+  });
+
+  it("carries the daemon's binding capability on a 'no page yet' answer too", async () => {
+    liveHostedSession();
+    clientStatus.mockResolvedValue({
+      kind: "ok",
+      bootId: "boot-1",
+      features: ["webmcp-eager", "webmcp-binding"],
+    });
+    clientSendCommand.mockResolvedValue({
+      status: "ok",
+      bootId: "boot-1",
+      result: { ok: false, error: "unknown_tab: @session" },
+    });
+    const peek = await peekPageTools({
+      engine: "hosted",
+      projectId: "p1",
+      bearer: "t",
+    });
+    expect(peek.canBind).toBe(true);
+    // And the snapshot the builder takes exists, so the refresher can be built.
+    expect(pageToolsSnapshotFrom(peek)).toMatchObject({
+      tools: [],
+      bootId: "boot-1",
+      navCounter: 0,
+      canBind: true,
+    });
+  });
+
+  it("keeps a binding when a person holds the browser", async () => {
+    // The daemon is there and answered; the turn — a person signing in, then
+    // handing back — is one where the page's tools become reachable mid-turn,
+    // and the refresher needs a boot to start from.
+    liveHostedSession();
+    clientSendCommand.mockResolvedValue({
+      status: "lease_blocked",
+      bootId: "boot-1",
+    });
+    const peek = await peekPageTools({
+      engine: "hosted",
+      projectId: "p1",
+      bearer: "t",
+    });
+    expect(peek.reason).toBe("lease_held");
+    expect(peek.binding).toEqual({
+      bootId: "boot-1",
+      tabId: "@session",
+      navCounter: 0,
+    });
   });
 
   it("swallows a thrown lookup", async () => {

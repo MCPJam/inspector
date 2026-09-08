@@ -502,7 +502,14 @@ export class BrowserdClient {
       // daemon answered and the page has no tools", the one answer a
       // cancellation must never be mistaken for.
       if (error instanceof Error && error.name === "AbortError") throw error;
-      return {};
+      // ONLY A MALFORMED BODY IS AN EMPTY BODY. `res.json()` rejects with a
+      // `SyntaxError` for bytes that are not JSON — a proxy's HTML error page,
+      // a truncated reply — and `{}` is the right reading of those: the daemon
+      // did not answer in its protocol. Anything else (a network error mid-
+      // body, a body already consumed) is a failed request, and decoding it
+      // as a successful empty reply hides the failure behind "no tools here".
+      if (error instanceof SyntaxError) return {};
+      throw error;
     }
   }
 }

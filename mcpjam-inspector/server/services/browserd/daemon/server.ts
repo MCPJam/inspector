@@ -217,6 +217,10 @@ export function buildBrowserdStack(
     guardLease(lease, guardStaleness(driver, lease)),
     bootId,
   );
+  // A Stop can land for an invoke that is admitted but still waiting behind
+  // another command on its tab; the driver has not seen it yet, and only the
+  // queue can say it exists. See `ChromiumDriver.attachCommandProbe`.
+  driver.attachCommandProbe?.((commandId) => queue.isPending(commandId));
   const handler = new BrowserdRequestHandler({
     queue,
     driver,

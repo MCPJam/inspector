@@ -67,77 +67,39 @@ describe("resolvePageToolAttribution", () => {
     ).toBeUndefined();
   });
 
-  it("prefers the result over the turn record", () => {
-    // The result is a fact about THIS CALL; the turn record is a fact about the
-    // turn. When both are present the narrower one wins.
-    const resolved = resolvePageToolAttribution({
-      toolName: "webmcp_add_topping",
-      output: RESULT,
-      turnRecords: [
-        {
-          name: "webmcp_add_topping",
-          rawName: "stale_name",
-          origin: "https://stale.test",
-          schemaHash: "0000",
-        },
-      ],
-    });
-    expect(resolved?.rawName).toBe("add_topping");
-  });
-
-  it("falls back to the turn's own record for an older card", () => {
-    const resolved = resolvePageToolAttribution({
-      toolName: "webmcp_bookSlot",
-      output: { result: "ok" },
-      turnRecords: [
-        {
-          name: "webmcp_bookSlot",
-          rawName: "bookSlot",
-          origin: "https://webmcp.dev",
-          schemaHash: "abcd1234",
-          binding: {
-            bootId: "boot-1",
-            tabId: "@session",
-            navCounter: 3,
-            frameId: "frame-main",
-            registrationSeq: 1,
-          },
-        },
-      ],
-    });
-    expect(resolved).toEqual({
-      rawName: "bookSlot",
-      origin: "https://webmcp.dev",
-      navCounter: 3,
-    });
-  });
-
   it("is UNCHANGED after the browser navigates elsewhere", () => {
     // Nothing about this call reads a live store, so there is nothing for a
     // navigation to change. This is the whole reason attribution rides in the
-    // result rather than being looked up.
+    // result rather than being looked up: the function's only inputs are the
+    // card's own name and output, and neither moves with the browser.
     const before = resolvePageToolAttribution({
       toolName: "webmcp_add_topping",
       output: RESULT,
     });
-    // The page is now somewhere else entirely and offers a DIFFERENT tool that
-    // happens to mint the same model-facing name.
     const after = resolvePageToolAttribution({
       toolName: "webmcp_add_topping",
       output: RESULT,
-      turnRecords: [
-        {
-          name: "webmcp_add_topping",
-          rawName: "add_topping",
-          origin: "https://someone-else.test",
-          schemaHash: "ffff",
-        },
-      ],
     });
     expect(after).toEqual(before);
+    expect(after?.origin).toBe("https://googlechromelabs.github.io");
   });
 
-  it("says nothing when neither source knows", () => {
+  it("attributes an ERROR result too, when the server stamped it", () => {
+    // A refused argument, a stale binding, a tombstone, a transport failure:
+    // every page-tool result the server produces carries its attribution, so
+    // the card for a failed call still says which page's tool it was for.
+    expect(
+      resolvePageToolAttribution({
+        toolName: "webmcp_add_topping",
+        output: {
+          error: "stale_binding: the page changed",
+          pageTool: { rawName: "add_topping", origin: "https://pizza.test" },
+        },
+      }),
+    ).toMatchObject({ rawName: "add_topping", origin: "https://pizza.test" });
+  });
+
+  it("says nothing when the result carries no attribution", () => {
     expect(
       resolvePageToolAttribution({
         toolName: "webmcp_unknown",
@@ -186,53 +148,18 @@ describe("a page cannot write the label it is approved under", () => {
   });
 });
 
-describe("the prefix is not the identity", () => {
-  // `webmcp_` is a naming convention this host applies, not a namespace anyone
-  // enforces. An ordinary MCP server may expose `webmcp_pay`, and its own
-  // `pageTool` field must not render as a page origin a reader would trust.
-  it("refuses a tool the turn did not advertise as a page tool", () => {
+describe("the prefix IS the namespace", () => {
+  // `webmcp_` is reserved by `prepareChatV2`: an MCP server, app, UI or skill
+  // tool that claims one of these names is dropped rather than advertised, so
+  // a `pageTool` field under this prefix can only have been written by the
+  // page-tool builder. Anything under another prefix is not looked at.
+  it("ignores a `pageTool` field on a tool outside the namespace", () => {
     expect(
       resolvePageToolAttribution({
-        toolName: "webmcp_pay",
+        toolName: "pay",
         output: {
           pageTool: { rawName: "pay", origin: "https://attacker.test" },
         },
-        turnRecords: [
-          {
-            name: "webmcp_book",
-            rawName: "book",
-            origin: "https://real.test",
-          } as never,
-        ],
-      }),
-    ).toBeUndefined();
-  });
-
-  it("still attributes one the turn DID advertise", () => {
-    expect(
-      resolvePageToolAttribution({
-        toolName: "webmcp_book",
-        output: { pageTool: { rawName: "book", origin: "https://real.test" } },
-        turnRecords: [{ name: "webmcp_book", rawName: "book" } as never],
-      }),
-    ).toMatchObject({ rawName: "book", origin: "https://real.test" });
-  });
-
-  it("falls back to the result when the turn recorded nothing at all", () => {
-    // A transcript from before the field existed. `undefined` means "we do not
-    // know what this turn advertised", which is not the same as "it advertised
-    // nothing" — an empty array is that, and it correctly refuses.
-    expect(
-      resolvePageToolAttribution({
-        toolName: "webmcp_book",
-        output: { pageTool: { rawName: "book" } },
-      }),
-    ).toMatchObject({ rawName: "book" });
-    expect(
-      resolvePageToolAttribution({
-        toolName: "webmcp_book",
-        output: { pageTool: { rawName: "book" } },
-        turnRecords: [],
       }),
     ).toBeUndefined();
   });

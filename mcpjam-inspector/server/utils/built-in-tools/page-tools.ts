@@ -54,12 +54,18 @@ import {
   WEBMCP_TOOL_NAME_PREFIX,
   declaredToolsFromWebmcp,
   mintDeclaredToolNames,
+  overCapMessage,
   toProviderToolSchema,
   validateDeclaredArgs,
   type DeclaredToolProvider,
   type MintedDeclaredTool,
 } from "@/shared/declared-tools";
 import type { BrowserPageTool } from "@/shared/browser-page-tools";
+import {
+  readPageToolBinding,
+  samePageToolBinding,
+  type PageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
 import type {
   BrowserAction,
   WebMcpToolBinding,
@@ -105,6 +111,30 @@ export interface BuildWebmcpPageToolsOptions {
   maxTools?: number;
   /** Called for each tool NOT advertised, with the reason the pane shows. */
   onDropped?: (info: { rawName: string; name: string; reason: string }) => void;
+  /**
+   * The model-output mapping every built tool gets, when the caller has one.
+   *
+   * Taken here rather than spread onto the built tool afterwards, because a
+   * spread makes a NEW object and `pageToolBindingOf` looks bindings up by the
+   * object this builder returned.
+   */
+  toModelOutput?: ToolSet[string]["toModelOutput"];
+}
+
+/**
+ * Model name → the binding its tool was minted against, for the tool objects
+ * THIS builder returned. A tombstone, a generic verb or a tool from another
+ * builder answers `undefined`.
+ */
+const BINDINGS = new WeakMap<object, WebMcpToolBinding>();
+
+/** The binding a built `webmcp_*` tool will send, or undefined if not ours. */
+export function pageToolBindingOf(
+  tool: unknown,
+): WebMcpToolBinding | undefined {
+  return tool !== null && typeof tool === "object"
+    ? BINDINGS.get(tool)
+    : undefined;
 }
 
 export interface WebmcpPageToolsResult {
@@ -204,9 +234,7 @@ export function buildWebmcpPageTools(
       });
 
     if (advertised.length >= cap) {
-      drop(
-        `this page declares more than ${cap} tools; this one is past the cap`,
-      );
+      drop(overCapMessage(cap));
       continue;
     }
     // AT BUILD TIME, not at execute: a run must not be shown a tool whose
@@ -301,7 +329,7 @@ function buildOne(
     registrationSeq: pageTool.registrationSeq!,
   };
 
-  return tool({
+  const built = tool({
     description: pageTool.description,
     // THE PAGE'S SCHEMA, VERBATIM. `jsonSchema` hands the AI SDK a raw JSON
     // Schema rather than a Zod shape, which is the only way to pass through a
@@ -317,7 +345,29 @@ function buildOne(
     // Read only by engines that honour per-tool gating (BYOK). The hosted
     // engines classify by name; both are fed from the same decision.
     needsApproval: options.needsApproval,
-    execute: async (input, { abortSignal }) => {
+    ...(options.toModelOutput ? { toModelOutput: options.toModelOutput } : {}),
+    execute: async (input, { abortSignal, messages, toolCallId }) => {
+      const attribution = attributionFor(pageTool, options);
+      // THE BINDING THE CALL WAS DECIDED FROM, when the call is older than this
+      // tool. An approval resumes in a new request whose tools were rebuilt
+      // from the page as it is now; if the page reloaded or navigated in
+      // between, the name the person approved is now carried by a different
+      // registration — and the daemon, handed THIS tool's binding, would
+      // happily run it. So the call's own binding is compared first, and a
+      // mismatch is refused here, before any command is built. A call with no
+      // recorded binding (a client too old to echo metadata, or the same-step
+      // call on an engine that does not hand `execute` the current message)
+      // has nothing to compare and proceeds on the daemon's check alone.
+      const approvedAgainst = bindingRecordedFor(messages, toolCallId);
+      if (approvedAgainst && !samePageToolBinding(approvedAgainst, binding)) {
+        return {
+          error:
+            "stale_binding: the page changed after this call was approved, so " +
+            `the "${pageTool.rawName}" it named is not the one here now. ` +
+            "Re-read the page's tools and call again.",
+          pageTool: attribution,
+        };
+      }
       // BEFORE ANY COMMAND LEAVES THIS PROCESS. Nothing downstream does this:
       // the hosted chat path has no SDK-side validation and Chrome does not
       // check an invocation against the schema it was given, so an argument
@@ -329,30 +379,72 @@ function buildOne(
           error:
             `invalid_arguments: ${validation.errors.join(" ")} ` +
             `Re-read the tool's schema and call it again.`,
-          pageTool: attributionFor(pageTool, options),
+          pageTool: attribution,
         };
       }
-      const result = await options.send(
-        {
-          kind: "webmcp_invoke",
-          // The tool's OWN name. The model-facing `webmcp_` name means nothing
-          // to the page.
-          toolKey: pageTool.rawName,
-          ...(pageTool.frameId ? { frameId: pageTool.frameId } : {}),
-          expectedBinding: binding,
-          input,
-        },
-        {
-          tabId: options.binding.tabId,
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        },
-      );
+      let result: Record<string, unknown>;
+      try {
+        result = await options.send(
+          {
+            kind: "webmcp_invoke",
+            // The tool's OWN name. The model-facing `webmcp_` name means
+            // nothing to the page.
+            toolKey: pageTool.rawName,
+            ...(pageTool.frameId ? { frameId: pageTool.frameId } : {}),
+            expectedBinding: binding,
+            input,
+          },
+          {
+            tabId: options.binding.tabId,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          },
+        );
+      } catch (error) {
+        // A throw here is the transport, not the page: the daemon refused the
+        // boot, the box went away, the request failed. Returned rather than
+        // rethrown so the card keeps its attribution — a failure with no
+        // `pageTool` on it would be rendered as an anonymous error under a
+        // model-facing name nobody can map back to the page.
+        return {
+          error: `webmcp_error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          pageTool: attribution,
+        };
+      }
       // Attribution rides INSIDE the result, in the half of the output that is
       // ours rather than the page's, so a card reopened tomorrow still knows
       // which tool on which page produced it.
-      return { ...result, pageTool: attributionFor(pageTool, options) };
+      return { ...result, pageTool: attribution };
     },
   });
+  BINDINGS.set(built, binding);
+  return built;
+}
+
+/**
+ * The binding recorded on this call's tool-call part, if the message history
+ * carries the part and the part carries one.
+ */
+function bindingRecordedFor(
+  messages: readonly unknown[] | undefined,
+  toolCallId: string | undefined,
+): PageToolBindingMetadata | undefined {
+  if (!messages || !toolCallId) return undefined;
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    const { role, content } = message as { role?: unknown; content?: unknown };
+    if (role !== "assistant" || !Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const record = part as Record<string, unknown>;
+      if (record.type !== "tool-call" || record.toolCallId !== toolCallId) {
+        continue;
+      }
+      return readPageToolBinding(record.providerOptions);
+    }
+  }
+  return undefined;
 }
 
 function attributionFor(

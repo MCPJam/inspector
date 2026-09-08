@@ -262,6 +262,18 @@ var CommandQueue = class {
   get distinctTrackedCount() {
     return this.commands.size + this.evicted.size;
   }
+  /**
+   * Is this command admitted and not yet settled — queued behind its tab's
+   * FIFO or running right now?
+   *
+   * For the driver's cancellation latch: a `webmcp_cancel` skips the FIFO, so
+   * it can arrive for an invoke the driver has not been handed yet, and only
+   * the queue knows that invoke exists. Reads and cancels are never tracked
+   * (see `isReplayable`), so they answer false.
+   */
+  isPending(commandId) {
+    return this.commands.get(commandId)?.state === "running";
+  }
   lookup(commandId) {
     const entry = this.commands.get(commandId);
     if (!entry) return void 0;
@@ -791,6 +803,20 @@ var BrowserdRequestHandler = class {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId }
       };
+    }
+    const action = parsed.command.action;
+    if (action.kind === "webmcp_invoke" && action.expectedBinding !== void 0 && action.expectedBinding.bootId !== this.bootId) {
+      return this.mapOutcome({
+        status: "ok",
+        bootId: this.bootId,
+        result: {
+          ok: false,
+          error: formatBrowserdError(
+            "stale_binding",
+            "this tool was listed on a previous run of this browser; re-read the page's tools"
+          )
+        }
+      });
     }
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
@@ -1746,6 +1772,7 @@ function buildBrowserdStack(driver, config) {
     guardLease(lease, guardStaleness(driver, lease)),
     bootId
   );
+  driver.attachCommandProbe?.((commandId) => queue.isPending(commandId));
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
@@ -3584,8 +3611,16 @@ function withoutRefIndex(fields) {
 function isNotAnInputRefusal(message) {
   return /not an <input>/i.test(message) && !/<select>/i.test(message);
 }
+function webmcpHashFor(tools, navCounter) {
+  return declaredToolsHash(declaredToolsFromWebmcp(tools), { navCounter });
+}
 function emptyWebmcpState() {
-  return { revision: 0, supported: false, tools: [] };
+  return {
+    revision: 0,
+    hash: webmcpHashFor([], 0),
+    supported: false,
+    tools: []
+  };
 }
 var MAX_TRACKED_INVOCATIONS = 256;
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
@@ -3697,6 +3732,25 @@ var ChromiumDriver = class {
    * only across the bridge call, and cleared in its `finally`.
    */
   activeInvocations = /* @__PURE__ */ new Set();
+  /**
+   * Is this command admitted but NOT yet dequeued? Answered by the queue, which
+   * is the only thing that knows; see `attachCommandProbe`.
+   *
+   * The latch above covers a Stop that lands while the invoke is RUNNING. A
+   * Stop can also land while it is still waiting its turn behind another
+   * command on the same tab — the cancel jumps the FIFO by design — and the
+   * driver has never heard of that command yet. Without this, that cancel found
+   * nothing to latch onto and the invoke ran to completion a moment later.
+   */
+  commandPending;
+  /**
+   * Let the queue answer "is this command still queued". Wired by whoever
+   * builds both, after the queue exists; a driver without one simply cannot
+   * latch a cancel for a command it has not dequeued.
+   */
+  attachCommandProbe(probe) {
+    this.commandPending = probe;
+  }
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -4009,6 +4063,12 @@ var ChromiumDriver = class {
   async webmcpInvoke(tabId, action, permit, commandId) {
     this.activeInvocations.add(commandId);
     try {
+      if (this.pendingCancels.has(commandId)) {
+        return {
+          ok: false,
+          error: "webmcp_cancelled: this call was stopped before the page was asked to run it"
+        };
+      }
       return await this.runWebmcpInvoke(tabId, action, permit, commandId);
     } finally {
       this.activeInvocations.delete(commandId);
@@ -4104,10 +4164,12 @@ var ChromiumDriver = class {
     }
     const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
-      if (action.commandId && this.activeInvocations.has(action.commandId)) {
-        this.pendingCancels.add(action.commandId);
-      }
-      return { ok: true, output: { cancelled: false, known: false } };
+      const latched = action.commandId !== void 0 && (this.activeInvocations.has(action.commandId) || this.commandPending?.(action.commandId) === true);
+      if (latched) this.pendingCancels.add(action.commandId);
+      return {
+        ok: true,
+        output: { cancelled: false, known: false, latched }
+      };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {
@@ -4167,7 +4229,7 @@ var ChromiumDriver = class {
     await this.attachWebmcp(tabId, entry).catch(() => void 0);
     await navigate(entry.page);
     entry.navCounter += 1;
-    entry.webmcp.revision += 1;
+    this.bumpWebmcpRevision(entry);
     const settled = await this.settle(entry.page);
     if (!permit()) {
       return this.leaseBlockedResult(
@@ -4902,19 +4964,32 @@ var ChromiumDriver = class {
       entry.webmcp.unsubscribe = bridge.subscribe((tools) => {
         entry.webmcp.tools = tools;
         entry.webmcp.supported = bridge.isSupported();
-        entry.webmcp.revision += 1;
+        this.bumpWebmcpRevision(entry);
       });
     })().catch(() => {
     });
     return entry.webmcp.attaching;
   }
   /**
+   * The ONE way a tab's tool generation moves.
+   *
+   * Two callers: the bridge's change events, and `navigateVerb` — which bumps
+   * `navCounter` on a path the bridge never reports (`Page.frameNavigated` has
+   * already fired by then). The hash folds `navCounter` in, so it is re-stamped
+   * here, on every bump, rather than at announce time (which would describe the
+   * previous generation) or on every read (which cost a full hash per
+   * heartbeat).
+   */
+  bumpWebmcpRevision(entry) {
+    entry.webmcp.revision += 1;
+    entry.webmcp.hash = webmcpHashFor(entry.webmcp.tools, entry.navCounter);
+  }
+  /**
    * A tab's tool set as `{revision, hash, count}`, read from the cache.
    *
-   * The HASH is computed here rather than stored, and that is load-bearing: it
-   * folds in `navCounter`, which changes on a path the bridge never reports
-   * (`navigateVerb` bumps it AFTER `Page.frameNavigated` has already fired). A
-   * hash stamped at announce time would describe the previous generation.
+   * TOUCHES NO PAGE and computes nothing: both fields are stamped when the
+   * generation moves. That is what lets this ride a heartbeat several times a
+   * second and be asked before every model step.
    */
   webmcpToolsSnapshot(tabId) {
     const id = tabId ?? DEFAULT_TAB;
@@ -4925,12 +5000,13 @@ var ChromiumDriver = class {
   webmcpRevisionFor(entry) {
     return {
       revision: entry.webmcp.revision,
-      hash: declaredToolsHash(declaredToolsFromWebmcp(entry.webmcp.tools), {
-        navCounter: entry.navCounter
-      }),
+      hash: entry.webmcp.hash,
       count: entry.webmcp.tools.length,
       supported: entry.webmcp.supported,
-      url: safeUrl(entry.page)
+      // BOUNDED, like the tab list's URL. This rides an 8 KiB heartbeat record
+      // beside up to sixteen tabs' URLs, and a page can make its URL as long
+      // as it likes.
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
     };
   }
   /** The `webmcpTools` half of a result envelope. */

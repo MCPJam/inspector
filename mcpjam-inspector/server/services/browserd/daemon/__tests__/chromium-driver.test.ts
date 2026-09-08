@@ -3504,3 +3504,90 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     expect(cancelled).toEqual(["inv-9"]);
   });
 });
+
+describe("ChromiumDriver — a Stop for an invoke the queue still holds", () => {
+  function recordingBridge() {
+    const invoked: unknown[] = [];
+    return {
+      invoked,
+      bridge: {
+        isSupported: () => true,
+        list: () => [],
+        async probeSettled() {},
+        subscribe: () => () => {},
+        registrationSeqFor: () => undefined,
+        invoke: async (args: unknown) => {
+          invoked.push(args);
+          return { invocationId: "inv-q", output: { ok: true } };
+        },
+        cancel: async () => true,
+      } as never,
+    };
+  }
+
+  it("latches the Stop when the queue vouches for the command, and never asks the page", async () => {
+    // A cancel skips the FIFO by design, so it can arrive for an invoke that is
+    // admitted but still waiting behind another command on its tab. The driver
+    // has never heard of that command; without the queue's answer the Stop was
+    // dropped, and the invoke ran to completion a moment later.
+    const live = recordingBridge();
+    const page = fakePage({ url: "https://x.test/", webmcp: live.bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    const queued = new Set(["cmd-queued"]);
+    driver.attachCommandProbe((commandId) => queued.has(commandId));
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const cancel = await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "cmd-queued" }),
+    );
+    expect(cancel.output).toMatchObject({ latched: true, known: false });
+
+    // Its turn comes.
+    queued.delete("cmd-queued");
+    const res = await driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-queued",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/^webmcp_cancelled/);
+    expect(live.invoked).toEqual([]);
+  });
+
+  it("still latches NOTHING for a command nobody vouches for", async () => {
+    // The ghost-cancel guard beside this suite depends on it: a command that
+    // is neither running nor queued leaves no entry behind.
+    const live = recordingBridge();
+    const page = fakePage({ url: "https://x.test/", webmcp: live.bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    driver.attachCommandProbe(() => false);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const cancel = await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "cmd-ghost" }),
+    );
+    expect(cancel.output).toMatchObject({ latched: false });
+    const res = await driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-ghost",
+    });
+    expect(res.ok).toBe(true);
+    expect(live.invoked).toHaveLength(1);
+  });
+});
+
+describe("ChromiumDriver — the page-tool revision on the heartbeat", () => {
+  it("bounds the URL it reports", async () => {
+    // This rides an 8 KiB heartbeat record beside up to sixteen tabs' URLs,
+    // and a page can make its URL as long as it likes.
+    const long = `https://x.test/${"a".repeat(2_000)}`;
+    const page = fakePage({ url: long });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: long }));
+    const snapshot = driver.webmcpToolsSnapshot();
+    expect(snapshot).toBeDefined();
+    expect(snapshot!.url!.length).toBeLessThanOrEqual(256);
+    expect(long.length).toBeGreaterThan(256);
+  });
+});

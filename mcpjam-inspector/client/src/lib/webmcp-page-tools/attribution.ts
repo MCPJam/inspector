@@ -13,11 +13,13 @@
  * result is message content: it persists in the transcript for free, survives a
  * reload, and still says the right thing a week later.
  *
- * The fallback is the turn's persisted `pageToolsAtTurn` record — also a fact
- * about the turn rather than about the browser — for a card written before the
- * result carried its own attribution. The live store is never consulted.
+ * There is no second source. Every page-tool result the server produces — a
+ * success, a refused argument, a stale binding, a transport failure, a
+ * tombstone — carries its attribution, so a card with none is a card for
+ * something that was not a page tool. The live store is never consulted, and
+ * the turn's persisted `pageToolsAtTurn` record is for the Raw view (what the
+ * turn advertised), not for cards.
  */
-import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import {
   isWebmcpPageToolName,
   safeDeclaredOrigin,
@@ -85,20 +87,16 @@ export function pageToolAttributionFrom(
 }
 
 /**
- * Attribution for one rendered tool part.
- *
- * Order is the whole point: the RESULT first (a fact about this call), then the
- * turn's own persisted record (a fact about this turn), and never the live
- * browser (a fact about right now, which is the wrong question).
+ * Attribution for one rendered tool part: the RESULT (a fact about this call),
+ * and never the live browser (a fact about right now, which is the wrong
+ * question).
  */
 export function resolvePageToolAttribution(args: {
   toolName: string;
   output: unknown;
-  /** The turn's persisted `pageToolsAtTurn`, when the trace carried one. */
-  turnRecords?: readonly MintedPageToolRecord[];
 }): PageToolAttribution | undefined {
   if (!isWebmcpPageToolName(args.toolName)) return undefined;
-  // THE PREFIX IS THE NAMESPACE, and the turn's record is the exact answer.
+  // THE PREFIX IS THE NAMESPACE.
   //
   // `webmcp_` means "the open page declared this" — to the model, through the
   // declared-tools prompt section, and here, where it decides whether a result
@@ -106,22 +104,5 @@ export function resolvePageToolAttribution(args: {
   // because `prepareChatV2` RESERVES the prefix: a tool from an MCP server, an
   // app, the UI set or a skill that claims one of these names is dropped rather
   // than advertised, so nothing else can arrive carrying it.
-  //
-  // Where the turn also recorded what it advertised, that record is checked
-  // too. It is the narrower fact — this turn, this name — and it costs nothing
-  // to prefer it over a namespace rule enforced a process away.
-  const records = args.turnRecords;
-  const record = records?.find((entry) => entry.name === args.toolName);
-  if (records && !record) return undefined;
-  const fromResult = pageToolAttributionFrom(args.output);
-  if (fromResult) return fromResult;
-  if (!record) return undefined;
-  const origin = record.origin ? safeDeclaredOrigin(record.origin) : undefined;
-  const rawName = safeRawName(record.rawName);
-  if (!rawName) return undefined;
-  return {
-    rawName,
-    ...(origin && origin !== "unknown" ? { origin } : {}),
-    ...(record.binding ? { navCounter: record.binding.navCounter } : {}),
-  };
+  return pageToolAttributionFrom(args.output);
 }

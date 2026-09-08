@@ -100,7 +100,12 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
-import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  mergeMcpToolOriginMetadata,
+  mergePageToolBindingMetadata,
+} from "@/shared/mcp-tool-origin-metadata";
+import { isWebmcpPageToolName } from "@/shared/declared-tools";
+import { pageToolBindingOf } from "./built-in-tools/page-tools.js";
 
 function unwrapJsonEnvelope(value: unknown): unknown {
   let current = value;
@@ -623,7 +628,13 @@ function applyToolRefresh(
   const retiredSet = new Set(retired);
   const kept = io
     .currentToolDefs()
-    .filter((def) => !retiredSet.has(def.name) && !(def.name in (refresh.add ?? {})));
+    .filter(
+      (def) =>
+        !retiredSet.has(def.name) &&
+        // `hasOwn`, not `in`: a page tool called `constructor` or `toString`
+        // must not be mistaken for one the refresh re-added.
+        !Object.hasOwn(refresh.add ?? {}, def.name),
+    );
   const addedDefs = serializeToolsForConvex(
     Object.fromEntries(added) as ToolSet,
   );
@@ -1560,6 +1571,9 @@ function scrubMessagesForBackend(
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
     Object.keys(tools as Record<string, unknown>),
+    // A page's tools exist only while that page is open; what the model did
+    // with them is still what happened. See the parameter's doc.
+    isWebmcpPageToolName,
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
@@ -1968,9 +1982,16 @@ async function processStream(
           flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
-          const providerMetadata = mergeMcpToolOriginMetadata(
-            chunk.providerMetadata,
-            serverIdForToolCall,
+          // AND THE PAGE TOOL'S BINDING, on the same channel. It rides the
+          // tool-call part to the client and back, so an approval resumed in a
+          // later request can tell whether the page moved under it — see
+          // `mergePageToolBindingMetadata`.
+          const providerMetadata = mergePageToolBindingMetadata(
+            mergeMcpToolOriginMetadata(
+              chunk.providerMetadata,
+              serverIdForToolCall,
+            ),
+            pageToolBindingOf(tools[chunk.toolName]),
           );
           contentParts.push({
             type: "tool-call",
