@@ -257,7 +257,7 @@ export function ActiveServerSelector({
           "flex justify-start",
         )}
       >
-        <div className="flex flex-nowrap min-w-fit h-full">
+        <div className="flex flex-nowrap min-w-fit h-full items-end gap-[3px]">
           {servers.map(([name, serverConfig]) => {
             const isSelected = isMultiSelectEnabled
               ? selectedMultipleServers.includes(name)
@@ -282,7 +282,14 @@ export function ActiveServerSelector({
                   handleServerClick(name);
                 }}
                 className={cn(
-                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer outline-none",
+                  "group relative isolate flex items-center gap-3 px-4 cursor-pointer outline-none text-foreground",
+                  // Sheets in a stack: rounded head, square foot, hairline
+                  // round the edge. The idle ones drop the bottom side — they
+                  // float 6px clear of the panel and their fill already ends
+                  // them against the linen. `overflow-hidden` so the rising
+                  // fill below is cut to the same silhouette.
+                  "h-[calc(100%-6px)] rounded-t-lg overflow-hidden border border-chrome-control-border",
+                  "transition-[height,background-color,box-shadow] duration-200 ease-out",
                   // The ring is on the BASE, not on one branch: `outline-none`
                   // above kills the native indicator for every tab, so the
                   // selected one would otherwise take keyboard focus with
@@ -290,16 +297,17 @@ export function ActiveServerSelector({
                   // horizontally (`overflow-x-auto`) and would clip an
                   // outset ring on the first and last tab.
                   "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/45",
-                  // Only the ACTIVE tab carries the panel fill; the rest sit
-                  // on the linen chrome with no fill at rest. This used to be
-                  // the other way round, which is why the strip read as one
-                  // pale block with the selection barely marked.
-                  //
-                  // The hover cannot be `bg-accent`: --accent IS the chrome
-                  // ground, so hovering an idle tab changed nothing.
+                  // Every sheet is the same size; the selected one is lit to
+                  // the panel fill, ruled at the foot and given a soft cast
+                  // off its head. The idle ones keep --chrome-control,
+                  // the fill the design system gives things that sit ON the
+                  // linen ground. Hover cannot be `bg-accent` or
+                  // `bg-chrome-hover` here: --accent IS the chrome ground and
+                  // --chrome-hover is for controls with no fill at rest, which
+                  // these no longer are.
                   isSelected
-                    ? "bg-background text-foreground"
-                    : "text-foreground hover:bg-chrome-hover focus-visible:bg-chrome-hover",
+                    ? "border-b-2 bg-chrome-control shadow-[0_-2px_6px_oklch(0_0_0_/_0.07)]"
+                    : "border-b-0 bg-chrome-control hover:bg-chrome-control-hover focus-visible:bg-chrome-control-hover",
                 )}
               >
                 {isMultiSelectEnabled && (
@@ -383,16 +391,17 @@ export function ActiveServerSelector({
                   </div>
                 )}
                 {isSelected && (
-                  // Foot rule on the active tab. The fill alone can't mark it:
-                  // the tab is --background and so is the panel it sits on, and
-                  // the two edges meet with no gap, so the active tab bleeds
-                  // into the pane below instead of reading as a tab. Absolute
-                  // rather than `border-b` so the 2px can't change the box
-                  // height and shift the row. Same bar HostFocusTabBar draws,
-                  // full-bleed here because these tabs are flush, not pills.
+                  // The panel fill, climbing from the foot to the head of the
+                  // sheet when you pick it. It is the same colour the tab
+                  // rests at, so the sweep IS the state arriving, not a tint
+                  // passing over it. Sits behind the content (`-z-10` inside
+                  // the button's own `isolate` context) so it never paints
+                  // over the label, and over the tab's --chrome-control base
+                  // so the part it hasn't reached yet still reads as an idle
+                  // sheet rather than a hole in the strip.
                   <span
                     aria-hidden
-                    className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-primary"
+                    className="pointer-events-none absolute inset-0 -z-10 bg-background animate-server-tab-fill-rise"
                   />
                 )}
               </button>
@@ -409,7 +418,8 @@ export function ActiveServerSelector({
               setIsAddModalOpen(true);
             }}
             className={cn(
-              "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer",
+              "group relative flex h-[calc(100%-6px)] items-center gap-3 px-4 cursor-pointer",
+              "rounded-t-lg border border-b-0 transition-all duration-200",
               // Not a tab, so it never wears the panel fill — it stays on the
               // chrome and only lights up on hover.
               "hover:bg-chrome-hover hover:text-foreground",
@@ -417,7 +427,7 @@ export function ActiveServerSelector({
               // which on the linen ground read as disabled rather than as the
               // secondary action it is; the dashed border already says "not a
               // server".
-              "text-foreground border-dashed",
+              "text-foreground border-dashed border-chrome-control-border",
             )}
           >
             {isMultiSelectEnabled && (
