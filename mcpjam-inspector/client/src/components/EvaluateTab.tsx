@@ -51,6 +51,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -72,6 +73,7 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SuitesOverview } from "./evaluate/suites-overview";
 import { ProjectRunsTable } from "./evals/project-runs-table";
@@ -183,6 +185,7 @@ function EvaluateTabContent({
   // is off by default, so a flag-off render issues zero summary requests even
   // though those components are shared with `/evals`.
   const decisionSummaryEnabled = useEvaluateEnabled();
+  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -318,12 +321,16 @@ function EvaluateTabContent({
     return false;
   }, [evalIterationQuota, evalRunsDisabledReason, organizationId]);
 
+  const [judgeRunIds, setJudgeRunIds] = useState<string[]>([]);
   const handleRerunWithQuota = useCallback(
-    (...args: Parameters<typeof handlers.handleRerun>) => {
+    async (...args: Parameters<typeof handlers.handleRerun>) => {
       if (!guardEvalIterationQuota()) {
         return;
       }
-      return handlers.handleRerun(...args);
+      const runIds = await handlers.handleRerun(...args);
+      if (args[1]?.caseIds?.length && !args[1]?.skipJudge && runIds?.length) {
+        setJudgeRunIds((current) => [...new Set([...current, ...runIds])]);
+      }
     },
     [guardEvalIterationQuota, handlers]
   );
@@ -1249,6 +1256,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateObserveFirst={observeFirstEnabled}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1322,6 +1330,9 @@ function EvaluateTabContent({
       }
     >
       <>
+        {judgeRunIds.map((runId) => (
+          <LaunchedCaseJudge key={runId} runId={runId} />
+        ))}
         {route.type === "create" ? (
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <CreateSuitePage
