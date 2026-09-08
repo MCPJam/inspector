@@ -315,6 +315,10 @@ describe("GithubChecksRoute availability gate", () => {
     mockRepos.value = [ROW];
     renderRoute();
     expect(screen.getByText("mcpjam/mcp-check-fixture")).toBeInTheDocument();
+    expect(screen.getByText("mcpjam.yaml")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the recipe docs" })
+    ).toHaveAttribute("href", "https://docs.mcpjam.com/github-checks");
   });
 
   it("shows the install-App empty state when there are no repos", () => {
@@ -340,6 +344,84 @@ describe("GithubChecksRoute availability gate", () => {
       configId: "cfg-1",
       enabled: false,
     });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // THE SWITCHES SAY WHICH IS WHICH
+  // ═════════════════════════════════════════════════════════════════════════
+  //
+  // Three bare switches sat in a row with no visible names — only a sighted
+  // user who already knew the order could tell checks from conformance from
+  // comments, on a page that decides what runs on other people's pull
+  // requests.
+
+  it("names every switch on screen, not just for a screen reader", () => {
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    // `toBeVisible`, not `toBeInTheDocument`: the claim is that a sighted user
+    // can READ these. `aria-hidden` does not affect it — that hides them from
+    // the accessibility tree, not from the screen.
+    //
+    // Its reach is narrower than it looks, though, and worth knowing before
+    // trusting it: jsdom loads no stylesheet, so a caption hidden by a utility
+    // class still passes here. It catches an inline `display: none` or the
+    // `hidden` attribute, and nothing a class could do. Verified both ways.
+    expect(screen.getByText("Checks")).toBeVisible();
+    expect(screen.getByText("Conformance")).toBeVisible();
+    expect(screen.getByText("Comments")).toBeVisible();
+  });
+
+  it("keeps each caption inside its switch's accessible name", () => {
+    // WCAG 2.5.3. A visible label that is not part of the accessible name
+    // leaves a speech-input user saying a word the control does not answer
+    // to — which is why the third caption is "Comments" and not "PR
+    // comments". Renaming a caption without renaming its `aria-label` breaks
+    // this and nothing else would catch it.
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    const pairs: Array<[string, string]> = [
+      ["Checks", "Enable checks for mcpjam/mcp-check-fixture"],
+      [
+        "Conformance",
+        "Enable conformance check for mcpjam/mcp-check-fixture",
+      ],
+      [
+        "Comments",
+        "Post feedback comments on pull requests for mcpjam/mcp-check-fixture",
+      ],
+    ];
+
+    for (const [caption, accessibleName] of pairs) {
+      expect(screen.getByLabelText(accessibleName)).toBeInTheDocument();
+      expect(accessibleName.toLowerCase()).toContain(caption.toLowerCase());
+    }
+  });
+
+  it("dims the conformance caption with the switch it belongs to", () => {
+    // Conformance is a SUB-SETTING of checks: its switch has always been
+    // disabled while checks are off. A caption at full strength beside a dead
+    // control reads as a bug rather than a rule.
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [{ ...ROW, enabled: false }];
+    renderRoute();
+
+    expect(
+      screen.getByLabelText(
+        "Enable conformance check for mcpjam/mcp-check-fixture",
+      ),
+    ).toBeDisabled();
+    expect(screen.getByText("Conformance").className).toContain(
+      "text-muted-foreground/50",
+    );
+    // Comments is NOT gated on `enabled` — it decides what MCPJam may write,
+    // not whether it runs — so it must stay at full strength here.
+    expect(screen.getByText("Comments").className).not.toContain(
+      "text-muted-foreground/50",
+    );
   });
 
   it("the conformance switch is off by default and opt-in", () => {

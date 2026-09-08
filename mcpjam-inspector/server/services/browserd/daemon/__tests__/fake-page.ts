@@ -91,6 +91,26 @@ export interface FakePage extends DriverPage {
   };
 }
 
+/**
+ * Fill in the bridge methods a test's stub did not bother to write.
+ *
+ * Tests stub the two or three methods their case is about, and the driver
+ * legitimately calls more than that — it subscribes for tool-set changes, waits
+ * out a support re-probe, and reads a registration sequence to validate a
+ * binding. Defaulting them here keeps every existing stub honest (a test that
+ * cares about one of them still overrides it) without making each one restate
+ * the whole interface.
+ */
+function withBridgeDefaults(bridge: unknown): unknown {
+  const stub = bridge as Record<string, unknown>;
+  return {
+    subscribe: () => () => {},
+    probeSettled: async () => {},
+    registrationSeqFor: () => undefined,
+    ...stub,
+  };
+}
+
 export function fakePage(init: {
   url?: string;
   dom?: string;
@@ -108,6 +128,14 @@ export function fakePage(init: {
   onWebmcp?: () => void;
   /** Make a targeted act fail, as a missing element would. */
   actError?: Error;
+  /**
+   * Make ONE act entry fail, by the `verb:detail` string the log records.
+   *
+   * `actError` fails every act, which cannot model the case `fill_form` exists
+   * to survive: a form whose third field is a `<select>`, where the fill is
+   * refused and the driver must fall back rather than give up on the form.
+   */
+  actErrorFor?: (entry: string) => Error | undefined;
 
   /** What `observe {mode:"text"}` reads off this page. */
   text?: string;
@@ -159,6 +187,8 @@ export function fakePage(init: {
   const act = (entry: string) => {
     calls.acts.push(entry);
     page.onAct?.();
+    const targeted = init.actErrorFor?.(entry);
+    if (targeted) throw targeted;
     if (init.actError) throw init.actError;
   };
   const page: FakePage = {
@@ -207,7 +237,7 @@ export function fakePage(init: {
     },
     async webmcp() {
       init.onWebmcp?.();
-      return (init.webmcp ?? null) as never;
+      return (init.webmcp ? withBridgeDefaults(init.webmcp) : null) as never;
     },
     async cdp() {
       return page.cdpSession === undefined ? defaultCdp : page.cdpSession;

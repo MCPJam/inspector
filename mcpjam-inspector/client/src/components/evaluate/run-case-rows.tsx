@@ -268,7 +268,7 @@ function verdictNote(row: EvaluateCaseRow): string | null {
       return null;
     case "matched":
       return row.mark === null && row.verdict.variants.length > 1
-        ? "variants disagree — open the case for each one"
+        ? "variants disagree. Open the case for each one"
         : null;
   }
 }
@@ -398,7 +398,7 @@ export function RunCaseRows({
                     ? "No trial in this case has a cost"
                     : [
                         row.costedIterations < row.coverage.total
-                          ? `${row.costedIterations} of ${row.coverage.total} trials priced`
+                          ? `${row.costedIterations} of ${row.coverage.total} iterations priced`
                           : null,
                         row.hasRunnerReportedCost
                           ? "Includes cost reported by your runner, not measured by MCPJam."

@@ -3,9 +3,9 @@
  *
  * Both routes that serve the pane — the hosted panel's `GET /page-tools` and
  * the local `POST /local-browser/page-tools` — build the same command and map
- * the daemon's answer through the same table below. The model's
- * `browser_webmcp_tools` tool sends this exact observation too, which is what
- * makes the pane a truthful preview of what the model would be told.
+ * the daemon's answer through the same table below. The chat turn's own
+ * page-tool peek sends this exact observation too, which is what makes the
+ * pane a truthful preview of what the model was actually given.
  *
  * Pure: no daemon, no HTTP. The routes own auth and session lookup; this owns
  * "what did the daemon say, and what does the pane tell the person".

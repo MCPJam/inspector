@@ -180,6 +180,39 @@ export function hostedBrowserEnabled(
 }
 
 /**
+ * How a page's WebMCP tools reach the model.
+ *
+ *   - `first_class` (default) — each page tool is its own server-executed
+ *     `webmcp_*` model tool: the page's schema advertised verbatim, arguments
+ *     validated before any command leaves this process, an ordinary approval
+ *     pill, and a binding that names the exact registration on the exact
+ *     document generation it was listed from.
+ *   - `verbs` — the pre-first-class behaviour, for a deployment that needs to
+ *     go back: the model calls `browser_webmcp_invoke` by name with an untyped
+ *     `input`, and nothing validates it (Chrome does not check an invocation
+ *     against the registered `inputSchema` either).
+ *
+ * A MODE rather than a boolean because the rollback has to be exact, and
+ * because the two positions are no longer "new thing on/off" — `verbs` is a
+ * named behaviour somebody may deliberately choose, not merely an absence.
+ *
+ * READ AT CALL TIME, like `hostedBrowserEnabled` beside it: flipped
+ * per-process in staging and per-test, and a module constant would freeze
+ * whatever the environment said when this module first loaded.
+ */
+export type WebmcpPageToolsMode = "verbs" | "first_class";
+
+export function webmcpPageToolsMode(
+  env: NodeJS.ProcessEnv = process.env,
+): WebmcpPageToolsMode {
+  // DEFAULTS ON. The dark period is over: a page's tools reach the model as
+  // real tools unless a deployment says otherwise, and `verbs` is the rollback
+  // — one environment variable, no deploy, and the six `browser_*` tools come
+  // back exactly as they were.
+  return env.MCPJAM_WEBMCP_PAGE_TOOLS === "verbs" ? "verbs" : "first_class";
+}
+
+/**
  * Feed model-visible widget→host tool calls (recorded by Interact steps) to the
  * eval model as a per-turn system-prompt addendum, so the model reasons over a
  * widget interaction on its next turn (the headless analogue of Playground's

@@ -19,7 +19,7 @@ import type { EvalExpectedToolCall } from "../eval-reporting-types.js";
 import type { Predicate, PredicateResult } from "../predicates/types.js";
 import { checkRole, stripCheckPolicy } from "../predicates/policy.js";
 import { canonicalDigest } from "./canonical.js";
-import { finalizeScoreResult } from "./derive.js";
+import { errorScoreResult, finalizeScoreResult } from "./derive.js";
 import {
   PREDICATES_VERSION,
   type ResolvedScoreDefinition,
@@ -83,11 +83,22 @@ export function predicateScoreDefinition(
  * `1`, so a predicate reads on the dashboard exactly like every other scorer.
  * The evaluator's `reason` is the load-bearing diagnostic and survives as the
  * rationale.
+ *
+ * A row the evaluator marked `status: "error"` becomes an ERROR result — no
+ * value, no `passed` — rather than a 0. The two are different claims: a 0 says
+ * the server did the wrong thing, an error says we could not tell. Emitting a
+ * 0 for the second would put a defect on the dashboard that nobody observed,
+ * and a gating scorer would fail the trial on it.
  */
 export function scoreResultFromPredicateResult(
   definition: ResolvedScoreDefinition,
   result: PredicateResult
 ): ScoreResult {
+  if (result.status === "error") {
+    return errorScoreResult(definition, result.reason, {
+      ...(result.scope ? { scope: result.scope } : {}),
+    });
+  }
   return finalizeScoreResult(definition, {
     kind: "scored",
     value: result.passed ? 1 : 0,

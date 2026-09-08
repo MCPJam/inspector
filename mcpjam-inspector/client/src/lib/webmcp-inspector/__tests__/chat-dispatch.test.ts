@@ -12,6 +12,7 @@ import {
   deferPageToolCallForApproval,
   fulfillApprovedPageToolCall,
   invokePageToolForChat,
+  ownsPageToolAlias,
   setAdvertisedPageTools,
   settleDeniedPageToolCall,
   snapshotPageToolsForTurn,
@@ -265,5 +266,16 @@ describe("snapshotPageToolsForTurn", () => {
   it("advertises nothing when no session is open at all", () => {
     useWebmcpInspectorStore.setState({ session: undefined });
     expect(snapshotPageToolsForTurn()).toEqual([]);
+  });
+});
+
+describe("ownsPageToolAlias — the two page-tool namespaces stay apart", () => {
+  it("does NOT claim the agent browser's server-executed `webmcp_*` tools", () => {
+    // `page_*` is fulfilled by THIS client; `webmcp_*` is executed on the
+    // server against the agent browser. A client that claimed the second would
+    // defer its call for a browser it does not have, and the turn would strand
+    // waiting on a result nobody sends.
+    expect(ownsPageToolAlias("webmcp_add_topping")).toBe(false);
+    expect(ownsPageToolAlias("webmcp_x")).toBe(false);
   });
 });

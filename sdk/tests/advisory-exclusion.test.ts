@@ -128,9 +128,12 @@ function advisoryScoreRows(test: EvalTest, scores: { scorerId: string; definitio
   return advisory[0]!;
 }
 
-describe("STAGE_ANALYZER_VERSION is advisory exclusion", () => {
-  it("is analyzer version 10", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(10);
+describe("STAGE_ANALYZER_VERSION", () => {
+  // 10 was advisory exclusion (the behaviour this file pins); 11 added
+  // response/call routing on top of it. The exclusion tests above are the
+  // real assertion — this one only keeps the constant from drifting silently.
+  it("is analyzer version 11", () => {
+    expect(STAGE_ANALYZER_VERSION).toBe(11);
   });
 });
 

@@ -22,7 +22,7 @@ export function AlsoInThisCase({
 }: {
   steps: TestStep[];
   turnOrdinalByStepId: Map<string, number>;
-  onOpenDeepEditor: () => void;
+  onOpenDeepEditor?: () => void;
   readOnly?: boolean;
 }) {
   if (steps.length === 0) return null;
@@ -32,7 +32,7 @@ export function AlsoInThisCase({
         <Label className="text-[11px] font-medium text-foreground">
           Also in this case
         </Label>
-        {readOnly ? null : (
+        {readOnly || !onOpenDeepEditor ? null : (
           <Button
             type="button"
             variant="ghost"

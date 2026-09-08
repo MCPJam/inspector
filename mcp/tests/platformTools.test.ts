@@ -185,6 +185,9 @@ const PLAIN_TOOLS = [
   "get_eval_run_stage_analytics",
   "get_eval_run_gate",
   "get_eval_run_route_facts",
+  // Server facts: what the run was taken against — a snapshot description, no
+  // widget view, so it belongs with the plain tools.
+  "get_eval_run_server_facts",
   "list_eval_suite_stage_analytics",
   "set_eval_suite_environments",
   // Project environments: agent-oriented payloads, no widget view.
@@ -459,6 +462,7 @@ describe("platform tool registration", () => {
       "get_eval_run_stage_analytics",
       "get_eval_run_gate",
       "get_eval_run_route_facts",
+      "get_eval_run_server_facts",
       "list_eval_suite_stage_analytics",
       "compare_eval_run",
       "get_eval_gate_waiver",
