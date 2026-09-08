@@ -3,11 +3,8 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  classifyUiToolApprovals,
-} from "@/shared/client-fulfilled-tools";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
@@ -52,7 +49,7 @@ vi.mock("ai", async () => {
     createUIMessageStreamResponse: vi.fn().mockReturnValue(
       new Response("{}", {
         headers: { "Content-Type": "text/event-stream" },
-      })
+      }),
     ),
   };
 });
@@ -64,7 +61,7 @@ vi.mock("@/shared/http-tool-calls", () => ({
 
 vi.mock("../chat-helpers", async () => {
   const actual = await vi.importActual<typeof import("../chat-helpers")>(
-    "../chat-helpers"
+    "../chat-helpers",
   );
   return {
     ...actual,
@@ -117,7 +114,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ])
+      ]),
     );
   });
 
@@ -155,7 +152,7 @@ describe("mcpjam-stream-handler", () => {
       // progressive discovery — this is the path the P2 trace mismatch hit.
       prepareAdvertisedTools: ({ defaultToolNames }) =>
         defaultToolNames.filter(
-          (n) => n !== "computer" && n !== "finish_widget"
+          (n) => n !== "computer" && n !== "finish_widget",
         ),
     });
 
@@ -163,10 +160,10 @@ describe("mcpjam-stream-handler", () => {
 
     // The Convex /stream request advertised only the narrowed set.
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
     );
     const requestToolNames = (fetchBody.tools as Array<{ name: string }>).map(
-      (t) => t.name
+      (t) => t.name,
     );
     expect(requestToolNames).toEqual(["search"]);
 
@@ -235,14 +232,14 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
     );
     expect(fetchBody.toolChoice).toEqual({
       type: "tool",
       toolName: "search_mcp_tools",
     });
     expect(
-      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name)
+      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
   });
 
@@ -286,7 +283,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
     );
     const scrubbedMessages = JSON.parse(fetchBody.messages);
 
@@ -312,7 +309,7 @@ describe("mcpjam-stream-handler", () => {
         endedAt: expect.any(Number),
         spans: expect.any(Array),
         modelId: expect.any(String),
-      })
+      }),
     );
   });
 
@@ -360,7 +357,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
     );
     const scrubbedMessages = JSON.parse(fetchBody.messages);
 
@@ -467,7 +464,7 @@ describe("mcpjam-stream-handler", () => {
     expect(onConversationComplete).toHaveBeenCalledTimes(1);
     expect(onStreamComplete).toHaveBeenCalledTimes(1);
     expect(onStreamComplete.mock.invocationCallOrder[0]).toBeGreaterThan(
-      onConversationComplete.mock.invocationCallOrder[0]
+      onConversationComplete.mock.invocationCallOrder[0],
     );
   });
 
@@ -523,7 +520,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
     );
     const scrubbedMessages = JSON.parse(fetchBody.messages);
 
@@ -581,7 +578,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -643,7 +640,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
         },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -708,7 +705,7 @@ describe("mcpjam-stream-handler", () => {
           promptIndex: 0,
           stepIndex: 0,
         }),
-      ])
+      ]),
     );
     expect(traceEvents[4]).toMatchObject({
       type: "turn_finish",
@@ -734,7 +731,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -755,10 +752,10 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const receiptIndex = writtenChunks.findIndex(
-      (chunk) => chunk?.type === "data-persist-receipt"
+      (chunk) => chunk?.type === "data-persist-receipt",
     );
     const finishIndex = writtenChunks.findIndex(
-      (chunk) => chunk?.type === "finish"
+      (chunk) => chunk?.type === "finish",
     );
     expect(receiptIndex).toBeGreaterThan(-1);
     expect(receiptIndex).toBeGreaterThan(finishIndex);
@@ -781,7 +778,7 @@ describe("mcpjam-stream-handler", () => {
         { type: "text-delta", id: "text-1", delta: "hi" },
         { type: "text-end", id: "text-1" },
         { type: "finish", finishReason: "stop" },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -802,7 +799,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     expect(
-      writtenChunks.find((chunk) => chunk?.type === "data-persist-receipt")
+      writtenChunks.find((chunk) => chunk?.type === "data-persist-receipt"),
     ).toMatchObject({
       data: {
         outcome: "failed",
@@ -821,7 +818,7 @@ describe("mcpjam-stream-handler", () => {
         { type: "text-delta", id: "text-1", delta: "hi" },
         { type: "text-end", id: "text-1" },
         { type: "finish", finishReason: "stop" },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -841,7 +838,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     expect(
-      writtenChunks.find((chunk) => chunk?.type === "data-persist-receipt")
+      writtenChunks.find((chunk) => chunk?.type === "data-persist-receipt"),
     ).toMatchObject({
       data: {
         outcome: "failed",
@@ -860,7 +857,7 @@ describe("mcpjam-stream-handler", () => {
         { type: "text-delta", id: "text-1", delta: "hi" },
         { type: "text-end", id: "text-1" },
         { type: "finish", finishReason: "stop" },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -878,7 +875,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     expect(
-      writtenChunks.some((chunk) => chunk?.type === "data-persist-receipt")
+      writtenChunks.some((chunk) => chunk?.type === "data-persist-receipt"),
     ).toBe(false);
   });
 
@@ -912,7 +909,7 @@ describe("mcpjam-stream-handler", () => {
             totalTokens: 1998,
           },
         },
-      ])
+      ]),
     );
 
     await handleMCPJamFreeChatModel({
@@ -939,7 +936,7 @@ describe("mcpjam-stream-handler", () => {
     });
 
     const llmSpan = snapshot.snapshot.spans.find(
-      (s: any) => s.category === "llm"
+      (s: any) => s.category === "llm",
     );
     expect(llmSpan).toBeDefined();
     expect(llmSpan.inputTokens).toBe(10);
@@ -1006,8 +1003,8 @@ describe("mcpjam-stream-handler", () => {
           (message: any) =>
             message?.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((part: any) => part.type === "tool-call")
-        ) && !messages.some((message: any) => message?.role === "tool")
+            message.content.some((part: any) => part.type === "tool-call"),
+        ) && !messages.some((message: any) => message?.role === "tool"),
     );
     vi.mocked(executeToolCallsFromMessages).mockImplementation(
       async (messages: any[]) => {
@@ -1026,7 +1023,7 @@ describe("mcpjam-stream-handler", () => {
         };
         messages.splice(2, 0, toolResultMessage);
         return [toolResultMessage] as any;
-      }
+      },
     );
 
     await handleMCPJamFreeChatModel({
@@ -1044,7 +1041,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const finishChunks = writtenChunks.filter(
-      (chunk) => chunk?.type === "finish"
+      (chunk) => chunk?.type === "finish",
     );
     expect(finishChunks).toHaveLength(1);
     expect(finishChunks[0]).toMatchObject({
@@ -1065,7 +1062,7 @@ describe("mcpjam-stream-handler", () => {
       () =>
         new Promise<Response>((resolve) => {
           resolveFetch = resolve;
-        })
+        }),
     );
 
     const collector = createHostedRpcLogCollector({
@@ -1120,13 +1117,13 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ])
+      ]),
     );
 
     await lastExecution;
 
     const rpcChunks = writtenChunks.filter(
-      (chunk) => chunk?.type === "data-rpc-log"
+      (chunk) => chunk?.type === "data-rpc-log",
     );
     expect(rpcChunks).toEqual(
       expect.arrayContaining([
@@ -1142,7 +1139,7 @@ describe("mcpjam-stream-handler", () => {
             direction: "receive",
           }),
         }),
-      ])
+      ]),
     );
   });
 
@@ -1160,7 +1157,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ])
+      ]),
     );
     vi.mocked(hasUnresolvedToolCalls).mockImplementation(
       (messages) =>
@@ -1168,8 +1165,8 @@ describe("mcpjam-stream-handler", () => {
           (message: any) =>
             message?.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((part: any) => part.type === "tool-call")
-        ) && !messages.some((message: any) => message?.role === "tool")
+            message.content.some((part: any) => part.type === "tool-call"),
+        ) && !messages.some((message: any) => message?.role === "tool"),
     );
     vi.mocked(executeToolCallsFromMessages).mockImplementation(
       async (messages: any[]) => {
@@ -1191,7 +1188,7 @@ describe("mcpjam-stream-handler", () => {
         };
         messages.splice(2, 0, toolResultMessage);
         return [toolResultMessage] as any;
-      }
+      },
     );
 
     await handleMCPJamFreeChatModel({
@@ -1216,7 +1213,7 @@ describe("mcpjam-stream-handler", () => {
       .filter((chunk) => chunk?.type === "data-trace-event")
       .map((chunk) => chunk.data);
     const requestPayloadEvents = traceEvents.filter(
-      (event) => event.type === "request_payload"
+      (event) => event.type === "request_payload",
     );
 
     expect(traceEvents.map((event) => event.type)).toEqual(
@@ -1227,7 +1224,7 @@ describe("mcpjam-stream-handler", () => {
         "tool_result",
         "trace_snapshot",
         "turn_finish",
-      ])
+      ]),
     );
     expect(traceEvents).toEqual(
       expect.arrayContaining([
@@ -1252,7 +1249,7 @@ describe("mcpjam-stream-handler", () => {
             }),
           }),
         }),
-      ])
+      ]),
     );
     expect(requestPayloadEvents).toHaveLength(2);
     expect(requestPayloadEvents.map((event) => event.stepIndex)).toEqual([
@@ -1329,8 +1326,8 @@ describe("mcpjam-stream-handler", () => {
           (message: any) =>
             message?.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((part: any) => part.type === "tool-call")
-        ) && !messages.some((message: any) => message?.role === "tool")
+            message.content.some((part: any) => part.type === "tool-call"),
+        ) && !messages.some((message: any) => message?.role === "tool"),
     );
     const rawWidgetResult = {
       content: [{ type: "text", text: "ok" }],
@@ -1360,7 +1357,7 @@ describe("mcpjam-stream-handler", () => {
         };
         messages.splice(2, 0, toolResultMessage);
         return [toolResultMessage] as any;
-      }
+      },
     );
 
     // Simulates the eval runner's harness state: the render hook "mounts"
@@ -1447,8 +1444,8 @@ describe("mcpjam-stream-handler", () => {
           (message: any) =>
             message?.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((part: any) => part.type === "tool-call")
-        ) && !messages.some((message: any) => message?.role === "tool")
+            message.content.some((part: any) => part.type === "tool-call"),
+        ) && !messages.some((message: any) => message?.role === "tool"),
     );
     const structuredContent = {
       project: { id: "p1", name: "Default" },
@@ -1482,7 +1479,7 @@ describe("mcpjam-stream-handler", () => {
         };
         messages.splice(2, 0, toolResultMessage);
         return [toolResultMessage] as any;
-      }
+      },
     );
 
     await handleMCPJamFreeChatModel({
@@ -1500,11 +1497,11 @@ describe("mcpjam-stream-handler", () => {
     const toolOutputChunk = writtenChunks.find(
       (chunk) =>
         chunk?.type === "tool-output-available" &&
-        chunk?.toolCallId === "call-w1"
+        chunk?.toolCallId === "call-w1",
     );
     expect(toolOutputChunk).toBeDefined();
     expect((toolOutputChunk!.output as any).structuredContent).toEqual(
-      structuredContent
+      structuredContent,
     );
   });
 
@@ -1541,8 +1538,8 @@ describe("mcpjam-stream-handler", () => {
           (message: any) =>
             message?.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((part: any) => part.type === "tool-call")
-        ) && !messages.some((message: any) => message?.role === "tool")
+            message.content.some((part: any) => part.type === "tool-call"),
+        ) && !messages.some((message: any) => message?.role === "tool"),
     );
     const rawResult = {
       content: [
@@ -1582,7 +1579,7 @@ describe("mcpjam-stream-handler", () => {
         };
         messages.splice(2, 0, toolResultMessage);
         return [toolResultMessage] as any;
-      }
+      },
     );
 
     await handleMCPJamFreeChatModel({
@@ -1604,7 +1601,7 @@ describe("mcpjam-stream-handler", () => {
     const toolOutputChunk = writtenChunks.find(
       (chunk) =>
         chunk?.type === "tool-output-available" &&
-        chunk?.toolCallId === "call-image-1"
+        chunk?.toolCallId === "call-image-1",
     );
     expect(toolOutputChunk).toBeDefined();
     expect((toolOutputChunk!.output as any).content).toEqual(rawResult.content);
@@ -1637,10 +1634,12 @@ describe("mcpjam-stream-handler", () => {
     } as any;
 
     it("treats a real tool named like a meta-tool as approval-required when progressive mode is off", async () => {
-      // Regression guard: `isMetaToolName` was name-only, so a real MCP
-      // server exposing a tool literally named `search_mcp_tools` would
-      // bypass approval whenever progressive mode wasn't active. With
-      // `progressivePlan` undefined the exemption MUST NOT apply.
+      // Regression guard: the meta-tool exemption was name-only, so a real MCP
+      // server exposing a tool literally named `search_mcp_tools` would bypass
+      // approval whenever progressive mode wasn't active. Approval now comes
+      // from the tool's own declaration — this one is a REAL tool built for a
+      // switch-on turn, so it asks — and the name-plus-plan check survives only
+      // as the pre-pause DRAIN filter, which must still reject it.
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
 
       await handleMCPJamFreeChatModel({
@@ -1660,7 +1659,9 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { search_mcp_tools: { _serverId: "evil" } } as any,
+        tools: {
+          search_mcp_tools: { _serverId: "evil", needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
@@ -1715,8 +1716,11 @@ describe("mcpjam-stream-handler", () => {
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
         tools: {
-          search_mcp_tools: {},
-          list_servers: { _serverId: "ops" },
+          // What `createProgressiveMetaTools` and `mcpToolOptionsFor` produce
+          // for a switch-on progressive turn: the meta-tool declares `never`,
+          // the real tool follows the switch.
+          search_mcp_tools: { needsApproval: false },
+          list_servers: { _serverId: "ops", needsApproval: true },
         } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
@@ -1757,40 +1761,29 @@ describe("mcpjam-stream-handler", () => {
             input: { target: "servers" },
           },
           { type: "finish", finishReason: "stop" },
-        ])
+        ]),
       );
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "observe then navigate" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        // Both are no-execute client-fulfilled entries.
-        tools: { ui_snapshot_app: {}, ui_navigate: {} } as any,
+        // Both are no-execute client-fulfilled entries carrying the
+        // declaration `buildUiTools` computed for a switch-on turn.
+        tools: {
+          ui_snapshot_app: { needsApproval: false },
+          ui_navigate: { needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_snapshot_app",
-              readOnly: true,
-              annotations: { readOnlyHint: true, destructiveHint: false },
-            },
-            {
-              name: "ui_navigate",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: false },
-            },
-          ],
-          true
-        ),
       });
 
       await lastExecution;
 
       const approvalRequests = writtenChunks.filter(
-        (chunk: any) => chunk.type === "tool-approval-request"
+        (chunk: any) => chunk.type === "tool-approval-request",
       );
       // Only the MUTATING ui tool pauses for approval; the read-only one
       // flows straight through to client fulfillment with no pill.
@@ -1819,47 +1812,38 @@ describe("mcpjam-stream-handler", () => {
             input: { target: "servers" },
           },
           { type: "finish", finishReason: "stop" },
-        ])
+        ]),
       );
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "run it" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_execute_tool: {}, ui_navigate: {} } as any,
+        // The `always` floor is what a destructive entry carries; `ui_navigate`
+        // is `setting`, and the switch is off.
+        tools: {
+          ui_execute_tool: { needsApproval: true },
+          ui_navigate: { needsApproval: false },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-            {
-              name: "ui_navigate",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: false },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
 
       const approvalRequests = writtenChunks.filter(
-        (chunk: any) => chunk.type === "tool-approval-request"
+        (chunk: any) => chunk.type === "tool-approval-request",
       );
       expect(approvalRequests).toHaveLength(1);
       expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-ui-exec" });
     });
 
     it("does not emit approval requests for real MCP tools when the flag is OFF", async () => {
-      // The UI classification must not leak into real-tool policy: unknown
-      // names still follow `requireToolApproval`.
+      // A real MCP tool carries the declaration `mcpToolOptionsFor` produced
+      // for this turn — with the switch off, no approval — and a destructive
+      // `ui_*` tool advertised alongside it does not change that answer.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1869,36 +1853,29 @@ describe("mcpjam-stream-handler", () => {
             input: {},
           },
           { type: "finish", finishReason: "stop" },
-        ])
+        ]),
       );
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "go" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { some_mcp_tool: {} } as any,
+        tools: {
+          some_mcp_tool: { needsApproval: false },
+          ui_execute_tool: { needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
 
       expect(
         writtenChunks.filter(
-          (chunk: any) => chunk.type === "tool-approval-request"
-        )
+          (chunk: any) => chunk.type === "tool-approval-request",
+        ),
       ).toHaveLength(0);
     });
 
@@ -1923,21 +1900,11 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_snapshot_app: {} } as any,
+        tools: { ui_snapshot_app: { needsApproval: false } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_snapshot_app",
-              readOnly: true,
-              annotations: { readOnlyHint: true, destructiveHint: false },
-            },
-          ],
-          true
-        ),
       });
 
       await lastExecution;
@@ -1953,10 +1920,10 @@ describe("mcpjam-stream-handler", () => {
       }
     });
 
-    it("emits an approval request for a page_* tool with the flag OFF (via classifyPageToolApprovals)", async () => {
-      // Page tools always gate. With their classification threaded in, the
-      // hosted gate emits a pill even though requireToolApproval is off (the
-      // default on the WebMCP Inspector surface).
+    it("emits an approval request for a page_* tool with the flag OFF", async () => {
+      // Page tools always gate — the `always` floor `buildPageTools` bakes in
+      // — so the hosted gate emits a pill even though requireToolApproval is
+      // off (the default on the WebMCP Inspector surface).
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1966,35 +1933,36 @@ describe("mcpjam-stream-handler", () => {
             input: { text: "hi" },
           },
           { type: "finish", finishReason: "stop" },
-        ])
+        ]),
       );
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "use the page tool" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { page_ab12cd34: {} } as any,
+        tools: { page_ab12cd34: { needsApproval: true } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyPageToolApprovals(["page_ab12cd34"]),
       });
 
       await lastExecution;
 
       const approvalRequests = writtenChunks.filter(
-        (chunk: any) => chunk.type === "tool-approval-request"
+        (chunk: any) => chunk.type === "tool-approval-request",
       );
       expect(approvalRequests).toHaveLength(1);
       expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-page-1" });
     });
 
-    it("STRANDS a page_* call when no classification is threaded (the bug this fix closes)", async () => {
-      // Regression guard for the pre-fix chat-v2 behavior: with no
-      // uiToolApprovals and the flag off, the hosted gate emitted no pill while
-      // the client had already deferred the call awaiting one — a turn that
-      // waits forever. This asserts the broken shape so a revert fails here.
+    it("gates a page_* call from the BUILT tool alone — no threading, nothing to forget", async () => {
+      // The turn that used to strand. A route that handed the engine its page
+      // tools but forgot to thread their name classification got no pill,
+      // while the client had already deferred the call awaiting one — a turn
+      // that waits forever. There is nothing to thread now: the tool
+      // `buildPageTools` produces carries the answer, and this drives the
+      // engine with exactly that tool and nothing else.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -2004,27 +1972,38 @@ describe("mcpjam-stream-handler", () => {
             input: { text: "hi" },
           },
           { type: "finish", finishReason: "stop" },
-        ])
+        ]),
       );
 
       await handleMCPJamFreeChatModel({
         messages: [{ role: "user", content: "use the page tool" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { page_ab12cd34: {} } as any,
+        tools: buildPageTools([
+          {
+            alias: "page_ab12cd34",
+            sessionId: "sess_1",
+            toolKey: "https://shop.test::checkout",
+            rawName: "checkout",
+            origin: "https://shop.test",
+            description: "Check out",
+          },
+        ] as never) as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        // uiToolApprovals deliberately omitted — the pre-fix chat-v2 shape.
       });
 
       await lastExecution;
 
       const approvalRequests = writtenChunks.filter(
-        (chunk: any) => chunk.type === "tool-approval-request"
+        (chunk: any) => chunk.type === "tool-approval-request",
       );
-      expect(approvalRequests).toHaveLength(0);
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({
+        toolCallId: "call-page-strand",
+      });
     });
 
     it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {
@@ -2038,7 +2017,7 @@ describe("mcpjam-stream-handler", () => {
           { type: "text-delta", id: "t1", delta: "Done." },
           { type: "text-end", id: "t1" },
           { type: "finish", finishReason: "stop" },
-        ])
+        ]),
       );
       const onConversationComplete = vi.fn();
 
@@ -2088,8 +2067,8 @@ describe("mcpjam-stream-handler", () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
       expect(
         writtenChunks.filter(
-          (chunk: any) => chunk.type === "tool-approval-request"
-        )
+          (chunk: any) => chunk.type === "tool-approval-request",
+        ),
       ).toHaveLength(0);
       // Clean completion — the turn persisted.
       expect(onConversationComplete).toHaveBeenCalledTimes(1);
@@ -2098,9 +2077,11 @@ describe("mcpjam-stream-handler", () => {
     it("processes a DENIAL of a destructive ui_* tool when the approval flag is OFF", async () => {
       // The stranding case. Approving a ui_* call is resolved by the browser
       // shipping a tool-result, but DENYING it sends an approval response
-      // back here. If pending-approval handling stayed gated on
-      // `requireToolApproval`, that denial would never be processed with the
-      // flag off — the tool call stays unresolved and the turn hangs forever.
+      // back here. Pending-approval handling used to run only when the switch
+      // was on (or a name set said so), so with the flag off that denial was
+      // never processed — the tool call stayed unresolved and the turn hung
+      // forever. It is unconditional now: a history carrying an approval
+      // request is the only fact that decides.
       vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
 
       await handleMCPJamFreeChatModel({
@@ -2134,21 +2115,11 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_execute_tool: {} } as any,
+        tools: { ui_execute_tool: { needsApproval: true } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
@@ -2157,8 +2128,8 @@ describe("mcpjam-stream-handler", () => {
       // resolved and the turn can finish instead of hanging.
       expect(
         writtenChunks.filter(
-          (chunk: any) => chunk.type === "tool-output-denied"
-        )
+          (chunk: any) => chunk.type === "tool-output-denied",
+        ),
       ).toMatchObject([{ toolCallId: "call-ui-exec" }]);
     });
 
@@ -2335,7 +2306,7 @@ describe("mcpjam-stream-handler", () => {
       await lastExecution;
 
       expect((global.fetch as any).mock.calls[0]?.[1]?.signal).toBe(
-        controller.signal
+        controller.signal,
       );
     });
 
@@ -2358,7 +2329,7 @@ describe("mcpjam-stream-handler", () => {
         async () => {
           controller.abort();
           return [];
-        }
+        },
       );
 
       await handleMCPJamFreeChatModel({
@@ -2378,14 +2349,14 @@ describe("mcpjam-stream-handler", () => {
 
       const visibleChunks = writtenChunks.filter(
         (c: any) =>
-          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat"
+          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat",
       );
       // Silent-cancel invariant: no finish, no error, no turn_finish.
       expect(
-        visibleChunks.find((c: any) => c?.type === "finish")
+        visibleChunks.find((c: any) => c?.type === "finish"),
       ).toBeUndefined();
       expect(
-        visibleChunks.find((c: any) => c?.type === "error")
+        visibleChunks.find((c: any) => c?.type === "error"),
       ).toBeUndefined();
       const traceTypes = visibleChunks
         .filter((c: any) => c?.type === "data-trace-event")
@@ -2424,13 +2395,13 @@ describe("mcpjam-stream-handler", () => {
       // no turn_finish, no conversation persistence.
       const visibleChunks = writtenChunks.filter(
         (c: any) =>
-          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat"
+          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat",
       );
       expect(
-        visibleChunks.find((c: any) => c?.type === "finish")
+        visibleChunks.find((c: any) => c?.type === "finish"),
       ).toBeUndefined();
       expect(
-        visibleChunks.find((c: any) => c?.type === "error")
+        visibleChunks.find((c: any) => c?.type === "error"),
       ).toBeUndefined();
       const traceTypes = visibleChunks
         .filter((c: any) => c?.type === "data-trace-event")
@@ -2457,7 +2428,7 @@ describe("mcpjam-stream-handler", () => {
 
       const heartbeats = writtenChunks.filter(
         (c: any) =>
-          c?.type === "data-trace-event" && c?.data?.type === "heartbeat"
+          c?.type === "data-trace-event" && c?.data?.type === "heartbeat",
       );
       expect(heartbeats).toHaveLength(0);
     });
@@ -2505,14 +2476,14 @@ describe("mcpjam-stream-handler", () => {
       await lastExecution;
 
       const fetchBody = JSON.parse(
-        ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+        ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
       );
       const sentMessages = JSON.parse(fetchBody.messages);
       const assistantWithReasoning = sentMessages.find(
-        (m: any) => m.role === "assistant"
+        (m: any) => m.role === "assistant",
       );
       const reasoningPart = assistantWithReasoning?.content?.find(
-        (p: any) => p?.type === "reasoning"
+        (p: any) => p?.type === "reasoning",
       );
       // Current-turn reasoning survives (so thinking models keep their
       // scratchpad), but the UI-only `state` field is stripped.
@@ -2571,7 +2542,7 @@ describe("mcpjam-stream-handler", () => {
               totalTokens: 75,
             },
           },
-        ])
+        ]),
       );
 
       await handleMCPJamFreeChatModel({
@@ -2690,8 +2661,8 @@ describe("mcpjam-stream-handler", () => {
             (message: any) =>
               message?.role === "assistant" &&
               Array.isArray(message.content) &&
-              message.content.some((part: any) => part.type === "tool-call")
-          ) && !messages.some((message: any) => message?.role === "tool")
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
       );
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
@@ -2710,7 +2681,7 @@ describe("mcpjam-stream-handler", () => {
           };
           messages.splice(2, 0, toolResultMessage);
           return [toolResultMessage] as any;
-        }
+        },
       );
 
       const onToolCall = vi.fn();
@@ -2784,8 +2755,8 @@ describe("mcpjam-stream-handler", () => {
             (message: any) =>
               message?.role === "assistant" &&
               Array.isArray(message.content) &&
-              message.content.some((part: any) => part.type === "tool-call")
-          ) && !messages.some((message: any) => message?.role === "tool")
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
       );
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
@@ -2805,7 +2776,7 @@ describe("mcpjam-stream-handler", () => {
           };
           messages.splice(2, 0, toolResultMessage);
           return [toolResultMessage] as any;
-        }
+        },
       );
 
       const onToolResult = vi.fn();
@@ -2834,7 +2805,7 @@ describe("mcpjam-stream-handler", () => {
           stepIndex: 0,
           promptIndex: 0,
           serverId: "docs-server",
-        })
+        }),
       );
     });
 
@@ -2874,8 +2845,8 @@ describe("mcpjam-stream-handler", () => {
             (message: any) =>
               message?.role === "assistant" &&
               Array.isArray(message.content) &&
-              message.content.some((part: any) => part.type === "tool-call")
-          ) && !messages.some((message: any) => message?.role === "tool")
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
       );
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
@@ -2894,7 +2865,7 @@ describe("mcpjam-stream-handler", () => {
           };
           messages.splice(2, 0, toolResultMessage);
           return [toolResultMessage] as any;
-        }
+        },
       );
 
       const onStepFinish = vi.fn();
@@ -2960,7 +2931,7 @@ describe("mcpjam-stream-handler", () => {
         new Response("upstream broke", {
           status: 500,
           statusText: "Internal Server Error",
-        })
+        }),
       );
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
 
@@ -2987,7 +2958,7 @@ describe("mcpjam-stream-handler", () => {
           stepIndex: 0,
           promptIndex: 0,
           settledWithError: true,
-        })
+        }),
       );
     });
 
@@ -3071,7 +3042,7 @@ describe("mcpjam-stream-handler", () => {
         new Response(structuredBody, {
           status: 429,
           statusText: "Too Many Requests",
-        })
+        }),
       );
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
 
@@ -3116,7 +3087,7 @@ describe("mcpjam-stream-handler", () => {
         new Response("upstream broke", {
           status: 500,
           statusText: "Internal Server Error",
-        })
+        }),
       );
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
 
@@ -3168,8 +3139,8 @@ describe("mcpjam-stream-handler", () => {
           {
             status: 200,
             headers: { "content-type": "text/event-stream" },
-          }
-        )
+          },
+        ),
       );
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
 
@@ -3229,7 +3200,7 @@ describe("mcpjam-stream-handler", () => {
           status: 200,
           statusText: "OK",
           headers: { "content-type": "application/json" },
-        })
+        }),
       );
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
 
@@ -3336,7 +3307,7 @@ describe("mcpjam-stream-handler", () => {
           };
           messages.push(toolResultMessage);
           return [toolResultMessage] as any;
-        }
+        },
       );
 
       const onToolCall = vi.fn();
@@ -3362,7 +3333,7 @@ describe("mcpjam-stream-handler", () => {
       // `onToolCall` MUST have fired for the approved tool before any
       // `onToolResult` — eval's PR 5b wiring relies on the ordering.
       const approvedCallIdx = onToolCall.mock.calls.findIndex(
-        (c) => c[0]?.toolCallId === "call-approved-1"
+        (c) => c[0]?.toolCallId === "call-approved-1",
       );
       expect(approvedCallIdx).toBeGreaterThanOrEqual(0);
       expect(onToolCall.mock.calls[approvedCallIdx]?.[0]).toMatchObject({
@@ -3498,10 +3469,10 @@ describe("mcpjam-stream-handler", () => {
           isError: true,
           stepIndex: expect.any(Number),
           promptIndex: 0,
-        })
+        }),
       );
       const deniedCall = onToolResult.mock.calls.find(
-        (c) => c[0]?.toolCallId === "call-denied-1"
+        (c) => c[0]?.toolCallId === "call-denied-1",
       );
       expect(deniedCall?.[0]?.output).toEqual({
         type: "error-text",
@@ -3523,7 +3494,7 @@ describe("mcpjam-stream-handler", () => {
             finishReason: "stop",
             totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           },
-        ])
+        ]),
       );
 
       // No callbacks supplied — same as every existing chat call site.
@@ -3536,7 +3507,7 @@ describe("mcpjam-stream-handler", () => {
           mcpClientManager: {
             getAllToolsMetadata: vi.fn().mockReturnValue({}),
           } as any,
-        })
+        }),
       ).resolves.toBeDefined();
 
       await lastExecution;
@@ -3563,7 +3534,7 @@ describe("mcpjam-stream-handler", () => {
               totalTokens: 2,
             },
           },
-        ])
+        ]),
       );
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
 
@@ -3585,7 +3556,7 @@ describe("mcpjam-stream-handler", () => {
           } as any,
           onToolCall,
           onStepFinish,
-        })
+        }),
       ).resolves.toBeDefined();
 
       await lastExecution;

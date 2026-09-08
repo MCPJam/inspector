@@ -34,7 +34,7 @@ describe("resolveHostTools — builtInToolIds", () => {
   it("resolves web_search to a runnable tool", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
-      ctx
+      ctx,
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
     expect(typeof tools![WEB_SEARCH_TOOL_NAME].execute).toBe("function");
@@ -43,7 +43,7 @@ describe("resolveHostTools — builtInToolIds", () => {
   it("skips unknown ids instead of throwing", () => {
     const tools = resolveHostTools(
       { builtInToolIds: ["not_a_tool", WEB_SEARCH_TOOL_NAME] },
-      ctx
+      ctx,
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -57,14 +57,14 @@ describe("resolveHostTools — builtInToolIds", () => {
     expect(
       resolveHostTools(
         { builtInToolIds: [WEB_SEARCH_TOOL_NAME, BASH_TOOL_NAME], computer },
-        null
-      )
+        null,
+      ),
     ).toBeUndefined();
   });
 
   it("returns undefined when every requested id is unknown", () => {
     expect(
-      resolveHostTools({ builtInToolIds: ["not_a_tool"] }, ctx)
+      resolveHostTools({ builtInToolIds: ["not_a_tool"] }, ctx),
     ).toBeUndefined();
   });
 
@@ -73,7 +73,7 @@ describe("resolveHostTools — builtInToolIds", () => {
     // instead of becoming "Bearer bearer x".
     const tools = resolveHostTools(
       { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
-      { authHeader: "bearer token-123", projectId: "project-1" }
+      { authHeader: "bearer token-123", projectId: "project-1" },
     );
     expect(tools).toBeDefined();
   });
@@ -83,7 +83,7 @@ describe("resolveHostTools — builtInToolIds", () => {
     // resolver normalizes, so the same call shape works for both.
     const tools = resolveHostTools(
       { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
-      { authHeader: "raw-token", projectId: "project-1" }
+      { authHeader: "raw-token", projectId: "project-1" },
     );
     expect(tools).toBeDefined();
     expect(Object.keys(tools!)).toEqual([WEB_SEARCH_TOOL_NAME]);
@@ -94,7 +94,7 @@ describe("resolveHostTools — computer-backed bash", () => {
   it("advertises bash when the id is granted AND a computer is attached", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME], computer },
-      { ...ctx, requireToolApproval: true }
+      { ...ctx, requireToolApproval: true },
     );
     expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
     const bash = tools![BASH_TOOL_NAME] as { needsApproval?: boolean };
@@ -106,7 +106,7 @@ describe("resolveHostTools — computer-backed bash", () => {
   it("skips bash when the host grants the id but attaches no computer", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME] },
-      ctx
+      ctx,
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -132,7 +132,7 @@ describe("resolveHostTools — computer-backed bash", () => {
         builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME],
         computer: { kind: "ephemeral" },
       },
-      ctx
+      ctx,
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -145,7 +145,7 @@ describe("resolveHostTools — computer-backed bash", () => {
         builtInToolIds: [BASH_TOOL_NAME],
         computer: { kind: "ephemeral" },
       },
-      { ...ctx, sandboxBinding: { sandboxId: "sbx_eval_1" } }
+      { ...ctx, sandboxBinding: { sandboxId: "sbx_eval_1" } },
     );
     expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
     expect(typeof tools![BASH_TOOL_NAME].execute).toBe("function");
@@ -154,7 +154,7 @@ describe("resolveHostTools — computer-backed bash", () => {
   it("skips bash for an anonymous guest on the personal-project path (backend rejects the reserve)", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
-      { ...ctx, isGuest: true }
+      { ...ctx, isGuest: true },
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -172,7 +172,7 @@ describe("resolveHostTools — computer-backed bash", () => {
           projectId: "project-1",
           workspaceId: "ws-1",
         },
-      }
+      },
     );
     expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
   });
@@ -184,7 +184,7 @@ describe("resolveHostTools — computer-backed bash", () => {
         ...ctx,
         isGuest: true,
         executionScope: { kind: "project", projectId: "project-1" },
-      }
+      },
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -192,7 +192,7 @@ describe("resolveHostTools — computer-backed bash", () => {
   it("does NOT advertise bash off the computer alone — the id must be granted", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [WEB_SEARCH_TOOL_NAME], computer },
-      ctx
+      ctx,
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -211,7 +211,7 @@ describe("resolveHostTools — local engine actor coercion (structural)", () => 
         requireToolApproval: false,
         computerEngine: "local",
         ...extraCtx,
-      } as never
+      } as never,
     );
     return tools?.[BASH_TOOL_NAME] as
       | { needsApproval?: boolean; description?: string }
@@ -250,7 +250,7 @@ describe("resolveHostTools — local engine actor coercion (structural)", () => 
   it("never reaches the personal path at all in a journey session", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME], computer },
-      { ...ctx, computerEngine: "local", isJourneySession: true } as never
+      { ...ctx, computerEngine: "local", isJourneySession: true } as never,
     );
     expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
   });
@@ -265,7 +265,7 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
         ...ctx,
         isJourneySession: true,
         onToolSuppressed: (info) => suppressed.push(info),
-      }
+      },
     );
     // The rest of the host's built-ins are untouched — only bash drops.
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
@@ -285,7 +285,7 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
         ...ctx,
         isJourneySession: true,
         executionScope: { kind: "project", projectId: "project-1" },
-      }
+      },
     );
     expect(tools).toBeUndefined();
   });
@@ -294,7 +294,7 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
     for (const surface of [{}, { isScenarioSession: true }]) {
       const tools = resolveHostTools(
         { builtInToolIds: [BASH_TOOL_NAME], computer },
-        { ...ctx, ...surface }
+        { ...ctx, ...surface },
       );
       expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
     }
@@ -303,7 +303,7 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
   it("never constructs the bash tool, so no reserve can be attempted", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME], computer },
-      { ...ctx, isJourneySession: true }
+      { ...ctx, isJourneySession: true },
     );
     // No tool object at all ⇒ nothing the model can invoke ⇒ the reserve call
     // inside `buildBashTool`'s execute is unreachable for this session.
@@ -323,7 +323,7 @@ describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
         isJourneySession: true,
         sandboxBinding: binding,
         onToolSuppressed: (info) => suppressed.push(info),
-      }
+      },
     );
     expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
     // Nothing was suppressed, so no notice should have been emitted either.
@@ -336,7 +336,7 @@ describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
     // exists, because the binding IS the resource.
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME] },
-      { ...ctx, isJourneySession: true, sandboxBinding: binding }
+      { ...ctx, isJourneySession: true, sandboxBinding: binding },
     );
     expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
   });
@@ -367,7 +367,7 @@ describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
         builtInToolIds: [BASH_TOOL_NAME],
         computer: { kind: "ephemeral", sandboxId: "sbx_attacker" },
       },
-      ctx
+      ctx,
     );
     expect(tools?.[BASH_TOOL_NAME]).toBeUndefined();
   });
@@ -379,7 +379,7 @@ describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
     // reserve, which is not happening here.
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME] },
-      { ...ctx, isGuest: true, sandboxBinding: binding }
+      { ...ctx, isGuest: true, sandboxBinding: binding },
     );
     expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
   });
@@ -387,7 +387,7 @@ describe("resolveHostTools — the trusted ephemeral sandbox binding", () => {
   it("inherits requireToolApproval like the personal path does", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME] },
-      { ...ctx, sandboxBinding: binding, requireToolApproval: true }
+      { ...ctx, sandboxBinding: binding, requireToolApproval: true },
     );
     expect(tools![BASH_TOOL_NAME].needsApproval).toBe(true);
   });
@@ -397,10 +397,10 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
   it("advertises every workspace id when the platform client is wired", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS] },
-      { ...ctx, mcpjamPlatformClient: stubClient }
+      { ...ctx, mcpjamPlatformClient: stubClient },
     );
     expect(Object.keys(tools ?? {}).sort()).toEqual(
-      [...MCPJAM_TOOL_IDS].sort()
+      [...MCPJAM_TOOL_IDS].sort(),
     );
     expect(typeof tools!["list_project_servers"].execute).toBe("function");
   });
@@ -408,7 +408,7 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
   it("advertises no workspace id without a platform client", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      ctx
+      ctx,
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -416,7 +416,7 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
   it("does not advertise any workspace id to guest actors", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isGuest: true, mcpjamPlatformClient: stubClient }
+      { ...ctx, isGuest: true, mcpjamPlatformClient: stubClient },
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -424,7 +424,7 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
   it("does not advertise any workspace id in scenario sessions", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isScenarioSession: true, mcpjamPlatformClient: stubClient }
+      { ...ctx, isScenarioSession: true, mcpjamPlatformClient: stubClient },
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
@@ -438,7 +438,7 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
           "diagnose_server",
         ],
       },
-      { ...ctx, mcpjamPlatformClient: stubClient, requireToolApproval: true }
+      { ...ctx, mcpjamPlatformClient: stubClient, requireToolApproval: true },
     );
     const approval = (id: string) =>
       (tools![id] as { needsApproval?: boolean }).needsApproval;
@@ -450,10 +450,10 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
   it("live ops do not require approval when the host policy is off", () => {
     const tools = resolveHostTools(
       { builtInToolIds: ["call_server_tool"] },
-      { ...ctx, mcpjamPlatformClient: stubClient }
+      { ...ctx, mcpjamPlatformClient: stubClient },
     );
     expect(
-      (tools!["call_server_tool"] as { needsApproval?: boolean }).needsApproval
+      (tools!["call_server_tool"] as { needsApproval?: boolean }).needsApproval,
     ).toBe(false);
   });
 });
@@ -481,7 +481,7 @@ describe("narrowHostComputer", () => {
     // deliberately travels on `ctx`, not here — widening this union would make
     // the binding wire-forgeable, which is why it was not done.
     expect(
-      narrowHostComputer({ kind: "ephemeral", sandboxId: "sbx_1" })
+      narrowHostComputer({ kind: "ephemeral", sandboxId: "sbx_1" }),
     ).toBeNull();
     expect(narrowHostComputer({ kind: "personal", workdir: "   " })).toEqual({
       kind: "personal",
@@ -527,8 +527,10 @@ describe("resolveHostTools — browser", () => {
     // Honored even with the env flag on. The likeliest reason for a refusal is
     // an unset desktop credit rate, which would meter every hosted browser
     // hour at the cheaper terminal rate.
-    const { resetComputersRuntimeConfigBootstrapForTests, initComputersRuntimeConfigBootstrap } =
-      await import("../computers/runtime-config");
+    const {
+      resetComputersRuntimeConfigBootstrapForTests,
+      initComputersRuntimeConfigBootstrap,
+    } = await import("../computers/runtime-config");
     resetComputersRuntimeConfigBootstrapForTests();
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "tok");
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.test");
@@ -596,19 +598,18 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("hands the caller the approval classification to merge", () => {
+  it("hands back tools that carry their own approval declaration", () => {
+    // Nothing is threaded back any more. The registry's whole job here is to
+    // pass the built tools through unchanged, declarations included — a
+    // caller that forgets a step cannot un-gate a browser tool.
     withFlag("1", () => {
-      let approvals: { requiredNames: ReadonlySet<string> } | undefined;
-      resolveHostTools(
+      const tools = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
-        {
-          ...browserCtx,
-          onBrowserApprovals: (value) => {
-            approvals = value;
-          },
-        },
+        browserCtx,
       );
-      expect(approvals?.requiredNames.has("browser_act")).toBe(true);
+      expect(
+        (tools?.browser_act as { needsApproval?: unknown })?.needsApproval,
+      ).toBe(true);
     });
   });
 
@@ -637,9 +638,9 @@ describe("resolveHostTools — browser", () => {
       // browser is dropped: one uid, one box — a shell can read the browser's
       // cookies and its daemon token out of the process environment.
       expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
-      expect(
-        suppressed.find((s) => s.id === "browser")?.reason,
-      ).toContain("same computer");
+      expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
+        "same computer",
+      );
     });
   });
 
@@ -956,7 +957,10 @@ describe("resolveHostTools — browser engines", () => {
 });
 
 describe("resolveHostTools — browser on a machine that cannot serve it", () => {
-  function withHostedBrowserFlag<T>(value: string | undefined, run: () => T): T {
+  function withHostedBrowserFlag<T>(
+    value: string | undefined,
+    run: () => T,
+  ): T {
     const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
     if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
     else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
@@ -1018,7 +1022,10 @@ describe("resolveHostTools — browser on a machine that cannot serve it", () =>
  * supplies one itself cannot notice that no real caller does.
  */
 describe("resolveHostTools — an unattended run names itself", () => {
-  function withHostedBrowserFlag<T>(value: string | undefined, run: () => T): T {
+  function withHostedBrowserFlag<T>(
+    value: string | undefined,
+    run: () => T,
+  ): T {
     const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
     if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
     else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;

@@ -143,11 +143,6 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -537,7 +532,8 @@ function streamDirectChatWithLiveTrace(options: {
   // chain — cheaper than widening the engine's signature for every headless
   // caller that will never emit a receipt.
   let persistReceipt:
-    { outcome: PersistChatOutcome; turnId: string } | undefined;
+    | { outcome: PersistChatOutcome; turnId: string }
+    | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -753,7 +749,7 @@ chatV2.post("/", async (c) => {
       ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isScenarioSession ? (bodySurface ?? "preview") : undefined;
+      isScenarioSession ? bodySurface ?? "preview" : undefined;
 
     // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
@@ -1062,7 +1058,7 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-      isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
+        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider),
     );
     // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
     // (`cursor/auto`) that is deliberately not MCPJam-hosted. Same exemption
@@ -1203,7 +1199,10 @@ chatV2.post("/", async (c) => {
         // AuthKit at all is a 503 the operator fixes. Collapsing both into
         // "your target is malformed" is what sends a signed-out user to
         // re-pick a folder.
-        return c.json({ error: actor.message, reason: actor.reason }, actor.status);
+        return c.json(
+          { error: actor.message, reason: actor.reason },
+          actor.status,
+        );
       }
       localHarnessActingUserId = actor.actor.userId;
     }
@@ -1275,7 +1274,9 @@ chatV2.post("/", async (c) => {
     // access (per-swarm isolation/caps). Absent ⇒ legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // Local⇄Cloud engine preference — a LOCAL-ROUTE-ONLY channel (this route
@@ -1314,15 +1315,11 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-          ? { preference: "cloud" as const }
-          : {}),
+        ? { preference: "cloud" as const }
+        : {}),
       localConsentValid,
     });
 
-
-    // Filled by the resolver when browser tools are advertised; merged into
-    // the engines' single `uiToolApprovals` slot below.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1353,13 +1350,10 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             localComputerRequested: localPrefEligible,
-            // This route THREADS the classification below, so it may advertise
-            // interactive browser tools; surfaces that thread nothing get none
-            // (see built-in-tools/browser.ts).
+            // A person is watching this route, so browser tools may be
+            // advertised and keep a signed-in profile; surfaces that attest
+            // nothing get none (see built-in-tools/browser.ts).
             browserApprovalDelivery: { kind: "attested" },
-            onBrowserApprovals: (approvals) => {
-              browserToolApprovals = approvals;
-            },
           }
         : null,
     );
@@ -1511,7 +1505,7 @@ chatV2.post("/", async (c) => {
           ? {
               toolCallCancellation:
                 toolCallCancellationFromMcpProfile(
-                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
                 ) ?? {},
             }
           : {}),
@@ -1579,25 +1573,6 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
     } = prepared;
-    // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
-    // NAME and never read a tool's own `needsApproval`, so page tools reach them
-    // approval-less unless we hand over their classification here. Page tools
-    // always gate; an empty set (no page tools, incl. every hosted-mode turn
-    // where WEBMCP_INSPECTOR_ENABLED is off) leaves all other tools on the
-    // existing `requireToolApproval` path unchanged. Without this the turn
-    // strands — the client defers the call awaiting an approval pill the server
-    // never sends. `uiTools` are ignored on this route (see above), so the page
-    // classification is the whole of this turn's `uiToolApprovals`.
-    const pageToolApprovals = classifyPageToolApprovals(
-      validatedPageTools.map((entry) => entry.alias),
-    );
-    // Browser tools are name-classified for the same reason page tools are,
-    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
-    // rather than one overwriting the other.
-    const uiToolApprovals = mergeUiToolApprovalClassifications(
-      pageToolApprovals,
-      browserToolApprovals,
-    );
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
@@ -1658,11 +1633,11 @@ chatV2.post("/", async (c) => {
           modelVisibleMcpToolResults,
         })
       : scopeStepUpCancelRequest
-        ? buildLocalScopeStepUpCancellation({
-            request: scopeStepUpCancelRequest,
-            bindingKey: scopeStepUpBindingKey,
-          })
-        : undefined;
+      ? buildLocalScopeStepUpCancellation({
+          request: scopeStepUpCancelRequest,
+          bindingKey: scopeStepUpBindingKey,
+        })
+      : undefined;
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );
@@ -1746,7 +1721,6 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
@@ -2024,7 +1998,6 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
@@ -2086,7 +2059,8 @@ chatV2.post("/", async (c) => {
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
     const inboundAbortSignalDirect = c.req.raw.signal as
-      AbortSignal | undefined;
+      | AbortSignal
+      | undefined;
     warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(

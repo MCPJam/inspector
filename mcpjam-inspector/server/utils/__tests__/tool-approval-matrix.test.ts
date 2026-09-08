@@ -1,52 +1,32 @@
 /**
  * THE approval matrix: family × engine × switch → gate | free.
  *
- * Approval is declared through TWO channels today, and each engine reads only
- * one of them:
+ * Approval is declared ONCE, on the tool, and every engine reads that one
+ * declaration. This file is where the answer lives: every row states the
+ * family, what its builder produces, and what each engine then does with the
+ * switch on and off.
  *
- *   - `tool.needsApproval` on the AI SDK tool object — written by every
- *     builder, read by the BYOK `streamText` path.
- *   - `uiToolApprovals`, a name set threaded by the route — read by the MCPJam
- *     emulated loop (`toolCallNeedsApproval`) and, through it, the hosted-org
- *     engine.
- *
- * So a family that fills only one channel is silently wrong on the other
- * engine, and no single file says what the answer is supposed to be. This one
- * does: every row states the family, what its builder actually produces, what
- * its route actually threads, and what each engine then does with the switch
- * on and off.
+ * It exists because there used to be TWO channels — `tool.needsApproval`,
+ * which only the BYOK `streamText` path read, and a per-turn set of tool NAMES
+ * the route threaded, which only the MCPJam loop read. A family that filled one
+ * and not the other was silently wrong on the other engine, in six places, and
+ * nothing said so. The columns below are no longer allowed to disagree, and
+ * that is the property this table is for.
  *
  * HOW EACH ENGINE IS DRIVEN — deliberately not a shared abstraction over the
- * two, because the point is that they are different readers:
+ * two, because they remain different readers of the same fact:
  *
  *   - `mcpjam` runs a whole turn through `handleMCPJamFreeChatModel` with a
  *     fake model emitting one `tool-call`, and asks whether a
  *     `tool-approval-request` chunk followed. That is the user-visible pill.
  *   - `byok` evaluates `tools[name].needsApproval` — the value `streamText`
  *     reads — invoking it with a representative input when it is a function.
- *
- * SIX ROWS ARE MARKED `DIVERGENCE`. They are written as the behaviour that
- * ships today, not as the behaviour the code's own comments and docs promise,
- * so this file is green on `main`. Every one is the same shape — a family
- * whose declaration the MCPJam engine cannot see, because it is not in any
- * name set — and PR 2 flips exactly these six.
- *
- * Three of them are the findings the plan named (local bash, workspace reads,
- * server-origin skill refs). The other three fell out of writing the table:
- * pinned skill tools, `app_*` and exa `web_search` all declare a `never` floor
- * that the MCPJam engine overrides with the switch. Same mechanism, same fix,
- * and worth stating rather than discovering during PR 2's review.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolSet } from "ai";
-import {
-  classifyBrowserToolApprovals,
-  classifyPageToolApprovals,
-  classifyUiToolApprovals,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import { hasUnresolvedToolCalls } from "@/shared/http-tool-calls";
 import {
+  createApprovalDecisionCache,
   handleMCPJamFreeChatModel,
   toolCallNeedsApproval,
 } from "../mcpjam-stream-handler";
@@ -108,13 +88,11 @@ vi.mock("ai", async () => {
       });
       return { getReader: vi.fn() };
     }),
-    createUIMessageStreamResponse: vi
-      .fn()
-      .mockReturnValue(
-        new Response("{}", {
-          headers: { "Content-Type": "text/event-stream" },
-        }),
-      ),
+    createUIMessageStreamResponse: vi.fn().mockReturnValue(
+      new Response("{}", {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    ),
   };
 });
 
@@ -163,7 +141,6 @@ async function mcpjamVerdict(args: {
   input: Record<string, unknown>;
   tools: ToolSet;
   requireToolApproval: boolean;
-  uiToolApprovals?: UiToolApprovalClassification | undefined;
   progressivePlan?: unknown;
 }): Promise<Verdict> {
   writtenChunks = [];
@@ -187,7 +164,6 @@ async function mcpjamVerdict(args: {
       getAllToolsMetadata: vi.fn().mockReturnValue({}),
     } as any,
     requireToolApproval: args.requireToolApproval,
-    ...(args.uiToolApprovals ? { uiToolApprovals: args.uiToolApprovals } : {}),
     ...(args.progressivePlan
       ? { progressivePlan: args.progressivePlan as any }
       : {}),
@@ -311,25 +287,12 @@ interface MatrixRow {
   input?: Record<string, unknown>;
   /** This family's advertised toolset, for the turn's switch state. */
   tools: (requireToolApproval: boolean) => ToolSet;
-  /**
-   * What the production route threads into the MCPJam engine's name-keyed
-   * `uiToolApprovals` slot for this family.
-   *
-   * DELETED IN PR 2 — the whole field, on every row. Until then it is what
-   * makes the `mcpjam` column reflect production rather than a shape no route
-   * actually sends.
-   */
-  uiToolApprovals?: (
-    requireToolApproval: boolean,
-  ) => UiToolApprovalClassification;
   /** Set on the one family that exists only under progressive discovery. */
   progressivePlan?: unknown;
   expected: {
     mcpjam: { on: Verdict; off: Verdict };
     byok: { on: Verdict; off: Verdict };
   };
-  /** Why the two engines disagree, for the rows where they do. */
-  divergence?: string;
 }
 
 const MATRIX: MatrixRow[] = [
@@ -409,14 +372,9 @@ const MATRIX: MatrixRow[] = [
       ),
     }),
     expected: {
-      mcpjam: { on: "gate", off: "free" }, // DIVERGENCE — flipped in PR 2
+      mcpjam: { on: "gate", off: "gate" },
       byok: { on: "gate", off: "gate" },
     },
-    divergence:
-      "bash.ts declares `needsApproval: true` for the local engine, but the " +
-      "MCPJam engine never reads it and `bash` is in no name set — so with " +
-      "the switch off a real shell on the user's real machine runs with no " +
-      "pill. PR 2 flips mcpjam.off to `gate`.",
   },
   {
     // Floor: setting. Opens an ephemeral connection to a user's saved server.
@@ -448,14 +406,9 @@ const MATRIX: MatrixRow[] = [
       })!,
     }),
     expected: {
-      mcpjam: { on: "gate", off: "free" }, // DIVERGENCE — flipped in PR 2
+      mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
     },
-    divergence:
-      "The MCPJam engine classifies an unknown name by the switch alone, so " +
-      "with the switch on every workspace tool gates — reads included, " +
-      "against both `mcpjam.ts`'s own rule and the playground doc. PR 2 " +
-      "flips mcpjam.on to `free`.",
   },
   {
     // Floor: always. Destructive wins over the switch in both directions.
@@ -465,8 +418,6 @@ const MATRIX: MatrixRow[] = [
       buildUiTools([UI_DESTRUCTIVE] as never, {
         requireToolApproval: flag,
       }),
-    uiToolApprovals: (flag) =>
-      classifyUiToolApprovals([UI_DESTRUCTIVE] as never, flag),
     expected: {
       mcpjam: { on: "gate", off: "gate" },
       byok: { on: "gate", off: "gate" },
@@ -480,8 +431,6 @@ const MATRIX: MatrixRow[] = [
       buildUiTools([UI_READ_ONLY] as never, {
         requireToolApproval: flag,
       }),
-    uiToolApprovals: (flag) =>
-      classifyUiToolApprovals([UI_READ_ONLY] as never, flag),
     expected: {
       mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
@@ -495,8 +444,6 @@ const MATRIX: MatrixRow[] = [
       buildUiTools([UI_OTHER] as never, {
         requireToolApproval: flag,
       }),
-    uiToolApprovals: (flag) =>
-      classifyUiToolApprovals([UI_OTHER] as never, flag),
     expected: {
       mcpjam: { on: "gate", off: "free" },
       byok: { on: "gate", off: "free" },
@@ -518,7 +465,6 @@ const MATRIX: MatrixRow[] = [
           description: "Check out",
         },
       ] as never),
-    uiToolApprovals: () => classifyPageToolApprovals(["page_ab12cd34"]),
     expected: {
       mcpjam: { on: "gate", off: "gate" },
       byok: { on: "gate", off: "gate" },
@@ -535,18 +481,6 @@ const MATRIX: MatrixRow[] = [
         approvalDelivery: { kind: "attested" },
         ensureSession: fakeBrowserSession() as never,
       })!.tools,
-    uiToolApprovals: () =>
-      classifyBrowserToolApprovals(
-        Object.keys(
-          buildBrowserTools({
-            authHeader: "Bearer u",
-            projectId: "proj_1",
-            approvalDelivery: { kind: "attested" },
-            ensureSession: fakeBrowserSession() as never,
-          })!.tools,
-        ),
-        { readOnly: false },
-      ),
     expected: {
       mcpjam: { on: "gate", off: "gate" },
       byok: { on: "gate", off: "gate" },
@@ -570,11 +504,6 @@ const MATRIX: MatrixRow[] = [
         },
         ensureSession: fakeBrowserSession() as never,
       })!.tools,
-    uiToolApprovals: () =>
-      classifyBrowserToolApprovals(
-        ["browser_observe", "browser_webmcp_tools"],
-        { readOnly: true },
-      ),
     expected: {
       mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
@@ -592,19 +521,6 @@ const MATRIX: MatrixRow[] = [
         approvalDelivery: { kind: "attested" },
         ensureSession: fakeBrowserSession() as never,
       })!.tools,
-    uiToolApprovals: () =>
-      classifyBrowserToolApprovals(
-        Object.keys(
-          buildBrowserTools({
-            authHeader: "Bearer u",
-            projectId: "proj_1",
-            engine: "local",
-            approvalDelivery: { kind: "attested" },
-            ensureSession: fakeBrowserSession() as never,
-          })!.tools,
-        ),
-        { readOnly: false },
-      ),
     expected: {
       mcpjam: { on: "gate", off: "gate" },
       byok: { on: "gate", off: "gate" },
@@ -648,16 +564,9 @@ const MATRIX: MatrixRow[] = [
         { pinned: true, requireToolApproval: flag },
       ) as unknown as ToolSet,
     expected: {
-      mcpjam: { on: "gate", off: "free" }, // DIVERGENCE — flipped in PR 2
+      mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
     },
-    divergence:
-      "`applySkillToolApproval` leaves a pinned skill tool with no " +
-      "declaration at all, which is how it says `never` — and the MCPJam " +
-      'engine reads a name it does not know as "follow the switch". An eval ' +
-      "run with the switch on is auto-deny, so the pill it pauses for is " +
-      "answered `no` and the skill never loads. PR 2 flips mcpjam.on to " +
-      "`free`.",
   },
   {
     // Floor: setting.
@@ -692,14 +601,9 @@ const MATRIX: MatrixRow[] = [
         { pinned: false, requireToolApproval: flag },
       ) as unknown as ToolSet,
     expected: {
-      mcpjam: { on: "gate", off: "free" }, // DIVERGENCE — flipped in PR 2
+      mcpjam: { on: "gate", off: "gate" },
       byok: { on: "gate", off: "gate" },
     },
-    divergence:
-      "The server-origin declaration is a function; the MCPJam engine never " +
-      "invokes it, so with the switch off a third party's instructions enter " +
-      "the turn with no pill and no digest binding. PR 2 flips mcpjam.off to " +
-      "`gate`.",
   },
   {
     // Floor: never — never set on this family.
@@ -715,13 +619,9 @@ const MATRIX: MatrixRow[] = [
         },
       ] as never),
     expected: {
-      mcpjam: { on: "gate", off: "free" }, // DIVERGENCE — flipped in PR 2
+      mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
     },
-    divergence:
-      '`buildAppTools` deliberately sets nothing ("normal server-tool ' +
-      'approval remains scoped to server tools"), and the MCPJam engine ' +
-      "reads that silence as the switch. PR 2 flips mcpjam.on to `free`.",
   },
   {
     // Floor: never — never set on this family.
@@ -735,13 +635,9 @@ const MATRIX: MatrixRow[] = [
       } as never),
     }),
     expected: {
-      mcpjam: { on: "gate", off: "free" }, // DIVERGENCE — flipped in PR 2
+      mcpjam: { on: "free", off: "free" },
       byok: { on: "free", off: "free" },
     },
-    divergence:
-      "Same silence as `app_*`: the builder sets no declaration, and only " +
-      "the MCPJam engine turns that into a pill. PR 2 flips mcpjam.on to " +
-      "`free`.",
   },
 ];
 
@@ -771,12 +667,9 @@ describe("tool approval matrix — family × engine × switch", () => {
           input: row.input ?? {},
           tools: row.tools(flag),
           requireToolApproval: flag,
-          uiToolApprovals: row.uiToolApprovals?.(flag),
           progressivePlan: row.progressivePlan,
         });
-        expect(verdict, row.divergence ?? row.family).toBe(
-          row.expected.mcpjam[label],
-        );
+        expect(verdict, row.family).toBe(row.expected.mcpjam[label]);
       });
 
       it(`${row.family} · byok · switch ${label} → ${row.expected.byok[label]}`, async () => {
@@ -785,39 +678,44 @@ describe("tool approval matrix — family × engine × switch", () => {
           input: row.input ?? {},
           tools: row.tools(flag),
         });
-        expect(verdict, row.divergence ?? row.family).toBe(
-          row.expected.byok[label],
-        );
+        expect(verdict, row.family).toBe(row.expected.byok[label]);
       });
     }
   }
 });
 
 /**
- * Every row above where the engines disagree, restated as one list.
+ * THE PROPERTY, stated once: the two engines never disagree.
  *
- * Not redundant with the rows: this is the review gate. PR 2's diff to this
- * file must be exactly these rows plus the `uiToolApprovals` field, and a
- * SEVENTH entry appearing here means a family stopped filling both channels
- * after the mechanism was supposed to be singular.
+ * This replaces the divergence list the table carried while there were two
+ * channels. It named six rows where one engine could not see a family's
+ * declaration; the fix was to delete the second channel, so what used to be a
+ * list of known exceptions is now an invariant with no exceptions. A row that
+ * needs an exception again means a family has grown a second declaration
+ * somewhere, which is the thing this whole change exists to prevent.
  */
-describe("known divergences", () => {
-  it("names exactly six, and each says which engine is wrong", () => {
-    const diverging = MATRIX.filter((row) => row.divergence);
-    expect(diverging.map((row) => row.family)).toEqual([
-      "local bash",
-      "workspace tool — platform read",
-      "pinned skill tool",
-      "server-origin skill ref",
-      "app_*",
-      "exa web search",
-    ]);
-    for (const row of diverging) {
-      expect(
+describe("one mechanism", () => {
+  it("gives the same answer on both engines, for every family and both switch positions", () => {
+    const disagreeing = MATRIX.filter(
+      (row) =>
         row.expected.mcpjam.on !== row.expected.byok.on ||
-          row.expected.mcpjam.off !== row.expected.byok.off,
-        `${row.family} is marked as diverging but both engines agree`,
-      ).toBe(true);
+        row.expected.mcpjam.off !== row.expected.byok.off,
+    ).map((row) => row.family);
+    expect(disagreeing).toEqual([]);
+  });
+
+  it("never lets the switch FREE a family that asks without it", () => {
+    // The floor semantics, read off the table rather than off the helper: the
+    // switch raises. A row that gates with the switch off and not with it on
+    // would be a setting that turns safety down.
+    for (const row of MATRIX) {
+      for (const engine of ["mcpjam", "byok"] as const) {
+        const { on, off } = row.expected[engine];
+        expect(
+          on === "gate" || off === "free",
+          `${row.family} (${engine}) stops asking when the switch is turned on`,
+        ).toBe(true);
+      }
     }
   });
 });
@@ -830,53 +728,112 @@ describe("known divergences", () => {
  * intact still shows up here.
  */
 describe("toolCallNeedsApproval — the MCPJam gate", () => {
-  const classification = classifyUiToolApprovals(
-    [UI_DESTRUCTIVE, UI_READ_ONLY] as never,
-    false,
-  );
+  const ask = (
+    name: string,
+    tools: Record<string, unknown>,
+    over: {
+      toolCallId?: string;
+      decisions?: ReturnType<typeof createApprovalDecisionCache>;
+    } = {},
+  ) =>
+    toolCallNeedsApproval({
+      name,
+      input: { name: "acme/refunds" },
+      toolCallId: over.toolCallId ?? "call-1",
+      tools: tools as never,
+      messages: [],
+      decisions: over.decisions ?? createApprovalDecisionCache(),
+    });
 
-  it("lets the name set win over the switch, in both directions", () => {
-    expect(
-      toolCallNeedsApproval(
-        UI_DESTRUCTIVE.name,
-        undefined,
-        classification,
-        false,
-      ),
-    ).toBe(true);
-    expect(
-      toolCallNeedsApproval(UI_READ_ONLY.name, undefined, classification, true),
-    ).toBe(false);
+  it("reads the tool's declaration, not the turn's switch", async () => {
+    const tools = {
+      gated: { needsApproval: true },
+      free: { needsApproval: false },
+    };
+    expect(await ask("gated", tools)).toBe(true);
+    expect(await ask("free", tools)).toBe(false);
   });
 
-  it("follows the switch for a name it does not know", () => {
-    expect(
-      toolCallNeedsApproval("list_issues", undefined, classification, true),
-    ).toBe(true);
-    expect(
-      toolCallNeedsApproval("list_issues", undefined, classification, false),
-    ).toBe(false);
+  it("treats a MISSING declaration as free, the way the AI SDK does", async () => {
+    // `never` spelled as silence. The two readers must agree here or a turn
+    // strands: the client defers on one answer while the server sends the
+    // other.
+    expect(await ask("undeclared", { undeclared: {} })).toBe(false);
+    expect(await ask("absent", {})).toBe(false);
   });
 
-  it("exempts meta-tools ONLY while progressive discovery is on", () => {
-    expect(
-      toolCallNeedsApproval(
-        "search_mcp_tools",
-        PROGRESSIVE_PLAN as never,
-        undefined,
-        true,
-      ),
-    ).toBe(false);
-    // Progressive off ⇒ no meta-tools exist, and a real server is free to
-    // expose a tool by that name. Honoring the exemption would run it unasked.
-    expect(
-      toolCallNeedsApproval("search_mcp_tools", undefined, undefined, true),
-    ).toBe(true);
+  it("invokes a FUNCTION declaration the way streamText does", async () => {
+    const seen: unknown[] = [];
+    const tools = {
+      loadSkill: {
+        needsApproval: (input: unknown, options: unknown) => {
+          seen.push({ input, options });
+          return true;
+        },
+      },
+    };
+    expect(await ask("loadSkill", tools)).toBe(true);
+    expect(seen).toEqual([
+      {
+        input: { name: "acme/refunds" },
+        options: { toolCallId: "call-1", messages: [] },
+      },
+    ]);
   });
 
-  it("coerces an absent switch to a real boolean", () => {
+  it("evaluates a function ONCE per tool call, however often it is asked", async () => {
+    // Not an optimization. The SEP-2640 declaration RECORDS the manifest
+    // digest `execute` re-checks, and this engine asks about the same call
+    // three times (emit gate, unresolved re-scan, auto-deny re-scan). A second
+    // evaluation would re-fetch the manifest and could overwrite the binding
+    // it exists to check.
+    let calls = 0;
+    const tools = {
+      loadSkill: {
+        needsApproval: async () => {
+          calls += 1;
+          return true;
+        },
+      },
+    };
+    const decisions = createApprovalDecisionCache();
+    await Promise.all([
+      ask("loadSkill", tools, { decisions }),
+      ask("loadSkill", tools, { decisions }),
+    ]);
+    await ask("loadSkill", tools, { decisions });
+    expect(calls).toBe(1);
+    // A DIFFERENT call is a different question.
+    await ask("loadSkill", tools, { decisions, toolCallId: "call-2" });
+    expect(calls).toBe(2);
+  });
+
+  it("fails CLOSED when a function declaration throws", async () => {
+    const tools = {
+      loadSkill: {
+        needsApproval: () => {
+          throw new Error("server unreachable");
+        },
+      },
+    };
+    expect(await ask("loadSkill", tools)).toBe(true);
+  });
+
+  it("does not exempt meta-tools by NAME", async () => {
+    // Progressive mode mints them with a `never` declaration, so they are free
+    // because of what they carry. A REAL server tool that happens to be called
+    // `search_mcp_tools` carries the switch's declaration and still asks —
+    // which is what the old name-plus-plan exemption was protecting, now for
+    // free.
     expect(
-      toolCallNeedsApproval("list_issues", undefined, undefined, undefined),
+      await ask("search_mcp_tools", {
+        search_mcp_tools: { needsApproval: false },
+      }),
     ).toBe(false);
+    expect(
+      await ask("search_mcp_tools", {
+        search_mcp_tools: { needsApproval: true, execute: async () => ({}) },
+      }),
+    ).toBe(true);
   });
 });

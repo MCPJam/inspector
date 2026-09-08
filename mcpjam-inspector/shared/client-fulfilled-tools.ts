@@ -193,82 +193,11 @@ export function uiToolApprovalFloor(opts: {
 }
 
 /**
- * Per-turn approval classification for the UI tools a turn advertised.
- *
- * Every validated entry lands in exactly one set, so an engine can answer
- * "does this UI tool call need approval?" without re-deriving policy — and
- * without the `requireToolApproval && …` shape that silently drops
- * destructive gating when the flag is off (the flag is off by default).
- *
- * `freeNames` is NOT redundant with "not in requiredNames": engines must
- * distinguish a UI tool that is deliberately approval-free from a name they
- * don't know about (a real MCP tool), which still follows the flag.
- */
-export interface UiToolApprovalClassification {
-  requiredNames: ReadonlySet<string>;
-  freeNames: ReadonlySet<string>;
-}
-
-export function classifyUiToolApprovals(
-  entries:
-    | ReadonlyArray<{
-        name: string;
-        readOnly: boolean;
-        annotations?: UiToolAnnotations;
-      }>
-    | undefined,
-  requireToolApproval: boolean,
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const entry of entries ?? []) {
-    const target = uiToolCallNeedsApproval({
-      readOnly: entry.readOnly,
-      annotations: entry.annotations,
-      requireToolApproval,
-    })
-      ? requiredNames
-      : freeNames;
-    target.add(entry.name);
-  }
-  return { requiredNames, freeNames };
-}
-
-/**
- * Per-turn approval classification for a turn's WebMCP `page_*` tools.
- *
- * Page tools are client-fulfilled (the browser runs them) and ALWAYS gate — see
- * `pageToolCallNeedsApproval`. The hosted engines classify by name via
- * `toolCallNeedsApproval` and never read a tool's own `needsApproval`, so a turn
- * that advertises page tools MUST hand them this classification. Without it,
- * every page alias falls through to the `requireToolApproval` default (off by
- * default), the server emits no approval request, and the turn strands: the
- * client has already deferred the call awaiting an approval pill that never
- * comes. (The BYOK `streamText` path is unaffected — it honors the per-tool
- * `needsApproval` that `buildPageTools` bakes in.)
- *
- * Page aliases are collision-free by construction, so the advertised names are
- * exactly the turn's validated aliases. Routing through `pageToolCallNeedsApproval`
- * keeps this the single source of truth rather than hard-coding "always gate".
- */
-export function classifyPageToolApprovals(
-  aliases: readonly string[] | undefined,
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const alias of aliases ?? []) {
-    (pageToolCallNeedsApproval() ? requiredNames : freeNames).add(alias);
-  }
-  return { requiredNames, freeNames };
-}
-
-/**
  * The six hosted-browser tool names, split by what they DO to the page.
  *
  * Verbs rather than one `browser` mega-tool precisely so this split can
- * exist: approval is classified BY NAME on the hosted engines, so an
- * unattended read-only run can be allowed to look at a page while anything
- * that changes it still gates.
+ * exist: an unattended read-only run is built with only the tools that look,
+ * and `buildBrowserTools` reads this set to decide which those are.
  */
 export const BROWSER_OBSERVATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "browser_observe",
@@ -308,62 +237,4 @@ export interface BrowserUnattendedPolicy {
   mode: "allow_all" | "read_only" | "allowlist";
   originAllowlist?: readonly string[];
   toolAllowlist?: readonly string[];
-}
-
-/**
- * Per-turn approval classification for the hosted `browser_*` tools.
- *
- * Shaped after `classifyPageToolApprovals`, not `classifyUiToolApprovals`,
- * and for the same reason: there is nothing trustworthy to classify ON. A
- * page is third-party code, the browser is signed into things, and the page's
- * own WebMCP annotations are claims by the party whose code would run —
- * which Chromium does not even carry through for imperative registrations.
- *
- * So: EVERYTHING gates by default, interactive and observational alike. The
- * single relaxation is an explicit `readOnly` policy — a caller stating, out
- * of band, that this run only looks — and even then only observation tools
- * are freed. `browser_act` and friends can never be freed by policy, because
- * a policy cannot make clicking a button on a live logged-in page safe.
- */
-export function classifyBrowserToolApprovals(
-  names: readonly string[] | undefined,
-  policy?: { readOnly?: boolean },
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const name of names ?? []) {
-    const freeable =
-      policy?.readOnly === true && BROWSER_OBSERVATION_TOOL_NAMES.has(name);
-    (freeable ? freeNames : requiredNames).add(name);
-  }
-  return { requiredNames, freeNames };
-}
-
-/**
- * Combine per-namespace classifications into the ONE `uiToolApprovals` slot
- * the engines read.
- *
- * Needed because that slot is single-valued while a turn can advertise page
- * tools AND ui tools AND browser tools; before this, each surface filled the
- * slot with its own namespace and the others silently fell through to the
- * `requireToolApproval` default (off by default), which strands a turn: the
- * client defers the call awaiting an approval pill the server never sends.
- *
- * REQUIRED WINS. A name classified as required by any contributor stays
- * required even if another says free — the merge must never be the reason
- * something stops gating, and a name should never appear in both sets.
- */
-export function mergeUiToolApprovalClassifications(
-  ...classifications: ReadonlyArray<UiToolApprovalClassification | undefined>
-): UiToolApprovalClassification {
-  const requiredNames = new Set<string>();
-  const freeNames = new Set<string>();
-  for (const classification of classifications) {
-    for (const name of classification?.requiredNames ?? []) {
-      requiredNames.add(name);
-    }
-    for (const name of classification?.freeNames ?? []) freeNames.add(name);
-  }
-  for (const name of requiredNames) freeNames.delete(name);
-  return { requiredNames, freeNames };
 }

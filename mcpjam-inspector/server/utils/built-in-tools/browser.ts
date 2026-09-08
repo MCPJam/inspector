@@ -5,21 +5,22 @@
  * SERVER-EXECUTED, like `bash` and unlike the `page_*`/`ui_*` namespaces: the
  * model calls a tool, this server sends a command to the daemon and returns
  * the result. Nothing here is client-fulfilled, so no new namespace enters
- * `isClientFulfilledToolName`; the approval classification rides the existing
- * name-keyed `uiToolApprovals` slot purely as policy.
+ * `isClientFulfilledToolName`; each tool carries its own `needsApproval`, like
+ * every other family.
  *
  * TWO THINGS ARE STRUCTURAL, not conventions to remember:
  *
  *   1. FAIL-CLOSED ADVERTISEMENT. `buildBrowserTools` returns nothing unless
- *      the caller ATTESTS how approval reaches the user. Approval on the
- *      hosted engines is classified by NAME from `uiToolApprovals`, and five
- *      `prepareChatV2` call sites (Slack agent, chat-session-turn, the
- *      session-simulation runner, and evals-runner twice) plus the
- *      `runAssistantTurn` eval path thread NOTHING — a browser tool reaching
- *      them would classify as FREE and drive a real browser with no gate. So
- *      the attestation is a parameter, not a lint rule: a surface that has not
- *      thought about approval gets no browser tools, and no edit to those five
- *      call sites is required for them to be safe.
+ *      the caller ATTESTS how approval reaches the user. Not because anything
+ *      has to be threaded back any more — the tools declare their own floors,
+ *      and an unthreaded surface would now gate correctly — but because
+ *      `approvalDelivery` is the one thing this file cannot work out for
+ *      itself: whether A PERSON IS WATCHING. That answer decides the browser's
+ *      context mode (a persistent, signed-in profile or a blank ephemeral
+ *      one), the owner key, and whether an unattended run's policy is
+ *      mandatory. A surface that has not said which kind of run it is has not
+ *      chosen any of those, and defaulting them is how an eval comes to run
+ *      against whatever profile the last playground session left signed in.
  *
  *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
  *      implementation result carries the capture as base64 in an ordinary
@@ -43,9 +44,7 @@ import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   BROWSER_TOOL_NAMES,
-  classifyBrowserToolApprovals,
   type BrowserUnattendedPolicy,
-  type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import { logger } from "../logger.js";
@@ -78,8 +77,8 @@ const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
  * How approval reaches the user for this turn — the thing a surface must
  * attest before it gets interactive browser tools.
  *
- * `attested`: the caller threads the returned classification into the
- * engine's `uiToolApprovals`, so a gated call actually pauses and asks.
+ * `attested`: a person is there. Gated calls actually pause and ask, so the
+ * turn keeps a persistent (signed-in) browser and every tool asks first.
  *
  * `unattended`: nobody is watching (eval, swarm, journey), so there is no
  * approval at all — and therefore a DECLARED policy is mandatory. The policy
@@ -154,12 +153,6 @@ export type BrowserEngine = "hosted" | "local";
 
 export interface BrowserToolsResult {
   tools: ToolSet;
-  /**
-   * The approval classification for the names actually built. The caller
-   * MERGES this into the engine's single `uiToolApprovals` slot — see
-   * `mergeUiToolApprovalClassifications`.
-   */
-  approvals: UiToolApprovalClassification;
 }
 
 /** What a daemon reply means once both layers have been read. */
@@ -410,8 +403,9 @@ export function buildBrowserTools(
     opts.onToolSuppressed?.({
       id: BROWSER_BUILT_IN_TOOL_ID,
       reason:
-        "browser tools need an approval path: an interactive surface must thread the " +
-        "approval classification, and an unattended run must declare a toolPolicy.",
+        "browser tools need to know whether a person is watching: an " +
+        "interactive surface must attest that approval reaches someone, and " +
+        "an unattended run must declare a toolPolicy instead.",
     });
     return undefined;
   }
@@ -578,7 +572,6 @@ export function buildBrowserTools(
   };
 
   const tools: ToolSet = {};
-  const built: string[] = [];
   const add = (name: string, definition: ToolSet[string]) => {
     if (!names.includes(name)) return;
     // Attached HERE, once, rather than on each tool: every one of these
@@ -586,7 +579,6 @@ export function buildBrowserTools(
     // later that forgot the mapping would silently go back to sending the
     // model an unreadable base64 string.
     tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
-    built.push(name);
   };
 
   add(
@@ -869,10 +861,7 @@ export function buildBrowserTools(
     }),
   );
 
-  return {
-    tools,
-    approvals: classifyBrowserToolApprovals(built, { readOnly }),
-  };
+  return { tools };
 }
 
 /**

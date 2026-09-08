@@ -79,9 +79,7 @@ function defaultStreamTextReturn(
     consumeStream: async () => {},
     response: Promise.resolve({
       modelId: "mock-model",
-      messages: overrides.messages ?? [
-        { role: "assistant", content: "Hi" },
-      ],
+      messages: overrides.messages ?? [{ role: "assistant", content: "Hi" }],
     }),
     steps: Promise.resolve(overrides.steps ?? []),
     totalUsage: Promise.resolve(
@@ -121,11 +119,16 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
   });
 
-  it("rejects synchronously with tool_approval_unsupported when requireToolApproval=true", async () => {
+  it("rejects synchronously with tool_approval_unsupported when a server tool would ask", async () => {
     // The synchronous guard must NEVER reach the engine — it's a
     // wrapper-level reject so the model is not built, the SSE writer
     // emits a single `error` chunk with code `tool_approval_unsupported`,
     // and the upstream provider is never contacted.
+    //
+    // The tool carries the declaration a switch-on turn gives a real MCP
+    // tool. That declaration, not the switch, is what the guard reads: what
+    // it cannot serve is the RESUME after an approval, and only a tool that
+    // would actually ask can get there.
     const writtenChunks: any[] = [];
     const response = handleLocalOrgChatModel({
       provider: buildResolvedProvider(),
@@ -133,7 +136,7 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
       modelId: "gpt-4-turbo",
       messages: [{ role: "user", content: "hi" } as any],
       systemPrompt: "s",
-      tools: { foo: { description: "f" } } as any,
+      tools: { foo: { description: "f", needsApproval: true } } as any,
       requireToolApproval: true,
       onStreamWriterReady: ({ write }) => {
         // Capture chunks the handler writes to the SSE stream.
@@ -163,6 +166,77 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // The model factory must NOT have been called.
     expect(buildOrgModelFromResolvedConfig).not.toHaveBeenCalled();
     // The engine must NOT have been invoked.
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT refuse a switch-on turn whose server tools all declare `never`", async () => {
+    // The turn this used to refuse for nothing. With the switch on and only
+    // floor-`never` server tools advertised — workspace reads, exa search —
+    // no call can pause, so there is no resume to support and nothing for the
+    // refusal to protect. The user saw "tool approval is not supported"
+    // about a turn that was never going to ask.
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: {
+        list_project_servers: {
+          description: "read",
+          needsApproval: false,
+          execute: async () => ({}),
+        },
+        web_search: {
+          description: "search",
+          needsApproval: false,
+          execute: async () => ({}),
+        },
+      } as any,
+      requireToolApproval: true,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+
+    // It reached the engine, which is the whole point.
+    expect(buildOrgModelFromResolvedConfig).toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalled();
+  });
+
+  it("still refuses when a FUNCTION-form declaration might ask", async () => {
+    // Unevaluable before the model has produced an input, so the guard reads
+    // it as "might ask" rather than gambling.
+    const response = handleLocalOrgChatModel({
+      provider: buildResolvedProvider(),
+      projectId: "proj",
+      modelId: "gpt-4-turbo",
+      messages: [{ role: "user", content: "hi" } as any],
+      systemPrompt: "s",
+      tools: {
+        loadSkill: {
+          description: "load",
+          needsApproval: () => false,
+          execute: async () => "",
+        },
+      } as any,
+      requireToolApproval: false,
+    });
+
+    const reader = response.body?.getReader();
+    if (reader) {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+      }
+    }
+
+    expect(buildOrgModelFromResolvedConfig).not.toHaveBeenCalled();
     expect(streamTextMock).not.toHaveBeenCalled();
   });
 
@@ -239,8 +313,9 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     // Yield so the queued microtask + the in-flight fetch settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(([url]) =>
-      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeDefined();
     const body = JSON.parse((usageCall![1] as any).body as string);
@@ -295,8 +370,9 @@ describe("handleLocalOrgChatModel — route 3 collapse invariants", () => {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const usageCall = fetchMock.mock.calls.find(([url]) =>
-      typeof url === "string" && url.includes("/stream/org/local-usage"),
+    const usageCall = fetchMock.mock.calls.find(
+      ([url]) =>
+        typeof url === "string" && url.includes("/stream/org/local-usage"),
     );
     expect(usageCall).toBeUndefined();
   });

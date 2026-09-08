@@ -17,7 +17,7 @@
  *   Engine consolidation route 3 collapse: this handler used to own its
  *   own inline `streamText({...})` block (~390 LOC) that duplicated the
  *   driver in `runDirectChatTurn`. The collapse keeps the route-specific
- *   pieces here (the `requireToolApproval` guard, the local-runtime
+ *   pieces here (the unsupported-approval-gate guard, the local-runtime
  *   config validation, the `postLocalUsage` writeback) and delegates
  *   streaming + trace + persistence to the shared engine.
  */
@@ -37,10 +37,7 @@ import {
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
-import {
-  isClientFulfilledToolName,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
+import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   writePersistReceipt,
   type PersistChatOutcome,
@@ -95,8 +92,6 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
-  /** Per-tool ui_* approval policy (see `classifyUiToolApprovals`). */
-  uiToolApprovals?: UiToolApprovalClassification;
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
@@ -112,7 +107,7 @@ export interface OrgModelHandlerOptions {
    */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace
+    turnTrace: PersistedTurnTrace,
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -293,7 +288,7 @@ export interface OrgLocalModelHandlerOptions {
    */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
-    turnTrace: PersistedTurnTrace
+    turnTrace: PersistedTurnTrace,
   ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
@@ -333,25 +328,35 @@ export interface OrgLocalModelHandlerOptions {
  * Whether this local-runtime turn hits the approval gap the handler cannot
  * serve, and must fail loudly instead.
  *
- * The gap is SERVER-EXECUTED tools: approving one resumes the turn by running
- * it here, and that resume path has never been supported (or tested) on the
- * local org runtime.
+ * The gap is SERVER-EXECUTED tools THAT WOULD ASK: approving one resumes the
+ * turn by running it here, and that resume path has never been supported (or
+ * tested) on the local org runtime.
  *
- * Client-fulfilled tools (`ui_*`, `app_*`) don't need it. Their approval is
- * emitted natively by `streamText` from the per-tool `needsApproval` that
- * `buildUiTools` set, and an approval is resolved by the BROWSER executing the
- * tool and supplying the result via `addToolOutput` — the engine only has to
- * accept a history that already contains the output. That is the same path
- * route 4 (personal BYOK) drives through this very engine today, so refusing
- * it here would break the UI-only agent surface for local-runtime orgs while
+ * Reads each tool's own `needsApproval` rather than the turn's switch. Those
+ * were the same question while the switch was the only thing that made a
+ * server tool ask; they are not, and the difference is a turn refused for
+ * nothing. A host with the switch ON whose only server-executed tools declare
+ * `never` — workspace reads, exa search — has no resume to support, so there
+ * is nothing for the refusal to protect.
+ *
+ * A FUNCTION-form declaration counts as asking. It cannot be evaluated without
+ * a model input, and this runs before the model has produced one, so the
+ * fail-closed reading is the only sound one.
+ *
+ * Client-fulfilled tools (`ui_*`, `app_*`, `page_*`) don't need the resume even
+ * when they DO ask. Their approval is emitted natively by `streamText` from the
+ * per-tool declaration, and an approval is resolved by the BROWSER executing
+ * the tool and supplying the result via `addToolOutput` — the engine only has
+ * to accept a history that already contains the output. That is the same path
+ * route 4 (personal BYOK) drives through this very engine today, so refusing it
+ * here would break the UI-only agent surface for local-runtime orgs while
  * protecting nothing.
  */
-function hasUnsupportedLocalApprovalGate(
-  tools: ToolSet,
-  requireToolApproval: boolean | undefined
-): boolean {
-  if (!requireToolApproval) return false;
+function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   return Object.entries(tools).some(([name, tool]) => {
+    const declared = (tool as { needsApproval?: unknown } | undefined)
+      ?.needsApproval;
+    if (declared !== true && typeof declared !== "function") return false;
     if (!isClientFulfilledToolName(name)) return true;
     // Name is necessary but NOT sufficient. A real MCP server tool called
     // `ui_foo` matches the namespace regex while still having an `execute`,
@@ -367,7 +372,7 @@ function hasUnsupportedLocalApprovalGate(
 }
 
 export function handleLocalOrgChatModel(
-  options: OrgLocalModelHandlerOptions
+  options: OrgLocalModelHandlerOptions,
 ): Response {
   const {
     provider,
@@ -376,7 +381,6 @@ export function handleLocalOrgChatModel(
     systemPrompt,
     temperature,
     tools,
-    requireToolApproval,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -387,12 +391,12 @@ export function handleLocalOrgChatModel(
   // sites; system fallback keeps the invariant if a future caller forgets it.
   const failureReporter = oncePerTurn(
     options.failureReporter ??
-      createSystemStreamFailureReporter("org-local-stream")
+      createSystemStreamFailureReporter("org-local-stream"),
   );
 
   // Deliberately NOT reported as an operation failure: this is a declared
   // product limitation surfaced to the user, not something that broke.
-  if (hasUnsupportedLocalApprovalGate(tools, requireToolApproval)) {
+  if (hasUnsupportedLocalApprovalGate(tools)) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
@@ -593,7 +597,7 @@ export function handleLocalOrgChatModel(
           if (
             isSuspendedScopeStepUpOutputChunk(
               chunk,
-              options.suspendedToolCallId?.()
+              options.suspendedToolCallId?.(),
             )
           ) {
             continue;
@@ -803,7 +807,7 @@ export async function postLocalUsage(params: {
 // ---------------------------------------------------------------------------
 
 export async function handleHostedOrgChatModel(
-  options: OrgModelHandlerOptions
+  options: OrgModelHandlerOptions,
 ): Promise<Response> {
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");
@@ -824,7 +828,6 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
-    uiToolApprovals: options.uiToolApprovals,
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }

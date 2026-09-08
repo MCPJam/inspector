@@ -69,7 +69,6 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
-import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -238,12 +237,6 @@ export interface BuiltInToolContext {
    * policy.
    */
   browserApprovalDelivery?: BrowserApprovalDelivery;
-  /**
-   * Receives the approval classification for the browser tools that were
-   * built, so the caller can merge it into the engine's single
-   * `uiToolApprovals` slot. Absent on surfaces that do not advertise them.
-   */
-  onBrowserApprovals?: (approvals: UiToolApprovalClassification) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
    * drive the SAME computer as the same uid, so a shell can read the driven
@@ -734,10 +727,7 @@ export function resolveHostTools(
             }
           : {}),
       });
-      if (browser) {
-        Object.assign(out, browser.tools);
-        ctx.onBrowserApprovals?.(browser.approvals);
-      }
+      if (browser) Object.assign(out, browser.tools);
       continue;
     }
     if (isMcpjamToolId(id)) {
