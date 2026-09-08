@@ -36,6 +36,19 @@ vi.mock("@/hooks/useHarnessBuiltinTools", () => ({
   useHarnessBuiltinTools: () => ({ tools: [] }),
 }));
 
+// The agent browser's tools. Stubbed to "no browser attached" here — the
+// section's own behaviour is covered in BrowserToolsSection.test.tsx, and what
+// this suite is about is the rail's zero-server connect path.
+vi.mock("@/hooks/useBrowserTools", () => ({
+  useBrowserTools: () => ({
+    attached: false,
+    engine: "hosted" as const,
+    tools: [],
+    page: null,
+    refreshPage: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
