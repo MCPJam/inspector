@@ -5,8 +5,9 @@
  * excluded — this surface answers "has the widget kept working unattended",
  * not "what did my last manual run do" (the Runs tab owns that).
  *
- * Visible only when the synthetic-monitors flag is on AND the suite has a
- * schedule or a widget-probe case (gating lives in `suite-dashboard.tsx`).
+ * Visible only when the suite has a schedule (with `scheduled-evals-enabled`
+ * on) or a widget-probe case (with `synthetic-monitors` on) — gating lives in
+ * `suite-dashboard.tsx`.
  */
 
 import { useMemo } from "react";
