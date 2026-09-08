@@ -227,7 +227,7 @@ export interface PlatformRunLauncherOption {
  * ACCEPTED IS NOT SENT. `repository`, `pullRequestNumber` and `workflow` are
  * accepted because that is what the environment offers and a caller should not
  * have to strip them by hand. A run row has no column for any of the three, so
- * none of them reaches the wire — see the key list in `runLaunchHeaders`.
+ * none of them reaches the wire — see the key list in `buildLaunchHeaders`.
  */
 export interface PlatformCiMetadataOption {
   provider?: string;
