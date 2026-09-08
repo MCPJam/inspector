@@ -378,9 +378,30 @@ export function createElectronPage(
   }
 
   /** The CDP session or a throw the driver reads as a real failure. */
+  /**
+   * Whether this session has been told to behave as a focused frame.
+   *
+   * These windows are created `show: false` — the agent's tab lives on a
+   * holder nobody ever sees — and Blink only matches `:focus` when the frame
+   * is focused AND active, which an unshown window need not be. Without this,
+   * `DOM.focus` can succeed while `:focus` matches nothing at all.
+   *
+   * `Emulation.setFocusEmulationEnabled` is the switch Playwright throws for
+   * exactly this reason, and it is best-effort here: a protocol that does not
+   * know the command leaves the guard below to degrade rather than the fill
+   * to fail.
+   */
+  let focusEmulated = false;
+
   async function needCdp(): Promise<CdpLike> {
     const cdp = await session();
     if (!cdp) throw new Error("no debugger session on this page");
+    if (!focusEmulated) {
+      focusEmulated = true;
+      await cdp
+        .send("Emulation.setFocusEmulationEnabled", { enabled: true })
+        .catch(() => {});
+    }
     return cdp;
   }
 
@@ -909,6 +930,21 @@ export function createElectronPage(
               })
               .catch(() => undefined)) as { nodeId?: number } | undefined;
             if (focused?.nodeId === focusNodeId) return;
+            // NOTHING FOCUSED IS NOT SOMETHING ELSE FOCUSED, and only the
+            // second is a reason to refuse.
+            //
+            // What this guard is for is a write landing in an element nobody
+            // classified, and that requires an element: `Input.insertText`
+            // goes to the focused editable, so with nothing focused the text
+            // goes nowhere. An empty answer is therefore never the dangerous
+            // case — while treating it as one would refuse EVERY fill in a
+            // window whose frame is not focused, which is what these windows
+            // are. `Emulation.setFocusEmulationEnabled` above is what keeps
+            // this answer meaningful; where it does not take, the guard goes
+            // quiet instead of taking the feature down with it.
+            // Falsy, not `undefined`: `DOM.querySelector` answers "nothing
+            // matched" with node id 0, not by omitting the field.
+            if (!focused?.nodeId) return;
             // Same fork as the focus rejection: a page that removed the field
             // during its own handler reaches here instead, and it is still a
             // re-render the model should re-observe rather than a fault it

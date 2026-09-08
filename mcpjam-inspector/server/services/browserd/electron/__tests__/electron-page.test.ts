@@ -523,6 +523,53 @@ describe("electron page — the keyboard", () => {
     expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
   });
 
+  it("still fills when the frame reports no :focus at all", async () => {
+    // These windows are created `show: false`, and Blink only matches
+    // `:focus` on a frame it considers focused and active. An empty answer is
+    // therefore expected rather than alarming — and it is not the dangerous
+    // case either way: `Input.insertText` goes to the focused editable, so
+    // with nothing focused the text goes nowhere. Refusing here would refuse
+    // every fill in the very window this engine drives.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      // CDP answers "nothing matched" with node id 0, not by omitting it.
+      if (method === "DOM.querySelector" && params?.selector === ":focus") {
+        await send(method, params);
+        return { nodeId: 0 };
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await page.fillSelector("#name", "Ada");
+
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(true);
+  });
+
+  it("asks for focus emulation, so :focus means something at all", async () => {
+    // The switch Playwright throws for the same reason: an unshown window's
+    // frame is not focused, and without this `DOM.focus` can succeed while
+    // `:focus` matches nothing.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await page.fillSelector("#name", "Ada");
+    await page.fillSelector("#name", "Byron");
+
+    // Once for the session, not once per act.
+    expect(
+      dbg.calls.filter((c) => c.method === "Emulation.setFocusEmulationEnabled"),
+    ).toHaveLength(1);
+  });
+
   it("calls a vanished field NOT FOUND, so the model looks again", async () => {
     // Error prose is load-bearing: `chromium-driver` reads
     // /timeout|not found|no element|strict mode/ as `target_not_found`, which
