@@ -155,7 +155,7 @@ async function main() {
 
   // Quick test
   const result = await agent.run("Echo 'Hello!'");
-  console.log("Response:", result.getText());
+  console.log("Response:", result.text);
   console.log("Tools:", result.toolsCalled());
 
   // Run eval suite
