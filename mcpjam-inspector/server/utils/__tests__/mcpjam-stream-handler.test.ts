@@ -75,6 +75,15 @@ vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
 }));
 
+// The handler imports exactly one function from the harness runner, and that
+// module pulls in `@ai-sdk/harness/agent` at load time. Nothing in this suite
+// runs a harness turn, so the whole file used to fail to LOAD wherever that
+// optional package is absent — which is every checkout that has not installed
+// it, and this suite is the one that pins the approval and emit invariants.
+vi.mock("../harness/run-harness-turn", () => ({
+  runHarnessTurn: vi.fn(),
+}));
+
 vi.mock("../logger", () => ({
   logger: {
     error: vi.fn(),
@@ -3734,18 +3743,206 @@ describe("mcpjam-stream-handler", () => {
       });
     });
 
-    // NOTE: `emitInheritedToolCalls` also fires `onToolCall` after the
-    // PR 5b fix (the function's signature gained `tools` / `traceTurn`
-    // / `stepIndex` / `onToolCall` params, and the loop body now
-    // invokes the callback alongside the existing `writer.write({type:
-    // "tool-input-available", ...})`). That path is harder to trigger
-    // in isolation than the resumed-approval branch covered above —
-    // it requires the per-step path to reach the local tool-execution
-    // branch with prior unresolved tool-calls in scope, a
-    // multi-fixture setup that doesn't fit cleanly into the
-    // single-handler-call test shape used here. The code fix is
-    // covered by the same `tools` + `traceTurn` plumbing pattern as
-    // the approved-tools site above, which IS tested.
+    it("re-introduces an UNAPPROVED sibling before answering it on a resumed turn", async () => {
+      // The approval pause is whole-step: it drains only approval-free meta
+      // tools, so an ordinary tool the model emitted in the same assistant
+      // message is still unresolved when the approval comes back. The resume
+      // then executes EVERY unresolved call, so that sibling gets an answer —
+      // and the client, on a fresh response, has no tool part to attach it to
+      // unless the call was re-introduced first. It throws
+      // `No tool invocation found for tool call ID "…"` and ends the turn with
+      // a red banner, after both tools have already run.
+      //
+      // A page tool makes this the ordinary case: `webmcp_*` always pauses
+      // while the `browser_*` verbs follow their own floor, so one request
+      // emits one of each in a single step.
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "done" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      global.fetch = vi.fn().mockResolvedValue(createSseResponse(stepTwo));
+
+      // ONE assistant message, TWO calls, ONE approval. The sibling has no
+      // approval parts at all — it never needed any.
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-page-1",
+              toolName: "webmcp_add_topping",
+              input: { topping: "pepperoni" },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-sibling-1",
+              toolName: "browser_observe",
+              input: {},
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-page-1",
+              toolCallId: "call-page-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-page-1",
+              approved: true,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      // What the real helper does: run every unresolved call in the history,
+      // not only the approved one.
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-page-1",
+                toolName: "webmcp_add_topping",
+                output: { type: "json", value: { ok: true } },
+              },
+              {
+                type: "tool-result",
+                toolCallId: "call-sibling-1",
+                toolName: "browser_observe",
+                output: { type: "json", value: { url: "https://pizza.test/" } },
+              },
+            ],
+          };
+          messages.push(toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          webmcp_add_topping: {},
+          browser_observe: {},
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      const indexOf = (type: string, toolCallId: string) =>
+        writtenChunks.findIndex(
+          (chunk) => chunk?.type === type && chunk?.toolCallId === toolCallId,
+        );
+
+      // The sibling is introduced, and BEFORE its answer. Either half missing
+      // is the bug: no input chunk at all was the original failure, and an
+      // input written after the output would still throw on the output.
+      const siblingInput = indexOf("tool-input-available", "call-sibling-1");
+      const siblingOutput = indexOf("tool-output-available", "call-sibling-1");
+      expect(siblingInput).toBeGreaterThanOrEqual(0);
+      expect(siblingOutput).toBeGreaterThanOrEqual(0);
+      expect(siblingInput).toBeLessThan(siblingOutput);
+
+      // And the approved call keeps the ordering it already had.
+      const pageInput = indexOf("tool-input-available", "call-page-1");
+      const pageOutput = indexOf("tool-output-available", "call-page-1");
+      expect(pageInput).toBeGreaterThanOrEqual(0);
+      expect(pageInput).toBeLessThan(pageOutput);
+    });
+
+    it("re-introduces a DENIED call before telling the client it was denied", async () => {
+      // Same rule, the other emission: `tool-output-denied` also asks the
+      // client for a tool part it does not have on a fresh response.
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      global.fetch = vi.fn().mockResolvedValue(createSseResponse(stepTwo));
+
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-denied-2",
+              toolName: "browser_navigate",
+              input: { url: "https://pizza.test/" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-denied-2",
+              toolCallId: "call-denied-2",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-denied-2",
+              approved: false,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: { browser_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      const inputIdx = writtenChunks.findIndex(
+        (chunk) =>
+          chunk?.type === "tool-input-available" &&
+          chunk?.toolCallId === "call-denied-2",
+      );
+      const deniedIdx = writtenChunks.findIndex(
+        (chunk) =>
+          chunk?.type === "tool-output-denied" &&
+          chunk?.toolCallId === "call-denied-2",
+      );
+      expect(inputIdx).toBeGreaterThanOrEqual(0);
+      expect(deniedIdx).toBeGreaterThanOrEqual(0);
+      expect(inputIdx).toBeLessThan(deniedIdx);
+    });
 
     it("fires `onToolResult` for denied tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
       // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes a
