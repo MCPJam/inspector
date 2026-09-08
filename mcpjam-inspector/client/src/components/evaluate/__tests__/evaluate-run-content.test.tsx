@@ -109,8 +109,8 @@ vi.mock("posthog-js/react", () => ({
     flag === "description-experiments-enabled"
       ? descriptionExperimentFlag.current
       : flag === "evaluate-failure-groups-enabled"
-        ? failureGroupsFlag.current
-        : flagEnabled.current,
+      ? failureGroupsFlag.current
+      : flagEnabled.current,
 }));
 vi.mock("@/hooks/use-suite-failure-groups", () => ({
   useSuiteFailureGroups: (args: { enabled?: boolean; suiteId?: string }) => {
@@ -300,42 +300,8 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "Draw and share a diagram broke at Selection: an expected tool call was never made.",
     );
-    // The expected/observed pair is a peek under the sentence, not the
-    // counting caveats and not the hero. The open case row repeats both names
-    // in its own evidence block, which is intended, so queries are scoped.
-    const peek = screen.getByTestId("run-grading-peek");
-    expect(peek).toHaveTextContent("Graded against");
-    expect(within(peek).getByText("create_view")).toBeInTheDocument();
-    expect(
-      within(peek).getByText("never called").closest("li"),
-    ).toHaveTextContent("export_to_excalidraw never called");
-    expect(screen.getByTestId("run-verdict-hero")).not.toHaveTextContent(
-      "Expected",
-    );
-    expect(screen.getByTestId("run-verdict-caveats")).not.toHaveTextContent(
-      "export_to_excalidraw",
-    );
-  });
-
-  it("folds the counting caveats instead of leading with them", () => {
-    detailState.current = {
-      ...detailState.current,
-      status: "ready",
-      summary: summary(),
-      diagnostics: [DIAGNOSTIC],
-    };
-    renderContent();
-
-    const caveats = screen.getByTestId("run-verdict-caveats");
-    // Present, and closed: the accounting is available to anyone who asks and
-    // is not the first thing a reader has to get through.
-    expect(caveats).not.toHaveAttribute("open");
-    expect(caveats).toHaveTextContent("legacy percent-threshold run");
-    expect(caveats).toHaveTextContent("Counts are iterations, not cases");
-    expect(caveats).toHaveTextContent(
-      "1 non-passing of 3 trials examined — this is the run's whole non-passing set.",
-    );
-    expect(caveats).toHaveTextContent("It is a location, not a claim");
+    expect(screen.queryByTestId("run-grading-peek")).toBeNull();
+    expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
   });
 
   it("says nothing about a verdict while the read is in flight", () => {
@@ -347,6 +313,10 @@ describe("EvaluateRunContent", () => {
     };
     renderContent();
 
+    expect(
+      screen.getByRole("status", { name: "Loading run summary" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("What happened")).toBeNull();
     // PASS_WORDS alone is too weak here: it does not contain "Failed" or
     // "Inconclusive", so a regression that rendered either while the read was
     // in flight would have passed this test. The claim is that NO verdict word
@@ -362,6 +332,15 @@ describe("EvaluateRunContent", () => {
     );
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
     expect(screen.queryByTestId("run-grading-peek")).toBeNull();
+  });
+
+  it("hides summary cards when the finished read has no summary", () => {
+    renderContent();
+    expect(screen.queryByTestId("run-summary-loading")).toBeNull();
+    expect(screen.queryByText("What happened")).toBeNull();
+    expect(screen.queryByText("Next step")).toBeNull();
+    expect(screen.queryByTestId("run-grading-peek")).toBeNull();
+    expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
   });
 
   it("says nothing about a verdict when the read failed", () => {

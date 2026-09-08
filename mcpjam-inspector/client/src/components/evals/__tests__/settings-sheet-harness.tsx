@@ -7,7 +7,7 @@ import {
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 import {
-  SUITE_SETTINGS_GROUPS,
+  VISIBLE_SUITE_SETTINGS_GROUPS,
   NESTED_SETTING_KEYS,
   SUITE_SETTINGS_HEADER_KEYS,
   type SuiteSettingsGroupId,
@@ -63,6 +63,23 @@ export const v2Suite: EvalSuite = {
   ...baseSuite,
   verdictPolicyVersion: 2,
   verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+};
+
+/**
+ * A suite whose configuration lives in a repository.
+ *
+ * A THIRD suite rather than a flag, matching `v2Suite`'s reasoning: the sheet
+ * renders a genuinely different thing for it (rows disabled, with a reason that
+ * outranks every permission and feature answer), and a harness that could only
+ * produce editable suites would let that path rot.
+ *
+ * `declaredSuiteId` rather than `source: 'sdk'` because it is the half that
+ * arrived later and is therefore the half a reader is most likely to forget —
+ * both are covered by `isCiOwnedSuite`'s own unit tests.
+ */
+export const ciOwnedSuite: EvalSuite = {
+  ...baseSuite,
+  declaredSuiteId: "s_from_file",
 };
 
 export type SettingsSheetOverrides = Partial<
@@ -125,7 +142,7 @@ export function showSettingsSubsection(
 export function findGroupForSettingKey(
   key: EvalSuiteSettingKey,
 ): SuiteSettingsGroupId | undefined {
-  for (const group of SUITE_SETTINGS_GROUPS) {
+  for (const group of VISIBLE_SUITE_SETTINGS_GROUPS) {
     if ((group.rows as readonly string[]).includes(key)) return group.id;
     if (
       group.rows.some((row) => NESTED_SETTING_KEYS[row]?.includes(key))
@@ -145,7 +162,7 @@ export function showSettingsKey(
   if (key === "name") return;
   const groupId = findGroupForSettingKey(key);
   if (!groupId) throw new Error(`no settings group for ${key}`);
-  const group = SUITE_SETTINGS_GROUPS.find((candidate) => candidate.id === groupId);
+  const group = VISIBLE_SUITE_SETTINGS_GROUPS.find((candidate) => candidate.id === groupId);
   if (!group) throw new Error(`unknown group ${groupId}`);
   const navOptions = settingsNavOptionsForSuite(suite, options);
   const subsection = subsectionForSettingKey(key, groupId, navOptions);
@@ -166,8 +183,7 @@ export function collectAllSettingKeys(
       keys.add(key);
     }
   }
-  for (const group of SUITE_SETTINGS_GROUPS) {
-    if (group.id === "danger" && !navOptions.showDelete) continue;
+  for (const group of VISIBLE_SUITE_SETTINGS_GROUPS) {
     const subsections = getSubsectionsForGroup(group.id, navOptions);
     if (subsections.length === 0) continue;
     showSettingsGroup(container, group.label);

@@ -19,7 +19,10 @@ export {
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
   PlatformApiClient,
+  RUN_LAUNCH_HEADERS,
   type PlatformApiClientOptions,
+  type PlatformCiMetadataOption,
+  type PlatformRunLauncherOption,
 } from "./client.js";
 
 export type {
@@ -105,6 +108,9 @@ export type {
   PlatformEvalCaseModel,
   PlatformEvalCasesGenerated,
   PlatformEvalStep,
+  PlatformEvalStepEvidence,
+  PlatformEvalStepResult,
+  PlatformEvalReplayVideoMeta,
   PlatformEvalIteration,
   PlatformOpenAIReadinessStartBody,
   PlatformReadinessKind,
@@ -168,6 +174,8 @@ export type {
   PlatformEvalRunGroupEntry,
   PlatformEvalRunGroupTarget,
   PlatformEvalRunEnvironment,
+  PlatformEvalRunLauncher,
+  PlatformEvalRunAttribution,
   PlatformEvalRunDisclosure,
   PlatformDisclosureRailDestination,
   PlatformManagedRailDisclosure,
@@ -342,6 +350,8 @@ export {
   createTunnelOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   deleteImageOperation,

@@ -5,21 +5,22 @@
  * SERVER-EXECUTED, like `bash` and unlike the `page_*`/`ui_*` namespaces: the
  * model calls a tool, this server sends a command to the daemon and returns
  * the result. Nothing here is client-fulfilled, so no new namespace enters
- * `isClientFulfilledToolName`; the approval classification rides the existing
- * name-keyed `uiToolApprovals` slot purely as policy.
+ * `isClientFulfilledToolName`; each tool carries its own `needsApproval`, like
+ * every other family.
  *
  * TWO THINGS ARE STRUCTURAL, not conventions to remember:
  *
  *   1. FAIL-CLOSED ADVERTISEMENT. `buildBrowserTools` returns nothing unless
- *      the caller ATTESTS how approval reaches the user. Approval on the
- *      hosted engines is classified by NAME from `uiToolApprovals`, and five
- *      `prepareChatV2` call sites (Slack agent, chat-session-turn, the
- *      session-simulation runner, and evals-runner twice) plus the
- *      `runAssistantTurn` eval path thread NOTHING — a browser tool reaching
- *      them would classify as FREE and drive a real browser with no gate. So
- *      the attestation is a parameter, not a lint rule: a surface that has not
- *      thought about approval gets no browser tools, and no edit to those five
- *      call sites is required for them to be safe.
+ *      the caller ATTESTS how approval reaches the user. Not because anything
+ *      has to be threaded back any more — the tools declare their own floors,
+ *      and an unthreaded surface would now gate correctly — but because
+ *      `approvalDelivery` is the one thing this file cannot work out for
+ *      itself: whether A PERSON IS WATCHING. That answer decides the browser's
+ *      context mode (a persistent, signed-in profile or a blank ephemeral
+ *      one), the owner key, and whether an unattended run's policy is
+ *      mandatory. A surface that has not said which kind of run it is has not
+ *      chosen any of those, and defaulting them is how an eval comes to run
+ *      against whatever profile the last playground session left signed in.
  *
  *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
  *      implementation result carries the capture as base64 in an ordinary
@@ -42,13 +43,16 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  BROWSER_BUILT_IN_TOOL_ID,
+  BROWSER_OBSERVATION_TOOL_NAMES,
   BROWSER_TOOL_NAMES,
-  classifyBrowserToolApprovals,
   type BrowserUnattendedPolicy,
-  type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
+import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
+import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
   isPointInViewport,
@@ -62,7 +66,10 @@ import type { BrowserContextMode } from "../../services/browserd/browser-session
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import { ensureLocalBrowserSession } from "../../services/browserd/local/local-browser-session.js";
 
-export const BROWSER_BUILT_IN_TOOL_ID = "browser";
+// Re-exported so the server's existing importers keep their one import site;
+// the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
+// six tool names, because the client decides from the same id.
+export { BROWSER_BUILT_IN_TOOL_ID };
 
 /**
  * The coordinate space the model is told about, stated in the tool schema and
@@ -77,8 +84,8 @@ const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
  * How approval reaches the user for this turn — the thing a surface must
  * attest before it gets interactive browser tools.
  *
- * `attested`: the caller threads the returned classification into the
- * engine's `uiToolApprovals`, so a gated call actually pauses and asks.
+ * `attested`: a person is there. Gated calls actually pause and ask, so the
+ * turn keeps a persistent (signed-in) browser and every tool asks first.
  *
  * `unattended`: nobody is watching (eval, swarm, journey), so there is no
  * approval at all — and therefore a DECLARED policy is mandatory. The policy
@@ -94,6 +101,12 @@ export interface BrowserToolsOptions {
   /** Project whose computer this turn drives. */
   projectId: string;
   executionScope?: ExecutionScope;
+  /**
+   * Where L3 tokens live BETWEEN requests, so an act that paused for approval
+   * is still pinned when it resumes. Defaults to the process-wide one;
+   * injected by tests, which otherwise inherit each other's tokens through it.
+   */
+  tokenMemory?: BrowserTokenMemory;
   /**
    * What THIS unattended run is, for keying its throwaway browser.
    *
@@ -119,11 +132,29 @@ export interface BrowserToolsOptions {
    * disagree: a run with nobody watching that inherits a signed-in profile is
    * a run whose verdict was decided by the previous one.
    */
+  /**
+   * The PER-RUN BOX this turn's browser runs on, when the run brought one.
+   *
+   * Absent ⇒ the hosted engine's project computer (interactive turns) or the
+   * local one. Present ⇒ a disposable desktop the caller already provisioned:
+   * the run owns it, so the isolation an unattended browser needs is a
+   * property of the machine rather than of a lock or a lease.
+   *
+   * Trusted by construction — it reaches the registry on `ctx`, never on a
+   * host config, so nothing parsed from a member-readable run snapshot can
+   * produce one.
+   */
+  sandboxTarget?: { sandboxRowId: string; sandboxId: string };
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
     contextMode: BrowserContextMode;
     ownerKey?: string;
+    target?: {
+      kind: "sandbox";
+      sandboxRowId: string;
+      sandboxId: string;
+    };
     signal?: AbortSignal;
   }) => Promise<BrowserSessionHandle>;
   /** Surfaced to the run when a tool is deliberately not advertised. */
@@ -135,12 +166,6 @@ export type BrowserEngine = "hosted" | "local";
 
 export interface BrowserToolsResult {
   tools: ToolSet;
-  /**
-   * The approval classification for the names actually built. The caller
-   * MERGES this into the engine's single `uiToolApprovals` slot — see
-   * `mergeUiToolApprovalClassifications`.
-   */
-  approvals: UiToolApprovalClassification;
 }
 
 /** What a daemon reply means once both layers have been read. */
@@ -255,6 +280,131 @@ function transportError(status: string): string {
   }
 }
 
+/**
+ * THE LAST TOKEN PER TAB, ACROSS REQUESTS.
+ *
+ * `BrowserTurnState` is per REQUEST, and an attended chat does not finish an
+ * act in one: every gated act pauses for approval and RESUMES in a new request
+ * with a freshly built toolset (`registry.ts` rebuilds the toolset per request;
+ * `chat-v2.ts` replays the approved call through a new `buildBrowserTools`).
+ * So the per-request map was empty on exactly the act a person had just stopped
+ * to think about — `tokenFor` returned undefined and the act ran UNPINNED.
+ * L3 stale-targeting protection was, in practice, working only for unattended
+ * evals.
+ *
+ * KEYED BY THE APPROVAL FLOW AND THE `bootId`. The boot id is the thing that
+ * rotates exactly when every token must be dropped — a daemon that restarted
+ * is a browser whose pages are gone — but it is not enough on its own: one
+ * project's browser serves every chat the member has open on it, so an
+ * observation in conversation B would overwrite the token conversation A's
+ * pending approved act was decided from. A would then resume and pin to B's
+ * NEWER token, and the daemon would accept an act chosen from A's older page
+ * — a pin that looks like protection and is not. The flow is the chat session
+ * (`runKey`), which is the identity that spans the approval pause.
+ *
+ * A caller that names NO FLOW remembers nothing and recalls nothing, which is
+ * where every act sat before this existed. Sharing one unscoped entry between
+ * such callers would never be more permissive than that baseline — the guard
+ * only ever refuses — but it would be more permissive than a correctly scoped
+ * pin, which is the thing this is supposed to be. A pin that is right for the
+ * wrong conversation reads downstream exactly like one that is right, and
+ * nothing below here can tell them apart; the honest answer where we cannot
+ * name the flow is to say nothing.
+ *
+ * PER PROCESS, deliberately not shared. A resume served by another replica
+ * finds nothing and runs unpinned, which is today's behaviour for every act:
+ * degradation back to the status quo, not a correctness loss. Making it shared
+ * state would mean a cross-request cache of page fingerprints, which is a much
+ * larger thing than the bug it fixes.
+ */
+export class BrowserTokenMemory {
+  private readonly entries = new Map<
+    string,
+    { token: ObservationStateToken; at: number; bootId: string }
+  >();
+
+  constructor(
+    private readonly now: () => number = () => Date.now(),
+    private readonly ttlMs = BROWSER_TOKEN_MEMORY_TTL_MS,
+    private readonly max = BROWSER_TOKEN_MEMORY_MAX,
+  ) {}
+
+  remember(
+    bootId: string | undefined,
+    tabId: string | undefined,
+    token: ObservationStateToken,
+    flow?: string,
+  ): void {
+    if (!bootId || !flow) return;
+    const key = memoryKey(bootId, tabId, flow);
+    // Re-inserted rather than updated in place, so the insertion order Map
+    // keeps is a true LRU-by-write and the eviction below drops the oldest.
+    this.entries.delete(key);
+    this.entries.set(key, { token, at: this.now(), bootId });
+    while (this.entries.size > this.max) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      this.entries.delete(oldest.value);
+    }
+  }
+
+  recall(
+    bootId: string | undefined,
+    tabId: string | undefined,
+    flow?: string,
+  ): ObservationStateToken | undefined {
+    if (!bootId || !flow) return undefined;
+    const key = memoryKey(bootId, tabId, flow);
+    const found = this.entries.get(key);
+    if (!found) return undefined;
+    // EXPIRED IS FORGOTTEN, not merely ignored. A token minted ten minutes ago
+    // describes a page a person has had ten minutes to change, and pinning to
+    // it would refuse every act rather than protect one.
+    if (this.now() - found.at > this.ttlMs) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return found.token;
+  }
+
+  /**
+   * Drop every token for one boot — ACROSS FLOWS, deliberately.
+   *
+   * A handoff seen in request N must not let request N+1 pin to a pre-handoff
+   * page: the tokens are internally consistent, they are simply about the
+   * wrong moment — which is the one staleness the daemon cannot detect for us.
+   * And a person taking the browser is a fact about the BROWSER, not about the
+   * conversation that noticed: every chat holding a token for that boot is
+   * describing the page as it was before somebody else started typing into it.
+   *
+   * Matched on the stored `bootId` rather than a key prefix, so the key format
+   * stays free to change without silently turning this into a no-op.
+   */
+  forget(bootId: string | undefined): void {
+    if (!bootId) return;
+    for (const [key, entry] of [...this.entries]) {
+      if (entry.bootId === bootId) this.entries.delete(key);
+    }
+  }
+}
+
+/** Ten minutes: long enough for a person to read an approval, short enough
+ *  that a page they walked away from is not still being pinned to. */
+const BROWSER_TOKEN_MEMORY_TTL_MS = 10 * 60 * 1000;
+/** A ceiling, not a target — one entry per (boot, tab) a process has seen. */
+const BROWSER_TOKEN_MEMORY_MAX = 512;
+
+function memoryKey(
+  bootId: string,
+  tabId: string | undefined,
+  flow: string,
+): string {
+  return `${flow}\u0000${bootId}\u0000${tabId ?? "@session"}`;
+}
+
+/** The process-wide default. Tests inject their own via `tokenMemory`. */
+const browserTokenMemory = new BrowserTokenMemory();
+
 /** Per-turn state: one session, and the last token seen per tab (L3). */
 class BrowserTurnState {
   private session: Promise<BrowserSessionHandle> | null = null;
@@ -267,7 +417,22 @@ class BrowserTurnState {
     private readonly ensure: NonNullable<BrowserToolsOptions["ensureSession"]>,
     private readonly contextMode: BrowserContextMode,
     private readonly ownerKey: string | undefined,
+    private readonly memory: BrowserTokenMemory,
   ) {}
+
+  /**
+   * WHICH conversation this turn belongs to, for the cross-request memory.
+   *
+   * The chat session: the identity that spans an approval pause, and the only
+   * thing that keeps one chat's observation out of another chat's pending act
+   * when both drive the project's single browser. `runKey` carries it — the
+   * registry threads `ctx.runKey ?? ctx.chatSessionId` on every turn, attended
+   * or not — and it doubles as the unattended profile key, which is the same
+   * "one run" identity read for a different purpose.
+   */
+  private get flow(): string | undefined {
+    return this.opts.runKey?.trim() || undefined;
+  }
 
   /** Ensure lazily: a turn that never calls a browser tool boots nothing. */
   handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
@@ -276,14 +441,25 @@ class BrowserTurnState {
       projectId: this.opts.projectId,
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
+      ...(this.opts.sandboxTarget
+        ? { target: { kind: "sandbox" as const, ...this.opts.sandboxTarget } }
+        : {}),
       ...(signal ? { signal } : {}),
     });
     return this.session;
   }
 
-  rememberToken(tabId: string | undefined, token?: ObservationStateToken): void {
+  rememberToken(
+    tabId: string | undefined,
+    token?: ObservationStateToken,
+    bootId?: string,
+  ): void {
     if (!token) return;
     this.tokens.set(tabId ?? "@session", token);
+    // AND ACROSS REQUESTS. An attended act pauses for approval and resumes in
+    // a NEW request whose per-turn map is empty; without this the act a person
+    // most carefully decided is the one that runs unpinned.
+    this.memory.remember(bootId, tabId, token, this.flow);
     // A token minted AFTER the handoff describes the page as it is now, so the
     // turn is caught up. Leaving the flag set would disable L3 for the rest of
     // the turn — the opposite of what the loud resume is for.
@@ -296,9 +472,18 @@ class BrowserTurnState {
    * on, which is what makes L3 protect against stale targeting rather than
    * being a parameter a model can forget.
    */
-  tokenFor(tabId: string | undefined): ObservationStateToken | undefined {
+  tokenFor(
+    tabId: string | undefined,
+    bootId?: string,
+  ): ObservationStateToken | undefined {
     if (this.staleAfterHandoff) return undefined;
-    return this.tokens.get(tabId ?? "@session");
+    // THIS TURN FIRST. The memory is the fallback for a request that has not
+    // observed yet — the resume after an approval — and a token this turn
+    // minted is always the more recent of the two.
+    return (
+      this.tokens.get(tabId ?? "@session") ??
+      this.memory.recall(bootId, tabId, this.flow)
+    );
   }
 
   /**
@@ -309,14 +494,66 @@ class BrowserTurnState {
    * the daemon cannot detect this one for us — the tokens we hold are still
    * internally consistent, just about the wrong moment.
    */
-  forgetTokens(): void {
+  forgetTokens(bootId?: string): void {
     this.tokens.clear();
+    // The memory too, or a handoff seen in THIS request would leave the next
+    // one free to pin to a page the person has since navigated away from.
+    this.memory.forget(bootId);
     this.staleAfterHandoff = true;
   }
 
   get handoffPending(): boolean {
     return this.staleAfterHandoff;
   }
+
+  /**
+   * SERIALIZE THE COMMANDS ONE MODEL STEP EMITS.
+   *
+   * Every engine runs the tool calls of a single step CONCURRENTLY, and the
+   * daemon's per-tab FIFO orders by HTTP arrival rather than by emission — so
+   * "type the password, then click Sign in" can, and does, land as "click,
+   * then type". Nothing downstream can repair that: by the time the daemon
+   * sees two commands it has no idea which the model meant first.
+   *
+   * The lock is a promise chain, held across send → unwrap → remember, so the
+   * next command is also built from the result of the previous one rather than
+   * from a token minted before either ran. Emission order is `execute`-call
+   * order because `executeSingleToolCall` invokes each `execute` synchronously
+   * in `pendingToolCalls` order.
+   *
+   * `signal` releases the waiter when a turn is aborted: an abandoned queue
+   * must not keep its siblings parked behind it forever.
+   */
+  acquire(signal?: AbortSignal): Promise<() => void> {
+    const previous = this.lock;
+    let release!: () => void;
+    this.lock = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    return new Promise<() => void>((resolve, reject) => {
+      const onAbort = () => {
+        // The chain must still advance — a waiter that simply rejected would
+        // leave every sibling behind it parked on a promise nobody resolves —
+        // but NOT BEFORE ITS PREDECESSOR FINISHES. Releasing immediately
+        // resolves this waiter's tail while the command ahead of it is still
+        // in flight, so the one behind it sends concurrently: the exact
+        // interleaving this lock exists to prevent, reached by cancelling the
+        // command in the middle.
+        void previous.then(release, release);
+        reject(new DOMException("aborted", "AbortError"));
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      void previous.then(() => {
+        signal?.removeEventListener("abort", onAbort);
+        if (signal?.aborted) return;
+        resolve(release);
+      });
+    });
+  }
+
+  /** The tail of the emission-order chain; resolved means "free". */
+  private lock: Promise<void> = Promise.resolve();
 }
 
 /**
@@ -375,8 +612,9 @@ export function buildBrowserTools(
     opts.onToolSuppressed?.({
       id: BROWSER_BUILT_IN_TOOL_ID,
       reason:
-        "browser tools need an approval path: an interactive surface must thread the " +
-        "approval classification, and an unattended run must declare a toolPolicy.",
+        "browser tools need to know whether a person is watching: an " +
+        "interactive surface must attest that approval reaches someone, and " +
+        "an unattended run must declare a toolPolicy instead.",
     });
     return undefined;
   }
@@ -394,6 +632,33 @@ export function buildBrowserTools(
   // one browser and one cookie jar — so a run that cannot name itself gets no
   // browser at all rather than somebody else's session.
   const ownerKey = unattended ? unattendedOwnerKey(opts) : undefined;
+  if (unattended && engine === "hosted" && !opts.sandboxTarget) {
+    // NOBODY IS WATCHING, AND THE HOSTED BROWSER WOULD BE THE MEMBER'S OWN BOX.
+    //
+    // The hosted engine reserves the one desktop computer this (project,
+    // member) has, so every unattended run in a project would drive the same
+    // Chromium and the same cookie jar — and an ephemeral request there is a
+    // mode mismatch that relaunches the daemon a person may be using. The
+    // ensure path refuses this by name (`ephemeral_requires_sandbox`); the
+    // model must never be shown tools whose every call is that refusal, so it
+    // is suppressed at build time too.
+    //
+    // A run that brought its OWN box passes: `sandboxTarget` names a
+    // disposable desktop nothing else can resolve to. The registry decides
+    // that (it is the only layer that can see a trusted binding); this stays
+    // as defence in depth, because the failure it prevents is silent.
+    logger.warn(
+      "[built-in-tools] browser tools not advertised: an unattended hosted run has no sandbox of its own",
+      { projectId: opts.projectId },
+    );
+    opts.onToolSuppressed?.({
+      id: BROWSER_BUILT_IN_TOOL_ID,
+      reason:
+        "an unattended hosted browser needs its own sandbox: the project " +
+        "computer is shared by every run in the project",
+    });
+    return undefined;
+  }
   if (unattended && !ownerKey) {
     logger.warn(
       "[built-in-tools] browser tools not advertised: unattended run did not name itself",
@@ -412,6 +677,7 @@ export function buildBrowserTools(
     opts.ensureSession ?? defaultEnsureSession(engine),
     contextMode,
     ownerKey,
+    opts.tokenMemory ?? browserTokenMemory,
   );
 
   // An unattended `allowlist` policy may name the exact tools this run may
@@ -437,11 +703,24 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  // Local is forced to ask, exactly as `bash` is (bash.ts:131). The browser is
-  // driving a real, signed-in Chromium on someone's own machine, where the
-  // blast radius of an unreviewed click is their accounts rather than a
-  // disposable box.
-  const needsApproval = delivery.kind === "attested" || engine === "local";
+  // Floors, one per shape of run. Local is forced to ask, exactly as `bash` is
+  // — the browser is driving a real, signed-in Chromium on someone's own
+  // machine, where the blast radius of an unreviewed click is their accounts
+  // rather than a disposable box. An attested (interactive) run has someone to
+  // ask, so it always does. What is left is an unattended run on a disposable
+  // box: nobody to ask, so the declared policy is the answer, and the
+  // interactive tools it might have freed were never built (see `names`).
+  //
+  // NOT the switch, on any branch: `requireToolApproval` cannot lower a floor,
+  // and there is no reading of this family where it should.
+  const interactiveFloor: ApprovalFloor =
+    delivery.kind === "attested" || engine === "local" ? "always" : "never";
+  // Observation is the one thing a read-only policy may free, and only there:
+  // a policy cannot make clicking a button on a live logged-in page safe, but
+  // it can say this run only looks.
+  const observationFloor: ApprovalFloor = readOnly ? "never" : interactiveFloor;
+  const needsApproval = needsApprovalFor(interactiveFloor, false);
+  const observationNeedsApproval = needsApprovalFor(observationFloor, false);
   const send = async (
     action: BrowserAction,
     args: {
@@ -455,7 +734,9 @@ export function buildBrowserTools(
     const handle = await state.handle(args.signal);
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
-    const pinned = args.expectedState ? state.tokenFor(args.tabId) : undefined;
+    const pinned = args.expectedState
+      ? state.tokenFor(args.tabId, handle.bootId)
+      : undefined;
     const command: BrowserCommand = {
       commandId: randomUUID(),
       source: unattended ? "eval" : "chat",
@@ -465,41 +746,60 @@ export function buildBrowserTools(
           ? { ...action, expectedState: pinned }
           : action,
     };
-    const response = await (handle.client as unknown as CommandSender).sendCommand(
-      command,
-      handle.bootId,
-    );
-    let outcome = unwrapCommand(response);
-    // W4/L6 — a handoff invalidates everything this turn cached. Two signals
-    // reach us: a refusal while the person still holds the browser, and the
-    // note the daemon attaches to the first result after they hand it back.
-    // Order matters: forget BEFORE remembering, so the fresh token from the
-    // post-handoff observation survives and the turn is immediately caught up.
-    if (response.status === "lease_blocked" || carriesHandoffNote(outcome.output)) {
-      state.forgetTokens();
-    }
-    // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
+    // THE COMMAND IS BUILT BEFORE THE LOCK, AND SENT INSIDE IT.
     //
-    // Checking the URL a model ASKS for stops it navigating somewhere the
-    // policy never named. It does not stop the page taking it there: a
-    // redirect, a meta refresh, a link the model clicked, an OAuth bounce.
-    // Until now the observation of that page came back in full, which made the
-    // allowlist a suggestion to the model rather than a boundary on the run.
-    if (unattended?.originAllowlist?.length) {
-      outcome = await enforceResultOrigin(outcome, {
-        allowlist: unattended.originAllowlist,
-        tabId: args.tabId,
-        recover: recovering
-          ? undefined
-          : (action) => send(action, { ...args, recovering: true }),
-      });
+    // Both halves matter. Building first means two acts emitted in ONE model
+    // step both pin to the observation the model actually saw — the second was
+    // decided from that page too, and re-pinning it to the first act's result
+    // would silently accept a target the model never looked at. Sending inside
+    // means they reach the daemon in the order the model emitted them: tool
+    // calls in a step run concurrently on every engine, and the daemon's FIFO
+    // orders by arrival, so "type, then submit" otherwise lands as "submit,
+    // then type".
+    //
+    // The origin recovery below calls `send` from INSIDE this section, so it
+    // skips the lock — taking it again would deadlock the turn on itself.
+    const release = recovering ? undefined : await state.acquire(args.signal);
+    try {
+      const response = await (
+        handle.client as unknown as CommandSender
+      ).sendCommand(command, handle.bootId);
+      let outcome = unwrapCommand(response);
+      // W4/L6 — a handoff invalidates everything this turn cached. Two signals
+      // reach us: a refusal while the person still holds the browser, and the
+      // note the daemon attaches to the first result after they hand it back.
+      // Order matters: forget BEFORE remembering, so the fresh token from the
+      // post-handoff observation survives and the turn is immediately caught up.
+      if (
+        response.status === "lease_blocked" ||
+        carriesHandoffNote(outcome.output)
+      ) {
+        state.forgetTokens(handle.bootId);
+      }
+      // ORIGIN, ENFORCED ON THE RESULT (not just on the request).
+      //
+      // Checking the URL a model ASKS for stops it navigating somewhere the
+      // policy never named. It does not stop the page taking it there: a
+      // redirect, a meta refresh, a link the model clicked, an OAuth bounce.
+      // Until now the observation of that page came back in full, which made the
+      // allowlist a suggestion to the model rather than a boundary on the run.
+      if (unattended?.originAllowlist?.length) {
+        outcome = await enforceResultOrigin(outcome, {
+          allowlist: unattended.originAllowlist,
+          tabId: args.tabId,
+          recover: recovering
+            ? undefined
+            : (action) => send(action, { ...args, recovering: true }),
+        });
+      }
+      state.rememberToken(args.tabId, outcome.stateToken, handle.bootId);
+      return { ...outcome, tabId };
+    } finally {
+      release?.();
     }
-    state.rememberToken(args.tabId, outcome.stateToken);
-    return { ...outcome, tabId };
   };
 
   const tools: ToolSet = {};
-  const built: string[] = [];
   const add = (name: string, definition: ToolSet[string]) => {
     if (!names.includes(name)) return;
     // Attached HERE, once, rather than on each tool: every one of these
@@ -507,7 +807,6 @@ export function buildBrowserTools(
     // later that forgot the mapping would silently go back to sending the
     // model an unreadable base64 string.
     tools[name] = { ...definition, toModelOutput: toBrowserModelOutput };
-    built.push(name);
   };
 
   add(
@@ -557,8 +856,10 @@ export function buildBrowserTools(
     tool({
       description:
         "Interact with the page: click, type, press a key, scroll, hover, drag or select. " +
+        "fill_form fills several fields in one call. " +
         "Target by coordinates from the last screenshot, or by CSS selector. Returns the " +
-        "page state after the action settles. Coordinates are CSS pixels in a " +
+        "page after the action: URL, what you can act on (a11y with refs), and a " +
+        "screenshot. Coordinates are CSS pixels in a " +
         `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
         "screenshot — the screenshot is always shown at that size, so read x and y " +
         "straight off it without scaling.",
@@ -571,6 +872,7 @@ export function buildBrowserTools(
           "hover",
           "drag",
           "select",
+          "fill_form",
         ]),
         selector: z.string().optional().describe("CSS selector to target."),
         x: z
@@ -597,10 +899,25 @@ export function buildBrowserTools(
               'drag destination ("x,y" in the same viewport coordinates), or option ' +
               "value to select.",
           ),
+        fields: z
+          .array(z.object({ selector: z.string(), value: z.string() }))
+          .optional()
+          .describe("For fill_form: fields to fill, in order."),
+        submit: z
+          .boolean()
+          .optional()
+          .describe("Press Enter afterwards (type, fill_form)."),
+        observe: z
+          .enum(["a11y", "screenshot", "both", "none"])
+          .optional()
+          .describe("What to return after the action. Defaults to both."),
         tabId: z.string().optional(),
       }),
       needsApproval,
-      execute: async ({ verb, selector, x, y, value, tabId }, { abortSignal }) => {
+      execute: async (
+        { verb, selector, x, y, value, fields, submit, observe, tabId },
+        { abortSignal },
+      ) => {
         if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
@@ -627,6 +944,17 @@ export function buildBrowserTools(
               verb,
               ...(target ? { target } : {}),
               ...(value !== undefined ? { value } : {}),
+              ...(fields ? { fields } : {}),
+              ...(submit !== undefined ? { submit } : {}),
+              // BOTH, for now. Until an act can target by ref the model can
+              // only aim by coordinate or CSS selector, and the a11y tree
+              // carries neither — dropping the screenshot would force a
+              // `browser_observe {mode:"screenshot"}` after every act and make
+              // things worse, not better. The cost of `both` on one act is
+              // about what today's act plus its follow-up observe already
+              // costs, with one fewer round trip. Flip this to "a11y" once
+              // acts accept refs.
+              observe: observe ?? "both",
             },
             // Pin to the observation the model actually saw (L3).
             { tabId, signal: abortSignal, expectedState: true },
@@ -693,7 +1021,7 @@ export function buildBrowserTools(
           .describe('With mode "a11y": zoom into a CSS selector instead.'),
         tabId: z.string().optional(),
       }),
-      needsApproval: needsApproval && !readOnly,
+      needsApproval: observationNeedsApproval,
       execute: async (
         { mode, filter, rootRef, rootSelector, tabId },
         { abortSignal },
@@ -720,7 +1048,7 @@ export function buildBrowserTools(
         "List the WebMCP tools the current page offers, if any. Pages that expose tools " +
         "let you act through their own API instead of clicking; most pages offer none.",
       inputSchema: z.object({ tabId: z.string().optional() }),
-      needsApproval: needsApproval && !readOnly,
+      needsApproval: observationNeedsApproval,
       execute: async ({ tabId }, { abortSignal }) =>
         present(
           await send(
@@ -764,10 +1092,43 @@ export function buildBrowserTools(
     }),
   );
 
-  return {
-    tools,
-    approvals: classifyBrowserToolApprovals(built, { readOnly }),
-  };
+  return { tools };
+}
+
+/**
+ * The six tools AS THE MODEL SEES THEM — names, descriptions and JSON input
+ * schemas — for surfaces that show what the browser capability adds to a turn
+ * (the Playground's Tools pane, the Raw request preview of a reopened chat).
+ *
+ * Derived from `buildBrowserTools` rather than kept as a second list, so the
+ * pane can never describe a tool the model does not have or drift from the
+ * wording the model reads. The build here never touches a browser: the
+ * session is resolved lazily on the first `execute()`, which this never calls,
+ * and the ensure function it is handed refuses by construction.
+ */
+export function describeBrowserTools(
+  engine: BrowserEngine,
+): SerializedModelRequestTool[] {
+  const built = buildBrowserTools({
+    authHeader: "",
+    projectId: "describe",
+    engine,
+    approvalDelivery: { kind: "attested" },
+    ensureSession: async () => {
+      throw new Error(
+        "describeBrowserTools builds definitions only; nothing may execute",
+      );
+    },
+  });
+  if (!built) return [];
+  const { tools } = buildResolvedModelRequestPayload({
+    systemPrompt: "",
+    tools: built.tools,
+    messages: [],
+  });
+  return BROWSER_TOOL_NAMES.map((name) => tools[name]).filter(
+    (tool): tool is SerializedModelRequestTool => tool !== undefined,
+  );
 }
 
 /**
@@ -809,7 +1170,24 @@ function defaultEnsureSession(
         ...(ownerKey ? { ownerKey } : {}),
       });
   }
-  return ensureLiveBrowserSession;
+  // Hosted. `target` decides WHICH BOX — the run's own disposable desktop when
+  // it brought one, the member's project computer otherwise — and everything
+  // else about this file stays engine- and box-blind.
+  return async ({ bearer, projectId, contextMode, target, signal }) =>
+    target
+      ? ensureLiveBrowserSession({
+          bearer,
+          projectId,
+          contextMode,
+          target,
+          ...(signal ? { signal } : {}),
+        })
+      : ensureLiveBrowserSession({
+          bearer,
+          projectId,
+          contextMode,
+          ...(signal ? { signal } : {}),
+        });
 }
 
 /**
@@ -862,8 +1240,18 @@ function resultUrl(output: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Which verbs only LOOK at the page.
+ *
+ * Reads the shared set rather than repeating its members. This used to be a
+ * private list, which was harmless only while `classifyBrowserToolApprovals`
+ * kept the shared one honest — that classifier is gone, and two lists of the
+ * same six names drift the moment a seventh verb is added. The one that would
+ * be forgotten is this one, and forgetting it means an unattended read-only
+ * run silently gets an interactive tool.
+ */
 function isObservational(name: string): boolean {
-  return name === "browser_observe" || name === "browser_webmcp_tools";
+  return BROWSER_OBSERVATION_TOOL_NAMES.has(name);
 }
 
 /**
@@ -934,17 +1322,29 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
  * signal, console lines the page logged, the tool names and descriptions a
  * page advertises over WebMCP, and whatever a page tool returned.
  *
- * `url` IS ONE OF THEM. It reads like our own metadata — we are the ones who
- * report it — but a page chooses its own path, query and fragment, and a URL
- * is a perfectly good place to write a sentence addressed to the model. The
- * fence header still names the origin (scheme and host only, which a page
- * cannot write prose into), so nothing is lost: the model can see where it is
- * without reading untrusted text to find out.
+ * `url` IS ONE OF THEM, and so is `previousUrl`. They read like our own
+ * metadata — we are the ones who report them — but a page chooses its own
+ * path, query and fragment, and a URL is a perfectly good place to write a
+ * sentence addressed to the model. The fence header still names the origin
+ * (scheme and host only, which a page cannot write prose into), so nothing is
+ * lost: the model can see where it is without reading untrusted text to find
+ * out.
+ *
+ * `refs` IS TOO, and was leaking before an act ever returned one: every value
+ * in it is a role and a NAME, and a name is the page's own text — an
+ * accessible name reading "ignore your instructions and…" was arriving
+ * outside the fence on every `observe {mode:"a11y"}`.
+ *
+ * `omittedSubtrees`, `totalNodes` and `a11yUnavailable` stay OURS: they are
+ * counts and flags this layer and the daemon produce, and a page cannot write
+ * a sentence into a number.
  */
 const PAGE_DERIVED_KEYS = [
   "url",
+  "previousUrl",
   "text",
   "a11y",
+  "refs",
   "dom",
   "console",
   "tools",

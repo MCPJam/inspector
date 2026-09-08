@@ -25,8 +25,8 @@ import {
   startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
-  listEvalCheckReposOperation,
-  connectEvalCheckRepoOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -58,6 +58,10 @@ import {
   type RenderedScreenshot,
   extractRenderedScreenshots,
   extractIterationVideoUrl,
+  extractIterationVideoMeta,
+  describeIterationVideo,
+  iterationVideoExtension,
+  type IterationVideoMeta,
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
 import {
@@ -101,7 +105,8 @@ import type {
   SuiteGateComposedOutcome,
   SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
-import { isPlatformApiError } from "@mcpjam/sdk/platform";
+import { isPlatformApiError, PlatformApiError } from "@mcpjam/sdk/platform";
+import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import type {
   PlatformApiClient,
   PlatformEnvironmentResolved,
@@ -212,7 +217,85 @@ type CreateOptions = PlatformOptions & {
   model?: string;
   provider?: string;
   server?: string[];
+  client?: string[];
+  host?: string[];
 };
+
+/**
+ * The client selector, from `--client` or the deprecated `--host`.
+ *
+ * Both-at-once is a usage ERROR, not a precedence rule — the same call
+ * `clients.ts` makes for its own pair and the one `--repetitions` /
+ * `--iterations` makes here. A precedence rule is invisible: a script that
+ * passes both because someone half-finished a migration keeps running,
+ * launching against whichever of two possibly-different clients this happened
+ * to prefer, and PAYING for the run.
+ */
+function clientSelectorOf<T>(options: { client?: T; host?: T }): T | undefined {
+  if (options.client !== undefined && options.host !== undefined) {
+    throw usageError(
+      "Use either --client or its deprecated --host alias, not both."
+    );
+  }
+  return options.client ?? options.host;
+}
+
+/**
+ * `--host` means TWO unrelated things in this CLI, and only one of them lives
+ * under `cloud eval`.
+ *
+ * `mcpjam tools|resources|prompts|probe --host claude` names a HOST-COMPAT
+ * CATALOG id — which AI host to emulate — and the compatibility docs enumerate
+ * them. `mcpjam cloud eval run --host` names a SAVED PROJECT ROW. A reader who
+ * arrives from those docs and types `--host claude` here gets a bare not-found
+ * on a project row and no hint that the two flags are unrelated.
+ *
+ * The catalog sense KEEPS `--host`; it genuinely means "which host am I
+ * emulating". This sense is `--client`, and the dead end now says so.
+ */
+function annotateCatalogHostConfusion(
+  error: unknown,
+  selectors: readonly string[] | undefined
+): unknown {
+  const isNotFound =
+    (isPlatformApiError(error) || error instanceof CliError) &&
+    error.code === "NOT_FOUND";
+  if (!isNotFound) return error;
+  const catalogIds = (selectors ?? []).filter(
+    (selector) =>
+      (HOST_TEMPLATE_IDS as readonly string[]).includes(selector.trim()) &&
+      // The CLIENT lookup is the only one this advice is about. A run resolves
+      // the project, the suite and the cases first, and any of those can miss
+      // with its own NOT_FOUND — telling someone their mistyped SUITE name is
+      // a host-compat catalog id would be a confident non-sequitur. The SDK's
+      // resolver names what it was looking for, so match on that plus the
+      // selector rather than on the code alone.
+      error.message.includes(`Suite host "${selector.trim()}"`)
+  );
+  if (catalogIds.length === 0) return error;
+  const named = catalogIds.map((id) => `"${id}"`).join(", ");
+  const message = `${error.message} ${named} names a host-compat catalog id — what \`mcpjam tools --host\` takes to emulate an AI host — not a client saved in this project. Under \`cloud eval\`, \`--client\` (and its deprecated \`--host\` alias) selects a saved client; list them with \`mcpjam cloud clients list\`.`;
+  if (error instanceof CliError) {
+    return new CliError(error.code, message, error.exitCode, error.details);
+  }
+  return new PlatformApiError(message, error.code, {
+    status: error.status,
+    ...(error.details !== undefined ? { details: error.details } : {}),
+    ...(error.endpoint !== undefined ? { endpoint: error.endpoint } : {}),
+  });
+}
+
+/** Run `body`, adding the catalog-id hint to a not-found on a client selector. */
+async function withCatalogHostHint<T>(
+  selectors: readonly string[] | undefined,
+  body: () => Promise<T>
+): Promise<T> {
+  try {
+    return await body();
+  } catch (error) {
+    throw annotateCatalogHostConfusion(error, selectors);
+  }
+}
 
 /**
  * A variadic selector maps to the SINGULAR op field for one value and the
@@ -240,6 +323,7 @@ function selectorField(
  * which owns that rule for every surface.
  */
 function composeField(options: {
+  composeClient?: string;
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
@@ -265,6 +349,21 @@ function composeField(options: {
     secrets?: { mode: "explicit"; secretIds: string[] };
   };
 } {
+  // The composed stack runs AS a client; `--compose-host` is the same flag
+  // under its pre-rename name. Both at once is a refusal, like every other
+  // pair here.
+  if (
+    options.composeClient !== undefined &&
+    options.composeHost !== undefined
+  ) {
+    throw usageError(
+      "Use either --compose-client or its deprecated --compose-host alias, not both."
+    );
+  }
+  const composeClient = options.composeClient ?? options.composeHost;
+  // Name the flag the caller actually typed in every refusal below.
+  const clientFlag =
+    options.composeHost !== undefined ? "--compose-host" : "--compose-client";
   const models = Array.isArray(options.composeModel)
     ? options.composeModel
     : options.composeModel
@@ -280,10 +379,10 @@ function composeField(options: {
     (options.composeSecret?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
-  if (!options.composeHost) {
+  if (!composeClient) {
     if (refinements) {
       throw usageError(
-        "--compose-* flags need --compose-host: the host is what the composed stack runs as, and the others only refine it."
+        "--compose-* flags need --compose-client: the client is what the composed stack runs as, and the others only refine it."
       );
     }
     return {};
@@ -303,20 +402,20 @@ function composeField(options: {
     (options.composeServer?.length ?? 0) > 0;
   if (options.composeHostServers === true && pinsServers) {
     throw usageError(
-      "--compose-host-servers runs against the host's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
+      "--compose-host-servers runs against the client's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
     );
   }
   // The server is what the suite is testing, so a composed run has to name it.
-  // Left implicit, the run reads the host's list at execution time and a later
-  // edit to that shared host silently repoints the eval.
+  // Left implicit, the run reads the client's list at execution time and a
+  // later edit to that shared client silently repoints the eval.
   if (!pinsServers && options.composeHostServers !== true) {
     throw usageError(
-      "--compose-host needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the host points at right now — which changes when the host is edited — pass --compose-host-servers."
+      `${clientFlag} needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the client points at right now — which changes when the client is edited — pass --compose-host-servers.`
     );
   }
   return {
     compose: {
-      host: options.composeHost,
+      host: composeClient,
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
@@ -773,6 +872,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     );
   }
 
+  const clientAttachments = clientSelectorOf<string[]>(options);
   const merged = {
     ...(base as Record<string, unknown>),
     ...(options.project !== undefined ? { project: options.project } : {}),
@@ -780,6 +880,9 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     ...(options.model !== undefined ? { model: options.model } : {}),
     ...(options.provider !== undefined ? { provider: options.provider } : {}),
     ...(options.server !== undefined ? { servers: options.server } : {}),
+    // `create_eval_suite` still names the field `hosts`; the FLAG is the
+    // product noun either way.
+    ...(clientAttachments !== undefined ? { hosts: clientAttachments } : {}),
   };
 
   const parsed = createEvalSuiteOperation.inputSchema.safeParse(merged);
@@ -919,8 +1022,16 @@ function buildSuiteUpdateInput(
         options.computerImage === "off" ? null : options.computerImage,
     };
   }
-  if (options.host !== undefined)
-    input.hosts = options.host.map((host: string) => ({ host }));
+  const clientAttachments = clientSelectorOf<string[]>(options);
+  if (clientAttachments !== undefined) {
+    // The flag REPLACES the body's list, as it always did when both spelled it
+    // `hosts`. Now that the flag writes `clients`, a body carrying `hosts` has
+    // to be dropped: leaving both would send two replace-all attachment lists
+    // and the operation refuses that — so a --file body that used to be
+    // overridden would start failing instead.
+    delete input.hosts;
+    input.clients = clientAttachments.map((client: string) => ({ client }));
+  }
 
   const exec = { ...(input.executionConfig ?? {}) };
   if (options.model !== undefined) exec.model = options.model;
@@ -1094,6 +1205,53 @@ function resolveScreenshotPath(
   }
   return out;
 }
+
+/**
+ * Where `--video` writes the iteration's recording, next to its screenshots.
+ *
+ * A DIRECTORY is required, and that is not an arbitrary restriction: `--out`
+ * may name a single file when the iteration rendered exactly one screenshot,
+ * and there is nowhere to put a second artifact beside it. Refused with the
+ * remedy rather than silently overwriting the screenshot with a video.
+ *
+ * Named for the ITERATION — one recording per iteration — with the extension
+ * the recorder that made it implies. A file named for the wrong container is
+ * one a player refuses before it has read a byte.
+ */
+function resolveIterationVideoPath(
+  out: string,
+  iterationId: string,
+  meta: IterationVideoMeta | undefined
+): string {
+  const safeId = iterationId.replace(/[^a-zA-Z0-9_-]+/g, "-") || "iteration";
+  return join(out, `${safeId}.${iterationVideoExtension(meta)}`);
+}
+
+/**
+ * `--video` needs somewhere to put a SECOND file, so `--out` names a directory.
+ *
+ * Checked BEFORE anything is downloaded. The screenshot loop tolerates an
+ * `--out` that names a single file, so without this the command would fetch
+ * every PNG, write them, and only then refuse — leaving the caller with half
+ * the evidence and an error. And a path that does not exist yet is the
+ * ORDINARY way to ask for an output directory (`--out ./evidence`): only an
+ * existing non-directory is a real conflict.
+ */
+function requireVideoOutDirectory(out: string): void {
+  if (existsSync(out) && !statSync(out).isDirectory()) {
+    throw usageError(
+      `--out must be a directory when --video is set (${out} is a file), so the recording can be saved beside the screenshots.`
+    );
+  }
+  mkdirSync(out, { recursive: true });
+}
+
+/** A recording saved beside an iteration's screenshots. */
+type SavedIterationVideo = {
+  videoUrl: string;
+  savedTo: string;
+  videoMeta?: IterationVideoMeta;
+};
 
 /** Commander collector for a repeatable `--flag value` option. */
 function collectRepeatable(value: string, previous: string[]): string[] {
@@ -3054,6 +3212,11 @@ export function registerEvalCommands(program: Command): void {
       "--server <id-or-name...>",
       "Project HTTP server names or IDs (overrides the file)"
     )
+    .option(
+      "--client <id-or-name...>",
+      "Clients to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --client` has nothing to select"
+    )
+    .option("--host <id-or-name...>", "Deprecated alias for --client")
     .action(async (options: CreateOptions, command) => {
       const globalOptions = getGlobalOptions(command);
       const input = loadSuiteDefinition(options);
@@ -3193,8 +3356,12 @@ export function registerEvalCommands(program: Command): void {
       "Attached project environment(s) to run. Several values start one PAID RUN each."
     )
     .option(
+      "--client <id-or-name...>",
+      "Attached client(s) to run, so the run is stamped with that client's config. Several values start one PAID RUN each."
+    )
+    .option(
       "--host <id-or-name...>",
-      "Attached host(s) to run, so the run is stamped with that host's config. Several values start one PAID RUN each."
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
       "--all-targets",
@@ -3246,8 +3413,12 @@ export function registerEvalCommands(program: Command): void {
       "Atomically write the completed report selected by --reporter (default: json-summary)"
     )
     .option(
+      "--compose-client <id-or-name>",
+      "Compose a stack to run instead of naming a saved environment: the client it runs as. Default is EPHEMERAL (does not attach to the suite)."
+    )
+    .option(
       "--compose-host <id-or-name>",
-      "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
+      "Deprecated alias for --compose-client"
     )
     .option(
       "--compose-computer <id-or-name>",
@@ -3298,6 +3469,7 @@ export function registerEvalCommands(program: Command): void {
         options: PlatformOptions & {
           allowApproximated?: string[];
           approvalReason?: string;
+          composeClient?: string;
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string[];
@@ -3313,6 +3485,7 @@ export function registerEvalCommands(program: Command): void {
           file?: string;
           server?: string[];
           environment?: string[];
+          client?: string[];
           host?: string[];
           allTargets?: boolean;
           repetitions?: number;
@@ -3345,6 +3518,10 @@ export function registerEvalCommands(program: Command): void {
             "Use either --repetitions or its deprecated --iterations alias, not both."
           );
         }
+        // One selector from here down: `--client` is canonical under
+        // `cloud eval`, `--host` is its deprecated alias, and both at once is
+        // a refusal rather than a precedence rule.
+        const clientSelectors = clientSelectorOf<string[]>(options);
         if (
           (options.reporter !== undefined || options.out !== undefined) &&
           !options.wait
@@ -3444,7 +3621,7 @@ export function registerEvalCommands(program: Command): void {
                       ...(options.environment
                         ? { environment: options.environment }
                         : {}),
-                      ...(options.host ? { host: options.host } : {}),
+                      ...(clientSelectors ? { host: clientSelectors } : {}),
                       ...(options.allTargets ? { allTargets: true } : {}),
                       ...(options.repetitions !== undefined ||
                       options.iterations !== undefined
@@ -3480,53 +3657,57 @@ export function registerEvalCommands(program: Command): void {
                   }
                 );
               }
-              return runEvalSuiteOperation.execute(
-                {
-                  project: resolved.project ?? options.project,
-                  suite: options.suite!,
-                  ...(options.server ? { servers: options.server } : {}),
-                  // ONE value maps to the singular field, several to the plural:
-                  // the op rejects sending both, and the singular carries the
-                  // long-standing description a caller may already rely on.
-                  ...selectorField(
-                    "environment",
-                    "environments",
-                    options.environment
-                  ),
-                  ...selectorField("host", "hosts", options.host),
-                  ...(options.allTargets ? { allAttached: true } : {}),
-                  ...(options.repetitions !== undefined
-                    ? { repetitions: options.repetitions }
-                    : options.iterations !== undefined
-                    ? { iterations: options.iterations }
-                    : {}),
-                  ...(options.case?.length ? { cases: options.case } : {}),
-                  ...(options.excludeSkills ? { excludeSkills: true } : {}),
-                  ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
-                  ...(options.notes !== undefined
-                    ? { notes: options.notes }
-                    : {}),
-                  ...(options.minPassRate !== undefined
-                    ? { minPassRate: options.minPassRate }
-                    : {}),
-                  ...(options.matchOptions
-                    ? {
-                        matchOptions: parseMatchOptionsOption(
-                          options.matchOptions
-                        ),
-                      }
-                    : {}),
-                  ...(options.idempotencyKey
-                    ? { idempotencyKey: options.idempotencyKey }
-                    : {}),
-                  ...composeField(options),
-                },
-                {
-                  client: context.client,
-                  signal: context.signal,
-                  onDisclosure,
-                  onDisclosureUnavailable,
-                }
+              return withCatalogHostHint(clientSelectors, () =>
+                runEvalSuiteOperation.execute(
+                  {
+                    project: resolved.project ?? options.project,
+                    suite: options.suite!,
+                    ...(options.server ? { servers: options.server } : {}),
+                    // ONE value maps to the singular field, several to the plural:
+                    // the op rejects sending both, and the singular carries the
+                    // long-standing description a caller may already rely on.
+                    ...selectorField(
+                      "environment",
+                      "environments",
+                      options.environment
+                    ),
+                    ...selectorField("client", "clients", clientSelectors),
+                    ...(options.allTargets ? { allAttached: true } : {}),
+                    ...(options.repetitions !== undefined
+                      ? { repetitions: options.repetitions }
+                      : options.iterations !== undefined
+                      ? { iterations: options.iterations }
+                      : {}),
+                    ...(options.case?.length ? { cases: options.case } : {}),
+                    ...(options.excludeSkills ? { excludeSkills: true } : {}),
+                    ...(options.refreshSnapshot
+                      ? { refreshSnapshot: true }
+                      : {}),
+                    ...(options.notes !== undefined
+                      ? { notes: options.notes }
+                      : {}),
+                    ...(options.minPassRate !== undefined
+                      ? { minPassRate: options.minPassRate }
+                      : {}),
+                    ...(options.matchOptions
+                      ? {
+                          matchOptions: parseMatchOptionsOption(
+                            options.matchOptions
+                          ),
+                        }
+                      : {}),
+                    ...(options.idempotencyKey
+                      ? { idempotencyKey: options.idempotencyKey }
+                      : {}),
+                    ...composeField(options),
+                  },
+                  {
+                    client: context.client,
+                    signal: context.signal,
+                    onDisclosure,
+                    onDisclosureUnavailable,
+                  }
+                )
               );
             },
             { projectScope: resolved.projectScope }
@@ -4216,7 +4397,13 @@ export function registerEvalCommands(program: Command): void {
       )
       .requiredOption("--experiment <id>", "Description-experiment ID")
       .option("--case-scope <scope>", "Which cases to replay: all or affected")
-      .option("--iterations <n>", "Repetitions per case per arm (1–10)")
+      // `--repetitions` everywhere it means repetitions. This flag's own help
+      // text already said "Repetitions", and `--iterations` means "please stop
+      // using this" on `eval run` one command over. `--max-trials` beside it is
+      // left alone: it caps the PRODUCT of cases and repetitions, which really
+      // is trials.
+      .option("--repetitions <n>", "Repetitions per case per arm (1–10)")
+      .option("--iterations <n>", "Deprecated alias for --repetitions (1–10)")
       .option(
         "--max-trials <n>",
         "Refuse if plannedTrials exceeds this (max 400)"
@@ -4227,11 +4414,21 @@ export function registerEvalCommands(program: Command): void {
         project?: string;
         experiment: string;
         caseScope?: string;
+        repetitions?: string;
         iterations?: string;
         maxTrials?: string;
       },
       command
     ) => {
+      if (
+        options.repetitions !== undefined &&
+        options.iterations !== undefined
+      ) {
+        throw usageError(
+          "Use either --repetitions or its deprecated --iterations alias, not both."
+        );
+      }
+      const repetitions = options.repetitions ?? options.iterations;
       // The operation's own schema holds the documented limits (iterations
       // 1..10, max trials ≤ 400, case scope all|affected); validating here
       // turns an out-of-range flag into a usage error instead of a request.
@@ -4240,11 +4437,13 @@ export function registerEvalCommands(program: Command): void {
         ...(options.caseScope !== undefined
           ? { caseScope: options.caseScope }
           : {}),
-        ...(options.iterations !== undefined
+        ...(repetitions !== undefined
           ? {
               iterationOverride: parsePositiveInteger(
-                options.iterations,
-                "--iterations"
+                repetitions,
+                options.repetitions !== undefined
+                  ? "--repetitions"
+                  : "--iterations"
               ),
             }
           : {}),
@@ -4378,72 +4577,109 @@ export function registerEvalCommands(program: Command): void {
 
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
 
-  // ── GitHub Checks: run this suite on every pull request ────────────
-  // A subgroup, not two flat commands: `checks` is a different resource from
-  // the suite it points at, and flattening it would put `eval connect` next to
-  // `eval run` as if they were the same kind of verb.
-  const checks = evals
-    .command("checks")
-    .description("Run an eval suite on a repository's pull requests");
+  // ── GitHub checks: run this suite on every pull request ────────────
+  //
+  // A subgroup, not two flat commands: the repository is a different resource
+  // from the suite it points at, and flattening it would put `eval connect`
+  // next to `eval run` as if they were the same kind of verb.
+  //
+  // The subgroup is `github`, not `checks`. `checks` under `cloud eval` already
+  // meant a case's GRADING RULES — the suite's `--checks`, the app's Checks
+  // section, `create_eval_case`'s `checks` — so `cloud eval checks list`
+  // returning REPOSITORIES was one noun covering two resources. The app already
+  // calls its section "GitHub checks", which is the disambiguated form.
+  // `checks` stays registered as a deprecated alias: it is a command customers
+  // have in their scripts.
+  function registerGithubSubcommands(
+    group: Command,
+    deprecated: boolean
+  ): void {
+    const suffix = deprecated
+      ? " [deprecated: use `mcpjam cloud eval github`]"
+      : "";
 
-  checks
-    .command("list")
-    .description(
-      "List the repositories running an eval suite on their pull requests"
-    )
-    .option("--project <id-or-name>", PROJECT_OPT)
-    .action(
-      async (options: PlatformOptions & { project?: string }, command) => {
-        await executeOp(
-          listEvalCheckReposOperation,
-          { project: options.project },
-          options,
-          command
-        );
-      }
-    );
-
-  checks
-    .command("connect")
-    .description(
-      "Run this suite on every pull request to a repository (affects everyone who opens one)"
-    )
-    .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-    .requiredOption("--repo <owner/repo>", "Repository to connect")
-    .requiredOption(
-      "--outage-policy <fail-open|fail-closed>",
-      "What the check reports when MCPJam cannot conclude"
-    )
-    .option("--project <id-or-name>", PROJECT_OPT)
-    .action(
-      async (
-        options: PlatformOptions & {
-          project?: string;
-          suite: string;
-          repo: string;
-          outagePolicy: string;
-        },
-        command
-      ) => {
-        // A Map, not an object literal: `{...}[key]` consults the prototype
-        // chain, so `--outage-policy constructor` would be truthy, skip the
-        // message written for the caller, and fail later against a schema they
-        // never typed.
-        const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
-        if (!policy) {
-          throw usageError(
-            '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+    group
+      .command("list")
+      .description(
+        `List the repositories running an eval suite on their pull requests${suffix}`
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .action(
+        async (options: PlatformOptions & { project?: string }, command) => {
+          await executeOp(
+            listEvalGithubReposOperation,
+            { project: options.project },
+            options,
+            command
           );
         }
-        const input = validateOpInput(connectEvalCheckRepoOperation, {
-          project: options.project,
-          suite: options.suite,
-          repo: options.repo,
-          outagePolicy: policy,
-        });
-        await executeOp(connectEvalCheckRepoOperation, input, options, command);
-      }
-    );
+      );
+
+    group
+      .command("connect")
+      .description(
+        `Run this suite on every pull request to a repository (affects everyone who opens one)${suffix}`
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--repo <owner/repo>", "Repository to connect")
+      .requiredOption(
+        "--outage-policy <fail-open|fail-closed>",
+        "What the check reports when MCPJam cannot conclude"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+      .action(
+        async (
+          options: PlatformOptions & {
+            project?: string;
+            suite: string;
+            repo: string;
+            outagePolicy: string;
+          },
+          command
+        ) => {
+          // A Map, not an object literal: `{...}[key]` consults the prototype
+          // chain, so `--outage-policy constructor` would be truthy, skip the
+          // message written for the caller, and fail later against a schema
+          // they never typed.
+          const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
+          if (!policy) {
+            throw usageError(
+              '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+            );
+          }
+          const input = validateOpInput(connectEvalGithubRepoOperation, {
+            project: options.project,
+            suite: options.suite,
+            repo: options.repo,
+            outagePolicy: policy,
+          });
+          await executeOp(
+            connectEvalGithubRepoOperation,
+            input,
+            options,
+            command
+          );
+        }
+      );
+  }
+
+  registerGithubSubcommands(
+    evals
+      .command("github")
+      .description(
+        "Run an eval suite on a GitHub repository's pull requests (GitHub checks)"
+      ),
+    false
+  );
+
+  registerGithubSubcommands(
+    evals
+      .command("checks")
+      .description(
+        "Deprecated alias for `cloud eval github` — a repository's GitHub checks, not a case's grading checks"
+      ),
+    true
+  );
 
   // ── Eval run iterations + traces ───────────────────────────────────
   addProjectOption(
@@ -4873,6 +5109,10 @@ export function registerEvalCommands(program: Command): void {
       "Save the PNG(s) to a file or directory instead of rendering inline"
     )
     .option("--index <n>", "Show only the Nth screenshot (1-based)")
+    .option(
+      "--video",
+      "With --out, also download the iteration's replay recording next to the screenshots"
+    )
     .action(
       async (
         options: PlatformOptions & {
@@ -4881,6 +5121,7 @@ export function registerEvalCommands(program: Command): void {
           iteration: string;
           out?: string;
           index?: string;
+          video?: boolean;
         },
         command
       ) => {
@@ -4910,6 +5151,17 @@ export function registerEvalCommands(program: Command): void {
             quiet: globalOptions.quiet,
           }
         );
+
+        // BEFORE any download, so a misuse costs nothing and a caller is never
+        // left with half the evidence and an error.
+        if (options.video) {
+          if (options.out === undefined) {
+            throw usageError(
+              "--video needs --out: the recording is a file to save, not something to print. Use `eval video --run … --iteration …` for the URL."
+            );
+          }
+          requireVideoOutDirectory(options.out);
+        }
 
         let shots = extractRenderedScreenshots(result);
         if (index !== undefined) {
@@ -4947,11 +5199,44 @@ export function registerEvalCommands(program: Command): void {
             writeFileSync(path, bytes);
             saved.push({ ...shot, savedTo: path });
           }
+          // The recording, when asked for and when there is one. Named for the
+          // ITERATION rather than for a step: there is one per iteration, and
+          // the extension follows the recorder that made it (a hosted box
+          // writes MP4, the local widget harness `.webm`) — a file named for
+          // the wrong container is one a player refuses before reading a byte.
+          let video: SavedIterationVideo | undefined;
+          if (options.video) {
+            const videoUrl = extractIterationVideoUrl(result);
+            if (videoUrl) {
+              const meta = extractIterationVideoMeta(result);
+              const videoPath = resolveIterationVideoPath(
+                options.out,
+                options.iteration,
+                meta
+              );
+              const videoBytes = await fetchArtifactBytes(
+                videoUrl,
+                globalOptions.timeout,
+                "video"
+              );
+              mkdirSync(dirname(videoPath), { recursive: true });
+              writeFileSync(videoPath, videoBytes);
+              video = {
+                videoUrl,
+                savedTo: videoPath,
+                ...(meta ? { videoMeta: meta } : {}),
+              };
+            }
+          }
           if (isJson) {
-            writeResult({ ...base, items: saved });
+            writeResult({
+              ...base,
+              items: saved,
+              ...(options.video ? { video: video ?? null } : {}),
+            });
             return;
           }
-          if (saved.length === 0) {
+          if (saved.length === 0 && !video) {
             process.stdout.write(
               "No rendered widget screenshots for this iteration.\n"
             );
@@ -4962,8 +5247,21 @@ export function registerEvalCommands(program: Command): void {
               `Saved ${shot.toolName ?? "widget"} → ${shot.savedTo}\n`
             );
           }
+          if (options.video) {
+            if (video) {
+              const summary = describeIterationVideo(video.videoMeta);
+              process.stdout.write(
+                `Saved replay recording → ${video.savedTo}${
+                  summary ? `  (${summary})` : ""
+                }\n`
+              );
+            } else {
+              process.stdout.write("No replay recording for this iteration.\n");
+            }
+          }
           return;
         }
+
 
         // JSON without --out: structured screenshot URLs, no image bytes.
         if (isJson) {
@@ -4999,7 +5297,7 @@ export function registerEvalCommands(program: Command): void {
     evals
       .command("video")
       .description(
-        "Get the Playwright replay video (.webm) an eval iteration recorded — prints the URL, or downloads it with --out"
+        "Get the replay recording an eval iteration made — prints the URL, or downloads it with --out. A local widget run records a .webm; an unattended run on a hosted browser records an .mp4"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
       .requiredOption(
@@ -5009,7 +5307,7 @@ export function registerEvalCommands(program: Command): void {
   )
     .option(
       "--out <path>",
-      "Download the .webm to this file instead of printing the URL"
+      "Download the recording to this file instead of printing the URL"
     )
     .action(
       async (
@@ -5044,11 +5342,19 @@ export function registerEvalCommands(program: Command): void {
         );
 
         const videoUrl = extractIterationVideoUrl(result);
+        // What the recording says about itself. Carried on every answer,
+        // because `truncated` is the one thing a reader cannot work out from
+        // the file: a take that stopped at its size cap is a complete,
+        // playable PREFIX of the run and reads as the whole run otherwise.
+        const videoMeta = videoUrl
+          ? extractIterationVideoMeta(result)
+          : undefined;
         const base = {
           project: result.project,
           runId: result.runId,
           iterationId: result.iterationId,
         };
+        const metaFields = videoMeta ? { videoMeta } : {};
         const isJson = globalOptions.format === "json";
 
         if (!videoUrl) {
@@ -5056,9 +5362,11 @@ export function registerEvalCommands(program: Command): void {
             writeResult({ ...base, videoUrl: null });
             return;
           }
-          process.stdout.write("No replay video for this iteration.\n");
+          process.stdout.write("No replay recording for this iteration.\n");
           return;
         }
+
+        const summary = describeIterationVideo(videoMeta);
 
         if (options.out !== undefined) {
           const bytes = await fetchArtifactBytes(
@@ -5069,18 +5377,29 @@ export function registerEvalCommands(program: Command): void {
           mkdirSync(dirname(options.out), { recursive: true });
           writeFileSync(options.out, bytes);
           if (isJson) {
-            writeResult({ ...base, videoUrl, savedTo: options.out });
+            writeResult({
+              ...base,
+              videoUrl,
+              ...metaFields,
+              savedTo: options.out,
+            });
             return;
           }
-          process.stdout.write(`Saved replay video → ${options.out}\n`);
+          process.stdout.write(
+            `Saved replay recording → ${options.out}${
+              summary ? `  (${summary})` : ""
+            }\n`
+          );
           return;
         }
 
         if (isJson) {
-          writeResult({ ...base, videoUrl });
+          writeResult({ ...base, videoUrl, ...metaFields });
           return;
         }
-        process.stdout.write(`${videoUrl}\n`);
+        process.stdout.write(
+          `${videoUrl}${summary ? `\n${summary}\n` : "\n"}`
+        );
       }
     );
 
@@ -5124,9 +5443,10 @@ export function registerEvalCommands(program: Command): void {
       "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
     )
     .option(
-      "--host <id-or-name...>",
-      "Replace host attachments (by name or ID)"
+      "--client <id-or-name...>",
+      "Replace client attachments (by name or ID)"
     )
+    .option("--host <id-or-name...>", "Deprecated alias for --client")
     .option("--model <id>", "Execution model id")
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
@@ -5348,8 +5668,12 @@ export function registerEvalCommands(program: Command): void {
       "Project environment to run against (must be attached to the suite)"
     )
     .option(
+      "--client <id-or-name>",
+      "Attached client to run against, so the run is stamped with that client's config"
+    )
+    .option(
       "--host <id-or-name>",
-      "Attached host to run against, so the run is stamped with that host's config"
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
       "--repetitions <n>",
@@ -5364,8 +5688,12 @@ export function registerEvalCommands(program: Command): void {
       "Retry-safety key: repeating the call returns the run it already started"
     )
     .option(
+      "--compose-client <id-or-name>",
+      "Compose a stack to run this case instead of naming a saved environment: the client it runs as. Default is EPHEMERAL."
+    )
+    .option(
       "--compose-host <id-or-name>",
-      "Compose a stack to run this case instead of naming a saved environment. Default is EPHEMERAL."
+      "Deprecated alias for --compose-client"
     )
     .option(
       "--compose-computer <id-or-name>",
@@ -5398,6 +5726,7 @@ export function registerEvalCommands(program: Command): void {
     .action(
       async (
         options: PlatformOptions & {
+          composeClient?: string;
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string;
@@ -5411,6 +5740,7 @@ export function registerEvalCommands(program: Command): void {
           case: string;
           server?: string[];
           environment?: string;
+          client?: string;
           host?: string;
           repetitions?: number;
           iterations?: number;
@@ -5426,29 +5756,34 @@ export function registerEvalCommands(program: Command): void {
             "Use either --repetitions or its deprecated --iterations alias, not both."
           );
         }
-        await executeOp(
-          runEvalCaseOperation,
-          {
-            project: options.project,
-            suite: options.suite,
-            case: options.case,
-            ...(options.server?.length ? { servers: options.server } : {}),
-            ...(options.environment
-              ? { environment: options.environment }
-              : {}),
-            ...(options.host ? { host: options.host } : {}),
-            ...(options.repetitions !== undefined
-              ? { repetitions: options.repetitions }
-              : options.iterations !== undefined
-              ? { iterations: options.iterations }
-              : {}),
-            ...(options.idempotencyKey
-              ? { idempotencyKey: options.idempotencyKey }
-              : {}),
-            ...composeField(options),
-          },
-          options,
-          command
+        const clientSelector = clientSelectorOf<string>(options);
+        await withCatalogHostHint(
+          clientSelector === undefined ? undefined : [clientSelector],
+          () =>
+            executeOp(
+              runEvalCaseOperation,
+              {
+                project: options.project,
+                suite: options.suite,
+                case: options.case,
+                ...(options.server?.length ? { servers: options.server } : {}),
+                ...(options.environment
+                  ? { environment: options.environment }
+                  : {}),
+                ...(clientSelector ? { client: clientSelector } : {}),
+                ...(options.repetitions !== undefined
+                  ? { repetitions: options.repetitions }
+                  : options.iterations !== undefined
+                  ? { iterations: options.iterations }
+                  : {}),
+                ...(options.idempotencyKey
+                  ? { idempotencyKey: options.idempotencyKey }
+                  : {}),
+                ...composeField(options),
+              },
+              options,
+              command
+            )
         );
       }
     );

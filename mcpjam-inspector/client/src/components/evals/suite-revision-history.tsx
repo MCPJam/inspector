@@ -68,7 +68,8 @@ const SNAPSHOT_KEY_TO_MANIFEST_KEY: Record<string, EvalSuiteSettingKey> = {
   defaultPassCriteria: "minimumAccuracy",
   minIterations: "minimumIterations",
   defaultMatchOptions: "matchOptions",
-  defaultPredicates: "checks",
+  defaultPredicates: "predicateChecks",
+  disabledStageChecks: "checks",
   judgeConfig: "judge",
   verdictPolicyVersion: "policy",
   environment: "computerEnvironment",
@@ -80,7 +81,7 @@ const SNAPSHOT_KEY_TO_MANIFEST_KEY: Record<string, EvalSuiteSettingKey> = {
  *
  * Each is stored on the suite and can appear in `changedFields`, but is
  * written from somewhere other than the settings sheet — the suite header
- * (`description`, `tags`), the host and skill pickers (`hostConfigId`,
+ * (`description`, `tags`), the client and skill pickers (`hostConfigId`,
  * `serverAttachmentId`, `namedHostId`, `hostAttachments`,
  * `selectedSkillIds`), the environment resolver (`environmentFingerprints`),
  * or the policy upgrade and rollout machinery (`verdictPolicyDefaults`,
@@ -97,8 +98,9 @@ const UNLISTED_FIELD_LABELS: Record<string, string> = {
   environmentFingerprints: "Environment fingerprints",
   hostConfigId: "Execution config",
   serverAttachmentId: "Server attachment",
-  namedHostId: "Host",
-  hostAttachments: "Hosts",
+  // The storage keys still say host; the label is the product noun.
+  namedHostId: "Client",
+  hostAttachments: "Clients",
   selectedSkillIds: "Skills",
   tags: "Tags",
 };
