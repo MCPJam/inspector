@@ -467,6 +467,39 @@ describe("case checks", () => {
     expect(serializeEvalSuiteFile(loadOrThrow(text).authored)).toBe(text);
   });
 
+  it("sorts `checks` BEFORE `import`, the key it would have followed", () => {
+    // The ordering that actually regressed: an unlisted key lands in the
+    // remainder, which `ordered()` appends AFTER every listed one — so the
+    // symptom is `checks` trailing `import`. A case with no `import` cannot
+    // show that, so this one carries both (and the provenance an import
+    // status requires).
+    const authored = {
+      ...MINIMAL,
+      provenance: {
+        sourceHash: "a".repeat(64),
+        sourceFormat: "promptfoo",
+        reportHash: "b".repeat(64),
+      },
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0
+          ? {
+              ...entry,
+              checks: [CHECK],
+              import: { status: "approximated", note: "widened the matcher" },
+            }
+          : entry
+      ),
+    } as EvalSuiteFile;
+
+    const text = serializeEvalSuiteFile(authored);
+    const checksAt = text.indexOf("checks:");
+    const importAt = text.indexOf("import:");
+    expect(checksAt).toBeGreaterThan(-1);
+    expect(importAt).toBeGreaterThan(-1);
+    expect(checksAt).toBeLessThan(importAt);
+    expect(serializeEvalSuiteFile(loadOrThrow(text).authored)).toBe(text);
+  });
+
   it("leaves a case with neither empty in the runner view", () => {
     const loaded = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
     expect(loaded.resolved.cases[0]?.assertions).toEqual([]);

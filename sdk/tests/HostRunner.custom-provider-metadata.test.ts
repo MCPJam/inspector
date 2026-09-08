@@ -17,8 +17,10 @@ import type { CustomProvider } from "../src/types";
  * mis-attributes every span and result for a BYOK deployment.
  */
 const LITELLM: CustomProvider = {
+  name: "my-litellm",
   protocol: "openai-compatible",
   baseUrl: "https://litellm.internal/v1",
+  modelIds: ["gpt-4"],
   apiKey: "sk-test",
 };
 
