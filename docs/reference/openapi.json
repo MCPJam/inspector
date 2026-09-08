@@ -13218,18 +13218,20 @@
           },
           "passCriteria": {
             "type": "object",
-            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
               "minimumPassRatePercent": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 100
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "deprecated": true
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
             "additionalProperties": false
@@ -13576,18 +13578,20 @@
           },
           "defaultPassCriteria": {
             "type": "object",
-            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
               "minimumPassRatePercent": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 100
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "deprecated": true
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
             "additionalProperties": false
@@ -14050,18 +14054,20 @@
           },
           "passCriteria": {
             "type": "object",
-            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
               "minimumPassRatePercent": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 100
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "deprecated": true
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
             "additionalProperties": false
@@ -14281,18 +14287,20 @@
           },
           "passCriteria": {
             "type": "object",
-            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. A value below 1 is REJECTED rather than read as a fraction: `0.8` here would mean 0.8%, a gate that can never fail, and this API cannot tell that apart from someone who meant 0.8%. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
               "minimumPassRatePercent": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 100
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous."
               },
               "minimumPassRate": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 100,
-                "deprecated": true
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is rejected here: it reads as a fraction sent by mistake. Use `minimumPassRatePercent` for a genuine sub-1% floor."
               }
             },
             "additionalProperties": false

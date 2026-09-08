@@ -132,13 +132,28 @@ export function suiteFileTooLarge(
 function suiteVerdictPolicyThreshold(
   settings: PlatformEvalSuiteDetail["settings"]
 ): number | null {
-  if (settings.policy !== "v2" && settings.verdictPolicyVersion !== 2) {
-    return null;
-  }
+  if (!isVerdictPolicyV2Suite(settings)) return null;
   const threshold = settings.verdictPolicyDefaults?.passThreshold;
   return typeof threshold === "number" && threshold >= 0 && threshold <= 1
     ? threshold
     : null;
+}
+
+/**
+ * Whether the platform decides this suite under verdict policy 2.
+ *
+ * Read separately from the threshold so "v2 suite, unusable threshold" stays
+ * distinguishable from "legacy suite". Collapsing the two is what let the
+ * threshold fall back to the legacy percent on a v2 suite.
+ *
+ * `policy` is the one-word answer; `verdictPolicyVersion` is the same fact by
+ * presence, and an API deployment that predates `policy` reports only the
+ * latter — so either is enough.
+ */
+function isVerdictPolicyV2Suite(
+  settings: PlatformEvalSuiteDetail["settings"]
+): boolean {
+  return settings.policy === "v2" || settings.verdictPolicyVersion === 2;
 }
 
 export function percentToFraction(percent: number): number | null {
@@ -390,38 +405,55 @@ function suiteLevelFindings(
   }
 
   // ── settings ─────────────────────────────────────────────────────────────
-  // WHICH policy decides this suite is what says where its threshold lives.
+  // WHICH policy decides this suite is what says where its threshold lives,
+  // and the v2 branch is FAIL-CLOSED.
   //
   // A v2 suite's floor is `verdictPolicyDefaults.passThreshold`, already the
   // fraction a suite file wants. Its `minimumAccuracy` is a legacy percent the
-  // platform stopped reading at upgrade, and converting THAT would write a
-  // file claiming a threshold no run uses.
-  if (suiteVerdictPolicyThreshold(settings) === null) {
-    if (
-      settings.minimumAccuracy === null ||
-      settings.minimumAccuracy === undefined
-    ) {
+  // platform stopped reading at upgrade, so falling back to it when the v2
+  // threshold is missing or malformed would write exactly the file this change
+  // exists to prevent — one claiming a threshold no run uses. A v2 suite whose
+  // own threshold is unreadable has no threshold to export, and saying so is
+  // the only honest answer.
+  if (isVerdictPolicyV2Suite(settings)) {
+    if (suiteVerdictPolicyThreshold(settings) === null) {
       findings.push(
         unsupported(
-          ["settings", "minimumAccuracy"],
-          "suite sets no minimum accuracy, and `defaults.passThreshold` is " +
-            "required in a suite file. Set one and export again."
-        )
-      );
-    } else if (
-      settings.minimumAccuracy < 0 ||
-      settings.minimumAccuracy > 100 ||
-      percentToFraction(settings.minimumAccuracy) === null
-    ) {
-      findings.push(
-        unsupported(
-          ["settings", "minimumAccuracy"],
-          `minimum accuracy ${settings.minimumAccuracy} does not convert to a ` +
-            `fraction in [0,1] without losing a digit; a suite file's ` +
-            `\`passThreshold\` is a fraction, never a percent`
+          ["settings", "verdictPolicyDefaults", "passThreshold"],
+          "suite is on verdict policy 2 but its stored " +
+            "`verdictPolicyDefaults.passThreshold` is missing or not a " +
+            "fraction in [0,1], so there is no threshold to write. Its legacy " +
+            "`minimumAccuracy` is NOT a stand-in — the platform stopped " +
+            "reading that at upgrade, and exporting it would claim a " +
+            "threshold no run uses. Set the suite's passThreshold and export " +
+            "again."
         )
       );
     }
+  } else if (
+    settings.minimumAccuracy === null ||
+    settings.minimumAccuracy === undefined
+  ) {
+    findings.push(
+      unsupported(
+        ["settings", "minimumAccuracy"],
+        "suite sets no minimum accuracy, and `defaults.passThreshold` is " +
+          "required in a suite file. Set one and export again."
+      )
+    );
+  } else if (
+    settings.minimumAccuracy < 0 ||
+    settings.minimumAccuracy > 100 ||
+    percentToFraction(settings.minimumAccuracy) === null
+  ) {
+    findings.push(
+      unsupported(
+        ["settings", "minimumAccuracy"],
+        `minimum accuracy ${settings.minimumAccuracy} does not convert to a ` +
+          `fraction in [0,1] without losing a digit; a suite file's ` +
+          `\`passThreshold\` is a fraction, never a percent`
+      )
+    );
   }
 
   const floor = settings.minimumIterations;
@@ -814,11 +846,15 @@ export function buildSuiteFileFromPlatform(
         ? {}
         : { temperature: executionConfig.temperature }),
       repetitions,
-      passThreshold:
-        suiteVerdictPolicyThreshold(detail.settings) ??
-        (percentToFraction(
-          detail.settings.minimumAccuracy as number
-        ) as number),
+      // A v2 suite uses its own fraction; a legacy one converts its percent.
+      // Never the other way round for a v2 suite: `suiteLevelFindings` has
+      // already refused the export when a v2 threshold is unreadable, so this
+      // `??` can only reach the legacy branch for a legacy suite.
+      passThreshold: isVerdictPolicyV2Suite(detail.settings)
+        ? (suiteVerdictPolicyThreshold(detail.settings) as number)
+        : (percentToFraction(
+            detail.settings.minimumAccuracy as number
+          ) as number),
       // `{}`, not the resolved defaults: the contract documents them and the
       // loader applies them, and writing them here would put values nobody
       // authored into the file (`sdk/src/contract/suite-file.ts:12-17`).

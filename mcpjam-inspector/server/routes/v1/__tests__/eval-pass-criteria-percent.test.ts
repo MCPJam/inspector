@@ -158,11 +158,49 @@ describe("passCriteria is a bounded percent", () => {
     ["both spellings at once", { minimumPassRatePercent: 80, minimumPassRate: 90 }],
     ["neither spelling", {}],
     ["a negative percent", { minimumPassRate: -1 }],
+    ["a negative canonical percent", { minimumPassRatePercent: -1 }],
+    ["a canonical percent over 100", { minimumPassRatePercent: 8000 }],
   ] as const)("refuses %s", async (_label, criteria) => {
     const res = await createSuite(criteria);
 
     expect(res.status).toBe(400);
     expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+  });
+
+  // THE NAME IS THE DISAMBIGUATOR. The (0, 1) band is refused on the bare
+  // `minimumPassRate`, which is the spelling the bug arrives through and which
+  // cannot tell 80% from 0.8%. It is ACCEPTED on `minimumPassRatePercent`,
+  // whose name carries the unit — and the backend's comparison is unrounded
+  // (`passRate * 100 >= minimumPassRate` in convex/testSuites.ts and
+  // convex/sdkEvals.ts), so a sub-1% floor is a gate it can genuinely act on:
+  // one passing case in two hundred is exactly 0.5%.
+  it("accepts a sub-1% floor on the field whose name carries the unit", async () => {
+    const res = await createSuite({ minimumPassRatePercent: 0.5 });
+
+    expect(res.status).toBe(201);
+    expect(authorEvalSuiteMock.mock.calls[0][0].passCriteria).toEqual({
+      minimumPassRate: 0.5,
+    });
+  });
+
+  it("still refuses that same value on the ambiguous spelling", async () => {
+    const res = await createSuite({ minimumPassRate: 0.5 });
+
+    expect(res.status).toBe(400);
+    // And it must point at the field that CAN express it, or the caller is
+    // simply told no with nowhere to go.
+    expect(await message(res)).toContain("minimumPassRatePercent");
+    expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a non-integer percent above 1 on either spelling", async () => {
+    // Nothing about this schema requires whole percents; only the fraction
+    // band on the ambiguous field is refused.
+    const alias = await createSuite({ minimumPassRate: 99.5 });
+    expect(alias.status).toBe(201);
+
+    const canonical = await createSuite({ minimumPassRatePercent: 12.34 });
+    expect(canonical.status).toBe(201);
   });
 
   it("still accepts 0 — a real floor, not a missing one", async () => {

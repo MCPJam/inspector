@@ -2067,6 +2067,46 @@ describe("eval export — which policy owns the threshold", () => {
     });
   });
 
+  // A v2 suite whose own threshold is unreadable has NO threshold to export.
+  // Falling back to `minimumAccuracy` there would write exactly the file this
+  // change exists to prevent, so the v2 branch is fail-closed.
+  const UNREADABLE_V2_THRESHOLDS: Array<[string, Record<string, unknown>]> = [
+    ["missing", {}],
+    ["not a number", { repetitions: 5, passThreshold: "0.9" }],
+    ["outside [0,1]", { repetitions: 5, passThreshold: 90 }],
+  ];
+
+  for (const [label, defaults] of UNREADABLE_V2_THRESHOLDS) {
+    test(`refuses a v2 suite whose passThreshold is ${label}, rather than exporting the legacy percent`, async () => {
+      await withTempDir(async (dir) => {
+        const run = await runExport(
+          {
+            detail: {
+              settings: {
+                ...V2_SETTINGS,
+                // Present, and still not a stand-in: the platform stopped
+                // reading it at upgrade.
+                minimumAccuracy: 80,
+                verdictPolicyDefaults: defaults,
+              },
+            },
+          },
+          "--suite",
+          "Billing smoke"
+        );
+
+        assert.notEqual(run.exitCode, 0);
+        assert.match(run.stderr + run.stdout, /passThreshold/);
+        // Nothing written: a partial file plus a non-zero exit would pass a
+        // weaker check.
+        assert.deepEqual(
+          await readdir(path.join(dir, ".mcpjam", "evals")).catch(() => []),
+          []
+        );
+      });
+    });
+  }
+
   test("a legacy suite still converts its percent", async () => {
     await withTempDir(async () => {
       const run = await runExport({}, "--suite", "Billing smoke");
