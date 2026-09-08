@@ -121,6 +121,28 @@ Layered suite → case, and validated when the test is constructed rather than m
 
 Deterministic, state-based checks evaluated against the iteration transcript — same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting#predicate-gate) for the full list of predicate types.
 
+<Warning>
+  **Baseline identifiers changed in this release.** If you compare runs against a
+  stored baseline, the following will cause the dashboard to report scorers as
+  **CHANGED** rather than matching — not because the rule changed, but because
+  the identifier did:
+
+  - **Anonymous predicate scorer ids lengthened.** A predicate scorer created
+    without an explicit `id` now derives its id from the full content digest
+    instead of an 8-character prefix. Ids of the form
+    `predicate:<type>#<8 hex>` become `predicate:<type>#<64 hex>`.
+  - **Judge template version moved from 2 to 3**, so every judge's
+    `implementationHash` and `definitionHash` changed.
+  - **Gate rows now join on `definitionHash` instead of `scorerId`.** A scorer
+    id that resolves to more than one definition in a run is now a
+    `usage_error` instead of an arbitrary pick.
+  - **`maximumTotalTokens` is `non_gateable`** on a run with no usable
+    iterations, where it previously read an absent total as `0` and passed.
+
+  Re-record baselines after upgrading if you pin them by scorer id or compare
+  `definitionHash` across releases.
+</Warning>
+
 ```typescript
 const test = new EvalTest({
   id: "c_books_the_venue",
