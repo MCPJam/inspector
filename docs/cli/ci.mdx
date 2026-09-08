@@ -480,7 +480,7 @@ npx -y @mcpjam/cli@latest cloud eval gate --run "$RUN_ID" \
 
 Both report **non-gateable** (exit `3`) rather than passing when the cost is
 unknown or only partly measured — a run on your own API keys, a harness run,
-or a run only some of whose trials MCPJam priced. Exit `3` is safe to retry
+or a run only some of whose iterations MCPJam priced. Exit `3` is safe to retry
 and safe to treat as "no opinion"; what it never does is let an unpriced run
 through as if it were cheap.
 
