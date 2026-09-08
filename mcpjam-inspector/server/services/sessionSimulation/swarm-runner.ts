@@ -319,15 +319,18 @@ export const ACCOUNT_LIMIT_CODE =
  * "Daily MCPJam model limit reached." — contains spend/cap/quota/budget wording.
  *
  * The prose check is kept as a second signal for a backend that words a cap
- * without a code. `cap`/`quota`/`budget` stay word-anchored so "capacity" /
- * "recap" / "escape" remain a per-host provider rate-limit.
+ * without a code. `cap`/`quota`/`budget`/`spend` stay word-anchored so
+ * "capacity" /
+ * "recap" / "escape" — and "su`spend`ed", which is an account SUSPENSION and
+ * not a cap — remain a per-host provider rate-limit. `spend_budget_reached`
+ * still escalates: ACCOUNT_LIMIT_CODE matches it on the line above.
  */
-function classifyRateLimit(
+export function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
   if (!message) return "provider_rate_limit";
   if (ACCOUNT_LIMIT_CODE.test(message)) return "org_spend_cap";
-  if (/spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+  if (/\bspend\b|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
