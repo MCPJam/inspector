@@ -326,9 +326,18 @@ function buildOne(
       const validation = validateDeclaredArgs(pageTool.inputSchema, input);
       if (!validation.ok) {
         return {
+          // OUR sentence, and nothing the page wrote. The messages that say
+          // WHY quote the page's own schema — an enum member, a property
+          // name — and every one of those literals is a string the page
+          // chose. They go under `validation`, which `toBrowserModelOutput`
+          // renders inside the page-content fence, so the allowed values
+          // still reach the model (that is what lets it fix the call) but
+          // never as text in our own voice.
           error:
-            `invalid_arguments: ${validation.errors.join(" ")} ` +
-            `Re-read the tool's schema and call it again.`,
+            "invalid_arguments: the call did not match this tool's input " +
+            "schema. The page's own rules are quoted in the page content " +
+            "below; re-read them and call the tool again.",
+          validation: validation.errors,
           pageTool: attributionFor(pageTool, options),
         };
       }

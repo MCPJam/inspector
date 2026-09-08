@@ -56,6 +56,7 @@ import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
+  DEFAULT_QUEUE_KEY,
   isPointInViewport,
   type BrowserAction,
   type BrowserActTarget,
@@ -63,7 +64,10 @@ import {
   type ObservationStateToken,
   type WebMcpToolsRevision,
 } from "../../services/browserd/protocol.js";
-import { sanitizeDeclaredText } from "@/shared/declared-tools";
+import {
+  safeDeclaredOrigin,
+  sanitizeDeclaredText,
+} from "@/shared/declared-tools";
 import type {
   DeclaredToolProvider,
   MintedDeclaredTool,
@@ -1397,12 +1401,25 @@ function tombstoneTool(gone: MintedDeclaredTool): ToolSet[string] {
         type: "object",
         properties: {},
       } as never),
-      execute: async () => ({
-        error:
-          `webmcp_tool_gone: the page no longer offers "${gone.rawName}"` +
-          `${gone.origin ? ` (it was on ${gone.origin})` : ""}; ` +
-          "re-read the page and decide again",
-      }),
+      execute: async () => {
+        // Both quoted values are the PAGE's: the name it registered and the
+        // frame it registered it from. Bounded and sanitized before they
+        // become part of a sentence in our own voice, and the origin reduced
+        // to scheme + host so a path cannot smuggle text either.
+        const rawName = sanitizeDeclaredText(
+          gone.rawName,
+          PAGE_TOOL_NAME_MAX_CHARS,
+        );
+        const origin = gone.origin
+          ? safeDeclaredOrigin(gone.origin)
+          : "unknown";
+        return {
+          error:
+            `webmcp_tool_gone: the page no longer offers "${rawName}"` +
+            `${origin !== "unknown" ? ` (it was on ${origin})` : ""}; ` +
+            "re-read the page and decide again",
+        };
+      },
     }),
     toModelOutput: toBrowserModelOutput,
   };
@@ -1779,6 +1796,14 @@ const PAGE_DERIVED_KEYS = [
   "tools",
   "webmcpTools",
   "result",
+  // A page tool's argument-validation messages quote the page's OWN schema —
+  // enum members, property names — so the messages are the page's words even
+  // though the check was ours.
+  "validation",
+  // Attribution for a page-tool result: the page's raw tool name and origin.
+  // Kept on the result for the card that renders it, but a page picks its own
+  // tool name, and a name is a place to write a sentence.
+  "pageTool",
 ] as const;
 
 /**
