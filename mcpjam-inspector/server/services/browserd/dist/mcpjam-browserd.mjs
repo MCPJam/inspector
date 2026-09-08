@@ -5943,6 +5943,14 @@ function defaultMintToken(path) {
   chmodSync(path, 384);
   return token;
 }
+function announcedFeatures(config, env = process.env) {
+  const features = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
+}
 function extraArgsFor(config) {
   const args = [];
   if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
@@ -5992,13 +6000,6 @@ function displayHeight(config) {
     BROWSERD_OBSERVATION_VIEWPORT.height * config.deviceScaleFactor
   );
 }
-function videoFeatures(config) {
-  if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
-  const features = [];
-  if (config.kiosk) features.push("h264");
-  if (config.recordingEnabled) features.push("record");
-  return features;
-}
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
@@ -6011,7 +6012,7 @@ async function main() {
   });
   const lease = new HandoffLease();
   const driver = new ChromiumDriver(context, { lease });
-  const features = videoFeatures(config);
+  const features = announcedFeatures(config);
   const video = features.includes("h264") ? createVideoEncoder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
