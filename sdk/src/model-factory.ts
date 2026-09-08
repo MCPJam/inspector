@@ -152,6 +152,27 @@ export function parseLLMString(
     };
   }
 
+  // An EMPTY segment is not a vendor path. `"/gpt-4o"`, `"vendor/"` and
+  // `"qwen//qwen3-max"` all reach here with `parts.length >= 2` and would
+  // otherwise be resolved by one of the two paths below, turning a local,
+  // obvious mistake into a remote API error (or, through the alias table, into
+  // a built-in provider with an empty model name).
+  //
+  // Placed after the built-in and custom-provider checks and before the alias
+  // table: those two are the paths that existed before this parser learned the
+  // hosted catalog, and `"openai/"` parses today, so tightening them would
+  // change the meaning of a string that already works. Everything below this
+  // line used to throw, so it can be strict.
+  //
+  // Tested on the raw SEGMENTS, not on `providerName` and the re-joined
+  // `model`: a doubled slash in the middle leaves both of those non-empty, so
+  // checking them would let exactly the case this guard names slip through.
+  if (parts.some((part) => part === "")) {
+    throw new Error(
+      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o") — no segment may be empty.`
+    );
+  }
+
   // A hosted-catalog prefix that is a built-in provider under another name.
   const aliased = HOSTED_PROVIDER_ALIASES[providerName.toLowerCase()];
   if (aliased && BUILT_IN_PROVIDERS.includes(aliased as LLMProvider)) {
@@ -173,20 +194,6 @@ export function parseLLMString(
   // OpenRouter and fails at the API call instead. A parser that could tell the
   // two apart would need the hosted catalog itself, which the SDK does not
   // ship and which grows without it.
-  // An EMPTY segment is not a vendor path. `"/gpt-4o"`, `"vendor/"` and
-  // `"qwen//qwen3-max"` all reach here with `parts.length >= 2` and would
-  // otherwise be handed to OpenRouter verbatim, turning a local, obvious
-  // mistake into a remote API error.
-  //
-  // Tested on the raw SEGMENTS, not on `providerName` and the re-joined
-  // `model`: a doubled slash in the middle leaves both of those non-empty, so
-  // checking them would let exactly the case this guard names slip through.
-  if (parts.some((part) => part === "")) {
-    throw new Error(
-      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o") — no segment may be empty.`
-    );
-  }
-
   return {
     type: "builtin",
     provider: HOSTED_CATALOG_PROVIDER,

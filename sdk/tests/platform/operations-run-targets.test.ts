@@ -735,9 +735,10 @@ describe("run_eval_suite target selection", () => {
     });
 
     it("names the CANONICAL fields when client and clients are both sent", async () => {
-      // Folded first, this lands on the `host`/`hosts` guard and answers a
-      // caller who typed `client` and `clients` by naming two fields they
-      // never used.
+      // `client` and `clients` are checked BEFORE they fold onto `host` and
+      // `hosts`. Folded first, this would land on the `host`/`hosts` guard and
+      // answer a caller who typed `client` and `clients` by naming two fields
+      // they never used.
       const { client, fetchMock } = makeClient();
       const error = await runEvalSuiteOperation
         .execute(

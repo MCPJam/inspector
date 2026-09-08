@@ -309,11 +309,18 @@ describe("model-factory", () => {
         // a remote API error. The middle cases are why the guard reads the raw
         // segments: a doubled slash leaves the provider and the re-joined
         // model both non-empty.
+        //
+        // The last two are ALIAS prefixes, and they are the reason the guard
+        // sits above the alias table rather than below it: resolved first,
+        // `x-ai/` would be an xai model with no name and `mistralai//model` a
+        // Mistral model called `/model`.
         for (const malformed of [
           "/qwen3-max",
           "qwen/",
           "qwen//qwen3-max",
           "qwen//",
+          "x-ai/",
+          "mistralai//model",
         ]) {
           expect(() => parseLLMString(malformed), malformed).toThrow(
             "Invalid LLM string format"
@@ -323,10 +330,12 @@ describe("model-factory", () => {
 
       it("leaves a BUILT-IN prefix alone, empty tail and all", () => {
         // The boundary, stated so it is a decision rather than an oversight:
-        // the guard sits on the hosted-vendor fallback only. A built-in
-        // provider returns before it and keeps the shape it has always had —
-        // tightening that would change a string that parses today, which this
-        // change deliberately never does.
+        // the guard sits below the built-in and custom-provider checks. Those
+        // two are the paths that existed before this parser learned the hosted
+        // catalog, and they keep the shape they have always had — tightening
+        // them would change a string that parses today, which this change
+        // deliberately never does. Everything the guard does cover used to
+        // throw.
         expect(parseLLMString("openai/")).toEqual({
           type: "builtin",
           provider: "openai",
