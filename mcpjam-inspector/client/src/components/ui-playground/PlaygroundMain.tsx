@@ -192,7 +192,10 @@ import {
   extractHostTheme,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
-import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
+import {
+  POST_CONNECT_GUIDE_COPY,
+  PostConnectGuide,
+} from "@/components/ui-playground/PostConnectGuide";
 import {
   ScenarioChatUiOverrideProvider,
   ScenarioHostStyleProvider,
@@ -408,7 +411,15 @@ interface PlaygroundMainProps {
   /** When true, Send / Enter are blocked until the playground server is connected. */
   blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
+  /** Legacy #1689 NUX branch, pinned `false` in production — see below. */
   showPostConnectGuide?: boolean;
+  /**
+   * Swaps the welcome hero's heading for the post-connect guide copy, so the
+   * first-run user sees the MCPJam logo and the Excalidraw nudge at once.
+   * Unlike `showPostConnectGuide` this keeps the rest of the composer NUX
+   * (typewriter, send hint, model/host selectors) intact.
+   */
+  showPostConnectGuideCopy?: boolean;
   onFirstMessageSent?: () => void;
   /**
    * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
@@ -560,6 +571,7 @@ export function PlaygroundMain({
   blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
+  showPostConnectGuideCopy = false,
   onFirstMessageSent,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
@@ -4973,7 +4985,9 @@ export function PlaygroundMain({
                                 : "text-[rgba(61,57,41,1)]",
                           )}
                         >
-                          This is your playground for MCP.
+                          {showPostConnectGuideCopy
+                            ? POST_CONNECT_GUIDE_COPY
+                            : "This is your playground for MCP."}
                         </h3>
                       </div>
                     </div>

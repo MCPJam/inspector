@@ -37,6 +37,12 @@ import type {
 } from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
 import {
+  DEFAULT_RECORD_FPS,
+  MAX_RECORD_FPS,
+  MIN_RECORD_FPS,
+  type VideoRecorder,
+} from "./video-recorder";
+import {
   HandoffLease,
   leaseRefusalFor,
   type LeaseHolderKind,
@@ -55,14 +61,36 @@ import {
 const MAX_INPUT_EVENTS = 64;
 
 /**
- * The frame interval a person's input buys, and for how long.
+ * The frame interval activity buys, and for how long.
  *
  * 33ms is 30fps — the ceiling the transports can actually carry — and 1.5s is
  * long enough to cover the echo of a gesture and the settle after it without
  * keeping a page at full rate because somebody clicked once.
+ *
+ * Named for ACTIVITY rather than for input, because the frame rate should not
+ * depend on whose hands moved the page. The throttle's 100ms floor is 10fps,
+ * and a scroll at 10fps is a slideshow whether a person drove it or the agent
+ * did — a watcher seeing the model work deserves the same picture the person
+ * driving gets.
  */
-const INPUT_BOOST_INTERVAL_MS = 33;
-const INPUT_BOOST_WINDOW_MS = 1_500;
+const ACTIVITY_BOOST_INTERVAL_MS = 33;
+const ACTIVITY_BOOST_WINDOW_MS = 1_500;
+
+/**
+ * The actions that move the picture, and so are worth the boost.
+ *
+ * `observe` is the deliberate omission: it reads the page and changes nothing
+ * on it, so raising the frame rate after one buys 45 extra JPEG encodes of a
+ * picture that did not move. The `webmcp_*` verbs are omitted for the same
+ * reason — they call a page's own tool, which may repaint or may not, and the
+ * repaint (if any) arrives through the ordinary screencast.
+ */
+const MOTION_ACTIONS: ReadonlySet<string> = new Set([
+  "navigate",
+  "back",
+  "reload",
+  "act",
+]);
 
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
@@ -105,7 +133,10 @@ interface CommandRequestBody {
 
 export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
-  driver: Pick<BrowserDriver, "health" | "viewport" | "tabsSnapshot">;
+  driver: Pick<
+    BrowserDriver,
+    "health" | "viewport" | "viewportIfWatched" | "tabsSnapshot"
+  >;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -170,6 +201,15 @@ export interface BrowserdHandlerDeps {
    * travelling on an envelope a caller controls.
    */
   captureTypedText?: boolean;
+  /**
+   * Record the display to a file, as run evidence.
+   *
+   * Absent on a box with no recorder (no display, or the operator's kill
+   * switch), where `/v1/record` answers 503 `record_unavailable` — and
+   * `features` omits `"record"` in the first place, so a caller that reads the
+   * status before asking never gets there.
+   */
+  recorder?: Pick<VideoRecorder, "start" | "stop" | "status">;
 }
 
 /**
@@ -185,11 +225,14 @@ const UNATTRIBUTED_ACTOR: BrowserLedgerActor = {
   id: "unattributed",
 };
 
+/** A recording id is a FILENAME. Nothing outside this may reach the path. */
+const RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
   private readonly driver: Pick<
     BrowserDriver,
-    "health" | "viewport" | "tabsSnapshot"
+    "health" | "viewport" | "viewportIfWatched" | "tabsSnapshot"
   >;
   private readonly bootId: string;
   private readonly token: string;
@@ -201,6 +244,7 @@ export class BrowserdRequestHandler {
   private readonly setVideoTier: BrowserdHandlerDeps["setVideoTier"];
   private readonly ledger: CommandLedger | undefined;
   private readonly captureTypedText: boolean;
+  private readonly recorder: BrowserdHandlerDeps["recorder"];
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -234,6 +278,7 @@ export class BrowserdRequestHandler {
     this.setVideoTier = deps.setVideoTier;
     this.ledger = deps.ledger;
     this.captureTypedText = deps.captureTypedText === true;
+    this.recorder = deps.recorder;
   }
 
   /**
@@ -363,6 +408,22 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handlePolicy(req);
+    }
+
+    // Recording control.
+    //
+    // NOT lease-gated, for the same reason `/v1/policy` is not: it governs
+    // whether the run leaves evidence behind, not what anything observes, and
+    // a person taking control mid-run must not end the recording of the run
+    // they took it during. Nor is it a `BrowserAction`: a recording outlives
+    // lease handoffs and must never enter the at-most-once command queue,
+    // where a retried `stop` would be answered from a cache instead of
+    // stopping anything.
+    if (req.path === "/v1/record") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleRecord(req);
     }
 
     // Human input, which does NOT travel with the frames.
@@ -558,6 +619,122 @@ export class BrowserdRequestHandler {
     return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
   }
 
+  /**
+   * Start or stop a recording.
+   *
+   * EVERY argument is validated before any spawn. A recording id becomes a
+   * filename and an fps becomes an x11grab rate: getting either wrong after
+   * the process is running means a file in the wrong place or an encoder at a
+   * rate the box cannot sustain, and neither is visible from the 200 that
+   * would come back. `fps` and `id` are echoed on every answer — including the
+   * refusals — so a caller never has to remember what it asked for to make
+   * sense of what it got.
+   */
+  private async handleRecord(req: DaemonRequest): Promise<DaemonResponse> {
+    if (req.method === "GET") {
+      // The state, on a box with a recorder or without one. `active:false`
+      // rather than a 503: "nothing is recording" is the honest answer either
+      // way, and the caller learns it can record from `features`.
+      const status = this.recorder?.status() ?? { active: false };
+      return { status: 200, body: { ...status, bootId: this.bootId } };
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId },
+      };
+    }
+    const { action, id, fps } = parsed as {
+      action?: unknown;
+      id?: unknown;
+      fps?: unknown;
+    };
+    if (action !== "start" && action !== "stop") {
+      return {
+        status: 400,
+        body: { error: "invalid_record_action", bootId: this.bootId },
+      };
+    }
+
+    if (action === "stop") {
+      if (!this.recorder) {
+        return {
+          status: 503,
+          body: { error: "record_unavailable", bootId: this.bootId },
+        };
+      }
+      const result = await this.recorder.stop();
+      // `null` means nothing was recording. 200, not 409: stopping a take that
+      // has already ended is what a caller collecting evidence on a teardown
+      // path does when the encoder hit its size cap five minutes ago, and it
+      // needs an answer it can read rather than an error it must special-case.
+      return {
+        status: 200,
+        body: { ok: true, recording: result, bootId: this.bootId },
+      };
+    }
+
+    // `fps` FIRST, before the id, so a caller fixing one error at a time is
+    // told about the rate it cannot have before the daemon starts caring what
+    // the file is called.
+    const resolvedFps = fps === undefined ? DEFAULT_RECORD_FPS : fps;
+    if (
+      typeof resolvedFps !== "number" ||
+      !Number.isInteger(resolvedFps) ||
+      resolvedFps < MIN_RECORD_FPS ||
+      resolvedFps > MAX_RECORD_FPS
+    ) {
+      return {
+        status: 400,
+        body: { error: "invalid_fps", fps, bootId: this.bootId },
+      };
+    }
+    if (typeof id !== "string" || !RECORD_ID_PATTERN.test(id)) {
+      // It is a FILENAME. A `..` or a slash here is a path the caller chose,
+      // and the daemon writes wherever it points.
+      return {
+        status: 400,
+        body: { error: "invalid_record_id", id, bootId: this.bootId },
+      };
+    }
+    if (!this.recorder) {
+      return {
+        status: 503,
+        body: {
+          error: "record_unavailable",
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId,
+        },
+      };
+    }
+    const started = this.recorder.start({ id, fps: resolvedFps });
+    if (!started.ok) {
+      return {
+        status: started.error === "record_active" ? 409 : 503,
+        body: {
+          error: started.error,
+          id,
+          fps: resolvedFps,
+          bootId: this.bootId,
+        },
+      };
+    }
+    return {
+      status: 200,
+      body: { ok: true, id, fps: resolvedFps, bootId: this.bootId },
+    };
+  }
+
   private async handleInput(req: DaemonRequest): Promise<DaemonResponse> {
     let parsed: unknown;
     try {
@@ -703,6 +880,12 @@ export class BrowserdRequestHandler {
     const outcome = await this.queue.submit(parsed.command);
     const response = this.mapOutcome(outcome);
     this.recordOutcome(parsed.command, outcome, startedAt);
+    // AFTER the command ran, so the boost covers the repaint it caused rather
+    // than the frame before it — the same placement `dispatchInput` uses, and
+    // for the same reason. Awaited so a test can observe it, but it never
+    // decides the response: a boost that cannot be applied is a slower
+    // picture, not a failed command.
+    await this.boostAfterMotion(parsed.command, outcome);
     return response;
   }
 
@@ -828,6 +1011,70 @@ export class BrowserdRequestHandler {
       ...(what.capturePage ? { capturePage: true } : {}),
       ...(this.captureTypedText ? { captureTypedText: true } : {}),
     });
+  }
+
+  /**
+   * Raise the frame rate for a moment after a command that moved the page.
+   *
+   * The seam is HERE rather than in the driver because this is where the
+   * command's fate is known: a `navigate` the lease refused, or one the queue
+   * de-duplicated, never touched the page, and boosting after it would spend a
+   * box's cores on a picture nothing changed. It runs for every source —
+   * a chat-driven scroll and a person's own `manual` command are the same
+   * motion to whoever is watching.
+   *
+   * `viewportIfWatched` and never `viewport`: on a box where nobody has the
+   * pane open there is no viewport, and building one here would attach a CDP
+   * screencast and start encoding JPEGs for an audience of nobody — on the
+   * same two cores the agent is using. A driver too old to answer the question
+   * (or a fake that does not implement it) simply gets no boost.
+   */
+  private async boostAfterMotion(
+    command: BrowserCommand,
+    outcome: BrowserCommandOutcome,
+  ): Promise<void> {
+    if (!MOTION_ACTIONS.has(command.action.kind)) return;
+    // NOTHING RAN, so nothing moved: `busy` was refused at the depth cap,
+    // `expired` lost its result to eviction, `at_capacity` was never admitted.
+    // Boosting after any of them spends 45 JPEG encodes on a picture that did
+    // not change, on the cores the agent is using.
+    if (outcome.status !== "ok") return;
+    // A SUCCESSFUL RESULT, AND NOTHING ELSE — because a failed one is genuinely
+    // ambiguous here and this is only a frame-rate hint.
+    //
+    // `ok: false` covers both "refused before touching the page"
+    // (`out_of_viewport`, `unknown_ref`, a stale observation) and "ran, then
+    // threw partway" (a click that landed before its follow-up timed out). The
+    // driver cannot tell those apart either: its catch classifies by message
+    // and snapshots the page either way, so `act_failed` arrives carrying a
+    // fresh `stateToken` in BOTH cases. Nothing reaching this method
+    // distinguishes them.
+    //
+    // Given that, the two mistakes are not equal. Boosting a refusal spends
+    // 1.5s of 30fps encoding on a page that did not move, on the two cores the
+    // agent is using; not boosting a partial act leaves a watcher at 10fps
+    // through the settle of a command that failed anyway. The first is a real
+    // cost on every refusal, the second a cosmetic one on a rarer path — so
+    // the gate takes the side that never spends CPU on a still page.
+    //
+    // Making this exact would mean the DRIVER reporting whether it dispatched,
+    // which is a change across every act path for a hint whose worst case is a
+    // choppier second and a half. Named here rather than approximated with a
+    // list of error codes, which is how this gate has been wrong twice.
+    //
+    // A duplicate resolved from the queue's cache still boosts: it reports the
+    // original result and the queue does not say which of the two it was. That
+    // is the honest limit of what is knowable here, and the cost is a second
+    // boost over a repaint that did happen.
+    if (!outcome.result.ok) return;
+    try {
+      const viewport = await this.driver.viewportIfWatched?.(command.tabId);
+      viewport?.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
+    } catch {
+      // A viewport whose page closed under it rejects here. The command
+      // already succeeded and its result is already owed to the caller; a
+      // frame-rate hint is never worth turning that into a 500.
+    }
   }
 
   /**
@@ -1044,7 +1291,7 @@ export class BrowserdRequestHandler {
     // batch changed nothing on the page, and raising the screencast to 30fps
     // for a second and a half over it is a box paying for nothing.
     if (args.events.length > 0) {
-      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+      viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
     return { ok: true };
   }

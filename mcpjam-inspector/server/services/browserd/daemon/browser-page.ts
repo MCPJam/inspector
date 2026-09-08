@@ -52,7 +52,25 @@ export interface DriverPage {
   hoverSelector(selector: string): Promise<void>;
   /** Type into the focused element (a click usually precedes this). */
   typeText(text: string): Promise<void>;
-  /** Type into a specific element, replacing its current value. */
+  /**
+   * Type into a specific element, replacing its current value.
+   *
+   * CONTRACT, in Playwright's own words because it is the reference engine:
+   *
+   *   - a `<select>` REJECTS with "not an `<input>`, `<textarea>` or
+   *     `[contenteditable]`" — a list that does NOT offer `<select>`;
+   *   - anything else unfillable REJECTS with a list that DOES.
+   *
+   * The one-item difference is load-bearing: `fill_form` falls back to
+   * `selectOption` on the first and must not on the second, or a `fill` aimed
+   * at a button is answered with whatever `selectOption` then fails for.
+   *
+   * An engine that fills by synthesising keystrokes has to check for itself,
+   * because those keystrokes land on a `<select>` and change nothing at all —
+   * and on a button they land after a CLICK, which is a side effect nobody
+   * asked for. An engine that fails silently makes the fallback unreachable
+   * there while it works everywhere else.
+   */
   fillSelector(selector: string, text: string): Promise<void>;
   /** Press one key or chord ("Enter", "Control+A"). */
   press(key: string): Promise<void>;

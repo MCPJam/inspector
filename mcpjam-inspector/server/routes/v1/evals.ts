@@ -1829,7 +1829,14 @@ function toStepResultDto(step: EvalStepReplay) {
     ? {
         ...(ev.toolCalls?.length ? { toolCalls: ev.toolCalls } : {}),
         ...(ev.screenshotUrl ? { screenshotUrl: ev.screenshotUrl } : {}),
-        ...(ev.videoUrl ? { videoUrl: ev.videoUrl } : {}),
+        ...(ev.videoUrl
+          ? {
+              videoUrl: ev.videoUrl,
+              // With the URL, never without: metadata for a video this row
+              // does not carry describes a recording nobody can reach.
+              ...(ev.videoMeta ? { videoMeta: ev.videoMeta } : {}),
+            }
+          : {}),
         ...(typeof ev.videoOffsetMs === "number"
           ? { videoOffsetMs: ev.videoOffsetMs }
           : {}),

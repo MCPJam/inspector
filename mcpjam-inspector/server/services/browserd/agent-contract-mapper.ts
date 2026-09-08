@@ -171,7 +171,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
           kind: "navigate",
           url: command.url,
           ...(command.newTab ? { newTab: true } : {}),
-          observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
+          observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
         },
       };
     case "back":
@@ -179,7 +179,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         ok: true,
         action: {
           kind: "back",
-          observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
+          observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
         },
       };
     case "reload":
@@ -187,7 +187,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         ok: true,
         action: {
           kind: "reload",
-          observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
+          observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
         },
       };
     case "act": {
@@ -213,7 +213,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
           : {}),
         ...(command.value === undefined ? {} : { value: command.value }),
         ...(expectedState ? { expectedState } : {}),
-        observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
+        observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
       };
       if (target && "ref" in target) {
         // Refused HERE rather than at the browser, so the caller learns why in

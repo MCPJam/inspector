@@ -2270,6 +2270,7 @@ export function PlaygroundRoute() {
     activeProject,
     activeProjectId,
     appState,
+    areServersHydrated,
     ensureServersReady,
     evalChatHandoff,
     handleConnect,
@@ -2299,6 +2300,7 @@ export function PlaygroundRoute() {
       isConvexAuthenticated={isAuthenticated}
       isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
       isClientConfigSyncPending={isClientConfigSyncPending}
+      areServersHydrated={areServersHydrated}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
@@ -2493,6 +2495,8 @@ export function HomeRoute() {
 export default function App() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
+  const billingLocation = useCurrentLocationParts();
+  const navigate = useAppNavigate();
   const [hostsTabSelectedHostId, setHostsTabSelectedHostId] = useState<
     string | null
   >(null);
@@ -2518,8 +2522,8 @@ export default function App() {
   const [pendingProjectReturnRecovery, setPendingProjectReturnRecovery] =
     useState<ProjectSignInReturnRecoveryIntent | null>(null);
   const callbackReturnConsumedRef = useRef(false);
-  const billingDeepLinkNavRef = useRef(false);
-  /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
+  const billingSignInStartedRef = useRef(false);
+  /** True after we read valid plan/interval from the current billing entry. */
   const billingCheckoutQueryConsumedRef = useRef(false);
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
@@ -2927,6 +2931,16 @@ export default function App() {
       return;
     }
 
+    // A guest session is also Convex-authenticated. For billing returns, wait
+    // for AuthKit to expose the real WorkOS user before consuming the return;
+    // otherwise the guest identity can restore `/billing` and start the same
+    // sign-in flow again while the successful login is still settling.
+    const isBillingReturnWaitingForWorkOs =
+      !!readPersistedCheckoutIntent() &&
+      !!readBillingSignInReturnPath() &&
+      !workOsUser;
+    if (isBillingReturnWaitingForWorkOs) return;
+
     // Select the return exactly once after AuthKit + Convex auth settle. A
     // project-scoped return stays on `/callback` until the database user and
     // first authoritative membership response are ready below.
@@ -3301,6 +3315,7 @@ export default function App() {
       readProjectPathSegment(window.location.pathname) !== null);
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
+    pendingCheckoutIntent === null &&
     !isBareCaniuseRoute &&
     !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
@@ -4200,8 +4215,7 @@ export default function App() {
     clearBillingSignInReturnPath();
     clearCheckoutIntentFromUrl();
     setPendingCheckoutIntent(null);
-    billingDeepLinkNavRef.current = false;
-    billingCheckoutQueryConsumedRef.current = false;
+    billingSignInStartedRef.current = false;
   }, []);
 
   const handleCheckoutIntentNavigationStarted = useCallback(() => {
@@ -4213,77 +4227,93 @@ export default function App() {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
 
-    const path = window.location.pathname;
+    const path = billingLocation.pathname;
     if (!isBillingEntryPathname(path)) {
       billingCheckoutQueryConsumedRef.current = false;
     }
 
-    if (window.location.pathname === "/callback") return;
+    if (path === "/callback") return;
 
     const onBillingEntry = isBillingEntryPathname(path);
+    let checkoutIntent = pendingCheckoutIntent;
 
     if (onBillingEntry) {
-      billingDeepLinkNavRef.current = false;
-      const search = window.location.search;
+      const search = billingLocation.search;
       const invalid =
         hasInvalidCheckoutQueryParams(search) ||
         hasInvalidCheckoutIntervalParam(search);
 
       if (invalid) {
-        clearPersistedCheckoutIntent();
-        clearBillingSignInReturnPath();
-        setPendingCheckoutIntent(null);
-        billingCheckoutQueryConsumedRef.current = false;
-      } else {
-        const fromUrl = readCheckoutIntentFromSearch(search);
-        if (fromUrl) {
-          persistCheckoutIntent(fromUrl);
-          setPendingCheckoutIntent(fromUrl);
-          billingCheckoutQueryConsumedRef.current = true;
-        } else if (!new URLSearchParams(search).has("plan")) {
-          const persistedIntent = readPersistedCheckoutIntent();
-          if (persistedIntent) {
-            billingCheckoutQueryConsumedRef.current = true;
-            if (
-              pendingCheckoutIntent?.plan !== persistedIntent.plan ||
-              pendingCheckoutIntent?.interval !== persistedIntent.interval
-            ) {
-              setPendingCheckoutIntent(persistedIntent);
-            }
-          } else if (!billingCheckoutQueryConsumedRef.current) {
-            clearPersistedCheckoutIntent();
-            clearBillingSignInReturnPath();
-            setPendingCheckoutIntent(null);
-          }
-        }
-      }
-
-      clearCheckoutIntentFromUrl();
-
-      if (!isAuthenticated) {
-        if (!isAuthLoading) {
-          writeBillingSignInReturnPath(path);
-          void signIn();
-        }
+        consumeCheckoutIntent();
+        navigate(routePaths.root, { replace: true, unscoped: true });
         return;
       }
 
-      if (path !== routePaths.root && path !== "") {
-        navigateApp(routePaths.root, { replace: true });
+      const fromUrl = readCheckoutIntentFromSearch(search);
+      if (fromUrl && !billingCheckoutQueryConsumedRef.current) {
+        checkoutIntent = fromUrl;
+        persistCheckoutIntent(fromUrl);
+        if (
+          pendingCheckoutIntent?.plan !== fromUrl.plan ||
+          pendingCheckoutIntent?.interval !== fromUrl.interval
+        ) {
+          setPendingCheckoutIntent(fromUrl);
+        }
+        billingCheckoutQueryConsumedRef.current = true;
+      } else if (fromUrl) {
+        // The URL hook can trail a same-tick replaceState while checkout is
+        // being consumed. Do not restore the intent from that stale render.
+        checkoutIntent = pendingCheckoutIntent;
+      } else if (!new URLSearchParams(search).has("plan")) {
+        const persistedIntent = readPersistedCheckoutIntent();
+        if (persistedIntent) {
+          checkoutIntent = persistedIntent;
+          billingCheckoutQueryConsumedRef.current = true;
+          if (
+            pendingCheckoutIntent?.plan !== persistedIntent.plan ||
+            pendingCheckoutIntent?.interval !== persistedIntent.interval
+          ) {
+            setPendingCheckoutIntent(persistedIntent);
+          }
+        } else if (!billingCheckoutQueryConsumedRef.current) {
+          consumeCheckoutIntent();
+          navigate(routePaths.root, { replace: true, unscoped: true });
+          return;
+        }
       }
     }
 
-    if (!isAuthenticated || isAuthLoading) return;
-    if (isLoadingOrganizations) return;
+    if (!checkoutIntent) {
+      billingSignInStartedRef.current = false;
+      return;
+    }
 
     if (billingEntitlementsUiEnabled === false) {
+      toast.error("Checkout isn't available in this environment.");
+      consumeCheckoutIntent();
       return;
     }
 
-    if (!pendingCheckoutIntent) {
-      billingDeepLinkNavRef.current = false;
+    // Convex guest sessions are authenticated too, so WorkOS is the source of
+    // truth for whether this actor may begin a paid checkout.
+    if (!workOsUser) {
+      if (isWorkOsLoading || billingSignInStartedRef.current) return;
+      billingSignInStartedRef.current = true;
+      writeBillingSignInReturnPath(routePaths.billing);
+      void Promise.resolve()
+        .then(() => signIn())
+        .catch(() => {
+          billingSignInStartedRef.current = false;
+          toast.error("Could not start sign in. Try again.");
+          consumeCheckoutIntent();
+        });
       return;
     }
+    billingSignInStartedRef.current = false;
+
+    if (!isAuthenticated || isAuthLoading) return;
+    if (!isUserReady || currentUser?.isAnonymous === true) return;
+    if (isLoadingOrganizations) return;
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
@@ -4305,22 +4335,26 @@ export default function App() {
       return;
     }
 
-    if (billingDeepLinkNavRef.current) {
-      return;
-    }
-
-    navigateApp(buildOrganizationPath(orgId, "billing"));
-    billingDeepLinkNavRef.current = true;
+    // The current route is the retry guard. If another redirect wins after
+    // this navigation, the changed route reruns the effect and resumes the
+    // handoff instead of leaving a lifetime ref latched until reload.
+    navigate(buildOrganizationPath(orgId, "billing"), { replace: true });
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
+    billingLocation.pathname,
+    billingLocation.search,
     billingEntitlementsUiEnabled,
     consumeCheckoutIntent,
+    currentUser?.isAnonymous,
     isAuthLoading,
     isAuthenticated,
     isDebugCallback,
     isHostedChatRoute,
     isLoadingOrganizations,
+    isUserReady,
+    isWorkOsLoading,
+    navigate,
     pendingCheckoutIntent,
     routeOrganizationId,
     routeOrganizationSection,
@@ -4799,10 +4833,6 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  if (isBillingEntryHandoff) {
-    return <BillingHandoffLoading />;
-  }
-
   if (isLoading && !isHostedChatRoute) {
     return <LoadingScreen />;
   }
@@ -4848,6 +4878,10 @@ export default function App() {
         email={workOsUser?.email}
       />
     );
+  }
+
+  if (isBillingEntryHandoff) {
+    return <BillingHandoffLoading />;
   }
 
   const shouldShowActiveServerSelector =

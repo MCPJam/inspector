@@ -222,6 +222,65 @@ The same caveat governs rollback as for the shell: this is a _server_ env var,
 and users on published npm or Electron builds are on their own machines. UI
 exposure needs its own client-evaluated flag before wide release.
 
+## Recording an unattended run
+
+An unattended run on a per-run hosted browser leaves an MP4 behind, and the run
+page plays it next to the trace. The box is disposable and nobody is watching
+it, so the file is the only account of what the agent saw.
+
+```
+POST /v1/record  {"action":"start","id":"<session>","fps":15}
+POST /v1/record  {"action":"stop"}   → {path, bytes, durationMs, distinctFrames, truncated}
+GET  /v1/record                      → the current take, if any
+```
+
+A daemon **route**, not a `BrowserAction`, and never lease-gated: a recording
+outlives handoffs, a person taking control mid-run must not end the recording
+of the run they took it during, and a retried `stop` in the at-most-once
+command queue would be answered from a cache instead of stopping anything.
+Announced through `status.features` as `"record"` — the inspector never calls a
+route the daemon did not advertise, so an older daemon simply records nothing.
+
+Its own ffmpeg process, never a sink on the live encoder: that one starts on
+the first watcher, stops on the last, and restarts whole on a tier change,
+each of which would truncate a file the run is still filling. On a per-run box
+there is no watcher at all, so it is the only encoder running.
+
+Fragmented MP4, H.264 baseline, `mpdecimate` with variable frame rate. A killed
+box still leaves a playable file — the case where the evidence matters most.
+An idle page emits nothing while timestamps stay on the wall clock, so the
+player holds the last frame across a gap and the duration still matches the
+run. `-fs` stops ffmpeg at the size cap and the take is reported `truncated`,
+never dropped: what lands is a complete, playable *beginning* of the run.
+
+The inspector starts a take when the browser tools first ensure a hosted
+session (so a run that never calls `browser_*` never records) and collects it
+in the release path, before the box goes away. Collection is bounded at 45 s
+and totally fail-soft — a daemon that has gone away, a read that hangs, an SDK
+that throws all yield no video and release the box on exactly the same
+schedule.
+
+```dotenv
+MCPJAM_BROWSERD_RECORD=0                 # daemon: `features` omits "record"
+MCPJAM_BROWSERD_RECORD_DIR=…             # default ${userDataDir}/recordings
+MCPJAM_BROWSERD_RECORD_MAX_BYTES=…       # default and ceiling 60 MiB
+MCPJAM_HOSTED_BROWSER_RECORDING=0        # inspector: never start a take
+```
+
+Only `MCPJAM_HOSTED_BROWSER_RECORDING` is read at call time — flip it and the
+next run stops recording, no deploy. The three daemon-side ones are read ONCE,
+by `readBrowserdConfig()` at boot, and `features` is computed from that
+snapshot: changing them needs the daemon relaunched before they take effect.
+
+Local engines do not record yet. They have no display and no encoder, so the
+design there is a second `Page.startScreencast` on a **dedicated flattened CDP
+session** — Chrome keeps one screencast per session, and the pane's handler
+would otherwise ack a recorder's frames on the wrong session. Both engines need
+one interface addition first: an uncached `DriverPage.cdpSession()` on the
+Playwright page (its `cdp()` memoises a single session shared by the
+screencast, a11y and WebMCP), and a `sessionId` threaded through
+`electron/debugger-cdp.ts`.
+
 ## The desktop app shows the page, not a picture of it
 
 In the packaged app the agent's browser is a `WebContentsView` running in this
@@ -326,7 +385,11 @@ PAGE, at the daemon's own observation viewport.
   upstream fixes that and halves the box's egress.
 - **No `browser_*` artifacts** are recorded for evals — no screenshots, no step
   replay. (The AGENT surface records its own: screenshots and trees land beside
-  the session's ledger. The eval trace is separate and still has none.)
+  the session's ledger. A hosted unattended run also leaves a video; see
+  *Recording an unattended run* — per-step offsets into it still need the
+  hosted tool path to emit `browserInteractionSteps` through the artifact
+  outbox, which only the local widget harness does today. The eval trace
+  is separate from both and still has none.)
 - **The agent surface is local only.** `/v1/browser-sessions`, the SDK ops, the
   MCP worker tools and the CLI's cloud bindings are M2, and the backend tables
   (`browserLogicalSessions`, `browserCommands`) land before any of them.
@@ -335,9 +398,11 @@ PAGE, at the daemon's own observation viewport.
   ledger's `actor`. A tab per participant, `holderKind: "agent"`, and revoking
   an agent's access from the rail are M1.5 — to be built when two drivers
   actually collide in dogfood, not before.
-- **No network, HAR, video or diff.** The console ring is the only page
-  telemetry, and it is ephemeral. `consoleSeqAfter`/`errorsSeqAfter` on a ledger
-  row already bracket a command's console output; nothing reads them yet.
+- **No network, HAR or diff.** Video has left this list — a hosted
+  unattended run records one, per *Recording an unattended run*. The console
+  ring is the only page telemetry, and it is ephemeral.
+  `consoleSeqAfter`/`errorsSeqAfter` on a ledger row already bracket a
+  command's console output; nothing reads them yet.
 - **`evaluate` is not implemented.** It is in neither the contract nor the
   daemon; running page script stays local-only via the CDP escape hatch.
 - The **quality governor and settle-still** from the WebMCP inspector are not
