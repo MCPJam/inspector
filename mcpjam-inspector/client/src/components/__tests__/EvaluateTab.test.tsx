@@ -792,6 +792,84 @@ describe("EvaluateTab", () => {
       return response;
     }
 
+    /**
+     * The lock reaches the AGENT, not just the person.
+     *
+     * The platform refuses these writes either way — but the agent was told
+     * `generation_started` for something that cannot start, and "check for a
+     * backend or authorization error" for a refusal that has nothing to do
+     * with authorization. Both are the misdirection this change exists to
+     * remove; the agent gets the same sentence a human gets, before anything
+     * runs.
+     */
+    describe("CI-owned suites refuse configuration commands", () => {
+      function withCiOwnedSuiteB() {
+        mocks.useEvalQueries.mockImplementation(
+          ({ selectedSuiteId }: { selectedSuiteId: string | null }) => {
+            const state = makeQueryState(selectedSuiteId);
+            const locked = makeSuiteEntry(["server-b"], "suite-b", {
+              declaredSuiteId: "s_checkout",
+            });
+            const suites = [state.sortedSuites[0], locked];
+            return {
+              ...state,
+              suiteOverview: suites,
+              sortedSuites: suites,
+            };
+          },
+        );
+      }
+
+      it("refuses generateEvalTests with the CI reason, and never starts one", async () => {
+        withCiOwnedSuiteB();
+        render(<EvaluateTab projectId="ws-1" />);
+
+        const response = await dispatch({
+          type: "generateEvalTests",
+          payload: { suite: "Suite suite-b" },
+        });
+
+        expect(response).toMatchObject({ status: "error" });
+        expect(JSON.stringify(response)).toMatch(/managed by CI/i);
+        // Named as a bad request, not an execution failure: nothing was
+        // attempted, and there is nothing to retry.
+        expect(JSON.stringify(response)).toMatch(/invalid_request/);
+        expect(mocks.handleGenerateTests).not.toHaveBeenCalled();
+      });
+
+      it("refuses deleteEvalSuite with the CI reason instead of an auth hint", async () => {
+        withCiOwnedSuiteB();
+        render(<EvaluateTab projectId="ws-1" />);
+
+        const response = await dispatch({
+          type: "deleteEvalSuite",
+          payload: { suite: "Suite suite-b" },
+        });
+
+        expect(response).toMatchObject({ status: "error" });
+        const body = JSON.stringify(response);
+        expect(body).toMatch(/managed by CI/i);
+        // The old message sent the reader after access that would change
+        // nothing — every project member already holds `suite.delete` here.
+        expect(body).not.toMatch(/authorization error/i);
+        expect(mocks.confirmDelete).not.toHaveBeenCalled();
+      });
+
+      it("still lets an agent RUN a CI-owned suite", async () => {
+        withCiOwnedSuiteB();
+        render(<EvaluateTab projectId="ws-1" />);
+
+        const response = await dispatch({
+          type: "runEvalSuite",
+          payload: { suite: "Suite suite-b" },
+        });
+
+        // Running was never the problem. A CI-owned suite an agent cannot run
+        // is broken, not locked.
+        expect(response).toMatchObject({ status: "success" });
+      });
+    });
+
     it("runEvalSuite resolves the suite and starts the run through the quota-gated wrapper", async () => {
       render(<EvaluateTab projectId="ws-1" />);
 

@@ -97,7 +97,10 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
-import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
+import {
+  CI_OWNED_REASON_COPY,
+  isCiOwnedSuite,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -692,6 +695,30 @@ function EvaluateTabContent({
   // Exact (case-insensitive) matches only against the loaded overview: the
   // suite id, the stored name, or the switcher's display name (timestamp
   // suffix stripped). Unknown or ambiguous → invalid_request, never a guess.
+  /**
+   * Refuse an agent command that would write a CI-owned suite's configuration.
+   *
+   * The platform already refuses these writes, so nothing gets through either
+   * way — but "refused" and "refused for THIS reason" are different answers,
+   * and the agent only ever saw the first. `generateEvalTests` returned
+   * `generation_started` and let the failure land in a toast the agent cannot
+   * read; `deleteEvalSuite` reported "check for a backend or authorization
+   * error", which is precisely the misdirection this whole change exists to
+   * remove — it is not an authorization problem, and no amount of access will
+   * fix it.
+   *
+   * So the agent gets the same sentence the human gets, before anything runs.
+   * Only the CONFIGURATION commands guard: `runEvalSuite` and `cancelEvalRun`
+   * are deliberately untouched, because running a CI-owned suite is allowed.
+   */
+  const refuseIfCiOwned = (suite: EvalSuite, attempted: string): void => {
+    if (!isCiOwnedSuite(suite)) return;
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `Suite "${suiteDisplayName(suite)}" is managed by CI — ${attempted} is refused. ${CI_OWNED_REASON_COPY}.`,
+    );
+  };
+
   const resolveSuiteEntry = (raw: unknown): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
@@ -848,6 +875,11 @@ function EvaluateTabContent({
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite);
+        // BEFORE the servers check. On a CI-owned suite, "attach a client in
+        // the suite header" is advice the reader cannot take — attaching one is
+        // itself a configuration write the platform refuses — so leading with
+        // it would send an agent down a path that dead-ends twice.
+        refuseIfCiOwned(entry.suite, "generating cases");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
@@ -886,6 +918,7 @@ function EvaluateTabContent({
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite);
+        refuseIfCiOwned(entry.suite, "deleting it");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
