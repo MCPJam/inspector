@@ -1010,24 +1010,6 @@ export function buildBrowserTools(
           : action,
     };
     const client = handle.client as unknown as CommandSender;
-    // A PAGE TOOL KEEPS RUNNING WHEN THE REQUEST IS ABORTED. Dropping the HTTP
-    // connection stops us waiting; it does not stop the browser, which has
-    // already admitted the command and is inside the page's own handler. So an
-    // abort has to become an actual `webmcp_cancel` — and the only id we hold
-    // before the invoke settles is our own `commandId`, which is why the daemon
-    // accepts one. Without this the user pressed Stop and the form submitted
-    // anyway.
-    const disarm =
-      action.kind === "webmcp_invoke" && args.signal
-        ? armWebmcpCancel(
-            client,
-            handle,
-            commandId,
-            args.tabId,
-            args.signal,
-            command.source,
-          )
-        : undefined;
     // THE COMMAND IS BUILT BEFORE THE LOCK, AND SENT INSIDE IT.
     //
     // Both halves matter. Building first means two acts emitted in ONE model
@@ -1041,8 +1023,59 @@ export function buildBrowserTools(
     //
     // The origin recovery below calls `send` from INSIDE this section, so it
     // skips the lock — taking it again would deadlock the turn on itself.
-    const release = recovering ? undefined : await state.acquire(args.signal);
+    let release: (() => void) | undefined;
     try {
+      release = recovering ? undefined : await state.acquire(args.signal);
+    } catch (error) {
+      // STOPPED WHILE STILL IN OUR OWN QUEUE. The lock above is a second queue
+      // in front of the daemon's, and `acquire` REJECTS rather than resolving
+      // when the signal fires while a sibling command is still in flight. For
+      // a page tool that is a cancellation like any other and has to read as
+      // one: without this the person pressed Stop and the card showed them a
+      // raw AbortError.
+      //
+      // Nothing goes out. The invoke was never sent, so there is no
+      // invocation, and a `webmcp_cancel` carrying this commandId would ask
+      // the daemon to stop something that never started.
+      if (action.kind === "webmcp_invoke" && args.signal?.aborted) {
+        return {
+          ok: false,
+          error:
+            "webmcp_cancelled: this call was stopped before it reached the " +
+            "browser, so the page never ran it",
+          tabId,
+        };
+      }
+      throw error;
+    }
+    try {
+      // A PAGE TOOL KEEPS RUNNING WHEN THE REQUEST IS ABORTED. Dropping the
+      // HTTP connection stops us waiting; it does not stop the browser, which
+      // has already admitted the command and is inside the page's own handler.
+      // So an abort has to become an actual `webmcp_cancel` — and the only id
+      // we hold before the invoke settles is our own `commandId`, which is why
+      // the daemon accepts one. Without this the user pressed Stop and the
+      // form submitted anyway.
+      //
+      // ARMED INSIDE THE LOCK, not before it. There is nothing to cancel until
+      // the command is on its way: armed earlier, a Stop that landed while
+      // this call was still parked behind a sibling sent the daemon a cancel
+      // naming a commandId it has never seen. Harmless, but it is a request
+      // that cannot do anything, and the branch above already gives that case
+      // its answer. There is no `await` between the acquire and this line, so
+      // nothing can slip through the gap — and an abort that has already
+      // happened fires no event, which `armWebmcpCancel` handles itself.
+      const disarm =
+        action.kind === "webmcp_invoke" && args.signal
+          ? armWebmcpCancel(
+              client,
+              handle,
+              commandId,
+              args.tabId,
+              args.signal,
+              command.source,
+            )
+          : undefined;
       let response;
       try {
         response = await client.sendCommand(command, handle.bootId, {
