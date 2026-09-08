@@ -2216,6 +2216,74 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     expect(cancelled).toEqual([]);
   });
 
+  it("latches NOTHING for a command that is not running", async () => {
+    // A cancel can arrive long after its invoke failed early — a refused
+    // binding, no bridge, a lease. That command will never reach `onStarted`
+    // to consume a latch or `finally` to clear one, because both already
+    // happened, so an entry made here would sit until the ceiling evicted it.
+    // Enough of those would evict the one latch belonging to a live
+    // invocation, and a real Stop would be lost — the failure the latch exists
+    // to prevent, reached by filling it with commands that were never running.
+    const cancelled: string[] = [];
+    let startInvocation: (() => void) | undefined;
+    let releaseInvoke: (() => void) | undefined;
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        // NAMELESS UNTIL RELEASED, so the Stop below lands in the latch window
+        // rather than the ordinary by-id path — which is the only window this
+        // test is about.
+        await new Promise<void>((resolve) => {
+          startInvocation = resolve;
+        });
+        (args.onStarted as ((id: string) => void) | undefined)?.("inv-live");
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+        return { invocationId: "inv-live", output: { ok: true } };
+      },
+      cancel: async (invocationId: string) => {
+        cancelled.push(invocationId);
+        return true;
+      },
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    // A real invocation, and a Stop while it is still nameless. This is the
+    // latch that has to survive.
+    const invoking = driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-live",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await driver.execute(cmd({ kind: "webmcp_cancel", commandId: "cmd-live" }));
+
+    // THEN cancels for commands that never ran, more than the ceiling. Order
+    // is the whole test: recording these would push the live one out.
+    for (let index = 0; index < 400; index += 1) {
+      await driver.execute(
+        cmd({ kind: "webmcp_cancel", commandId: `ghost-${index}` }),
+      );
+    }
+
+    // The browser answers only now.
+    startInvocation?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // It survived the ghosts, because they were never recorded.
+    expect(cancelled).toEqual(["inv-live"]);
+
+    releaseInvoke?.();
+    await invoking;
+  });
+
   it("does NOT deliver a remembered cancel under a handoff", async () => {
     // The named-id path re-asks the lease after its await because cancelling
     // reaches into the page. This delivery can span the whole accept window,

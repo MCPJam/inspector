@@ -327,6 +327,15 @@ export class ChromiumDriver implements BrowserDriver {
    * a daemon holding 256 in-flight invocations has a different problem.
    */
   private readonly pendingCancels = new Set<string>();
+  /**
+   * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
+   *
+   * The membership test for `pendingCancels`: a cancellation can only be
+   * latched for something still running, which is what keeps that set bounded
+   * by the number of concurrent invocations rather than by a ceiling. Held
+   * only across the bridge call, and cleared in its `finally`.
+   */
+  private readonly activeInvocations = new Set<string>();
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -660,6 +669,7 @@ export class ChromiumDriver implements BrowserDriver {
         };
       }
     }
+    this.activeInvocations.add(commandId);
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -720,11 +730,9 @@ export class ChromiumDriver implements BrowserDriver {
             : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`,
       };
     } finally {
-      // THE COMMAND IS OVER, so any cancellation still waiting on it is moot.
-      // Without this an invocation that threw, timed out, or never reached
-      // `onStarted` would leave its entry behind for the life of the daemon —
-      // and once the set hit its ceiling every later race-window Stop would be
-      // dropped in silence, which is the failure this set exists to prevent.
+      // THE COMMAND IS OVER, so any cancellation still waiting on it is moot,
+      // and nothing may latch a new one against it from here.
+      this.activeInvocations.delete(commandId);
       this.pendingCancels.delete(commandId);
     }
   }
@@ -756,15 +764,15 @@ export class ChromiumDriver implements BrowserDriver {
       //
       // So the intent is remembered against the COMMAND, and the id, when it
       // arrives, is cancelled on sight.
-      if (action.commandId) {
-        // Oldest-first, like the map beside it. The `finally` on the invoke
-        // clears these in the ordinary case; this is the backstop for a
-        // command that never ran at all, so the ceiling can never turn into a
-        // silently ignored Stop.
-        if (this.pendingCancels.size >= MAX_TRACKED_INVOCATIONS) {
-          const oldest = this.pendingCancels.values().next().value;
-          if (oldest !== undefined) this.pendingCancels.delete(oldest);
-        }
+      // ONLY FOR A COMMAND THAT IS ACTUALLY RUNNING. A cancel can also arrive
+      // long after its invoke failed early — refused binding, no bridge, a
+      // lease — and that command will never reach `onStarted` to consume the
+      // latch or `finally` to clear it, because both already happened. Those
+      // entries would sit until the ceiling evicted them, and enough of them
+      // would evict the one latch that belonged to a live invocation. So the
+      // question is not "might this start later" but "is it running now", and
+      // only the set below can answer it.
+      if (action.commandId && this.activeInvocations.has(action.commandId)) {
         this.pendingCancels.add(action.commandId);
       }
       return { ok: true, output: { cancelled: false, known: false } };

@@ -3657,6 +3657,15 @@ var ChromiumDriver = class {
    * a daemon holding 256 in-flight invocations has a different problem.
    */
   pendingCancels = /* @__PURE__ */ new Set();
+  /**
+   * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
+   *
+   * The membership test for `pendingCancels`: a cancellation can only be
+   * latched for something still running, which is what keeps that set bounded
+   * by the number of concurrent invocations rather than by a ceiling. Held
+   * only across the bridge call, and cleared in its `finally`.
+   */
+  activeInvocations = /* @__PURE__ */ new Set();
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -3894,6 +3903,7 @@ var ChromiumDriver = class {
         };
       }
     }
+    this.activeInvocations.add(commandId);
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
@@ -3941,6 +3951,7 @@ var ChromiumDriver = class {
         error: error instanceof WebMcpBridgeError ? `${error.failure}: ${error.message}` : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`
       };
     } finally {
+      this.activeInvocations.delete(commandId);
       this.pendingCancels.delete(commandId);
     }
   }
@@ -3951,11 +3962,7 @@ var ChromiumDriver = class {
     }
     const invocationId = action.invocationId ?? this.invocationsByCommand.get(action.commandId ?? "");
     if (!invocationId) {
-      if (action.commandId) {
-        if (this.pendingCancels.size >= MAX_TRACKED_INVOCATIONS) {
-          const oldest = this.pendingCancels.values().next().value;
-          if (oldest !== void 0) this.pendingCancels.delete(oldest);
-        }
+      if (action.commandId && this.activeInvocations.has(action.commandId)) {
         this.pendingCancels.add(action.commandId);
       }
       return { ok: true, output: { cancelled: false, known: false } };
