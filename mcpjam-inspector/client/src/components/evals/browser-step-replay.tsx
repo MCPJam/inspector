@@ -19,7 +19,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { EvalTraceBrowserInteractionStepView } from "@/shared/eval-trace";
+import type {
+  EvalTraceBrowserInteractionStepView,
+  EvalTraceVideoMeta,
+} from "@/shared/eval-trace";
 
 /** Verdict for an interaction step: asserts use `assertion`, actions use `ok`. */
 export type BrowserStepStatus = "ok" | "error" | "unknown";
@@ -95,6 +98,54 @@ export function browserStepKey(
   step: EvalTraceBrowserInteractionStepView,
 ): string {
   return `${step.toolCallId}:${step.stepIndex}`;
+}
+
+/** What the recording says about itself, as the player reads it. */
+export type ReplayVideoMeta = EvalTraceVideoMeta;
+
+/**
+ * One line describing the recording, built only from what it actually reports.
+ *
+ * NOTHING IS DERIVED. A duration is shown only when the recorder gave one, and
+ * `distinctFrames` sits in a tooltip rather than beside the duration because
+ * the honest number looks broken next to it: `mpdecimate` drops frames
+ * identical to the last, so a static ten-minute run holds a handful of frames
+ * against six hundred seconds. Putting it in the open would read as a fault.
+ * The local widget harness reports none of this, and gets no line at all —
+ * better than a made-up one.
+ */
+export function summarizeRecording(
+  meta: ReplayVideoMeta | null | undefined,
+): Array<{ key: string; label: string; title?: string }> {
+  if (!meta) return [];
+  const parts: Array<{ key: string; label: string; title?: string }> = [];
+  if (typeof meta.durationMs === "number" && meta.durationMs > 0) {
+    parts.push({
+      key: "duration",
+      label: formatRecordingDuration(meta.durationMs),
+      ...(typeof meta.distinctFrames === "number"
+        ? {
+            title: `${meta.distinctFrames.toLocaleString()} distinct frames — identical frames are dropped, so an idle page costs none`,
+          }
+        : {}),
+    });
+  }
+  if (typeof meta.fps === "number" && meta.fps > 0) {
+    parts.push({ key: "fps", label: `${meta.fps} fps` });
+  }
+  return parts;
+}
+
+/** `m:ss`, or `h:mm:ss` past an hour. Wall clock, as the recorder measured it. */
+function formatRecordingDuration(durationMs: number): string {
+  const total = Math.round(durationMs / 1000);
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  const mm = String(minutes).padStart(hours > 0 ? 2 : 1, "0");
+  return hours > 0
+    ? `${hours}:${mm}:${String(seconds).padStart(2, "0")}`
+    : `${mm}:${String(seconds).padStart(2, "0")}`;
 }
 
 /**
@@ -278,12 +329,19 @@ export function stepAtVideoOffset(
 export function BrowserStepFilmstrip({
   steps,
   videoUrl,
+  videoMeta,
   /** True while the run is still going, so a missing video isn't yet a loss. */
   isRunning = false,
   className,
 }: {
   steps: EvalTraceBrowserInteractionStepView[];
   videoUrl?: string | null;
+  /**
+   * What the recording says about itself. Absent for every run made before
+   * recordings reported anything, and for anything it genuinely does not know
+   * — the header simply shows less rather than guessing.
+   */
+  videoMeta?: ReplayVideoMeta | null;
   isRunning?: boolean;
   className?: string;
 }) {
@@ -301,6 +359,7 @@ export function BrowserStepFilmstrip({
   const [videoFailed, setVideoFailed] = useState(false);
 
   const resolvedVideoUrl = replayVideoUrl(videoUrl);
+  const videoSummary = useMemo(() => summarizeRecording(videoMeta), [videoMeta]);
 
   const ordered = useMemo(
     () =>
@@ -405,6 +464,32 @@ export function BrowserStepFilmstrip({
             screen recording of the app interactions in this run
           </span>
         </h3>
+        {resolvedVideoUrl && !videoFailed && videoSummary.length > 0 ? (
+          <p
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground"
+            data-testid="browser-replay-video-meta"
+          >
+            {videoSummary.map((part) => (
+              <span key={part.key} title={part.title}>
+                {part.label}
+              </span>
+            ))}
+            {videoMeta?.truncated ? (
+              // A take that hit its size cap is a complete, playable PREFIX of
+              // the run — and without saying so, a reader takes twelve minutes
+              // of a forty-minute run as the whole thing. Said in the header
+              // rather than as a toast, because it qualifies everything the
+              // player below shows.
+              <span
+                className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1.5 py-px font-medium text-amber-700 dark:text-amber-400"
+                data-testid="browser-replay-truncated-badge"
+                title="The recorder stopped at its size limit, so this video covers the beginning of the run and not the end of it."
+              >
+                Stopped at the size limit
+              </span>
+            ) : null}
+          </p>
+        ) : null}
         {resolvedVideoUrl && !videoFailed ? (
           <video
             ref={videoRef}

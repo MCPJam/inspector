@@ -12,6 +12,7 @@ import {
   BrowserStepFilmstrip,
   browserStepKey,
   stepAtVideoOffset,
+  summarizeRecording,
 } from "../browser-step-replay";
 
 function step(
@@ -378,5 +379,120 @@ describe("browserStepKey", () => {
     expect(browserStepKey(step({ toolCallId: "tc-9", stepIndex: 3 }))).toBe(
       "tc-9:3",
     );
+  });
+});
+
+/**
+ * R-4. What the recording says about itself.
+ *
+ * The badge is the load-bearing part: a hosted take stops itself at a size cap
+ * so it can never exceed the upload limit, and what lands is a complete,
+ * playable PREFIX of the run. A reader shown twelve minutes of a forty-minute
+ * run with nothing saying so is being misled by the evidence.
+ */
+describe("BrowserStepFilmstrip — the recording's own numbers", () => {
+  it("says when a take stopped at its size limit", async () => {
+    render(
+      <BrowserStepFilmstrip
+        steps={[]}
+        videoUrl="https://example.test/run.mp4"
+        videoMeta={{
+          source: "hosted",
+          fps: 15,
+          durationMs: 9_000,
+          distinctFrames: 42,
+          truncated: true,
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByTestId("browser-replay-truncated-badge"),
+    ).toBeTruthy();
+    const meta = screen.getByTestId("browser-replay-video-meta");
+    expect(meta.textContent).toContain("0:09");
+    expect(meta.textContent).toContain("15 fps");
+  });
+
+  it("shows the numbers without the badge for a take that finished", async () => {
+    render(
+      <BrowserStepFilmstrip
+        steps={[]}
+        videoUrl="https://example.test/run.mp4"
+        videoMeta={{ source: "hosted", fps: 15, durationMs: 605_000 }}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("browser-replay-truncated-badge"),
+    ).toBeNull();
+    expect(screen.getByTestId("browser-replay-video-meta").textContent).toContain(
+      "10:05",
+    );
+  });
+
+  it("renders nothing extra for a recording that reports nothing", async () => {
+    // Every run made before recordings reported anything, and every local
+    // widget replay: Playwright writes its `.webm` and tells us nothing about
+    // it. Showing an invented duration would be worse than showing none.
+    render(
+      <BrowserStepFilmstrip
+        steps={[]}
+        videoUrl="https://example.test/run.webm"
+        videoMeta={{ source: "widget" }}
+      />,
+    );
+
+    expect(screen.queryByTestId("browser-replay-video-meta")).toBeNull();
+    expect(screen.getByTestId("browser-replay-video")).toBeTruthy();
+  });
+
+  it("says nothing at all when there is no video to describe", () => {
+    // Metadata under an empty player would assert a recording that is not
+    // there — the one thing worse than no metadata.
+    render(
+      <BrowserStepFilmstrip
+        steps={[step()]}
+        videoUrl={null}
+        videoMeta={{ source: "hosted", durationMs: 9_000, truncated: true }}
+      />,
+    );
+
+    expect(screen.queryByTestId("browser-replay-video-meta")).toBeNull();
+    expect(screen.queryByTestId("browser-replay-truncated-badge")).toBeNull();
+    expect(screen.getByTestId("browser-replay-video-unavailable")).toBeTruthy();
+  });
+});
+
+describe("summarizeRecording", () => {
+  it("derives nothing the recorder did not report", () => {
+    expect(summarizeRecording(null)).toEqual([]);
+    expect(summarizeRecording({ source: "widget" })).toEqual([]);
+    // A zero duration is "unknown", not "an instant": the recorder reports a
+    // wall clock, and zero only ever means it had none to give.
+    expect(summarizeRecording({ source: "hosted", durationMs: 0 })).toEqual([]);
+    expect(
+      summarizeRecording({ source: "hosted", fps: 15 }).map((p) => p.label),
+    ).toEqual(["15 fps"]);
+  });
+
+  it("keeps the distinct-frame count in a tooltip, not beside the duration", () => {
+    // Identical frames are dropped, so a static ten-minute run holds a handful
+    // against six hundred seconds. In the open that reads as a fault; as a
+    // tooltip it reads as what it is.
+    const parts = summarizeRecording({
+      source: "hosted",
+      durationMs: 600_000,
+      distinctFrames: 12,
+    });
+    expect(parts[0]!.label).toBe("10:00");
+    expect(parts[0]!.title).toContain("12 distinct frames");
+    expect(parts.some((p) => p.label.includes("12"))).toBe(false);
+  });
+
+  it("grows to hours without losing the minutes", () => {
+    expect(
+      summarizeRecording({ source: "hosted", durationMs: 3_725_000 })[0]!.label,
+    ).toBe("1:02:05");
   });
 });

@@ -15,6 +15,7 @@ import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceSpan,
+  EvalTraceVideoMeta,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -306,6 +307,21 @@ function getBrowserVideoUrl(
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+/**
+ * What that recording says about itself, when it says anything.
+ *
+ * Read only ALONGSIDE a resolved URL, by the caller: metadata under an empty
+ * player would render a duration and a frame rate for a recording that is not
+ * there.
+ */
+function getBrowserVideoMeta(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): EvalTraceVideoMeta | null {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return null;
+  const raw = (trace as TraceEnvelope).videoMeta;
+  return raw && typeof raw === "object" ? raw : null;
+}
+
 export function TraceViewer({
   trace,
   model,
@@ -419,6 +435,10 @@ export function TraceViewer({
   );
   const browserSteps = useMemo(() => getBrowserSteps(trace), [trace]);
   const browserVideoUrl = useMemo(() => getBrowserVideoUrl(trace), [trace]);
+  const browserVideoMeta = useMemo(
+    () => (browserVideoUrl ? getBrowserVideoMeta(trace) : null),
+    [trace, browserVideoUrl]
+  );
   // Step-aligned replay tab: gated on the run carrying its authored step list.
   const hasSteps = (steps?.length ?? 0) > 0;
   // Replay tab gate — ONE predicate, shared with every other surface that shows
@@ -838,6 +858,7 @@ export function TraceViewer({
               observations={browserObservations}
               steps={browserSteps}
               videoUrl={browserVideoUrl}
+              videoMeta={browserVideoMeta}
               isRunning={isLoading}
               className={flexFillChrome ? "flex-1" : undefined}
             />

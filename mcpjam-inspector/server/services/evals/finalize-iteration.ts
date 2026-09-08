@@ -1226,7 +1226,14 @@ export async function finalizeEvalIteration(
               : {}),
             // Iteration replay video already uploaded above; carry the storageId
             // onto the W1 fallback so the replay survives the fanout-failed path.
-            ...(videoBlobId ? { videoBlobId } : {}),
+            ...(videoBlobId
+              ? {
+                  videoBlobId,
+                  // ...and what it says about itself, on the same call. On its
+                  // own it would render a duration under an empty player.
+                  ...(videoMeta ? { videoMeta } : {}),
+                }
+              : {}),
           }
         : {}),
       error,

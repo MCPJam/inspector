@@ -16,6 +16,7 @@ import type {
 import {
   BrowserStepFilmstrip,
   replayVideoUrl,
+  type ReplayVideoMeta,
 } from "./browser-step-replay";
 
 /**
@@ -228,6 +229,7 @@ export function BrowserArtifactsView({
   observations = [],
   steps = [],
   videoUrl = null,
+  videoMeta = null,
   isRunning = false,
   className,
 }: {
@@ -238,8 +240,10 @@ export function BrowserArtifactsView({
    * carries its `videoOffsetMs`.
    */
   steps?: EvalTraceBrowserInteractionStepView[];
-  /** Run replay `.webm` URL. */
+  /** Run replay video URL (a local `.webm`, or a hosted box's `.mp4`). */
   videoUrl?: string | null;
+  /** What that recording says about itself, when it says anything. */
+  videoMeta?: ReplayVideoMeta | null;
   /** True while the run is still going — a missing video isn't yet a loss. */
   isRunning?: boolean;
   className?: string;
@@ -275,6 +279,7 @@ export function BrowserArtifactsView({
         <BrowserStepFilmstrip
           steps={steps}
           videoUrl={videoUrl}
+          videoMeta={videoMeta}
           isRunning={isRunning}
         />
       ) : null}
