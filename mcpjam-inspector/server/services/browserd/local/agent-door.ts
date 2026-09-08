@@ -233,34 +233,40 @@ export async function runAgentCommand(
   const { session, actor } = args;
   const commandId = args.commandId || randomUUID();
 
-  const envelope = (): BrowserCommand => ({
+  // TRANSLATED FIRST, even though policy is checked before anything is sent.
+  // The refusal rows below have to say WHAT was refused, and a placeholder
+  // action would record an agent's refused `type` into a password field as a
+  // page reload — which is worse than not recording it, because it looks like
+  // history.
+  const mapped = toDaemonAction(args.command);
+  const command: BrowserCommand = {
     commandId,
     source: AGENT_SOURCE,
     ...(args.tabId ? { tabId: args.tabId } : {}),
-    action: { kind: "reload" },
+    // The mapper hands back what it built even when it refuses; only a command
+    // whose shape it could not read at all leaves this undefined, and there is
+    // then genuinely nothing truthful to record but the op.
+    action: mapped.action ?? { kind: "observe", mode: "url" },
     actor,
     sessionId: session.sessionId,
     ...(args.correlation && Object.keys(args.correlation).length
       ? { correlation: args.correlation }
       : {}),
-  });
+  };
 
   // 1. POLICY, before anything is sent. A refusal here still gets a row — the
   //    daemon mints its seq so the one ordered ledger stays one ordered ledger
   //    — but nothing reaches the browser.
   const policyRefusal = policyRefusalFor(session.policy, args.command);
   if (policyRefusal) {
-    return recordOnlyRefusal(args, commandId, envelope(), policyRefusal);
+    return recordOnlyRefusal(args, commandId, command, policyRefusal);
   }
 
-  // 2. TRANSLATION. The mapper refuses what the contract will not carry (an
-  //    out-of-viewport coordinate, chiefly), also without touching the browser.
-  const mapped = toDaemonAction(args.command);
+  // 2. TRANSLATION refusals: what the contract will not carry at all (an
+  //    out-of-viewport coordinate, chiefly). Also without touching the browser.
   if (!mapped.ok) {
-    return recordOnlyRefusal(args, commandId, envelope(), mapped.refusal);
+    return recordOnlyRefusal(args, commandId, command, mapped.refusal);
   }
-
-  const command: BrowserCommand = { ...envelope(), action: mapped.action };
 
   // 3. THE DAEMON. Its handler writes the row for whatever happens next.
   let response: BrowserdCommandResponse;

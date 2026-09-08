@@ -320,11 +320,13 @@ export async function mirrorLedger(args: {
   const dir = sessionDir(session.projectId, session.sessionId);
   await ensureDir(dir);
 
-  const restarted = session.lastBootId !== undefined && session.lastBootId !== bootId;
-  // A boot we have never mirrored starts from its beginning; the SAME boot
-  // continues from where we left off. Reading from 0 on a continuing boot would
-  // duplicate every row we already have.
-  const afterSeq = restarted || session.lastBootId !== bootId ? 0 : (session.lastBootSeq ?? 0);
+  const continuing = session.lastBootId === bootId;
+  const restarted = session.lastBootId !== undefined && !continuing;
+  // The SAME boot continues from where we left off; any other boot starts from
+  // its beginning. Reading from 0 on a continuing boot would duplicate every
+  // row we already have, and continuing from a previous boot's cursor into a
+  // fresh ring would skip the new boot's opening rows.
+  const afterSeq = continuing ? (session.lastBootSeq ?? 0) : 0;
   const { entries } = ledger.read({ afterSeq, limit: 1000 });
 
   const lines: string[] = [];
@@ -341,8 +343,12 @@ export async function mirrorLedger(args: {
       seq,
       bootId,
       ts: Date.now(),
-      fromSeq: session.lastBootSeq ?? 0,
-      toSeq: session.lastBootSeq ?? 0,
+      // In the DURABLE sequence's own coordinates, not the old boot's: a
+      // restart marks a point rather than spanning a range, and quoting a
+      // previous ring's numbering here would put two unrelated sequences in one
+      // file with nothing to say which was which.
+      fromSeq: session.lastSeq,
+      toSeq: session.lastSeq,
       reason: "daemon_restart",
     };
     lines.push(JSON.stringify(gap));

@@ -67,7 +67,20 @@ export interface ContractRefusal {
 
 export type MappedAction =
   | { ok: true; action: BrowserAction }
-  | { ok: false; refusal: ContractRefusal };
+  | {
+      ok: false;
+      refusal: ContractRefusal;
+      /**
+       * What the command WOULD have been, when the refusal is about a value
+       * rather than about a shape we cannot read.
+       *
+       * The ledger needs it. A refused command is recorded so a trace can show
+       * that somebody tried, and recording it as a placeholder — or as nothing
+       * — turns "the agent tried to type into the password field and was
+       * refused" into a row that says something else entirely.
+       */
+      action?: BrowserAction;
+    };
 
 /**
  * The contract's default for an acting verb.
@@ -156,6 +169,29 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
       };
     case "act": {
       const target = command.target;
+      const expectedState = command.expectedState
+        ? decodeStateToken(command.expectedState)
+        : undefined;
+      // BUILT FIRST, validated second, so a refusal can still say what was
+      // attempted — the ledger records refused commands, and a refusal that
+      // could not name its own verb and target would be a row about nothing.
+      const action: BrowserAction = {
+        kind: "act",
+        verb: command.verb,
+        ...(target
+          ? {
+              target:
+                "ref" in target
+                  ? { a11yRef: target.ref }
+                  : "selector" in target
+                    ? { selector: target.selector }
+                    : { coordinates: target.coordinates },
+            }
+          : {}),
+        ...(command.value === undefined ? {} : { value: command.value }),
+        ...(expectedState ? { expectedState } : {}),
+        observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
+      };
       if (target && "coordinates" in target) {
         const [x, y] = target.coordinates;
         // REFUSED, never clamped and never dispatched. Chromium happily
@@ -165,6 +201,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         if (!isPointInViewport(x, y)) {
           return {
             ok: false,
+            action,
             refusal: {
               code: "invalid_command",
               message:
@@ -175,29 +212,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
           };
         }
       }
-      const expectedState = command.expectedState
-        ? decodeStateToken(command.expectedState)
-        : undefined;
-      return {
-        ok: true,
-        action: {
-          kind: "act",
-          verb: command.verb,
-          ...(target
-            ? {
-                target:
-                  "ref" in target
-                    ? { a11yRef: target.ref }
-                    : "selector" in target
-                      ? { selector: target.selector }
-                      : { coordinates: target.coordinates },
-              }
-            : {}),
-          ...(command.value === undefined ? {} : { value: command.value }),
-          ...(expectedState ? { expectedState } : {}),
-          observeAfter: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
-        },
-      };
+      return { ok: true, action };
     }
     case "observe":
       return {

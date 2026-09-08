@@ -369,6 +369,57 @@ describe("runAgentCommand", () => {
     expect(ran.result.status).toBe("unknown");
   });
 
+  it("records a refused command as what it WAS, not as a placeholder", async () => {
+    // The regression this pins: a refusal recorded as a generic action turns
+    // "the agent tried to type into the password field and was refused" into a
+    // row that says something else, which is worse than no row at all because
+    // it looks like history.
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    await runAgentCommand({
+      session: await session({ mode: "read_only" }),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: {
+        op: "act",
+        verb: "type",
+        target: { selector: "#password" },
+        value: "hunter2",
+      },
+    });
+    const recorded = fake.refusals[0]?.command;
+    expect(recorded?.action).toMatchObject({
+      kind: "act",
+      verb: "type",
+      target: { selector: "#password" },
+    });
+    // …and the ledger still redacts the value on the way in.
+    const row = fake.ledger.read({ limit: 1 }).entries[0];
+    expect(row.kind === "command" && row.command).toMatchObject({
+      verb: "type",
+      redactedValue: { redacted: true, chars: 7 },
+    });
+    expect(JSON.stringify(row)).not.toContain("hunter2");
+  });
+
+  it("records an out-of-viewport act with the coordinates that were refused", async () => {
+    const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
+    await runAgentCommand({
+      session: await session(),
+      client: fake.client,
+      ledger: fake.ledger,
+      bootId: "boot-1",
+      actor: ACTOR,
+      command: { op: "act", verb: "click", target: { coordinates: [5000, 5] } },
+    });
+    const row = fake.ledger.read({ limit: 1 }).entries[0];
+    expect(row.kind === "command" && row.command).toMatchObject({
+      verb: "click",
+      target: { coordinates: [5000, 5] },
+    });
+  });
+
   it("refuses an out-of-viewport coordinate before the browser sees it", async () => {
     const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
     const ran = await runAgentCommand({

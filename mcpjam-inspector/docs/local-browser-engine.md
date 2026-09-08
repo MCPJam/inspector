@@ -123,11 +123,80 @@ points at it.
 | `GET /local-browser/status`                      | session + verified sign-in + non-guest + kill switch. No consent: the consent screen needs it to describe itself.                                              |
 | `POST /local-browser/install`                    | the above **+ consent**                                                                                                                                        |
 | `POST /local-browser/{ensure,token,lease,input}` | the above **+ consent**                                                                                                                                        |
+| `POST /local-browser/{session,command,note,trace,artifact,close,sessions}` | the above **+ consent**. The agent surface; see below.                                                                              |
 | `GET /api/web/computers/local-browser/frames`    | allowed `Origin` (**absent Origin rejected**) + single-use, 60 s, kind-bound nonce + the nonce's consent fingerprint must still match + **the daemon's lease** |
 | Hosted build                                     | `/api/mcp` unmounted, kill switch forced off, WS route not mounted                                                                                             |
 
 Nonces are typed by what they open, so a terminal nonce cannot start a frame
 stream and a frames nonce cannot open a shell.
+
+## The agent surface
+
+An outside coding agent — Claude Code, Cursor, any MCP client — drives this
+browser through the same routes, over the transport `mcpjam inspector open`
+already uses. It is not a second way in: every command goes through the
+in-process client, so the auth check, the handoff lease, the bootId check and
+the idempotent queue apply exactly as they do to a model's tool call.
+
+| Concern                              | Where                                                        |
+| ------------------------------------ | ------------------------------------------------------------ |
+| The public contract (v1)             | `shared/browser-agent-contract.ts`                           |
+| Contract ⇄ daemon, exhaustive        | `server/services/browserd/agent-contract-mapper.ts`          |
+| The door: policy, actor, outcomes    | `server/services/browserd/local/agent-door.ts`               |
+| Logical session + durable ledger     | `server/services/browserd/local/agent-session-store.ts`       |
+| The ledger itself                    | `server/services/browserd/daemon/command-ledger.ts`          |
+| CLI                                  | `cli/src/commands/browser.ts`                                |
+| The rail's Activity list             | `client/src/components/browser/BrowserActivityList.tsx`      |
+
+Four things about it are load-bearing.
+
+**`source` and `actor` are stamped server-side, never read from a body.**
+`manual` is the one source the handoff lease does not block, so a caller able
+to choose its own source could drive — and observe — a browser somebody is
+signing into. The actor's `kind` is fixed by the route and the authenticated
+identity rides in its `label` (`anonymous` where a self-hosted install has
+nobody to name, shown rather than smoothed over).
+
+**Three outcomes, never conflated.** `executed` ran (and `ok` separately says
+whether it succeeded — a click that found no button ran fine and failed);
+`refused` means nothing ran, so a retry is safe; `unknown` means we cannot say,
+and the caller is told to read the ledger by `commandId` rather than retry.
+Collapsing `unknown` into `refused` is the tempting simplification and the
+dangerous one: it tells a caller a payment is safe to re-submit.
+
+**The ledger is written at the daemon's command entry**, because that is the
+only place that sees every disposition — the lease gate, the bootId check and
+the queue's `busy`/`expired`/`at_capacity` all answer before an executor is
+reached. Refusals the inspector itself makes (an origin outside the allowlist,
+an op the policy excludes) are posted back through `POST /v1/trace` so the ring
+stays the single ordered ledger with one `seq` minter. When policy enforcement
+moves into the daemon (I-11a) that path goes away.
+
+**The capture policy runs at write.** `type` values are stored as
+`{redacted: true, chars: N}` unless a session explicitly opts in (ephemeral
+profiles only — a persistent profile is somebody's real logged-in browser);
+URLs lose their query and fragment; `data:` URLs are dropped; a page tool's
+input is never recorded; and nothing page-derived is written at all for a
+command the lease refused.
+
+The logical session is a new entity because `browserSessions` is a **boot**
+record — it is deleted and re-inserted on every relaunch — so an agent's
+history and a permalink cannot hang off it. Locally it is a JSON file beside
+the profile, written only by the inspector server; the CLI reaches it through
+these routes, so there is no two-process locking story to invent.
+
+```bash
+mcpjam browser consent --token <capability>   # granted once, in the UI
+mcpjam browser open --mode allow_all --profile persistent
+mcpjam browser navigate https://example.test  # returns the a11y tree
+mcpjam browser act --verb click --ref e7      # …and the tree after the click
+mcpjam browser trace                          # who did what, in order
+mcpjam browser close                          # detaches; --terminate closes it
+```
+
+The CLI never grants its own consent: the Inspector's consent screen is where
+a person authorizes the agent browser, and a CLI able to mint the capability
+would be that screen's own bypass.
 
 ## Kill switch
 
@@ -247,7 +316,21 @@ PAGE, at the daemon's own observation viewport.
   congested watcher can miss a repaint the other received. Fanning out from one
   upstream fixes that and halves the box's egress.
 - **No `browser_*` artifacts** are recorded for evals — no screenshots, no step
-  replay.
+  replay. (The AGENT surface records its own: screenshots and trees land beside
+  the session's ledger. The eval trace is separate and still has none.)
+- **The agent surface is local only.** `/v1/browser-sessions`, the SDK ops, the
+  MCP worker tools and the CLI's cloud bindings are M2, and the backend tables
+  (`browserLogicalSessions`, `browserCommands`) land before any of them.
+- **One shared tab, and the lease is the only exclusive control.** Two agents
+  on one session share the daemon's per-tab FIFO and are told apart only by the
+  ledger's `actor`. A tab per participant, `holderKind: "agent"`, and revoking
+  an agent's access from the rail are M1.5 — to be built when two drivers
+  actually collide in dogfood, not before.
+- **No network, HAR, video or diff.** The console ring is the only page
+  telemetry, and it is ephemeral. `consoleSeqAfter`/`errorsSeqAfter` on a ledger
+  row already bracket a command's console output; nothing reads them yet.
+- **`evaluate` is not implemented.** It is in neither the contract nor the
+  daemon; running page script stays local-only via the CDP escape hatch.
 - The **quality governor and settle-still** from the WebMCP inspector are not
   in the shared viewport yet; local streams at a fixed rung, which is fine over
   loopback and is not fine over a hosted network.

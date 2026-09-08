@@ -68,6 +68,7 @@ import {
 import {
   appendNote,
   leaveAgentSession,
+  listAgentSessions,
   mirrorLedger,
   openAgentSession,
   readArtifact,
@@ -759,6 +760,34 @@ computers.post("/local-browser/session", async (c) => {
     bootId: handle.bootId,
     ...(page ? { page } : {}),
   });
+});
+
+/**
+ * This project's browser sessions, so a WATCHER can find the one to show.
+ *
+ * The rail knows the project, not the session: an agent opened it, possibly
+ * from another process. Without this the Activity list would have nothing to
+ * read, and asking a person to paste a session id into a side panel is not a
+ * side panel anybody would use.
+ *
+ * A read, and it starts nothing.
+ */
+computers.post("/local-browser/sessions", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  try {
+    const sessions = await listAgentSessions(projectId);
+    return c.json({
+      sessions: sessions.sort((a, b) => b.createdAt - a.createdAt),
+    });
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
 });
 
 /**
