@@ -275,6 +275,12 @@ export function collectToolAnnotations(
       }
     }
   } catch {
+    // Silent on purpose, and it is a trade: a logger would be this module's
+    // only runtime import — it holds two type imports and nothing else, which
+    // is what lets an evidence extractor be read as a pure function of the
+    // trace. The failure is not invisible: `noDestructiveToolCalled` reports
+    // an evidence error naming the missing declarations on every trial it
+    // touches, which is the surface an operator actually looks at.
     return undefined;
   }
   return read ? merged : undefined;

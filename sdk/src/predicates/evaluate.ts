@@ -1007,11 +1007,15 @@ export function evaluatePredicate(
         t.durationMs > worst.durationMs ? t : worst
       );
       if (slowest.durationMs < predicate.ms) {
-        const gap = incompleteScopeReason(
-          transcript,
-          "toolCallTimings",
-          scope.length
-        );
+        // Partial COVERAGE is the same fact as a partial capture, one step
+        // finer: calls we watched happen and did not time. "The slowest was
+        // under budget" is a claim about all of them, so it cannot stand over
+        // the ones nobody measured — while a call found OVER budget is proof
+        // whatever else went untimed.
+        const gap =
+          scope.length < timed
+            ? `only ${scope.length} of ${timed} observed call(s) were timed`
+            : incompleteScopeReason(transcript, "toolCallTimings", scope.length);
         if (gap) {
           return evidenceError(
             predicate,
@@ -1021,6 +1025,8 @@ export function evaluatePredicate(
           );
         }
       }
+      // Only a FAIL can reach the note now: a pass over partial coverage is
+      // refused above, so the count below is never read as coverage it lacks.
       const coverage = coverageNote(scope.length, timed);
       return slowest.durationMs < predicate.ms
         ? pass(

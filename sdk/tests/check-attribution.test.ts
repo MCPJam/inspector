@@ -66,22 +66,35 @@ describe("an empty channel is not an empty run", () => {
     expect(result).not.toHaveProperty("status");
   });
 
-  it("says how much of the scope a partial measurement covered", () => {
-    // Two calls, one timed. The verdict is real, but "1 call(s) under 500ms"
-    // alone reads as coverage the row does not have.
-    const partial = buildIterationTranscript({
-      toolCalls: [
-        { toolName: "a", arguments: {} },
-        { toolName: "b", arguments: {} },
-      ],
-      toolCallTimings: [
-        { toolName: "a", durationMs: 12, provenance: "span" },
-      ],
-      timingsCaptured: true,
+  it("refuses a ceiling met by only some of the calls", () => {
+    // Two calls, one timed. "The slowest was under budget" is a claim about
+    // BOTH, and the untimed one could be the slow one — the same fact as a
+    // partial capture, one step finer.
+    const partial = (durationMs: number) =>
+      buildIterationTranscript({
+        toolCalls: [
+          { toolName: "a", arguments: {} },
+          { toolName: "b", arguments: {} },
+        ],
+        toolCallTimings: [{ toolName: "a", durationMs, provenance: "span" }],
+        timingsCaptured: true,
+      });
+    const under = evaluatePredicate(partial(12), {
+      type: "toolLatencyUnder",
+      ms: 500,
     });
-    expect(
-      evaluatePredicate(partial, { type: "toolLatencyUnder", ms: 500 }).reason,
-    ).toContain("1 of 2 observed call(s) measured");
+    expect(under.status).toBe("error");
+    expect(under.reason).toContain("only 1 of 2 observed call(s) were timed");
+
+    // A call found OVER budget is proof whatever else went untimed, and the
+    // reason still says how much was measured.
+    const over = evaluatePredicate(partial(900), {
+      type: "toolLatencyUnder",
+      ms: 500,
+    });
+    expect(over.passed).toBe(false);
+    expect(over).not.toHaveProperty("status");
+    expect(over.reason).toContain("1 of 2 observed call(s) measured");
   });
 });
 
