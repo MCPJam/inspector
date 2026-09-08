@@ -15,6 +15,7 @@ import {
   createProgressReader,
   createVideoRecorder,
   recorderArgs,
+  FRAGMENT_SECONDS,
 } from "../video-recorder";
 
 /** A stand-in for ffmpeg. */
@@ -136,9 +137,11 @@ describe("the ffmpeg arguments", () => {
     // WITHOUT it the file ends at the last frame that happened to differ, so a
     // run going quiet for its last five minutes yields a video five minutes
     // shorter than the take — under a header reporting the take's length,
-    // which is a reader misled by the evidence. Asserted as the exact filter
-    // string, because a bare `mpdecimate` substring matches either form.
-    expect(line).toContain("-vf mpdecimate=max=150");
+    // which is a reader misled by the evidence. It is ALSO what gives
+    // `-force_key_frames` a frame to land on, so the two are one number.
+    // Asserted as the exact filter string, because a bare `mpdecimate`
+    // substring matches either form.
+    expect(line).toContain("-vf mpdecimate=max=60");
     const at30 = recorderArgs({
       display: ":0",
       width: 1024,
@@ -147,8 +150,34 @@ describe("the ffmpeg arguments", () => {
       maxBytes: 1,
       outputPath: "/rec/x.mp4",
     });
-    // Ten seconds' worth at any rate, not a fixed frame count.
-    expect(at30.join(" ")).toContain("-vf mpdecimate=max=300");
+    // FRAGMENT_SECONDS worth at any rate, not a fixed frame count.
+    expect(at30.join(" ")).toContain("-vf mpdecimate=max=120");
+  });
+
+  it("derives the floor, the forced keyframe and the GOP from ONE number", () => {
+    // THE COUPLING IS THE POINT. `-force_key_frames` can only mark a frame
+    // that EXISTS; the decimation floor is what makes one exist on a page that
+    // never changes. Set the floor looser than the boundary and IT becomes the
+    // real cadence — the four-second promise silently widens to whatever the
+    // floor is, which is exactly how this was wrong before. Three literals
+    // that must agree are three chances to drift, so there is now one.
+    for (const fps of [1, 15, 30]) {
+      const line = recorderArgs({
+        display: ":0",
+        width: 800,
+        height: 600,
+        fps,
+        maxBytes: 1,
+        outputPath: "/rec/x.mp4",
+      }).join(" ");
+      expect(line).toContain(
+        `-vf mpdecimate=max=${fps * FRAGMENT_SECONDS}`,
+      );
+      expect(line).toContain(`-g ${fps * FRAGMENT_SECONDS}`);
+      expect(line).toContain(
+        `-force_key_frames expr:gte(t,n_forced*${FRAGMENT_SECONDS})`,
+      );
+    }
   });
 
   it("stops ITSELF at the size cap rather than filling the disk", () => {

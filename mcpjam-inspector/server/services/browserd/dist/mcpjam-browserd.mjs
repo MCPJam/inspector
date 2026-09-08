@@ -294,6 +294,7 @@ import { join } from "node:path";
 var MIN_RECORD_FPS = 1;
 var MAX_RECORD_FPS = 30;
 var DEFAULT_RECORD_FPS = 15;
+var FRAGMENT_SECONDS = 4;
 var DEFAULT_FINALIZE_GRACE_MS = 2e3;
 function recorderArgs(options) {
   return [
@@ -312,8 +313,9 @@ function recorderArgs(options) {
     "-i",
     options.display,
     "-vf",
-    // `max`: the most consecutive frames mpdecimate may drop. See the header.
-    `mpdecimate=max=${options.fps * 10}`,
+    // `max`: the most consecutive frames mpdecimate may drop — the floor
+    // that gives `-force_key_frames` below something to land on.
+    `mpdecimate=max=${options.fps * FRAGMENT_SECONDS}`,
     "-fps_mode",
     "vfr",
     "-c:v",
@@ -329,13 +331,13 @@ function recorderArgs(options) {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    String(options.fps * 4),
+    String(options.fps * FRAGMENT_SECONDS),
     "-sc_threshold",
     "0",
-    // Wall clock, not frame count — the only one of the two that survives
+    // Wall clock, not frame count — the only one of the three that survives
     // decimation. `t` is the frame's presentation time in seconds.
     "-force_key_frames",
-    "expr:gte(t,n_forced*4)",
+    `expr:gte(t,n_forced*${FRAGMENT_SECONDS})`,
     "-crf",
     "28",
     "-maxrate",

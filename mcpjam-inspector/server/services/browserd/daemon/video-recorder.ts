@@ -153,6 +153,25 @@ export const MAX_RECORD_FPS = 30;
 export const DEFAULT_RECORD_FPS = 15;
 
 /** How long shutdown waits for ffmpeg to write its last fragment. */
+/**
+ * The fragment interval, in seconds — and the ONLY number that sets it.
+ *
+ * Three arguments have to agree for `+frag_keyframe` to mean "a killed box
+ * loses at most this long", and when they were three separate literals they
+ * did not:
+ *
+ *   - `-force_key_frames` forces a keyframe at each boundary, but only ever on
+ *     a frame that EXISTS.
+ *   - `mpdecimate=max=` is what makes one exist on a page that never changes.
+ *     Set looser than the boundary, it becomes the real cadence and the
+ *     promise quietly widens to whatever it was.
+ *   - `-g` bounds the same thing for a busy page, where the frames are there
+ *     anyway and the count is what matters.
+ *
+ * So they are derived from this, and cannot drift apart again.
+ */
+export const FRAGMENT_SECONDS = 4;
+
 export const DEFAULT_FINALIZE_GRACE_MS = 2_000;
 
 /**
@@ -171,14 +190,16 @@ export const DEFAULT_FINALIZE_GRACE_MS = 2_000;
  *                       nothing while timestamps stay on the wall clock, so
  *                       the player holds the last frame across the gap.
  *                       `max` is the floor — at most that many consecutive
- *                       frames may be dropped, so a keeper lands every ~10s
- *                       however still the screen is. Without it the file ENDS
+ *                       frames may be dropped, so a keeper lands every
+ *                       `FRAGMENT_SECONDS` however still the screen is, which
+ *                       is also what gives `-force_key_frames` a frame to
+ *                       land on. Without it the file ENDS
  *                       at the last frame that happened to differ: a run that
  *                       goes quiet for its last five minutes would produce a
  *                       video five minutes shorter than the take, under a
  *                       header reporting the take's length. The floor costs
- *                       six near-identical frames a minute, which compress to
- *                       almost nothing.
+ *                       fifteen near-identical frames a minute, which
+ *                       compress to almost nothing.
  *   `-threads 1`        the same rule the live encoder follows: one thread at
  *                       or below 30fps, so the encoder never starves the
  *                       capture loop feeding it on a 2 vCPU box.
@@ -219,8 +240,9 @@ export function recorderArgs(options: {
     "-i",
     options.display,
     "-vf",
-    // `max`: the most consecutive frames mpdecimate may drop. See the header.
-    `mpdecimate=max=${options.fps * 10}`,
+    // `max`: the most consecutive frames mpdecimate may drop — the floor
+    // that gives `-force_key_frames` below something to land on.
+    `mpdecimate=max=${options.fps * FRAGMENT_SECONDS}`,
     "-fps_mode",
     "vfr",
     "-c:v",
@@ -236,13 +258,13 @@ export function recorderArgs(options: {
     "-pix_fmt",
     "yuv420p",
     "-g",
-    String(options.fps * 4),
+    String(options.fps * FRAGMENT_SECONDS),
     "-sc_threshold",
     "0",
-    // Wall clock, not frame count — the only one of the two that survives
+    // Wall clock, not frame count — the only one of the three that survives
     // decimation. `t` is the frame's presentation time in seconds.
     "-force_key_frames",
-    "expr:gte(t,n_forced*4)",
+    `expr:gte(t,n_forced*${FRAGMENT_SECONDS})`,
     "-crf",
     "28",
     "-maxrate",
@@ -511,7 +533,7 @@ export function createVideoRecorder(
     await entry.exited;
     // THE TAKE'S WALL-CLOCK SPAN, not the container's. The two can differ:
     // the file ends at its last frame, and only the `mpdecimate` floor keeps
-    // that within ~10s of the stop. Wall clock is the honest number for a
+    // that within `FRAGMENT_SECONDS` of the stop. Wall clock is the honest number for a
     // reader asking how long the run was, and it is the only one the daemon
     // knows without probing the file it just wrote.
     const durationMs = Math.max(0, now() - entry.startedAtMs);
