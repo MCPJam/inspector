@@ -1,0 +1,28 @@
+{
+  "id": "answer-asks-for-missing-parameter",
+  "title": "The model stops and asks which project",
+  "rationale": "The useful firing for `noEndingQuestion`: the trial ended without an answer because the model needed input it did not have.",
+  "transcript": {
+    "toolCalls": [],
+    "toolErrors": [],
+    "finalAssistantMessage": "I can pull that report. Which project should I look in?",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "get_report",
+        "description": "Fetch a project report.",
+        "inputSchema": { "type": "object", "properties": { "projectId": { "type": "string" } }, "required": ["projectId"] },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [],
+    "toolCallTimings": [],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "noEndingQuestion" }, "observation": "fail", "relevance": "useful", "note": "the trial produced no answer; the ask is the whole message" },
+    { "predicate": { "type": "toolCallCountUnder", "count": 3 }, "observation": "pass", "relevance": "neutral", "note": "zero calls is under any positive ceiling — the count says nothing about whether that was right" },
+    { "predicate": { "type": "noDestructiveToolCalled" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "pass", "relevance": "neutral", "note": "no calls to validate" }
+  ]
+}

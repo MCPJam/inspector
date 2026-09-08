@@ -1,0 +1,31 @@
+{
+  "id": "deprecated-mentioned-not-deprecated",
+  "title": "\"Replaces the deprecated old_search tool\" — a current tool that says the word",
+  "rationale": "Counterexample for `noDeprecatedToolCalled`. A regex over a description is a heuristic; anchoring it to self-deprecation is what keeps this item from being a detector error.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "search", "arguments": { "query": "invoice 88" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "Invoice 88 is paid.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "search",
+        "description": "Search across invoices, orders and customers. Replaces the deprecated `old_search` tool.",
+        "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "search", "text": "{\"invoice\":88,\"state\":\"paid\"}", "isError": false, "size": { "bytes": 29, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "search", "durationMs": 120, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "noDeprecatedToolCalled" }, "observation": "pass", "relevance": "neutral", "note": "if this fires it is a detector error, not a misleading finding" }
+  ]
+}

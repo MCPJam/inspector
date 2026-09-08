@@ -1,0 +1,64 @@
+{
+  "id": "discovery-hops-necessary",
+  "title": "Three hops, every one of them needed",
+  "rationale": "The server forces a lookup before the write: you cannot comment on an issue you have not resolved to an id. A per-trial call count is not a verdict on efficiency, and this item is the counterexample that says so.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "search_issues", "arguments": { "query": "login timeout", "limit": 20 } },
+      { "toolCallId": "c2", "toolName": "get_issue", "arguments": { "issueId": "ISS-4412" } },
+      { "toolCallId": "c3", "toolName": "add_comment", "arguments": { "issueId": "ISS-4412", "body": "Repro on 14.2, see thread." } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "I found ISS-4412 (\"Login times out on 14.2\") and added your repro note to it.",
+    "turnCount": 1,
+    "usage": { "inputTokens": 3100, "outputTokens": 180 },
+    "toolInventory": [
+      {
+        "name": "search_issues",
+        "description": "Search issues by free text. Returns up to `limit` matches.",
+        "inputSchema": { "type": "object", "properties": { "query": { "type": "string" }, "limit": { "type": "number" } }, "required": ["query"] },
+        "annotations": { "readOnlyHint": true }
+      },
+      {
+        "name": "get_issue",
+        "description": "Fetch one issue by id.",
+        "inputSchema": { "type": "object", "properties": { "issueId": { "type": "string" } }, "required": ["issueId"] },
+        "annotations": { "readOnlyHint": true }
+      },
+      {
+        "name": "add_comment",
+        "description": "Append a comment to an issue.",
+        "inputSchema": { "type": "object", "properties": { "issueId": { "type": "string" }, "body": { "type": "string" } }, "required": ["issueId", "body"] },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "search_issues", "text": "[{\"id\":\"ISS-4412\",\"title\":\"Login times out on 14.2\"}]", "structuredContent": { "results": [{ "id": "ISS-4412", "title": "Login times out on 14.2" }] }, "isError": false, "size": { "bytes": 58, "basis": "model_visible_output", "complete": true } },
+      { "toolCallId": "c2", "toolName": "get_issue", "text": "{\"id\":\"ISS-4412\",\"state\":\"open\"}", "isError": false, "size": { "bytes": 31, "basis": "model_visible_output", "complete": true } },
+      { "toolCallId": "c3", "toolName": "add_comment", "text": "{\"ok\":true}", "isError": false, "size": { "bytes": 11, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "search_issues", "durationMs": 240, "provenance": "span" },
+      { "toolCallId": "c2", "toolName": "get_issue", "durationMs": 95, "provenance": "span" },
+      { "toolCallId": "c3", "toolName": "add_comment", "durationMs": 130, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "toolCallCountUnder", "count": 5 }, "observation": "pass", "relevance": "neutral", "note": "3 calls, all necessary" },
+    { "predicate": { "type": "toolCallCountUnder", "count": 3 }, "observation": "fail", "relevance": "misleading", "note": "a ceiling of 3 fails a trajectory whose three hops the server itself forces — the author's number, not the server's defect" },
+    { "predicate": { "type": "toolCalledBefore", "toolName": "get_issue", "beforeToolName": "add_comment" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "noRepeatedIdenticalCall" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "noEndingQuestion" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "noToolErrors" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "noDestructiveToolCalled" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "noDeprecatedToolCalled" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "toolLatencyUnder", "ms": 1000 }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "toolLatencyUnder", "toolName": "search_issues", "ms": 100 }, "observation": "fail", "relevance": "useful", "note": "240ms against a 100ms ceiling the author set" },
+    { "predicate": { "type": "toolResultSizeUnder", "maxBytes": 1024 }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "toolResultContains", "toolName": "search_issues", "needle": "ISS-4412" }, "observation": "pass", "relevance": "neutral" },
+    { "predicate": { "type": "toolErrorNamesInput" }, "observation": "pass", "relevance": "neutral", "note": "no errors, vacuous pass" },
+    { "predicate": { "type": "fullPageHasContinuation" }, "observation": "pass", "relevance": "neutral", "note": "1 result against limit 20 is not a full page" }
+  ]
+}

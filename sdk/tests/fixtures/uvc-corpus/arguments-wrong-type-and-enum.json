@@ -1,0 +1,39 @@
+{
+  "id": "arguments-wrong-type-and-enum",
+  "title": "A number where a string belongs, and a value outside the enum",
+  "rationale": "The `wrong-type` and `bad-enum` classifications, in one trajectory.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "search_issues", "arguments": { "query": 42 } },
+      { "toolCallId": "c2", "toolName": "search_issues", "arguments": { "query": "login", "state": "archived" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "I could not complete the search.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "search_issues",
+        "description": "Search issues.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "query": { "type": "string" }, "state": { "enum": ["open", "closed"] } },
+          "required": ["query"]
+        },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "search_issues", "text": "[]", "isError": false, "size": { "bytes": 2, "basis": "model_visible_output", "complete": true } },
+      { "toolCallId": "c2", "toolName": "search_issues", "text": "[]", "isError": false, "size": { "bytes": 2, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "search_issues", "durationMs": 90, "provenance": "span" },
+      { "toolCallId": "c2", "toolName": "search_issues", "durationMs": 88, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "fail", "relevance": "useful", "note": "wrong-type on call 1, bad-enum on call 2" },
+    { "predicate": { "type": "noRepeatedIdenticalCall" }, "observation": "pass", "relevance": "neutral", "note": "same tool twice, different arguments — that is not an identical repeat" }
+  ]
+}

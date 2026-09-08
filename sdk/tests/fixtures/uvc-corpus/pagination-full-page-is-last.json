@@ -1,0 +1,39 @@
+{
+  "id": "pagination-full-page-is-last",
+  "title": "Exactly 25 results, and 25 is all there is",
+  "rationale": "Counterexample for `fullPageHasContinuation`. A full page does not prove more results exist, which is why the label reads \"a full page carried no continuation metadata\" and never \"truncated\".",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "list_orders", "arguments": { "status": "open", "limit": 25 } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "All 25 open orders are listed above; that is the complete set.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "list_orders",
+        "description": "List orders, newest first.",
+        "inputSchema": { "type": "object", "properties": { "status": { "type": "string" }, "limit": { "type": "number" } } },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      {
+        "toolCallId": "c1",
+        "toolName": "list_orders",
+        "text": "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25]",
+        "structuredContent": { "orders": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] },
+        "isError": false,
+        "size": { "bytes": 67, "basis": "model_visible_output", "complete": true }
+      }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "list_orders", "durationMs": 190, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "fullPageHasContinuation" }, "observation": "fail", "relevance": "misleading", "note": "the page IS the last page; the finding names a defect that is not there" },
+    { "predicate": { "type": "noEndingQuestion" }, "observation": "pass", "relevance": "neutral" }
+  ]
+}
