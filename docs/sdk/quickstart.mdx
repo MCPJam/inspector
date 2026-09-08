@@ -89,7 +89,7 @@ const agent = new HostRunner({
 ```typescript
 const result = await agent.run("What is 15 plus 27?");
 
-console.log("Response:", result.getText());
+console.log("Response:", result.text);
 console.log("Tools called:", result.toolsCalled());
 console.log("Arguments:", result.getToolArguments("add"));
 console.log("Latency:", result.e2eLatencyMs(), "ms");
