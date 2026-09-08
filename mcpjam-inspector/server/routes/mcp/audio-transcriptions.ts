@@ -3,7 +3,10 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ErrorCode } from "../web/errors.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
-import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import {
+  reportRouteFailure,
+  readRequestJson,
+} from "../../utils/route-error-report.js";
 
 const DEFAULT_STT_MODEL = "openai/whisper-1";
 const STT_TIMEOUT_MS = 55_000;
@@ -54,7 +57,7 @@ function readErrorMessage(payload: unknown, fallback: string): string {
 
 function readUpstreamError(
   payload: unknown,
-  fallback: string
+  fallback: string,
 ): Record<string, unknown> {
   const message = readErrorMessage(payload, fallback);
   if (!payload || typeof payload !== "object") {
@@ -70,8 +73,8 @@ function readUpstreamError(
     error: isVoiceBudgetError
       ? MCPJAM_VOICE_BUDGET_MESSAGE
       : isVoiceInProgressError
-      ? MCPJAM_VOICE_IN_PROGRESS_MESSAGE
-      : message,
+        ? MCPJAM_VOICE_IN_PROGRESS_MESSAGE
+        : message,
     ...(code ? { code } : {}),
     ...(typeof record.isRetryable === "boolean"
       ? { isRetryable: record.isRetryable }
@@ -111,11 +114,11 @@ function validateRequest(body: TranscriptionRequestBody):
         new Set(
           body.selectedServerIds
             .filter(
-              (serverId): serverId is string => typeof serverId === "string"
+              (serverId): serverId is string => typeof serverId === "string",
             )
             .map((serverId) => serverId.trim())
-            .filter((serverId) => serverId.length > 0)
-        )
+            .filter((serverId) => serverId.length > 0),
+        ),
       )
     : undefined;
   const scenarioId =
@@ -197,12 +200,58 @@ function validateRequest(body: TranscriptionRequestBody):
   };
 }
 
+/**
+ * Whether this host is one the loopback exemption covers.
+ *
+ * `localhost` is included on top of the literal addresses because that is what
+ * a local Convex is actually configured as, and it resolves to loopback on
+ * every platform this ships to.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/**
+ * Where the caller's bearer gets forwarded — over TLS, or not at all.
+ *
+ * This route hands the CALLER's `Authorization` header to Convex, so the
+ * scheme of `CONVEX_HTTP_URL` decides whether a bearer crosses the network in
+ * cleartext. The variable is operator-set rather than attacker-controlled, so
+ * this is a misconfiguration guard, not an injection one — but a misconfigured
+ * deployment leaking every voice caller's token is worth failing closed over,
+ * and the failure is loud (a 500 on one route at boot-time-constant config)
+ * rather than silent.
+ *
+ * LOOPBACK IS EXEMPT. A local Convex is `http://127.0.0.1:…`, and there is no
+ * network hop to protect — refusing it would break `npm run dev` for everyone
+ * to defend against nothing. This is the same rule browsers apply to secure
+ * contexts, for the same reason.
+ *
+ * Scoped to this route deliberately. The same forwarding shape exists in
+ * `routes/mcp/chat-v2.ts` and `routes/mcp/models.ts`, and a single assertion
+ * in `server/env.ts` at boot would cover all of them — that is the right home
+ * and a bigger change than a bearer-auth fix should carry. Noted here so the
+ * next person finds the thought rather than the gap.
+ */
 function getMcpjamTranscriptionUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  return `${convexHttpUrl.replace(/\/$/, "")}/audio/transcriptions`;
+  const base = convexHttpUrl.replace(/\/$/, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw new Error("CONVEX_HTTP_URL is not a valid URL");
+  }
+  if (parsed.protocol !== "https:" && !isLoopbackHost(parsed.hostname)) {
+    throw new Error(
+      "CONVEX_HTTP_URL must use https — refusing to forward a bearer token over cleartext",
+    );
+  }
+  return `${base}/audio/transcriptions`;
 }
 
 const audioTranscriptions = new Hono();
@@ -257,7 +306,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         error:
           "Voice transcription uses MCPJam credits and is only available on the /api/web audio endpoint.",
       },
-      403
+      403,
     );
   }
 
@@ -275,8 +324,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
   } = validation.value;
 
   let transcriptionSignal:
-    | ReturnType<typeof createTranscriptionSignal>
-    | undefined;
+    ReturnType<typeof createTranscriptionSignal> | undefined;
   try {
     // The CALLER's bearer, and only ever the caller's. This route once fell
     // back to a server-side guest session when the header was absent, which
@@ -288,7 +336,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     if (!authHeader) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-        401
+        401,
       );
     }
 
@@ -339,21 +387,21 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     if (!upstreamResponse.ok) {
       const errorBody = readUpstreamError(
         payload,
-        `Voice transcription failed with status ${upstreamResponse.status}`
+        `Voice transcription failed with status ${upstreamResponse.status}`,
       );
       return c.json(
         {
           ...errorBody,
           status: upstreamResponse.status,
         },
-        upstreamResponse.status as ContentfulStatusCode
+        upstreamResponse.status as ContentfulStatusCode,
       );
     }
 
     if (!payload || typeof payload !== "object") {
       return c.json(
         { error: "MCPJam returned an invalid voice transcription response" },
-        502
+        502,
       );
     }
 
@@ -371,13 +419,13 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         {
           source: "mcp.audio-transcriptions.transcribe",
           hop: "mcpjam_internal",
-        }
+        },
       );
       return c.json(
         {
           error: "Voice transcription timed out. Try a shorter recording.",
         },
-        504
+        504,
       );
     }
     reportRouteFailure(
@@ -389,7 +437,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
         // quiet — the boundary promotes only unrecognized failures.
         source: "mcp.audio-transcriptions.transcribe",
         hop: "mcpjam_internal",
-      }
+      },
     );
     const message =
       error instanceof Error

@@ -44,9 +44,9 @@ describe("audio transcriptions route", () => {
               "Content-Type": "application/json",
               "X-Generation-Id": "gen_123",
             },
-          }
-        )
-      )
+          },
+        ),
+      ),
     );
   });
 
@@ -102,7 +102,7 @@ describe("audio transcriptions route", () => {
     vi.mocked(fetch).mockImplementation(async (url, init) => {
       expect(String(url)).toBe("https://convex.example/audio/transcriptions");
       expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer user-token"
+        "Bearer user-token",
       );
       expect(JSON.parse(String(init?.body))).toEqual({
         model: "openai/whisper-1",
@@ -120,7 +120,7 @@ describe("audio transcriptions route", () => {
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
     });
 
@@ -150,6 +150,65 @@ describe("audio transcriptions route", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses to forward the caller's bearer over cleartext", async () => {
+    // The scheme of `CONVEX_HTTP_URL` decides whether this route puts a
+    // caller's `Authorization` header on the wire in the clear. Operator-set,
+    // so this is a misconfiguration guard rather than an injection one — but
+    // a deployment pointed at `http:` would leak every voice caller's token,
+    // and failing closed is cheap.
+    process.env.CONVEX_HTTP_URL = "http://convex.example";
+
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-voice",
+        input_audio: { data: "UklGRiQA", format: "webm" },
+      }),
+    });
+
+    // 502 because the route's catch maps every unrecognized failure there;
+    // asserted as-is rather than reshaped, since the status is not the point.
+    // The point is that NOTHING WAS SENT — no bearer left the process.
+    expect(response.status).toBe(502);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("https"),
+    });
+  });
+
+  it("still forwards to a loopback Convex over http", async () => {
+    // A local Convex is `http://127.0.0.1:…` and there is no network hop to
+    // protect. Refusing it would break local development to defend against
+    // nothing — the same rule browsers apply to secure contexts.
+    process.env.CONVEX_HTTP_URL = "http://127.0.0.1:3210";
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      expect(String(url)).toBe("http://127.0.0.1:3210/audio/transcriptions");
+      return new Response(JSON.stringify({ ok: true, text: "Local." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-voice",
+        input_audio: { data: "UklGRiQA", format: "webm" },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("passes through MCPJam voice budget errors with friendly copy", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -163,8 +222,8 @@ describe("audio transcriptions route", () => {
           retryAfter: 86_400_000,
           details: "Try again tomorrow.",
         }),
-        { status: 429, headers: { "Content-Type": "application/json" } }
-      )
+        { status: 429, headers: { "Content-Type": "application/json" } },
+      ),
     );
 
     const response = await app.request("/api/web/audio/transcriptions", {
@@ -204,8 +263,8 @@ describe("audio transcriptions route", () => {
           isRetryable: true,
           retryAfter: 10_000,
         }),
-        { status: 429, headers: { "Content-Type": "application/json" } }
-      )
+        { status: 429, headers: { "Content-Type": "application/json" } },
+      ),
     );
 
     const response = await app.request("/api/web/audio/transcriptions", {
@@ -270,7 +329,7 @@ describe("audio transcriptions route", () => {
     vi.mocked(fetch).mockImplementation(async (url, init) => {
       expect(String(url)).toBe("https://convex.example/audio/transcriptions");
       expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer caller-guest-token"
+        "Bearer caller-guest-token",
       );
       expect(JSON.parse(String(init?.body))).toMatchObject({
         model: "openai/whisper-1",
@@ -308,7 +367,7 @@ describe("audio transcriptions route", () => {
     });
     const [, init] = vi.mocked(fetch).mock.calls[0];
     expect(new Headers(init?.headers).get("x-mcpjam-guest-ip-hash")).toBe(
-      "guest-ip-hash"
+      "guest-ip-hash",
     );
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -345,8 +404,8 @@ describe("audio transcriptions route", () => {
           error: { message: "Voice provider failed" },
           details: "Backend env var AI_GATEWAY_API_KEY is not set.",
         }),
-        { status: 502, headers: { "Content-Type": "application/json" } }
-      )
+        { status: 502, headers: { "Content-Type": "application/json" } },
+      ),
     );
 
     const response = await app.request("/api/web/audio/transcriptions", {
@@ -381,7 +440,7 @@ describe("audio transcriptions route", () => {
           signal.addEventListener("abort", () => {
             reject(new Error("aborted"));
           });
-        })
+        }),
     );
 
     const responsePromise = app.request("/api/web/audio/transcriptions", {

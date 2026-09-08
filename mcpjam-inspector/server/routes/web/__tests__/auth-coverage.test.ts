@@ -53,14 +53,7 @@ import { createWebTestApp } from "./helpers/test-app.js";
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const BODYLESS_METHODS = new Set(["GET", "HEAD", "DELETE"]);
 /** What an `.all()` route accepts, so every branch of one gets probed. */
-const ALL_ROUTE_METHODS = [
-  "POST",
-  "GET",
-  "HEAD",
-  "PUT",
-  "PATCH",
-  "DELETE",
-];
+const ALL_ROUTE_METHODS = ["POST", "GET", "HEAD", "PUT", "PATCH", "DELETE"];
 
 /**
  * Routes that correctly return a SUCCESS to a caller with no `Authorization`
@@ -79,6 +72,60 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
 ]);
 
 /**
+ * Routes that answer a credential-less request with something other than
+ * 401/403, and why.
+ *
+ * READ THIS AS THE LIST OF THINGS THE SWEEP DOES NOT VERIFY. Every entry is a
+ * route whose refusal — if it refuses at all — this harness cannot observe:
+ * there is no Convex, so an absent upstream reads as 500/503, and a `{}` body
+ * reads as 400 on a route that validates before it authenticates. Several of
+ * these legitimately answer 2xx to an anonymous caller in production. Naming
+ * them keeps that a decision rather than an artifact of the test environment.
+ */
+const NON_AUTH_REFUSALS = new Map<string, string>([
+  [
+    "POST /api/web/guest-session",
+    "public by design — minting a guest bearer is how an anonymous caller becomes an authenticated one; the 500 here is the absent Convex, not a refusal",
+  ],
+  [
+    "POST /api/web/guest-session/revoke",
+    "same router as the mint; 500 is the absent Convex",
+  ],
+  [
+    "POST /api/web/guest-session/promotion-proof",
+    "same router as the mint; 500 is the absent Convex",
+  ],
+  [
+    "GET /api/web/guest-jwks",
+    "public JWKS — a verifier fetches it before holding any credential; 503 is the absent Convex",
+  ],
+  [
+    "GET /api/web/conformance-shared/:token",
+    "the token in the path IS the credential; 500 is the absent Convex",
+  ],
+  [
+    "GET /api/web/score/runs/:token",
+    "the token in the path IS the credential; 503 is the absent Convex",
+  ],
+  [
+    "GET /api/web/bench/results/:secret",
+    "the secret in the path IS the credential; 503 is the absent Convex",
+  ],
+  [
+    "POST /api/web/score/runs",
+    "400 on the probe body — validates before it authenticates, so the sweep cannot see which it would do with a real payload",
+  ],
+  [
+    "POST /api/web/caniuse/subscribe",
+    "public submission endpoint; 400 is the probe body failing validation",
+  ],
+  [
+    "POST /api/web/caniuse/report-inconsistency",
+    "public submission endpoint; 400 is the probe body failing validation",
+  ],
+]);
+
+/**
  * Render a registered path into one a request can actually hit: `:param` and
  * any `*` become a concrete segment.
  *
@@ -87,9 +134,7 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
  * Skipping them would leave exactly the blind spot this suite exists to close.
  */
 function concretePath(path: string): string {
-  return path
-    .replace(/:([A-Za-z0-9_]+)\??/g, "probe")
-    .replace(/\*/g, "probe");
+  return path.replace(/:([A-Za-z0-9_]+)\??/g, "probe").replace(/\*/g, "probe");
 }
 
 /**
@@ -161,7 +206,7 @@ function probes(): Probe[] {
  */
 async function probeResponses(
   app: Hono,
-  probe: Probe
+  probe: Probe,
 ): Promise<Array<{ method: string; response: Response }>> {
   const answered: Array<{ method: string; response: Response }> = [];
   for (const method of probe.methods) {
@@ -228,12 +273,53 @@ describe("/api/web — credential-less requests", () => {
     expect(succeeded).toEqual([]);
   });
 
+  /**
+   * The sweep above only proves "not 2xx", and in this harness that is weaker
+   * than it looks: there is no Convex, so a route can answer 500 or 503
+   * because its upstream is absent rather than because it refused anyone.
+   * `POST /guest-session` is the clearest case — it is deliberately public
+   * (minting a bearer is how an anonymous caller becomes an authenticated
+   * one), it answers 500 here, and it would answer 200 to the same
+   * credential-less caller in production. Counting that as a refusal is how a
+   * clean run can be reported over routes the sweep never actually tested.
+   *
+   * So the invariant is tightened: refuse with an AUTH status, or be NAMED
+   * below with the reason you do something else. Each entry turns a silent
+   * pass into a decision someone wrote down, and a new unauthenticated route
+   * whose upstream happens to break in test can no longer hide behind a 500.
+   */
+  it("refuses with an auth status, or is named as refusing some other way", async () => {
+    const app = withSentinel(createWebTestApp().app);
+    const unexplained: string[] = [];
+
+    for (const probe of probes()) {
+      if (PUBLIC_SUCCESS_ROUTES.has(probe.key)) continue;
+      if (NON_AUTH_REFUSALS.has(probe.key)) continue;
+
+      for (const { method, response } of await probeResponses(app, probe)) {
+        if (response.status === 401 || response.status === 403) continue;
+        // 2xx is the sweep above's business, not this test's.
+        if (response.status >= 200 && response.status < 300) continue;
+        unexplained.push(`${method} ${probe.path} -> ${response.status}`);
+      }
+    }
+
+    expect(unexplained).toEqual([]);
+  });
+
+  it("has no stale entries in the non-auth refusal list", () => {
+    // An entry that outlives its route hides the next one that needs looking at.
+    const keys = new Set(probes().map((probe) => probe.key));
+    const stale = [...NON_AUTH_REFUSALS.keys()].filter((key) => !keys.has(key));
+    expect(stale).toEqual([]);
+  });
+
   it("has no stale entries in the public list", () => {
     // An allowlist that outlives its route is how a future exemption gets
     // granted by accident.
     const keys = new Set(probes().map((probe) => probe.key));
     const stale = [...PUBLIC_SUCCESS_ROUTES.keys()].filter(
-      (key) => !keys.has(key)
+      (key) => !keys.has(key),
     );
     expect(stale).toEqual([]);
   });
