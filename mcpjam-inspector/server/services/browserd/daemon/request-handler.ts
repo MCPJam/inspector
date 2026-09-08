@@ -17,11 +17,17 @@
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
 import {
+  BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
 } from "../protocol";
+import type {
+  BrowserLedgerActor,
+  BrowserLedgerRow,
+  CommandLedger,
+} from "./command-ledger";
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
 import type {
@@ -141,7 +147,43 @@ export interface BrowserdHandlerDeps {
    * does not govern.
    */
   setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
+  /**
+   * The command ledger, written HERE and nowhere else.
+   *
+   * At the command entry rather than around the executor because this is the
+   * only place that sees every disposition: the lease refusal below, the
+   * bootId rejection below that, and the queue's own `busy`/`expired`/
+   * `at_capacity` outcomes never reach an executor at all. A ledger that wrapped
+   * `CommandExecutor` would record exactly the commands that RAN and silently
+   * lose every command that was refused — and "the agent tried to drive while
+   * a person held the browser" is the row the whole trace exists for.
+   *
+   * Optional: a daemon built without one still works, it just remembers
+   * nothing. Nothing in the command path may depend on its presence.
+   */
+  ledger?: CommandLedger;
+  /**
+   * May the ledger keep `type` values verbatim for this browser?
+   *
+   * A property of the SESSION, decided by the door (ephemeral profiles only),
+   * not of any one command — so it is configured once here rather than
+   * travelling on an envelope a caller controls.
+   */
+  captureTypedText?: boolean;
 }
+
+/**
+ * The actor a command with no stamped identity is recorded against.
+ *
+ * Not "unknown" and not omitted: a row has to say something, and the honest
+ * something is that this command reached the daemon through a path that does
+ * not attribute — which is a fact about our own plumbing, worth seeing in a
+ * trace rather than smoothing over.
+ */
+const UNATTRIBUTED_ACTOR: BrowserLedgerActor = {
+  kind: "inspector",
+  id: "unattributed",
+};
 
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
@@ -157,6 +199,8 @@ export class BrowserdRequestHandler {
   private readonly contextMode: "persistent" | "ephemeral" | undefined;
   private readonly startedBy: "prelaunch" | "inspector";
   private readonly setVideoTier: BrowserdHandlerDeps["setVideoTier"];
+  private readonly ledger: CommandLedger | undefined;
+  private readonly captureTypedText: boolean;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -188,6 +232,8 @@ export class BrowserdRequestHandler {
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
     this.setVideoTier = deps.setVideoTier;
+    this.ledger = deps.ledger;
+    this.captureTypedText = deps.captureTypedText === true;
   }
 
   /**
@@ -332,7 +378,93 @@ export class BrowserdRequestHandler {
       return this.handleInput(req);
     }
 
+    // The ledger, read forward from a cursor.
+    //
+    // NOT lease-gated, and deliberately: the rows carry no page content — the
+    // artifacts live behind `/v1/artifact` and are never captured for a command
+    // the lease refused — and a person who has taken the browser should still be
+    // able to see what the agent was doing before they took it. The one thing
+    // this endpoint could leak is a URL, which is already stripped of its query.
+    if (req.path === "/v1/trace") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      return this.handleTrace(req);
+    }
+
+    // One artifact payload, by the id a row names.
+    //
+    // Separate from the trace read because a screenshot is a hundred kilobytes
+    // and a trace page is a hundred rows: inlining them would make the common
+    // read — "what has happened lately" — the expensive one.
+    if (req.path === "/v1/artifact") {
+      if (req.method !== "GET" && req.method !== "DELETE") {
+        return { status: 405, headers: { allow: "GET, DELETE" } };
+      }
+      return this.handleArtifact(req);
+    }
+
     return { status: 404 };
+  }
+
+  private handleTrace(req: DaemonRequest): DaemonResponse {
+    if (!this.ledger) {
+      // A daemon built without a ledger says so, rather than answering with an
+      // empty list — "nothing happened" and "I am not recording" are different
+      // answers and a caller acts differently on each.
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId },
+      };
+    }
+    const query = req.query;
+    const afterSeq = readNumber(query?.get("afterSeq"));
+    const limit = readNumber(query?.get("limit"));
+    const commandId = query?.get("commandId") ?? undefined;
+    const { entries, headSeq } = this.ledger.read({
+      ...(afterSeq === undefined ? {} : { afterSeq }),
+      ...(limit === undefined ? {} : { limit }),
+      ...(commandId ? { commandId } : {}),
+    });
+    return {
+      status: 200,
+      body: { entries, headSeq, bootId: this.bootId },
+    };
+  }
+
+  private handleArtifact(req: DaemonRequest): DaemonResponse {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId },
+      };
+    }
+    const id = req.query?.get("id") ?? "";
+    if (!id) {
+      return {
+        status: 400,
+        body: { error: "artifact_id_required", bootId: this.bootId },
+      };
+    }
+    if (req.method === "DELETE") {
+      // The mirror saying "I have this on disk now". Idempotent: releasing an
+      // id twice, or one that already aged out, is a success — the postcondition
+      // the caller wants (the daemon is not holding this payload) is true either
+      // way.
+      this.ledger.releaseArtifact(id);
+      return { status: 200, body: { released: true, bootId: this.bootId } };
+    }
+    const artifact = this.ledger.artifact(id);
+    if (!artifact) {
+      // 410 rather than 404: this id was real and its payload has aged out,
+      // which is a different thing from an id that never existed and points the
+      // caller at the row's `evicted` marker rather than at a typo.
+      return {
+        status: 410,
+        body: { error: "artifact_evicted", id, bootId: this.bootId },
+      };
+    }
+    return { status: 200, body: { artifact, bootId: this.bootId } };
   }
 
   private handlePolicy(req: DaemonRequest): DaemonResponse {
@@ -421,6 +553,7 @@ export class BrowserdRequestHandler {
   }
 
   private async handleCommand(req: DaemonRequest): Promise<DaemonResponse> {
+    const startedAt = Date.now();
     let parsed: CommandRequestBody;
     try {
       parsed = JSON.parse(req.body) as CommandRequestBody;
@@ -461,6 +594,14 @@ export class BrowserdRequestHandler {
       parsed.command,
     );
     if (refusal) {
+      // Recorded, and recorded WITHOUT a page: the gate above captured nothing,
+      // so there is nothing to attach and nothing to leak. The row is the point
+      // — an agent that got refused while somebody was signing in is exactly
+      // what a person reading this trace is trying to find out.
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "refused",
+        errorCode: refusal,
+      });
       return {
         status: 423,
         body: {
@@ -482,6 +623,15 @@ export class BrowserdRequestHandler {
       parsed.expectedBootId !== undefined &&
       parsed.expectedBootId !== this.bootId
     ) {
+      // UNKNOWN, not refused. This boot did not run it — but the boot the
+      // caller was talking to may well have, and the whole reason we refuse
+      // rather than re-run is that its fate is unknowable. Recording that as
+      // "refused" would tell a caller it is safe to retry a form submission
+      // that may already have gone through.
+      this.recordRow(parsed.command, startedAt, {
+        outcome: "unknown",
+        errorCode: "command_unknown_boot",
+      });
       return {
         status: 409,
         body: { error: "command_unknown_boot", bootId: this.bootId },
@@ -489,7 +639,133 @@ export class BrowserdRequestHandler {
     }
 
     const outcome = await this.queue.submit(parsed.command);
-    return this.mapOutcome(outcome);
+    const response = this.mapOutcome(outcome);
+    this.recordOutcome(parsed.command, outcome, startedAt);
+    return response;
+  }
+
+  /**
+   * One command, one row — written from the one place that sees them all.
+   *
+   * The mapping from queue outcome to ledger outcome is the interesting part,
+   * and it turns on a single distinction the rest of this file is careful
+   * about: `refused` means NOTHING RAN, `unknown` means WE CANNOT SAY. They are
+   * never collapsed. A caller that reads "refused" and retries is correct; a
+   * caller that reads "unknown" and retries may double-submit a payment, which
+   * is why `expired` — a result the queue evicted and therefore may not re-run —
+   * is `unknown` rather than the more comfortable-looking `refused`.
+   */
+  private recordOutcome(
+    command: BrowserCommand,
+    outcome: BrowserCommandOutcome,
+    startedAt: number,
+  ): void {
+    if (!this.ledger) return;
+    if (outcome.status !== "ok") {
+      this.recordRow(command, startedAt, {
+        // `busy` and `at_capacity` are back-pressure: the queue never admitted
+        // the command, so nothing ran and a retry is safe. `expired` is the
+        // opposite — it ran once, its result is gone, and re-running it is the
+        // thing the tombstone exists to prevent.
+        outcome: outcome.status === "expired" ? "unknown" : "refused",
+        errorCode:
+          outcome.status === "expired"
+            ? "command_expired"
+            : outcome.status === "busy"
+              ? "busy"
+              : "daemon_at_capacity",
+      });
+      return;
+    }
+    const { result } = outcome;
+    // A handoff that landed INSIDE the queue: the command was admitted, then a
+    // person took the browser before it could be observed. Same row as the gate
+    // refusal above it, because it is the same event from the other side.
+    if (result.leaseBlocked) {
+      this.recordRow(command, startedAt, {
+        outcome: "refused",
+        errorCode: parseBrowserdErrorCode(result.error) ?? "lease_held",
+      });
+      return;
+    }
+    if (result.staleObservation) {
+      // Nothing ran: the page moved under the caller and the act was refused so
+      // it can re-decide. The FRESH observation the refusal carries is recorded
+      // — it was legitimately captured, and it is what the caller will act on.
+      this.recordRow(command, startedAt, {
+        outcome: "refused",
+        errorCode: "stale_observation",
+        result,
+        capturePage: true,
+      });
+      return;
+    }
+    // A duplicate that resolved to a retained result adds NO row: the execution
+    // it resolved to already has one. The exception is a retry whose original
+    // row has aged out of the ring, which is recorded as a duplicate rather
+    // than as a second click.
+    if (outcome.deduped) {
+      const known = this.ledger.read({ commandId: command.commandId, limit: 1 });
+      if (known.entries.length > 0) return;
+      this.recordRow(command, startedAt, {
+        outcome: "executed",
+        deduped: true,
+        result,
+        capturePage: true,
+      });
+      return;
+    }
+    this.recordRow(command, startedAt, {
+      outcome: "executed",
+      result,
+      capturePage: true,
+    });
+  }
+
+  /** The single call site that turns a disposition into a row. */
+  private recordRow(
+    command: BrowserCommand,
+    startedAt: number,
+    what: {
+      outcome: BrowserLedgerRow["outcome"];
+      errorCode?: string;
+      deduped?: boolean;
+      result?: { ok: boolean; error?: string; output?: unknown; stateToken?: unknown; cursors?: { console: number; errors: number } };
+      /**
+       * Artifacts are kept only for a command that actually looked at the page.
+       * A refusal has no output by construction — the lease gate runs before
+       * anything captures — and a ledger that stored one anyway would be the
+       * leak the gate exists to prevent.
+       */
+      capturePage?: boolean;
+    },
+  ): void {
+    if (!this.ledger) return;
+    const result = what.result;
+    this.ledger.record({
+      command,
+      actor: command.actor ?? UNATTRIBUTED_ACTOR,
+      ...(command.sessionId ? { sessionId: command.sessionId } : {}),
+      ...(command.correlation ? { correlation: command.correlation } : {}),
+      ts: startedAt,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      outcome: what.outcome,
+      ...(result ? { ok: result.ok } : {}),
+      ...(what.errorCode
+        ? { errorCode: what.errorCode }
+        : result && !result.ok && parseBrowserdErrorCode(result.error)
+          ? { errorCode: parseBrowserdErrorCode(result.error) as string }
+          : {}),
+      ...(what.deduped ? { deduped: true } : {}),
+      ...(what.capturePage && result ? { output: result.output } : {}),
+      ...(what.capturePage && result?.stateToken
+        ? { stateToken: result.stateToken as never }
+        : {}),
+      ...(what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {}),
+      ...(result?.cursors ? { cursors: result.cursors } : {}),
+      ...(what.capturePage ? { capturePage: true } : {}),
+      ...(this.captureTypedText ? { captureTypedText: true } : {}),
+    });
   }
 
   /**
@@ -867,6 +1143,12 @@ export class BrowserdRequestHandler {
         };
     }
   }
+}
+
+function readNumber(value: string | null | undefined): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 /** Minimal structural validation — the queue trusts the envelope's shape. */

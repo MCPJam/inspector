@@ -22,6 +22,7 @@ import {
   type BrowserAction,
   type BrowserCommand,
   type BrowserCommandResult,
+  type BrowserObserveAfter,
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
@@ -325,6 +326,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           (page) => page.goto(action.url),
           permit,
+          action.observeAfter,
         );
       }
       case "back":
@@ -340,6 +342,7 @@ export class ChromiumDriver implements BrowserDriver {
           entry,
           (page) => (action.kind === "back" ? page.goBack() : page.reload()),
           permit,
+          action.observeAfter,
         );
       }
       case "observe":
@@ -431,19 +434,62 @@ export class ChromiumDriver implements BrowserDriver {
         "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
       );
     }
-    const frame = await this.snapshot(page);
-    const screenshot = await page.screenshotBase64().catch(() => undefined);
-    return {
-      ...this.observation(
+    const blockedDetail =
+      "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back";
+    const folded = await this.foldObservation(
+      tabId,
+      entry,
+      // Absent keeps the historical answer — a screenshot — so the six
+      // `browser_*` model tools are untouched by this parameter existing.
+      action.observeAfter ?? "screenshot",
+      permit,
+      blockedDetail,
+    );
+    return { ...folded, settled };
+  }
+
+  /**
+   * The observation an acting verb hands back with its result.
+   *
+   * ONE command, one observation, one ledger row. The alternative — act, then
+   * issue a separate `observe` — costs a second round trip, a second row, and
+   * a window between the two in which the page moves, so that the tree the
+   * caller acts on next describes a page its click did not produce.
+   */
+  private async foldObservation(
+    tabId: string,
+    entry: TabEntry,
+    mode: BrowserObserveAfter,
+    permit: () => boolean,
+    blockedDetail: string,
+  ): Promise<BrowserCommandResult> {
+    if (mode === "a11y") {
+      // Refs from AFTER the act, which is the whole point: the next act by ref
+      // has to be decided from the page the last one produced.
+      return this.captureA11y(tabId, entry, {}, permit, blockedDetail);
+    }
+    const frame = await this.snapshot(entry.page);
+    if (mode === "none") {
+      return this.observation(
         tabId,
         entry,
-        { url: frame.url, ...(screenshot ? { screenshot } : {}) },
+        { url: frame.url },
         frame,
         permit,
-        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back",
-      ),
-      settled,
-    };
+        blockedDetail,
+      );
+    }
+    const screenshot = await entry.page
+      .screenshotBase64()
+      .catch(() => undefined);
+    return this.observation(
+      tabId,
+      entry,
+      { url: frame.url, ...(screenshot ? { screenshot } : {}) },
+      frame,
+      permit,
+      blockedDetail,
+    );
   }
 
   /** Map an act verb onto the page primitives. */
@@ -634,27 +680,105 @@ export class ChromiumDriver implements BrowserDriver {
     entry: TabEntry,
     navigate: (page: DriverPage) => Promise<void>,
     permit: () => boolean,
+    observeAfter?: BrowserObserveAfter,
   ): Promise<BrowserCommandResult> {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
+    const blockedDetail =
+      "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back";
     if (!permit()) {
-      return this.leaseBlockedResult(
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
-      );
+      return this.leaseBlockedResult(blockedDetail);
     }
+    const folded = await this.foldObservation(
+      tabId,
+      entry,
+      // A navigation has historically answered with its URL and nothing else.
+      observeAfter ?? "none",
+      permit,
+      blockedDetail,
+    );
+    return { ...folded, settled };
+  }
+
+
+  /**
+   * The a11y observation, as a method rather than a switch arm.
+   *
+   * Extracted because an ACT can now fold one in (`observeAfter: "a11y"`), and
+   * a second copy of this sequence would be a second place for the ref map to
+   * fall out of step with the tree it was minted from — which is precisely the
+   * bug the state token exists to catch and precisely the one it would then be
+   * catching against itself.
+   *
+   * filter → cap → number → render, in that order, and the order is
+   * load-bearing. Filtering first keeps the budget from being spent on prose
+   * the interactive view will not show; numbering after the cap keeps every ref
+   * in the map reachable in the text (a ref stamped on a node the budget then
+   * dropped would be a name for something the model cannot see); rendering last
+   * means the map and the text were built from one pass over one tree.
+   */
+  private async captureA11y(
+    tabId: string,
+    entry: TabEntry,
+    action: {
+      rootSelector?: string;
+      rootRef?: string;
+      filter?: "interactive" | "all";
+    },
+    permit: () => boolean,
+    blockedDetail?: string,
+  ): Promise<BrowserCommandResult> {
+    const raw = await this.readA11y(tabId, entry, action);
+    if (!raw.ok) return raw.error;
+    const filtered =
+      raw.filter === "interactive" && raw.tree
+        ? filterInteractive(raw.tree)
+        : raw.tree;
     const frame = await this.snapshot(entry.page);
-    return {
-      ...this.observation(
-        tabId,
-        entry,
-        { url: frame.url },
-        frame,
-        permit,
-        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back",
-      ),
-      settled,
-    };
+    const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+      filtered,
+      this.a11yBudget,
+    );
+    const refs = assignRefs(tree);
+    const rendered = renderA11yTree(tree, {
+      interactiveOnly: raw.filter === "interactive",
+    });
+    const result = this.observation(
+      tabId,
+      entry,
+      {
+        a11y: rendered,
+        refs: Object.fromEntries(
+          [...refs].map(([ref, entryValue]) => [
+            ref,
+            { role: entryValue.role, name: entryValue.name },
+          ]),
+        ),
+        ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
+      },
+      frame,
+      permit,
+      // `undefined` selects `observation`'s own default, so an ordinary
+      // observe keeps its wording and a folded-in one gets the acting verb's.
+      blockedDetail,
+    );
+    // COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+    // mid-read discards the result — and refs stored anyway would be names
+    // for a page the model was never shown, guessable afterwards by a model
+    // that never received them. On that path the old map goes too: it
+    // described a page this tab may no longer be on.
+    if (!result.ok) {
+      this.refs.delete(tabId);
+      return result;
+    }
+    // Replaces the per-tab map wholesale: refs are valid for exactly one
+    // observation, and leaving an older map merged underneath is how `e7`
+    // comes to mean two things at once. Bound to the token the observation
+    // carries, so a ref used after the page moved is refused rather than
+    // resolved by name against whatever is there now.
+    this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+    return result;
   }
 
   private async observe(
@@ -699,62 +823,8 @@ export class ChromiumDriver implements BrowserDriver {
       case "text": {
         return this.observeText(tabId, entry, permit);
       }
-      case "a11y": {
-        // filter → cap → number → render, in that order, and the order is
-        // load-bearing. Filtering first keeps the budget from being spent on
-        // prose the interactive view will not show; numbering after the cap
-        // keeps every ref in the map reachable in the text (a ref stamped on a
-        // node the budget then dropped would be a name for something the model
-        // cannot see); rendering last means the map and the text were built
-        // from one pass over one tree.
-        const raw = await this.readA11y(tabId, entry, action);
-        if (!raw.ok) return raw.error;
-        const filtered =
-          raw.filter === "interactive" && raw.tree
-            ? filterInteractive(raw.tree)
-            : raw.tree;
-        const frame = await this.snapshot(entry.page);
-        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          filtered,
-          this.a11yBudget,
-        );
-        const refs = assignRefs(tree);
-        const rendered = renderA11yTree(tree, {
-          interactiveOnly: raw.filter === "interactive",
-        });
-        const result = this.observation(
-          tabId,
-          entry,
-          {
-            a11y: rendered,
-            refs: Object.fromEntries(
-              [...refs].map(([ref, entryValue]) => [
-                ref,
-                { role: entryValue.role, name: entryValue.name },
-              ]),
-            ),
-            ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
-          },
-          frame,
-          permit,
-        );
-        // COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
-        // mid-read discards the result — and refs stored anyway would be names
-        // for a page the model was never shown, guessable afterwards by a model
-        // that never received them. On that path the old map goes too: it
-        // described a page this tab may no longer be on.
-        if (!result.ok) {
-          this.refs.delete(tabId);
-          return result;
-        }
-        // Replaces the per-tab map wholesale: refs are valid for exactly one
-        // observation, and leaving an older map merged underneath is how `e7`
-        // comes to mean two things at once. Bound to the token the observation
-        // carries, so a ref used after the page moved is refused rather than
-        // resolved by name against whatever is there now.
-        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
-        return result;
-      }
+      case "a11y":
+        return this.captureA11y(tabId, entry, action, permit);
       case "console": {
         const { entries, omitted } = capConsole(
           entry.page.consoleEntries(),
@@ -1116,8 +1186,13 @@ export class ChromiumDriver implements BrowserDriver {
     blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed",
   ): BrowserCommandResult {
     if (!permit()) return this.leaseBlockedResult(blockedDetail);
+    const cursors = entry.page.consoleCursor?.();
     return {
       ok: true,
+      // Beside `stateToken`, never inside `output`: `output` is the payload
+      // that goes to the model through the untrusted-content fence, and our own
+      // ring accounting has no business in there. The ledger lifts them out.
+      ...(cursors ? { cursors } : {}),
       // WHERE this came from, on every observation without exception. The
       // unattended origin allowlist is enforced against the result's `url`
       // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
