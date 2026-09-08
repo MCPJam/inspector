@@ -183,6 +183,19 @@ export type SuiteCapabilitiesState =
   | { state: "unavailable"; capabilities: null };
 
 /**
+ * The two answers that carry no data, shared so a caller comparing renders
+ * sees one stable object rather than a new one each time.
+ */
+const LOADING: SuiteCapabilitiesState = {
+  state: "loading",
+  capabilities: null,
+};
+const UNAVAILABLE: SuiteCapabilitiesState = {
+  state: "unavailable",
+  capabilities: null,
+};
+
+/**
  * Read one suite's capabilities.
  *
  * `refreshKey` re-asks. The sheet passes the suite's revision number, so a
@@ -195,18 +208,19 @@ export function useSuiteCapabilities(
   refreshKey?: unknown,
 ): SuiteCapabilitiesState {
   const convex = useConvex();
-  const [state, setState] = useState<SuiteCapabilitiesState>({
-    state: "loading",
-    capabilities: null,
-  });
+  // The answer is stored WITH the suite it was asked about — see the return.
+  const [answered, setAnswered] = useState<{
+    suiteId: string | null;
+    result: SuiteCapabilitiesState;
+  }>({ suiteId, result: LOADING });
 
   useEffect(() => {
     if (!suiteId) {
-      setState({ state: "unavailable", capabilities: null });
+      setAnswered({ suiteId, result: UNAVAILABLE });
       return;
     }
     let cancelled = false;
-    setState({ state: "loading", capabilities: null });
+    setAnswered({ suiteId, result: LOADING });
     void (async () => {
       try {
         const result = await convex.query(
@@ -217,20 +231,21 @@ export function useSuiteCapabilities(
         // `null` is the backend's answer for a suite this caller cannot see —
         // 404-never-403, so it cannot be used to discover which ids exist. It
         // is not an error, and it is not a set of capabilities either.
-        setState(
-          result
+        setAnswered({
+          suiteId,
+          result: result
             ? {
                 state: "ready",
                 capabilities: result as unknown as SuiteCapabilities,
               }
-            : { state: "unavailable", capabilities: null },
-        );
+            : UNAVAILABLE,
+        });
       } catch {
         // Swallowed on purpose, and NOT reported: the ordinary case is a
         // deployment that predates this query, which is the two repos
         // releasing independently rather than a fault. Every caller falls back
         // to the behaviour it had before capabilities existed.
-        if (!cancelled) setState({ state: "unavailable", capabilities: null });
+        if (!cancelled) setAnswered({ suiteId, result: UNAVAILABLE });
       }
     })();
     return () => {
@@ -238,7 +253,28 @@ export function useSuiteCapabilities(
     };
   }, [convex, suiteId, refreshKey]);
 
-  return state;
+  /*
+   * AN ANSWER BELONGS TO THE SUITE IT WAS ASKED ABOUT.
+   *
+   * Every `setAnswered` above runs inside the effect, and effects run after
+   * the commit — so the render that FIRST sees a new `suiteId` still holds the
+   * PREVIOUS suite's answer. That render is reachable by ordinary clicking:
+   * none of the three `SuiteIterationsView` call sites passes a `key`, so
+   * picking another suite in the switcher swaps the prop on a mounted view
+   * rather than remounting it.
+   *
+   * Handing back the stale answer there is not a cosmetic flash. `ownership`
+   * decides the CI-owned lock, so a normal suite opened straight after a
+   * CI-owned one would render with its case-authoring callbacks withheld and
+   * its settings disabled, from the previous suite's ownership, until the
+   * effect caught up. Report `loading` instead — the state every caller
+   * already treats as "behave exactly as the page did before this hook
+   * existed", and the one the suite row is there to answer over.
+   *
+   * Derived on the way out rather than reset during render: there is then no
+   * window at all, not merely a shorter one.
+   */
+  return answered.suiteId === suiteId ? answered.result : LOADING;
 }
 
 /**

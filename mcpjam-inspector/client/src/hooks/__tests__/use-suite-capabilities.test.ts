@@ -28,6 +28,7 @@ vi.mock("convex/react", () => ({
 import {
   hasJudgeSeverityCapability,
   useSuiteCapabilities,
+  type SuiteCapabilitiesState,
 } from "../use-suite-capabilities";
 
 describe("useSuiteCapabilities", () => {
@@ -179,5 +180,72 @@ describe("useSuiteCapabilities — suite ownership", () => {
     // permission. The suite row carries both `declaredSuiteId` and `source`, so
     // that fallback is complete on its own.
     expect(result.current.capabilities?.ownership).toBeUndefined();
+  });
+
+  /*
+   * SWITCHING SUITES MUST NOT CARRY THE OLD SUITE'S OWNERSHIP ACROSS.
+   *
+   * None of the three `SuiteIterationsView` call sites passes a `key`, so
+   * picking another suite swaps the prop on a mounted view. The state only
+   * resets inside the effect, and effects run after the commit — so without
+   * the answer being keyed to its suite there is one committed render of the
+   * new suite holding the old suite's `ownership`, which is one render of a
+   * normal suite with its case-authoring controls withheld.
+   *
+   * Asserting after `rerender` would prove nothing: it wraps in `act`, which
+   * flushes the effect that clears the stale value. So record what every
+   * render actually returned and look at the ones after the switch.
+   */
+  it("never reports the previous suite's answer as the new suite's", async () => {
+    queryMock.mockClear();
+    queryMock.mockImplementation(
+      async (_name: unknown, args: { suiteId: string }) =>
+        args.suiteId === "suite-1"
+          ? {
+              suiteId: "suite-1",
+              permissions: { "suite.edit": true },
+              ownership: {
+                ciOwned: true,
+                declaredSuiteId: "s_from_file",
+                lockedActions: ["suite.edit", "case.create"],
+              },
+            }
+          : {
+              suiteId: "suite-2",
+              permissions: { "suite.edit": true },
+              ownership: {
+                ciOwned: false,
+                declaredSuiteId: null,
+                lockedActions: [],
+              },
+            },
+    );
+
+    const seen: SuiteCapabilitiesState[] = [];
+    const { rerender } = renderHook(
+      ({ suiteId }: { suiteId: string }) => {
+        const answer = useSuiteCapabilities(suiteId);
+        seen.push(answer);
+        return answer;
+      },
+      { initialProps: { suiteId: "suite-1" } },
+    );
+    await waitFor(() =>
+      expect(seen.at(-1)?.capabilities?.ownership?.ciOwned).toBe(true),
+    );
+
+    const beforeSwitch = seen.length;
+    rerender({ suiteId: "suite-2" });
+
+    const stale = seen
+      .slice(beforeSwitch)
+      .filter((answer) => answer.capabilities?.suiteId === "suite-1");
+    expect(stale).toEqual([]);
+
+    // And the new suite's own answer still arrives — reporting `loading`
+    // across the switch must not mean reporting it forever.
+    await waitFor(() =>
+      expect(seen.at(-1)?.capabilities?.ownership?.ciOwned).toBe(false),
+    );
   });
 });
