@@ -359,7 +359,16 @@ export function pageToolsSnapshotFrom(peek: PageToolsPeek | undefined):
       url?: string;
     }
   | undefined {
-  if (!peek?.binding || peek.tools.length === 0) return undefined;
+  // A ZERO-TOOL PEEK STILL COUNTS, as long as it came with a binding.
+  //
+  // "This page declares nothing" and "we could not look" are different facts,
+  // and only the second is a reason to build nothing. A turn that opens on a
+  // blank tab and then navigates to a page full of tools is the ordinary case
+  // this whole feature exists for; dropping the binding here would take away
+  // the generation the refresher needs and leave that turn unable to grow a
+  // single tool. The empty `tools` array below is what makes the turn ADVERTISE
+  // nothing to begin with — that part is unchanged.
+  if (!peek?.binding) return undefined;
   return {
     tools: peek.tools,
     ...peek.binding,

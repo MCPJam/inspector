@@ -52,6 +52,7 @@ import {
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
+  advertisedPageToolsOnly,
   validatePageToolEntries,
   PageToolValidationError,
   type PageToolEntry,
@@ -1677,6 +1678,10 @@ chatV2.post("/", async (c) => {
     // the turn runner, which merges it into the engines' one approval slot.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    // Filled by `runWebChatTurn` once `prepareChatV2` has decided which names
+    // are spoken for. Only the persisted record reads it — the model's own set
+    // is filtered inside the turn, where the decision is made.
+    let reservedAgainstPageTools: ReadonlySet<string> | undefined;
     // The mid-turn refresher, when the browser capability built one. Kept in a
     // mutable slot because `resolveHostTools` is synchronous and fills it by
     // callback, exactly as it does the approval classification.
@@ -1734,10 +1739,13 @@ chatV2.post("/", async (c) => {
         ...(pageToolsSnapshot
           ? {
               browserPageTools: pageToolsSnapshot,
-              // The hosted chat loop is the ONE engine that can grow its tool
-              // set between model steps, so it is the one that can retire the
-              // generic verbs.
-              browserDynamicPageTools: true as const,
+              // ONLY WHERE THE SET CAN ACTUALLY GROW. Dynamic mode retires
+              // `browser_webmcp_invoke`, on the grounds that an engine which
+              // re-advertises between steps does not need a generic verb to
+              // reach a page it navigated to. A harness takes its toolset as a
+              // constructor argument and never re-reads it, so claiming it here
+              // would withdraw the fallback and put nothing in its place.
+              browserDynamicPageTools: !resolvedExecution.harness,
             }
           : {}),
         onBrowserPageTools: ({ minted }) => {
@@ -1923,6 +1931,9 @@ chatV2.post("/", async (c) => {
           // The persisted record is re-read here rather than captured at turn
           // start, so a reopened conversation shows the set the turn ENDED
           // with — which is the one the last steps actually used.
+          onPageToolNamesReserved: (reserved) => {
+            reservedAgainstPageTools = reserved;
+          },
           ...(pageToolRefresh
             ? {
                 refreshTools: async (ctx: { signal?: AbortSignal }) => {
@@ -1985,8 +1996,25 @@ chatV2.post("/", async (c) => {
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
           // rather than re-derived, so a reopened conversation shows the tools
           // the model really had rather than the ones the browser has now.
+          // A THUNK: the set is read when the turn is persisted, not when
+          // these options are built. On a turn that navigated the two differ,
+          // and the later one is the one its last steps actually used.
           ...(pageToolsSnapshot
-            ? { pageToolsAtTurn: toMintedPageToolRecords(advertisedPageTools, pageToolsSnapshot) }
+            ? {
+                pageToolsAtTurn: () =>
+                  toMintedPageToolRecords(
+                    // Filtered by the same collision policy the model's set
+                    // was, so the record cannot name a tool the model was
+                    // never actually offered.
+                    reservedAgainstPageTools
+                      ? advertisedPageToolsOnly(
+                          advertisedPageTools,
+                          reservedAgainstPageTools,
+                        )
+                      : advertisedPageTools,
+                    pageToolsSnapshot,
+                  ),
+              }
             : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide

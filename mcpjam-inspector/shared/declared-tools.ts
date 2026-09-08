@@ -288,23 +288,68 @@ export function declaredToolHex8(input: string): string {
  * object on every registration would look like a change on every read, and the
  * "fetch definitions only when the hash moved" optimization would never fire.
  */
-function canonicalJson(value: unknown, depth = 0): string {
+function canonicalJson(
+  value: unknown,
+  depth = 0,
+  budget: { left: number } = { left: CANONICAL_JSON_BUDGET_CHARS },
+): string {
   if (depth > WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH * 2) return '"[deep]"';
+  if (budget.left <= 0) return '"[budget]"';
   if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
+    // A LONG STRING IS CUT BEFORE IT IS SERIALIZED, not after. `JSON.stringify`
+    // on a multi-megabyte string allocates the whole escaped copy first, which
+    // is exactly the work this budget exists to refuse.
+    const scalar =
+      typeof value === "string" && value.length > budget.left
+        ? `${value.slice(0, budget.left)}…`
+        : value;
+    const out = JSON.stringify(scalar) ?? "null";
+    budget.left -= out.length;
+    return out;
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item, depth + 1)).join(",")}]`;
+    const parts: string[] = [];
+    for (const item of value) {
+      if (budget.left <= 0) {
+        parts.push('"[budget]"');
+        break;
+      }
+      parts.push(canonicalJson(item, depth + 1, budget));
+    }
+    budget.left -= parts.length + 1;
+    return `[${parts.join(",")}]`;
   }
   const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map(
-      (key) =>
-        `${JSON.stringify(key)}:${canonicalJson(record[key], depth + 1)}`,
-    )
-    .join(",")}}`;
+  const parts: string[] = [];
+  for (const key of Object.keys(record).sort()) {
+    if (budget.left <= 0) {
+      parts.push('"[budget]":0');
+      break;
+    }
+    const encodedKey = JSON.stringify(key);
+    budget.left -= encodedKey.length + 1;
+    parts.push(`${encodedKey}:${canonicalJson(record[key], depth + 1, budget)}`);
+  }
+  budget.left -= parts.length + 1;
+  return `{${parts.join(",")}}`;
 }
+
+/**
+ * How much of one schema is hashed before the walk gives up.
+ *
+ * A CAP ON WORK, not on meaning. `boundDeclaredSchema` already refuses to
+ * ADVERTISE a schema over `WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES`, but hashing
+ * happens earlier and more often — the daemon digests every revision snapshot,
+ * on a heartbeat, for whatever the page registered — so a page that registers a
+ * multi-megabyte string would otherwise decide how long the event loop is busy.
+ *
+ * Set well above the advertised cap, so every schema a model could ever see is
+ * hashed in full and the budget only ever bites on schemas already destined to
+ * be refused. Two schemas identical up to it collide, which costs a page that
+ * declares megabytes of schema one missed refresh — not a correctness bug, and
+ * a far better trade than the alternative.
+ */
+const CANONICAL_JSON_BUDGET_CHARS = WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES * 4;
 
 /** Digest of one input schema. Stable across key reordering. */
 export function declaredSchemaHash(
@@ -443,6 +488,17 @@ export function mintDeclaredToolNames(
     else byBase.set(name, [descriptor]);
   }
   const minted: MintedDeclaredTool[] = [];
+  // EVERY NAME ALREADY SPOKEN FOR, seeded with all the bases before a single
+  // suffix is handed out.
+  //
+  // The bases are unique by construction (they are this map's keys); the
+  // SUFFIXED names are not, and a page is free to declare a tool called
+  // literally `foo_f1` alongside two called `foo`. Allocating `_f<k>` blind
+  // would then mint `webmcp_foo_f1` twice, and two tools sharing a model-facing
+  // name is the one thing this whole minting pass exists to prevent.
+  const taken = new Set(byBase.keys());
+  /** How many names are in play at all — the bound on the search below. */
+  const total = descriptors.length;
   for (const [base, bucket] of byBase) {
     [...bucket].sort(collisionOrder).forEach((descriptor, index) => {
       const diagnostics: DeclaredToolDiagnostic[] = [];
@@ -459,12 +515,33 @@ export function mintDeclaredToolNames(
       }
       let name = base;
       if (index > 0) {
-        // `_f<k>`: k is the index among SAME-NAMED registrants, so the second
-        // copy of a tool in a duplicated iframe is `_f1` whether or not a main
-        // frame is in the running.
-        const suffix = `_f${index}`;
-        const room = DECLARED_TOOL_NAME_MAX_CHARS - suffix.length;
-        name = `${base.slice(0, room)}${suffix}`;
+        // `_f<k>`: k STARTS at the index among same-named registrants, so the
+        // second copy of a tool in a duplicated iframe is `_f1` whether or not
+        // a main frame is in the running — and then walks forward past any
+        // candidate another declaration already holds.
+        const suffixed = (k: number) => {
+          const suffix = `_f${k}`;
+          return `${base.slice(0, DECLARED_TOOL_NAME_MAX_CHARS - suffix.length)}${suffix}`;
+        };
+        name = suffixed(index);
+        // Bounded by the number of names in play: at most that many can be
+        // taken, so a free one is always within reach.
+        for (
+          let k = index + 1;
+          taken.has(name) && k <= index + total + 1;
+          k += 1
+        ) {
+          name = suffixed(k);
+        }
+        if (taken.has(name)) {
+          // Unreachable by the bound above, and still not a place to mint a
+          // duplicate: hash the identity instead of trusting the count.
+          const suffix = `_f${declaredToolHex8(
+            `${descriptor.rawName}${SEP}${descriptor.frameId ?? ""}${SEP}${descriptor.registrationSeq ?? ""}`,
+          )}`;
+          name = `${base.slice(0, DECLARED_TOOL_NAME_MAX_CHARS - suffix.length)}${suffix}`;
+        }
+        taken.add(name);
         diagnostics.push({
           code: "name_suffixed",
           message:

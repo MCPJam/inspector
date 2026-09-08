@@ -17,6 +17,20 @@ import {
   BROWSER_BUILT_IN_TOOL_ID,
 } from "../browser";
 import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools";
+
+/**
+ * What a FIRST-CLASS build advertises: the catalog minus the listing verb.
+ *
+ * `browser_webmcp_tools` exists for `MCPJAM_WEBMCP_PAGE_TOOLS=verbs`, where the
+ * model needs somewhere to learn a page's tool names from. Where the page's
+ * tools ARE the model's tools it is a step spent re-asking what the last result
+ * already said, so the default build drops it — and asserting against the whole
+ * catalog here would pin the wrong number for the mode almost every test runs
+ * in.
+ */
+const FIRST_CLASS_TOOL_NAMES = BROWSER_TOOL_NAMES.filter(
+  (name) => name !== "browser_webmcp_tools",
+);
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
 
 type SendResult = {
@@ -174,9 +188,9 @@ describe("buildBrowserTools — unattended policy", () => {
     const { result } = build({
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
     });
-    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(Object.keys(result!.tools)).toHaveLength(FIRST_CLASS_TOOL_NAMES.length);
     expect(result!.approvals.requiredNames.size).toBe(
-      BROWSER_TOOL_NAMES.length,
+      FIRST_CLASS_TOOL_NAMES.length,
     );
   });
 
@@ -1009,12 +1023,12 @@ describe("buildBrowserTools — an unattended hosted run has no box of its own",
       engine: "local",
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
     });
-    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(Object.keys(result!.tools)).toHaveLength(FIRST_CLASS_TOOL_NAMES.length);
   });
 
   it("leaves an INTERACTIVE hosted turn alone — one member, one computer", () => {
     const { result } = build({ engine: "hosted" });
-    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(Object.keys(result!.tools)).toHaveLength(FIRST_CLASS_TOOL_NAMES.length);
   });
 
   it("BUILDS them when the run brought a box of its own", () => {
@@ -1023,7 +1037,7 @@ describe("buildBrowserTools — an unattended hosted run has no box of its own",
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
       sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
     });
-    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(Object.keys(result!.tools)).toHaveLength(FIRST_CLASS_TOOL_NAMES.length);
   });
 
   it("ensureSession receives the sandbox target, and the run still names itself", () => {
@@ -1230,7 +1244,7 @@ describe("describeBrowserTools", () => {
   it("describes every tool the model is given", () => {
     const described = describeBrowserTools("hosted");
     expect(described.map((tool) => tool.name).sort()).toEqual(
-      [...BROWSER_TOOL_NAMES].sort(),
+      [...FIRST_CLASS_TOOL_NAMES].sort(),
     );
   });
 
@@ -1268,7 +1282,7 @@ describe("describeBrowserTools", () => {
     // it is handed throws, and this proves nothing calls it.
     expect(() => describeBrowserTools("hosted")).not.toThrow();
     expect(describeBrowserTools("hosted").length).toBe(
-      BROWSER_TOOL_NAMES.length,
+      FIRST_CLASS_TOOL_NAMES.length,
     );
   });
 });
@@ -1324,6 +1338,44 @@ describe("buildBrowserTools — first-class page tools", () => {
     )!;
     expect(Object.keys(built.tools).sort()).toEqual([...BROWSER_TOOL_NAMES].sort());
     expect(built.pageTools).toBeUndefined();
+  });
+
+  it("FLAG OFF: keeps the way to LEARN a page's tool names", () => {
+    // The rollback has to be a whole one. `browser_webmcp_invoke` takes a tool
+    // NAME, so shipping it without `browser_webmcp_tools` would leave the model
+    // holding a verb it has no way to fill in — worse than the state this
+    // feature replaced, not a return to it.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("verbs", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+        dynamicPageTools: true,
+      }),
+    )!;
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_tools");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+  });
+
+  it("FLAG ON: retires the listing verb but keeps a way to ACT", () => {
+    // Asymmetric on purpose. Listing is redundant once every observation
+    // carries `{count, names}`; INVOKING is not, because an engine that cannot
+    // grow its tool set mid-turn still has to reach a page it navigated to.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+      }),
+    )!;
+    expect(Object.keys(built.tools)).not.toContain("browser_webmcp_tools");
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
   });
 
   it("FLAG ON: advertises the page's tools beside the verbs", () => {
@@ -1484,7 +1536,7 @@ describe("buildBrowserTools — first-class page tools", () => {
     );
   });
 
-  it("drops a page tool that collides with a browser verb name", () => {
+  it("prefixes a page tool whose stem matches a verb, so it cannot collide", () => {
     const { ensureSession } = fakeSession(async () => OK);
     const built = withFlag("first_class", () =>
       buildBrowserTools({

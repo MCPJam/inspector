@@ -371,15 +371,30 @@ describe("pageToolsSnapshotFrom", () => {
 
   it("is undefined when there is nothing to build from", () => {
     expect(pageToolsSnapshotFrom(undefined)).toBeUndefined();
+    // NO BINDING is the only "nothing". Without one there is no generation to
+    // bind an invocation to, so there is nothing a tool could be built against.
     expect(
       pageToolsSnapshotFrom({ tools: [], reason: "no_browser_session" }),
     ).toBeUndefined();
-    // A live browser on a page with no tools is still nothing to build.
-    expect(
-      pageToolsSnapshotFrom({
-        tools: [],
-        binding: { bootId: "b", tabId: "@session", navCounter: 1 },
-      }),
-    ).toBeUndefined();
+  });
+
+  it("KEEPS a binding for a live page that declares no tools", () => {
+    // "This page declares nothing" and "we could not look" are different facts,
+    // and only the second is a reason to build nothing. A turn that opens on a
+    // blank tab and navigates to a page full of tools is the ordinary case this
+    // whole feature is for — dropping the binding here would take away the
+    // generation the refresher needs and leave that turn unable to grow a
+    // single tool.
+    const snapshot = pageToolsSnapshotFrom({
+      tools: [],
+      binding: { bootId: "b", tabId: "@session", navCounter: 1 },
+    });
+    expect(snapshot).toMatchObject({
+      bootId: "b",
+      tabId: "@session",
+      navCounter: 1,
+    });
+    // And it still advertises nothing to begin with, which is the other half.
+    expect(snapshot?.tools).toEqual([]);
   });
 });

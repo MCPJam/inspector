@@ -261,6 +261,20 @@ export const BROWSER_BUILT_IN_TOOL_ID = "browser";
  */
 export const BROWSER_OBSERVATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "browser_observe",
+  /**
+   * The LISTING verb, built only where page tools are not first-class.
+   *
+   * Redundant the moment they are: a whole model step spent asking "does this
+   * page have tools?" answers a question the previous step's own result now
+   * carries, so `first_class` mode drops it and puts `{count, names}` on every
+   * observation instead.
+   *
+   * It survives here because `MCPJAM_WEBMCP_PAGE_TOOLS=verbs` has to be an
+   * exact rollback. Without it that mode advertises `browser_webmcp_invoke` —
+   * which takes a tool NAME — and gives the model no way to learn a name or an
+   * argument shape.
+   */
+  "browser_webmcp_tools",
 ]);
 
 export const BROWSER_INTERACTIVE_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -272,10 +286,6 @@ export const BROWSER_INTERACTIVE_TOOL_NAMES: ReadonlySet<string> = new Set([
    * the harness). Where they can, a page's tools are advertised as real
    * `webmcp_*` tools instead — typed, validated and bound to a document
    * generation — and this untyped by-name call is not built at all.
-   *
-   * Its sibling `browser_webmcp_tools` is gone entirely: a whole model step
-   * spent asking "does this page have tools?" answered a question the previous
-   * step's own result now carries.
    */
   "browser_webmcp_invoke",
 ]);

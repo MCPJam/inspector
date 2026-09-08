@@ -15,7 +15,10 @@
  *   - streamText path — only in mcp
  */
 
-import { isWebmcpPageToolName } from "@/shared/declared-tools";
+import {
+  isWebmcpPageToolName,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { markUserServerHop } from "./route-error-report.js";
@@ -1714,5 +1717,73 @@ export async function prepareChatV2(
     progressivePlan,
     discoveryState,
     effectiveUiTools,
+    // EVERY NAME A MID-TURN PAGE TOOL MAY NOT TAKE.
+    //
+    // The loop above applies "a page tool loses every collision" to the set the
+    // turn STARTS with. A turn that navigates gets a second, later set that
+    // this function never sees, and the same rule has to hold for it — so the
+    // decided-here answer travels to whoever applies those refreshes rather
+    // than being re-derived from a partial view of the tools.
+    reservedAgainstPageTools: new Set(
+      Object.keys(allTools).filter(
+        (name) => !advertisedPageToolNames.includes(name),
+      ),
+    ) as ReadonlySet<string>,
   };
+}
+
+/**
+ * Apply the page-tool collision policy to ONE mid-turn refresh.
+ *
+ * Two different losses, for the same reason — a page's name must never decide
+ * what a host-configured name means:
+ *
+ *  - An ADDED page tool whose minted name is already taken is dropped, exactly
+ *    as it would have been at turn start. Installing it would let a page shadow
+ *    a tool the model was told about by name.
+ *  - A RETIRED name that belongs to something else is left alone. This is the
+ *    subtler half: a page tool dropped at turn start is still in the
+ *    refresher's own book, so when the page stops offering it the refresher
+ *    asks to retire a name whose definition now belongs to the tool that won
+ *    the collision — and withdrawing that would take a configured tool away
+ *    mid-turn.
+ */
+export function guardPageToolRefresh<
+  T extends {
+    add?: ToolSet;
+    retire?: string[];
+    tombstones?: ToolSet;
+  },
+>(refresh: T, reserved: ReadonlySet<string>): T {
+  const keptAdd = Object.fromEntries(
+    Object.entries(refresh.add ?? {}).filter(([name]) => {
+      if (!reserved.has(name)) return true;
+      logger.warn(
+        `[chat-v2] page tool '${name}' arrived mid-turn under a name that is already taken; dropping the page tool`,
+      );
+      return false;
+    }),
+  ) as ToolSet;
+  const keptRetire = (refresh.retire ?? []).filter(
+    (name) => !reserved.has(name),
+  );
+  const keptTombstones = Object.fromEntries(
+    Object.entries(refresh.tombstones ?? {}).filter(
+      ([name]) => !reserved.has(name),
+    ),
+  ) as ToolSet;
+  return {
+    ...refresh,
+    ...(refresh.add ? { add: keptAdd } : {}),
+    ...(refresh.retire ? { retire: keptRetire } : {}),
+    ...(refresh.tombstones ? { tombstones: keptTombstones } : {}),
+  };
+}
+
+/** The page tools a turn can honestly say it advertised, after collisions. */
+export function advertisedPageToolsOnly(
+  minted: readonly MintedDeclaredTool[],
+  reserved: ReadonlySet<string>,
+): MintedDeclaredTool[] {
+  return minted.filter((tool) => !reserved.has(tool.name));
 }

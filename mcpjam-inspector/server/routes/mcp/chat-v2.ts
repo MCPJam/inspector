@@ -75,6 +75,8 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   buildWidgetModelContextSystemPrompt,
+  advertisedPageToolsOnly,
+  guardPageToolRefresh,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
@@ -1357,8 +1359,15 @@ chatV2.post("/", async (c) => {
       pageToolsSnapshot
         ? {
             ...trace,
+            // Filtered by the same collision policy the model's own set was,
+            // so the record cannot name a tool the model never got.
             pageToolsAtTurn: toMintedPageToolRecords(
-              advertisedPageTools,
+              reservedAgainstPageTools
+                ? advertisedPageToolsOnly(
+                    advertisedPageTools,
+                    reservedAgainstPageTools,
+                  )
+                : advertisedPageTools,
               pageToolsSnapshot,
             ),
           }
@@ -1419,7 +1428,13 @@ chatV2.post("/", async (c) => {
             ...(pageToolsSnapshot
               ? {
                   browserPageTools: pageToolsSnapshot,
-                  browserDynamicPageTools: true as const,
+              // ONLY WHERE THE SET CAN ACTUALLY GROW. Dynamic mode retires
+                  // `browser_webmcp_invoke`, on the grounds that an engine which
+                  // re-advertises between steps does not need a generic verb to
+                  // reach a page it navigated to. A harness takes its toolset as a
+                  // constructor argument and never re-reads it, so claiming it here
+                  // would withdraw the fallback and put nothing in its place.
+                  browserDynamicPageTools: !resolvedExecution.harness,
                 }
               : {}),
             onBrowserPageTools: ({ minted }) => {
@@ -1646,7 +1661,31 @@ chatV2.post("/", async (c) => {
       scrubMessages,
       progressivePlan,
       discoveryState,
+      reservedAgainstPageTools,
     } = prepared;
+
+    /**
+     * The mid-turn refresher, under the SAME collision policy `prepareChatV2`
+     * applied to the turn's opening set.
+     *
+     * The refresher reserves only the browser's own verb names; every MCP, app,
+     * UI and skill name beside them is decided here, and a page tool minted
+     * after a navigation has to lose to those exactly as one minted at turn
+     * start does.
+     */
+    const guardedRefreshTools = async (ctx: { signal?: AbortSignal }) => {
+      const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+      // The persisted record is re-read here rather than captured at turn
+      // start, so a reopened conversation shows the set the turn ENDED with —
+      // the one its last steps actually used.
+      advertisedPageTools = advertisedPageToolsOnly(
+        pageToolRefresh!.currentPageTools(),
+        reservedAgainstPageTools,
+      );
+      return refresh
+        ? (guardPageToolRefresh(refresh, reservedAgainstPageTools) as never)
+        : undefined;
+    };
     // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
     // NAME and never read a tool's own `needsApproval`, so page tools reach them
     // approval-less unless we hand over their classification here. Page tools
@@ -1819,16 +1858,7 @@ chatV2.post("/", async (c) => {
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
         ...(pageToolRefresh
-          ? {
-              refreshTools: async (ctx: { signal?: AbortSignal }) => {
-                const refresh = await pageToolRefresh!.refreshPageTools(ctx);
-                // The persisted record is re-read here rather than captured at
-                // turn start, so a reopened conversation shows the set the turn
-                // ENDED with — the one its last steps actually used.
-                advertisedPageTools = pageToolRefresh!.currentPageTools();
-                return refresh as never;
-              },
-            }
+          ? { refreshTools: guardedRefreshTools }
           : {}),
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
@@ -1942,7 +1972,7 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace,
+                turnTrace: withPageToolsAtTurn(turnTrace),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -2111,16 +2141,7 @@ chatV2.post("/", async (c) => {
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
         ...(pageToolRefresh
-          ? {
-              refreshTools: async (ctx: { signal?: AbortSignal }) => {
-                const refresh = await pageToolRefresh!.refreshPageTools(ctx);
-                // The persisted record is re-read here rather than captured at
-                // turn start, so a reopened conversation shows the set the turn
-                // ENDED with — the one its last steps actually used.
-                advertisedPageTools = pageToolRefresh!.currentPageTools();
-                return refresh as never;
-              },
-            }
+          ? { refreshTools: guardedRefreshTools }
           : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,

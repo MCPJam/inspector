@@ -254,4 +254,24 @@ describe("createToolPolicyGate — a page's own tools", () => {
     await wrapped.webmcp_pay.execute!({}, {} as never);
     expect(execute).toHaveBeenCalled();
   });
+
+  it("lets DENY win when a suite names a page tool in both lists", async () => {
+    // A suite that both allows and denies a name has said one thing that widens
+    // and one that forbids. Resolving that in favour of running a page's own
+    // code on a live browser picks the wrong one, and the two lists are easy to
+    // drift apart across an inherited suite.
+    const { execute, tools } = pageTool();
+    const gate = createToolPolicyGate({
+      policy: {
+        mode: "default",
+        allow: ["webmcp_pay"],
+        deny: ["webmcp_pay"],
+      },
+      annotations: new Map(),
+    });
+    const wrapped = gate.wrap(tools);
+    await wrapped.webmcp_pay.execute!({}, {} as never);
+    expect(execute).not.toHaveBeenCalled();
+    expect(gate.blocks[0]).toMatchObject({ reason: "denyList" });
+  });
 });

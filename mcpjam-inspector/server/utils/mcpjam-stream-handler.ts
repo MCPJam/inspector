@@ -579,6 +579,15 @@ export interface ToolRefresh {
    * tombstones so a call already in flight gets a recoverable answer.
    */
   retire?: readonly string[];
+  /**
+   * The tombstones themselves, installed into `tools` WITHOUT being advertised.
+   *
+   * A retired name keeps whatever entry it had if none is supplied here, which
+   * is the honest fallback rather than the intended one: the old entry still
+   * answers, but with the daemon's `stale_binding` refusal instead of a
+   * sentence saying the page moved on.
+   */
+  tombstones?: ToolSet;
   /** The classification for everything in `add`. Merged, never replaced. */
   approvals?: UiToolApprovalClassification;
 }
@@ -605,6 +614,11 @@ function applyToolRefresh(
   if (added.length === 0 && retired.length === 0) return;
 
   for (const [name, definition] of added) io.tools[name] = definition;
+  // Tombstones are installed but never advertised, so a call the model had
+  // already decided on lands somewhere that can explain itself.
+  for (const [name, definition] of Object.entries(refresh.tombstones ?? {})) {
+    io.tools[name] = definition;
+  }
 
   const retiredSet = new Set(retired);
   const kept = io

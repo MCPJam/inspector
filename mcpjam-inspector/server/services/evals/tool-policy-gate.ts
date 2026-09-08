@@ -416,11 +416,17 @@ export function createToolPolicyGate(args: {
         // whose code would run, and Chromium does not carry them through for
         // imperative registrations at all.
         if (isWebmcpPageToolName(toolName)) {
-          // `allow` is the author's explicit override and is honoured here as
-          // everywhere else; `deny` and `readOnly` mode both refuse.
+          // DENY OUTRANKS ALLOW, which is the order the comment beside the
+          // original of this line already claimed and the expression did not:
+          // an author who names a tool in both lists has said one thing that
+          // widens and one that forbids, and a gate that resolves that in
+          // favour of running third-party code on a live browser has picked
+          // the wrong one. Past the deny check, `allow` is the author's
+          // explicit override of `readOnly` and is honoured as it is elsewhere.
           const allowed =
-            args.policy.allow?.includes(toolName) === true ||
-            (args.policy.mode !== "readOnly" && !isExplicitlyDenied);
+            !isExplicitlyDenied &&
+            (args.policy.allow?.includes(toolName) === true ||
+              args.policy.mode !== "readOnly");
           if (allowed) continue;
           const reason = isExplicitlyDenied
             ? ("denyList" as const)

@@ -98,6 +98,9 @@ function parseBrowserdErrorCode(error) {
 }
 
 // server/services/browserd/daemon/command-queue.ts
+function isOutOfBand(command) {
+  return command.action.kind === "webmcp_cancel";
+}
 function queueKeyFor(command) {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
 }
@@ -158,6 +161,7 @@ var CommandQueue = class {
     }
   }
   async submit(command) {
+    if (isOutOfBand(command)) return this.runOutOfBand(command);
     if (isReplayable(command)) return this.runUntracked(command);
     const existing = this.lookup(command.commandId);
     if (existing) {
@@ -214,6 +218,23 @@ var CommandQueue = class {
       this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
       if (this.tails.get(key) === raw) this.tails.delete(key);
     }
+  }
+  /**
+   * Run a command NOW, off the tab's FIFO entirely.
+   *
+   * Not depth-capped either, and deliberately: the depth cap exists to stop a
+   * caller stampeding the browser with work, and this lane carries only
+   * cancellations — refusing one because the tab is busy would refuse it in
+   * exactly the situation it is for. Untracked, like a read: a cancellation is
+   * idempotent, so a retry replaying it costs nothing and a tombstone would buy
+   * nothing.
+   */
+  async runOutOfBand(command) {
+    const result = await this.executor(command).then(
+      (value) => value,
+      normalizeError
+    );
+    return { status: "ok", result, bootId: this.bootId };
   }
   /** Current retained-result count. Exposed for tests. */
   get retainedCount() {
@@ -3058,6 +3079,7 @@ var WebMcpBridge = class {
 };
 
 // shared/declared-tools.ts
+var WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES = 8192;
 var WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH = 12;
 var CONTROL_CHARS = new RegExp(
   "[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]",
@@ -3082,19 +3104,42 @@ function declaredToolHex8(input) {
   const low = fnv1a(input, 16777619);
   return high.toString(16).padStart(8, "0").slice(0, 4) + low.toString(16).padStart(8, "0").slice(0, 4);
 }
-function canonicalJson(value, depth = 0) {
+function canonicalJson(value, depth = 0, budget = { left: CANONICAL_JSON_BUDGET_CHARS }) {
   if (depth > WEBMCP_TOOL_INPUT_SCHEMA_MAX_DEPTH * 2) return '"[deep]"';
+  if (budget.left <= 0) return '"[budget]"';
   if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
+    const scalar2 = typeof value === "string" && value.length > budget.left ? `${value.slice(0, budget.left)}\u2026` : value;
+    const out = JSON.stringify(scalar2) ?? "null";
+    budget.left -= out.length;
+    return out;
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item, depth + 1)).join(",")}]`;
+    const parts2 = [];
+    for (const item of value) {
+      if (budget.left <= 0) {
+        parts2.push('"[budget]"');
+        break;
+      }
+      parts2.push(canonicalJson(item, depth + 1, budget));
+    }
+    budget.left -= parts2.length + 1;
+    return `[${parts2.join(",")}]`;
   }
   const record = value;
-  return `{${Object.keys(record).sort().map(
-    (key) => `${JSON.stringify(key)}:${canonicalJson(record[key], depth + 1)}`
-  ).join(",")}}`;
+  const parts = [];
+  for (const key of Object.keys(record).sort()) {
+    if (budget.left <= 0) {
+      parts.push('"[budget]":0');
+      break;
+    }
+    const encodedKey = JSON.stringify(key);
+    budget.left -= encodedKey.length + 1;
+    parts.push(`${encodedKey}:${canonicalJson(record[key], depth + 1, budget)}`);
+  }
+  budget.left -= parts.length + 1;
+  return `{${parts.join(",")}}`;
 }
+var CANONICAL_JSON_BUDGET_CHARS = WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES * 4;
 function declaredSchemaHash(schema) {
   return declaredToolHex8(schema === void 0 ? "" : canonicalJson(schema));
 }

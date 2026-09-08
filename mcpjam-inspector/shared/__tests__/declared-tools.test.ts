@@ -500,3 +500,97 @@ describe("toProviderToolSchema", () => {
     expect(diagnostics[0].blocking).toBe(true);
   });
 });
+
+describe("minting under adversarial names", () => {
+  // A page picks its own tool names, so it can pick the ones the collision
+  // scheme itself produces. Two tools sharing a model-facing name is the one
+  // outcome minting exists to prevent, and a page must not be able to force it.
+  it("does not mint a duplicate when a raw name looks like a suffix", () => {
+    const minted = mintDeclaredToolNames("webmcp_", [
+      { rawName: "foo", frameId: "f1", isMainFrame: true, registrationSeq: 1 },
+      { rawName: "foo", frameId: "f2", registrationSeq: 2 },
+      { rawName: "foo_f1", frameId: "f3", registrationSeq: 3 },
+    ]);
+    const names = minted.map((tool) => tool.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain("webmcp_foo");
+    expect(names).toContain("webmcp_foo_f1");
+  });
+
+  it("keeps every name distinct when a page floods the suffix space", () => {
+    const descriptors = [
+      { rawName: "t", frameId: "a", isMainFrame: true, registrationSeq: 1 },
+      { rawName: "t", frameId: "b", registrationSeq: 2 },
+      { rawName: "t", frameId: "c", registrationSeq: 3 },
+      ...Array.from({ length: 6 }, (_unused, index) => ({
+        rawName: `t_f${index}`,
+        frameId: `x${index}`,
+        registrationSeq: 10 + index,
+      })),
+    ];
+    const names = mintDeclaredToolNames("webmcp_", descriptors).map(
+      (tool) => tool.name,
+    );
+    expect(names).toHaveLength(descriptors.length);
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) {
+      expect(name).toMatch(DECLARED_TOOL_NAME_REGEX);
+    }
+  });
+});
+
+describe("hashing a hostile schema", () => {
+  // The daemon hashes whatever the page registered, on a heartbeat, BEFORE the
+  // 8 KB advertise cap has any say. Without a budget the page decides how long
+  // the event loop is busy.
+  it("stops walking a multi-megabyte schema instead of hashing all of it", () => {
+    // The two differ only far past the budget. Hashing them alike is the PROOF
+    // the walk stopped — the assertion a wall-clock timing check only gestures
+    // at, and the collision it costs is confined to schemas already too big to
+    // advertise.
+    const tail = 4_000_000;
+    const a = { type: "object", description: `${"x".repeat(tail)}a` };
+    const b = { type: "object", description: `${"x".repeat(tail)}b` };
+    expect(declaredSchemaHash(a)).toBe(declaredSchemaHash(b));
+    expect(declaredSchemaHash(a)).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it("stops walking a schema with a huge NUMBER of nodes too", () => {
+    // Depth is already bounded; breadth was not, and a page can register a
+    // hundred thousand tiny properties as easily as one enormous string.
+    const many = (extra: string) => ({
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 50_000 }, (_unused, index) => [
+          `p${index}`,
+          { type: "string" },
+        ]).concat([[`z${extra}`, { type: "string" }]]),
+      ),
+    });
+    expect(declaredSchemaHash(many("a"))).toBe(declaredSchemaHash(many("b")));
+  });
+
+  it("still separates two schemas that differ inside the budget", () => {
+    expect(declaredSchemaHash({ type: "object", a: 1 })).not.toBe(
+      declaredSchemaHash({ type: "object", a: 2 }),
+    );
+  });
+
+  it("hashes every schema small enough to advertise in full", () => {
+    // The budget sits well above the advertise cap, so a schema the model could
+    // actually be shown is never truncated into a collision.
+    const wide = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 60 }, (_unused, index) => [
+          `p${index}`,
+          { type: "string", description: "d".repeat(100) },
+        ]),
+      ),
+    };
+    const other = structuredClone(wide) as Record<string, unknown>;
+    (other.properties as Record<string, { description: string }>).p59
+      .description = "e".repeat(100);
+    expect(declaredSchemaHash(wide)).not.toBe(declaredSchemaHash(other));
+  });
+});

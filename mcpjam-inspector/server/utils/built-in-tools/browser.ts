@@ -219,11 +219,13 @@ export type BrowserEngine = "hosted" | "local";
  * that cannot grow their tool set inside a turn, where it is the only way to
  * reach a page the model navigated to after the turn started.
  *
- * `browser_webmcp_tools` is not here because it is gone from every engine — see
- * `BROWSER_INTERACTIVE_TOOL_NAMES`.
+ * `browser_webmcp_tools` sits alongside it for the same reason and is retired
+ * on the same condition: where a page's tools ARE the model's tools, asking
+ * what the page offers is a step spent on a question the last result answered.
  */
 const LEGACY_WEBMCP_TOOL_NAMES: ReadonlySet<string> = new Set([
   "browser_webmcp_invoke",
+  "browser_webmcp_tools",
 ]);
 
 const EMPTY_PAGE_TOOLS = {
@@ -272,6 +274,16 @@ export interface BrowserToolsResult {
 export interface BrowserPageToolsRefresh {
   add?: ToolSet;
   retire?: string[];
+  /**
+   * Replacements for the retired names, keyed the same as `retire`.
+   *
+   * Carried rather than installed here because the object this builder writes
+   * into is a COPY by the time a turn is running: the orchestrator spreads the
+   * built-in set into the final one, so a definition swapped in on this side
+   * would never be the one the model calls. The handler owns the live map and
+   * installs these itself.
+   */
+  tombstones?: ToolSet;
   approvals?: UiToolApprovalClassification;
 }
 
@@ -620,14 +632,25 @@ export function buildBrowserTools(
   // real tools. An engine that CANNOT keeps them, because turning this on must
   // not remove the only way to reach a page the model navigated to after the
   // turn started.
+  //
+  // THE LISTING VERB GOES ON THE FIRST-CLASS FLAG ALONE, not on dynamic mode.
+  // `browser_webmcp_invoke` is a way to ACT, and an engine that cannot grow its
+  // set needs it to reach a page it navigated to mid-turn; the list verb is a
+  // way to LOOK, and first-class mode puts `{count, names}` on every
+  // observation, so nothing is lost by dropping it there. Under
+  // `MCPJAM_WEBMCP_PAGE_TOOLS=verbs` neither goes: that mode has to be an exact
+  // rollback, and an invoke verb that takes a tool NAME is unusable beside no
+  // way to learn one.
   const retireLegacyWebmcpVerbs =
     firstClassPageTools && opts.dynamicPageTools === true;
+  const retireListVerb = firstClassPageTools;
   // A read-only run gets ONLY the tools that look. Refusing to build the rest
   // is stronger than gating them: with nobody to ask, an ungated interactive
   // tool would simply run.
   const names = BROWSER_TOOL_NAMES.filter((name) => {
     if (!allowedNames.has(name)) return false;
     if (readOnly && !isObservational(name)) return false;
+    if (name === "browser_webmcp_tools") return !retireListVerb;
     if (retireLegacyWebmcpVerbs && LEGACY_WEBMCP_TOOL_NAMES.has(name)) {
       return false;
     }
@@ -992,6 +1015,26 @@ export function buildBrowserTools(
   );
 
   add(
+    "browser_webmcp_tools",
+    tool({
+      description:
+        "List the WebMCP tools the current page offers, if any. Pages that expose tools " +
+        "let you act through their own API instead of clicking; most pages offer none.",
+      inputSchema: z.object({ tabId: z.string().optional() }),
+      // Looking, not acting — but it reads a page's own words, so it gates
+      // exactly as `browser_observe` does rather than for free.
+      needsApproval: needsApproval && !readOnly,
+      execute: async ({ tabId }, { abortSignal }) =>
+        presented(
+          await send(
+            { kind: "observe", mode: "webmcp_tools" },
+            { tabId, signal: abortSignal },
+          ),
+        ),
+    }),
+  );
+
+  add(
     "browser_webmcp_invoke",
     tool({
       description: firstClassPageTools
@@ -1150,9 +1193,6 @@ function createPageToolRefresher(args: {
       if (revision.revision === lastRevision && revision.hash === lastHash) {
         return undefined;
       }
-      lastRevision = revision.revision;
-      lastHash = revision.hash;
-
       const observation = await args.send(
         { kind: "observe", mode: "webmcp_tools" },
         {
@@ -1166,6 +1206,12 @@ function createPageToolRefresher(args: {
         // than retire — the tools have not gone anywhere, we simply cannot
         // look right now, and churning the model's tool set every step while
         // somebody signs in would be worse than holding still.
+        //
+        // The markers are deliberately NOT advanced. They record "the set we
+        // have successfully read", not "the revision we have heard about": a
+        // refused read that moved them would make every later refresh see an
+        // unchanged revision and return at the check above, stranding the turn
+        // on the previous page's tools for as long as it lasts.
         return undefined;
       }
       const page = pageToolsFromObservation(observation.output);
@@ -1197,6 +1243,7 @@ function createPageToolRefresher(args: {
         args.install(name, definition);
       }
       const retire: string[] = [];
+      const tombstones: ToolSet = {};
       for (const [name, gone] of advertised) {
         if (next.has(name)) continue;
         retire.push(name);
@@ -1205,15 +1252,21 @@ function createPageToolRefresher(args: {
         // of any name comes back as "Tool not found" — which tells it nothing
         // about what happened or what to do instead. This answers in a
         // sentence it can act on.
-        args.install(name, tombstoneTool(gone));
+        tombstones[name] = tombstoneTool(gone);
+        args.install(name, tombstones[name]!);
       }
       advertised = next;
+      // COMMITTED HERE, once the read succeeded and the rebuild landed. From
+      // this point a refresh that sees the same revision is genuinely looking
+      // at the set we already advertise.
+      lastRevision = revision.revision;
+      lastHash = revision.hash;
       if (Object.keys(add).length === 0 && retire.length === 0) {
         return undefined;
       }
       return {
         ...(Object.keys(add).length > 0 ? { add } : {}),
-        ...(retire.length > 0 ? { retire } : {}),
+        ...(retire.length > 0 ? { retire, tombstones } : {}),
         approvals: rebuilt.approvals,
       };
     },
@@ -1504,7 +1557,7 @@ function resultUrl(output: unknown): string | undefined {
 }
 
 function isObservational(name: string): boolean {
-  return name === "browser_observe";
+  return name === "browser_observe" || name === "browser_webmcp_tools";
 }
 
 /**
@@ -1790,7 +1843,11 @@ function pageToolsNote(
   options: { firstClass: boolean; dynamic: boolean },
 ): Record<string, unknown> {
   const revision = outcome.webmcpTools;
-  if (!options.firstClass || !revision || revision.count === 0) return {};
+  // NOT GATED ON `firstClass`. Verbs mode has `browser_webmcp_tools` to learn
+  // the names from, and a count riding the observation it already made is
+  // strictly cheaper than the round trip — the sentence below just points at
+  // the verb instead of at the tools.
+  if (!revision || revision.count === 0) return {};
   const names = pageToolNamesFrom(outcome.output);
   return {
     webmcpTools: {
@@ -1800,8 +1857,11 @@ function pageToolsNote(
     pageToolsNote: options.dynamic
       ? "This page's tools are available to you directly as `webmcp_*` tools — " +
         "call one by name rather than clicking. They change when you navigate."
-      : "This page offers WebMCP tools. Call one with `browser_webmcp_invoke`, " +
-        "using the name listed above.",
+      : options.firstClass
+        ? "This page offers WebMCP tools. Call one with `browser_webmcp_invoke`, " +
+          "using the name listed above."
+        : "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
+          "then call one with `browser_webmcp_invoke`.",
   };
 }
 
