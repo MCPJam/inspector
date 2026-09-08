@@ -80,6 +80,20 @@ export interface WebMcpToolDescriptor {
   origin: string;
   isMainFrame: boolean;
   /**
+   * WHICH REGISTRATION this is, minted here on the `toolsAdded` that carried
+   * the tool and never reused.
+   *
+   * The piece of identity nothing the browser reports can supply. A same-origin
+   * reload re-registers the page's tools under the SAME name in the SAME frame
+   * (the main frame keeps its id across navigation — see this file's header),
+   * so name, origin and frame id together still describe two different
+   * documents' tools identically. A consumer that bound a model tool to the
+   * first one would invoke it against the second and be told nothing was wrong.
+   *
+   * Monotone per bridge, so it also orders registrations within one document.
+   */
+  registrationSeq: number;
+  /**
    * How the page registered it. Load-bearing for approval reasoning:
    * Chromium 151 does not carry `annotations` through for IMPERATIVE
    * registrations, so a `readOnly: false` on one of those is the absence of a
@@ -173,6 +187,9 @@ export interface WebMcpBridgeOptions {
   onExternalInvocation?: (toolName: string) => void;
 }
 
+/** Unsubscribe a listener registered with {@link WebMcpBridge.subscribe}. */
+export type WebMcpUnsubscribe = () => void;
+
 const DEFAULT_INVOCATION_TIMEOUT_MS = 60_000;
 const DEFAULT_CANCEL_SETTLE_GRACE_MS = 1_000;
 
@@ -189,8 +206,20 @@ function originOf(url: string): string {
  * per driven tab, created lazily on the first `webmcp_*` action.
  */
 export class WebMcpBridge {
-  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
-  private readonly tools = new Map<string, WebMcpCdpTool>();
+  /**
+   * Tools keyed `${frameId} ${name}` — the browser's own notion of identity —
+   * each carrying the registration sequence minted when it arrived.
+   */
+  private readonly tools = new Map<
+    string,
+    { tool: WebMcpCdpTool; registrationSeq: number }
+  >();
+  /**
+   * The next registration sequence to hand out. Bumped ONCE per `toolsAdded`
+   * event, so tools registered together share a sequence and a
+   * re-registration (reload, unregister/register) always gets a fresh one.
+   */
+  private nextRegistrationSeq = 1;
   /** frameId → last known URL, for origin labelling. */
   private readonly frames = new Map<string, string>();
   private readonly pending = new Map<string, PendingInvocation>();
@@ -202,6 +231,37 @@ export class WebMcpBridge {
   private readonly invocationTimeoutMs: number;
   private readonly cancelSettleGraceMs: number;
   private supported = false;
+  /**
+   * The domain half of `supported`, remembered so a RE-probe can recombine
+   * without re-enabling anything: `WebMCP.enable` is per session, not per
+   * document, so a navigation cannot take the domain away — only the page's
+   * `document.modelContext` can change.
+   */
+  private domainEnabled = false;
+  /**
+   * The page-side probe, kept so main-frame navigation can re-run it.
+   *
+   * WHY THE CACHED PROBE WAS A BUG. `start()` set `supported` once and nothing
+   * ever revisited it, so a tab that opened on a page without WebMCP reported
+   * "this browser has no WebMCP" for the rest of its life — including after
+   * navigating to a page whose whole point is the tools it registers. The
+   * probe is a page question and has to be re-asked of each page.
+   */
+  private probe: (() => Promise<boolean>) | undefined;
+  /**
+   * The in-flight re-probe, so a reader arriving between a navigation and its
+   * answer can wait for the truth instead of reading the previous page's.
+   */
+  private probing: Promise<void> | null = null;
+  /**
+   * Which re-probe is current. A slow probe for the page we LEFT must not
+   * overwrite the answer for the page we are on, and navigations can outrun a
+   * `Runtime.evaluate`.
+   */
+  private probeGeneration = 0;
+  private readonly subscribers = new Set<
+    (tools: WebMcpToolDescriptor[]) => void
+  >();
   private disposed = false;
 
   private readonly onChange:
@@ -230,12 +290,45 @@ export class WebMcpBridge {
    * responsible for the bridge's own bookkeeping.
    */
   private announce(): void {
-    if (!this.onChange) return;
+    if (!this.onChange && this.subscribers.size === 0) return;
+    const tools = this.list();
+    for (const listener of [this.onChange, ...this.subscribers]) {
+      if (!listener) continue;
+      try {
+        listener(tools);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Watch the tool set, alongside the constructor's `onChange`.
+   *
+   * A second channel because the two consumers arrive at different times: the
+   * bridge is constructed by the page adapter (which knows how to probe the
+   * page) while the DRIVER — the one that has to keep a per-tab revision — only
+   * meets the bridge once it has resolved one. Handing the adapter the driver's
+   * callback would make the adapter know about tab bookkeeping; this way each
+   * side subscribes to what it needs.
+   *
+   * The listener is called with the CURRENT set immediately, so a subscriber
+   * that attached after the page had already registered its tools does not
+   * have to wait for the next change to learn about them — the exact gap that
+   * makes an eagerly-attached bridge worth having.
+   */
+  subscribe(
+    listener: (tools: WebMcpToolDescriptor[]) => void,
+  ): WebMcpUnsubscribe {
+    this.subscribers.add(listener);
     try {
-      this.onChange(this.list());
+      listener(this.list());
     } catch {
       /* ignore */
     }
+    return () => {
+      this.subscribers.delete(listener);
+    };
   }
 
   /**
@@ -255,6 +348,7 @@ export class WebMcpBridge {
     await this.cdp.send("WebMCP.enable").catch(() => {
       domainEnabled = false;
     });
+    this.domainEnabled = domainEnabled;
     // Run the probe REGARDLESS of the domain, then combine. `&&` would
     // short-circuit past it, and the callback is the caller's only hook for
     // work that has to happen inside `start` — the inspector navigates the
@@ -270,11 +364,69 @@ export class WebMcpBridge {
     return this.supported;
   }
 
+  /**
+   * Re-ask this probe of every page the main frame goes to.
+   *
+   * Separate from `start()`'s argument because support is a property of the
+   * PAGE, not of the session: `start()` answers it for the document that
+   * happened to be open, and a bridge that stopped there tells a caller "this
+   * browser has no WebMCP" about a page that registered five tools a moment
+   * ago. Opt-in so a consumer that cannot cheaply re-probe (a test fake) is
+   * unchanged.
+   */
+  resupport(probe: () => Promise<boolean>): void {
+    this.probe = probe;
+  }
+
+  /**
+   * Resolve once no re-probe is outstanding.
+   *
+   * `Page.frameNavigated` is a synchronous event and the probe is a round trip
+   * into the page, so there is a window in which `isSupported()` still answers
+   * for the page we LEFT. A reader that has just navigated (the driver, about
+   * to list tools) waits here rather than reporting the previous page's answer
+   * as this page's.
+   */
+  async probeSettled(): Promise<void> {
+    await this.probing;
+  }
+
+  /** Re-run the page probe for the document the main frame just committed. */
+  private reprobe(): void {
+    const probe = this.probe;
+    if (!probe || this.disposed) return;
+    const generation = ++this.probeGeneration;
+    this.probing = (async () => {
+      const probed = await probe().catch(() => false);
+      // A slow probe for the page we left must never overwrite the answer for
+      // the page we are on: navigations outrun a `Runtime.evaluate` routinely
+      // (a redirect chain fires several).
+      if (generation !== this.probeGeneration || this.disposed) return;
+      const next = this.domainEnabled && probed;
+      if (next === this.supported) return;
+      this.supported = next;
+      // Support IS part of what a consumer renders ("this page offers no
+      // tools" vs "this browser cannot"), so a flip is a change like any
+      // other — and on the false→true edge the tools are usually already here.
+      this.announce();
+    })().finally(() => {
+      if (generation === this.probeGeneration) this.probing = null;
+    });
+  }
+
   private wire(): void {
     this.cdp.on("WebMCP.toolsAdded", (payload) => {
       const { tools } = (payload ?? {}) as { tools?: WebMcpCdpTool[] };
+      // ONE sequence for the whole event, minted before the loop: tools a page
+      // registers together belong to one registration, and a per-tool counter
+      // would make the identity of a tool depend on how many siblings the page
+      // happened to declare beside it.
+      const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
-        this.tools.set(this.key(tool.frameId, tool.name), tool);
+        this.tools.set(this.key(tool.frameId, tool.name), {
+          tool,
+          registrationSeq,
+        });
       }
       this.announce();
     });
@@ -338,7 +490,14 @@ export class WebMcpBridge {
       // "tools of the page we are on". Dropping them here is what stops the
       // registry serving tools that no longer exist.
       this.dropFrame(frame.id);
-      if (!frame.parentId) this.mainFrameId = frame.id;
+      if (!frame.parentId) {
+        this.mainFrameId = frame.id;
+        // A NEW DOCUMENT is a new answer to "does this page speak WebMCP?".
+        // Only the main frame: a subframe navigating says nothing about the
+        // top-level page's `document.modelContext`, and re-probing on every
+        // ad iframe would be a round trip per frame per page.
+        this.reprobe();
+      }
       this.announce();
     });
 
@@ -404,7 +563,7 @@ export class WebMcpBridge {
 
   /** The tools currently on offer, as the model should see them. */
   list(): WebMcpToolDescriptor[] {
-    return [...this.tools.values()].map((tool) => ({
+    return [...this.tools.values()].map(({ tool, registrationSeq }) => ({
       frameId: tool.frameId,
       name: tool.name,
       description: tool.description ?? "",
@@ -416,6 +575,7 @@ export class WebMcpBridge {
         : {}),
       origin: originOf(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
+      registrationSeq,
       registrationKind:
         tool.backendNodeId !== undefined
           ? ("declarative" as const)
@@ -431,12 +591,12 @@ export class WebMcpBridge {
    * time rather than being carried around as identity.
    */
   private resolveFrame(toolName: string): string {
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName && tool.frameId === this.mainFrameId) {
         return tool.frameId;
       }
     }
-    for (const tool of this.tools.values()) {
+    for (const { tool } of this.tools.values()) {
       if (tool.name === toolName) return tool.frameId;
     }
     throw new WebMcpBridgeError(
@@ -452,9 +612,29 @@ export class WebMcpBridge {
    * the subframe detached), so an id that no longer matches falls back to
    * resolution rather than being sent to the browser to fail obscurely.
    */
-  private frameFor(frameId: string | undefined, toolName: string): string {
+  private frameFor(
+    frameId: string | undefined,
+    toolName: string,
+    strict = false,
+  ): string {
     if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    // STRICT callers named a frame as part of an identity they already
+    // validated, so falling back would invoke a DIFFERENT tool than the one
+    // approved — a same-named main-frame tool standing in for the subframe's.
+    // Silent substitution is exactly the failure the caller's binding exists
+    // to prevent, so an unmatched frame is `webmcp_tool_gone` instead.
+    if (strict) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" no longer offers it.`,
+      );
+    }
     return this.resolveFrame(toolName);
+  }
+
+  /** The registration sequence for one (frame, name), or undefined if gone. */
+  registrationSeqFor(frameId: string, toolName: string): number | undefined {
+    return this.tools.get(this.key(frameId, toolName))?.registrationSeq;
   }
 
   /**
@@ -481,6 +661,23 @@ export class WebMcpBridge {
      * omitted, and when the frame given no longer offers the tool.
      */
     frameId?: string;
+    /**
+     * Refuse rather than re-resolve when `frameId` no longer offers the tool.
+     *
+     * For a caller invoking against an identity it has already validated: a
+     * fallback would run a same-named tool in another frame under an approval
+     * that named this one.
+     */
+    strictFrame?: boolean;
+    /**
+     * The invocation id, the moment the browser hands it back.
+     *
+     * The whole reason a cancel could not reach the page before: `invoke` is
+     * synchronous from the caller's side and only RETURNS the id once the tool
+     * has settled, so nothing upstream could name the thing it wanted stopped
+     * while it was still running.
+     */
+    onStarted?: (invocationId: string) => void;
     signal?: AbortSignal;
   }): Promise<{ invocationId: string; output: unknown }> {
     if (this.disposed) {
@@ -510,7 +707,11 @@ export class WebMcpBridge {
         reason,
       );
     }
-    const frameId = this.frameFor(args.frameId, args.toolName);
+    const frameId = this.frameFor(
+      args.frameId,
+      args.toolName,
+      args.strictFrame === true,
+    );
 
     let invocationId: string;
     try {
@@ -536,6 +737,14 @@ export class WebMcpBridge {
         );
       }
       invocationId = result.invocationId;
+      // BEFORE the await below, so a cancel arriving while the page's handler
+      // is still running has an id to name. A throwing subscriber must not
+      // fail the invocation it is only observing.
+      try {
+        args.onStarted?.(invocationId);
+      } catch {
+        /* ignore */
+      }
     } catch (error) {
       if (error instanceof WebMcpBridgeError) throw error;
       // An unknown tool rejects HERE rather than settling as a response.
@@ -638,6 +847,8 @@ export class WebMcpBridge {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.subscribers.clear();
+    this.probe = undefined;
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);

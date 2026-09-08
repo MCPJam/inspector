@@ -1757,3 +1757,390 @@ describe("ChromiumDriver — the human pane's tab strip", () => {
     expect(snapshot.active).toBe(`${long}-7`);
   });
 });
+
+describe("ChromiumDriver — WebMCP revision cache", () => {
+  /**
+   * A bridge whose tool set a test can change, with a real subscription. The
+   * driver's whole revision story is push-driven, so a stub with a no-op
+   * `subscribe` would pin nothing.
+   */
+  function liveBridge(initial: Array<Record<string, unknown>> = []) {
+    let tools = initial;
+    const listeners = new Set<(t: unknown[]) => void>();
+    let supported = true;
+    return {
+      bridge: {
+        isSupported: () => supported,
+        list: () => tools,
+        async probeSettled() {},
+        subscribe(listener: (t: unknown[]) => void) {
+          listeners.add(listener);
+          listener(tools);
+          return () => listeners.delete(listener);
+        },
+        registrationSeqFor: (frameId: string, name: string) =>
+          (
+            tools.find(
+              (tool) => tool.frameId === frameId && tool.name === name,
+            ) as { registrationSeq?: number } | undefined
+          )?.registrationSeq,
+        invoke: async () => ({ invocationId: "inv-1", output: { ok: true } }),
+        cancel: async () => true,
+      } as never,
+      set(next: Array<Record<string, unknown>>) {
+        tools = next;
+        for (const listener of listeners) listener(tools);
+      },
+      setSupported(value: boolean) {
+        supported = value;
+      },
+    };
+  }
+
+  async function withLiveBridge(live: ReturnType<typeof liveBridge>) {
+    const page = fakePage({ url: "https://x.test/", webmcp: live.bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    return driver;
+  }
+
+  const TOOL = {
+    name: "book",
+    description: "Book it",
+    frameId: "frame-main",
+    origin: "https://x.test",
+    isMainFrame: true,
+    registrationSeq: 1,
+  };
+
+  it("answers webmcp_revision without touching the page", async () => {
+    const live = liveBridge([TOOL]);
+    const page = fakePage({ url: "https://x.test/", webmcp: live.bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const shotsBefore = page.calls.shots;
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "webmcp_revision" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.webmcpTools).toMatchObject({ count: 1, supported: true });
+    // No screenshot, no settle — this is the read the server makes before EVERY
+    // model step, and one that reached into the page would make discovery cost
+    // a page load per step.
+    expect(page.calls.shots).toBe(shotsBefore);
+    // And no state token: nothing observed a rendered state, so there is none
+    // to pin an act to.
+    expect(res.stateToken).toBeUndefined();
+  });
+
+  it("bumps the revision when the page adds and removes a tool", async () => {
+    const live = liveBridge([TOOL]);
+    const driver = await withLiveBridge(live);
+    const first = driver.webmcpToolsSnapshot()!;
+
+    live.set([TOOL, { ...TOOL, name: "cancel", registrationSeq: 2 }]);
+    const second = driver.webmcpToolsSnapshot()!;
+    expect(second.revision).toBeGreaterThan(first.revision);
+    expect(second.hash).not.toBe(first.hash);
+    expect(second.count).toBe(2);
+
+    live.set([TOOL]);
+    const third = driver.webmcpToolsSnapshot()!;
+    expect(third.revision).toBeGreaterThan(second.revision);
+    // Back to the same SET, and the hash says so — which is what lets the
+    // server skip re-fetching definitions it already has.
+    expect(third.hash).toBe(first.hash);
+  });
+
+  it("bumps the revision on a navigation even when the tools are identical", async () => {
+    // A same-origin reload re-registers the same names in the same frame. It is
+    // a NEW document all the same, and every binding against the old one is
+    // void — a revision that held still there would tell the server nothing
+    // changed about a page that had been replaced.
+    const live = liveBridge([TOOL]);
+    const driver = await withLiveBridge(live);
+    const before = driver.webmcpToolsSnapshot()!;
+    await driver.execute(cmd({ kind: "reload" }));
+    const after = driver.webmcpToolsSnapshot()!;
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.hash).not.toBe(before.hash);
+  });
+
+  it("rides along on every observation", async () => {
+    const live = liveBridge([TOOL]);
+    const driver = await withLiveBridge(live);
+    for (const mode of ["url", "screenshot", "dom"] as const) {
+      const res = await driver.execute(cmd({ kind: "observe", mode }));
+      expect(res.webmcpTools?.count).toBe(1);
+    }
+    // Including the navigate that CAUSED the change, so a tool the model's own
+    // action registered is seen without a second round trip.
+    const navigated = await driver.execute(
+      cmd({ kind: "navigate", url: "https://x.test/next" }),
+    );
+    expect(navigated.webmcpTools).toBeDefined();
+  });
+
+  it("reports an unknown tab as no snapshot at all", async () => {
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    expect(driver.webmcpToolsSnapshot("never-opened")).toBeUndefined();
+  });
+});
+
+describe("ChromiumDriver — webmcp_invoke bindings", () => {
+  function bindingBridge(tools: Array<Record<string, unknown>>) {
+    const invoked: Array<Record<string, unknown>> = [];
+    return {
+      invoked,
+      bridge: {
+        isSupported: () => true,
+        list: () => tools,
+        async probeSettled() {},
+        subscribe(listener: (t: unknown[]) => void) {
+          listener(tools);
+          return () => {};
+        },
+        registrationSeqFor: (frameId: string, name: string) =>
+          (
+            tools.find(
+              (tool) => tool.frameId === frameId && tool.name === name,
+            ) as { registrationSeq?: number } | undefined
+          )?.registrationSeq,
+        invoke: async (args: Record<string, unknown>) => {
+          invoked.push(args);
+          (args.onStarted as ((id: string) => void) | undefined)?.("inv-42");
+          return { invocationId: "inv-42", output: { ok: true } };
+        },
+        cancel: async () => true,
+      } as never,
+    };
+  }
+
+  const MAIN_TOOL = {
+    name: "pay",
+    frameId: "frame-main",
+    origin: "https://x.test",
+    isMainFrame: true,
+    registrationSeq: 5,
+  };
+
+  async function driverWith(bridge: unknown) {
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge as never });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    return driver;
+  }
+
+  /** The binding a caller holds after listing on the first navigation. */
+  const BINDING = {
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 1,
+    frameId: "frame-main",
+    registrationSeq: 5,
+  };
+
+  it("invokes when the binding still describes the live tool", async () => {
+    const live = bindingBridge([MAIN_TOOL]);
+    const driver = await driverWith(live.bridge);
+    const res = await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "pay",
+        input: {},
+        expectedBinding: BINDING,
+      }),
+    );
+    expect(res.ok).toBe(true);
+    // Bound callers get the EXACT frame, never a resolved-by-name substitute.
+    expect(live.invoked[0]).toMatchObject({
+      frameId: "frame-main",
+      strictFrame: true,
+    });
+  });
+
+  it("refuses stale_binding after a navigation, without invoking", async () => {
+    // The main frame KEEPS its id across navigation, so name + origin + frame
+    // id all still match — `navCounter` is the only thing that separates this
+    // page from the page that replaced it.
+    const live = bindingBridge([MAIN_TOOL]);
+    const driver = await driverWith(live.bridge);
+    await driver.execute(cmd({ kind: "reload" }));
+
+    const res = await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "pay",
+        input: {},
+        expectedBinding: BINDING,
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("stale_binding");
+    expect(live.invoked).toEqual([]);
+    // The fresh revision rides along so the caller re-reads rather than
+    // retrying the binding it already holds.
+    expect(res.webmcpTools).toBeDefined();
+  });
+
+  it("refuses stale_binding after a same-origin re-registration", async () => {
+    // Nothing navigated and nothing moved frames: the page unregistered and
+    // re-registered the tool, so the handler behind the name is different.
+    const live = bindingBridge([{ ...MAIN_TOOL, registrationSeq: 6 }]);
+    const driver = await driverWith(live.bridge);
+    const res = await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "pay",
+        input: {},
+        expectedBinding: BINDING,
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("re-registered");
+    expect(live.invoked).toEqual([]);
+  });
+
+  it("refuses stale_binding when the bound frame is gone", async () => {
+    const live = bindingBridge([
+      { ...MAIN_TOOL, frameId: "frame-other", isMainFrame: false },
+    ]);
+    const driver = await driverWith(live.bridge);
+    const res = await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "pay",
+        input: {},
+        expectedBinding: BINDING,
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("stale_binding");
+    // Emphatically NOT resolved to the same-named tool in the other frame.
+    expect(live.invoked).toEqual([]);
+  });
+
+  it("refuses a binding minted for another tab", async () => {
+    const live = bindingBridge([MAIN_TOOL]);
+    const driver = await driverWith(live.bridge);
+    const res = await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "pay",
+        input: {},
+        expectedBinding: { ...BINDING, tabId: "other-tab" },
+      }),
+    );
+    expect(res.error).toContain("stale_binding");
+  });
+
+  it("leaves an UNBOUND invoke exactly as it was", async () => {
+    // The legacy `browser_webmcp_invoke` sends no binding and must keep its
+    // resolve-by-name behaviour.
+    const live = bindingBridge([MAIN_TOOL]);
+    const driver = await driverWith(live.bridge);
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "pay", input: {} }),
+    );
+    expect(res.ok).toBe(true);
+    expect(live.invoked[0].strictFrame).toBeUndefined();
+  });
+});
+
+describe("ChromiumDriver — cancelling by commandId", () => {
+  it("cancels the invocation a command started, mid-flight", async () => {
+    // The gap this closes: `webmcp_invoke` is synchronous, so a caller wanting
+    // to stop a running page tool has never known the invocation id — its own
+    // commandId is the only handle it holds before the call.
+    const cancelled: string[] = [];
+    let releaseInvoke: (() => void) | undefined;
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        (args.onStarted as ((id: string) => void) | undefined)?.("inv-77");
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+        return { invocationId: "inv-77", output: { ok: true } };
+      },
+      cancel: async (invocationId: string) => {
+        cancelled.push(invocationId);
+        return true;
+      },
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const invoking = driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-abc",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const cancel = await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "cmd-abc" }),
+    );
+    expect(cancel.ok).toBe(true);
+    expect(cancelled).toEqual(["inv-77"]);
+
+    releaseInvoke?.();
+    await invoking;
+  });
+
+  it("reports a cancel with nothing to stop as an ordinary answer", async () => {
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async () => ({ invocationId: "x", output: {} }),
+      cancel: async () => true,
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    // A cancel that beats the browser's acceptance of the invocation has
+    // nothing to stop, and nothing went wrong — reporting a failure would make
+    // an ordinary race look like a broken cancel path.
+    const res = await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "never-started" }),
+    );
+    expect(res).toMatchObject({ ok: true, output: { cancelled: false, known: false } });
+  });
+
+  it("still cancels by invocationId for a caller that knows one", async () => {
+    const cancelled: string[] = [];
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async () => ({ invocationId: "x", output: {} }),
+      cancel: async (id: string) => {
+        cancelled.push(id);
+        return true;
+      },
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "webmcp_cancel", invocationId: "inv-9" }));
+    expect(cancelled).toEqual(["inv-9"]);
+  });
+});

@@ -18,6 +18,7 @@
  */
 import {
   BROWSERD_PROTOCOL_VERSION,
+  BROWSERD_WEBMCP_FEATURES,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
@@ -183,7 +184,15 @@ export class BrowserdRequestHandler {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
-    this.features = deps.features ?? [];
+    // MERGED HERE, not at a call site. These describe what this daemon's CODE
+    // can do, which is not something an assembler should be able to forget to
+    // announce: the hosted `main.ts`, the local in-process session and a test
+    // stack all construct this handler, and a capability missing from one of
+    // them reads to the server as "fall back to the old path" on an engine
+    // that supports the new one.
+    this.features = [
+      ...new Set([...(deps.features ?? []), ...BROWSERD_WEBMCP_FEATURES]),
+    ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
