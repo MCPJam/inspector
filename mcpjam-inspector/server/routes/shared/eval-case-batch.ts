@@ -219,6 +219,15 @@ export async function createEvalCasesInBatches(
     cases: EvalCaseBatchItem[];
     duplicatePolicy?: DuplicatePolicy | string;
     overrideReason?: string;
+    /**
+     * The suite-file sync marker, when this batch IS a `--file` sync.
+     *
+     * A CI-owned suite refuses case creation from the app and from the API;
+     * naming the suite's own declared id is how the file writing itself says
+     * so. Sent on every chunk, because each chunk is its own transaction and
+     * its own authorization.
+     */
+    fileSync?: { declaredSuiteId: string };
   }
 ): Promise<CaseBatchResult> {
   const committed: CaseBatchCommittedEntry[] = [];
@@ -250,6 +259,10 @@ export async function createEvalCasesInBatches(
           ...(args.overrideReason
             ? { overrideReason: args.overrideReason }
             : {}),
+          // Only when present: a platform that predates the CI-owned lock does
+          // not know this argument and rejects the whole call for an unknown
+          // field.
+          ...(args.fileSync ? { fileSync: args.fileSync } : {}),
         }
       );
     } catch (error) {

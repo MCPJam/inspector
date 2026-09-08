@@ -63,7 +63,7 @@ export function GitHubStarButton() {
   }, [count]);
 
   return (
-    <Button asChild variant="outline" size="sm" className="gap-1.5 px-2.5">
+    <Button asChild variant="secondary" size="sm" className="gap-1.5 px-2.5">
       <a
         href={`https://github.com/${REPO}`}
         target="_blank"

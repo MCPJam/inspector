@@ -61,6 +61,39 @@ export const LOCAL_HARNESS_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_HARNESS_ENABLED === "true";
 
 /**
+ * Scheduled eval runs — the deployment switch over ENABLING one, enforced on
+ * the write path rather than on the screen.
+ *
+ * Default OFF. Schedule has not been thoroughly tested, and the PostHog flag
+ * `scheduled-evals-enabled` only hides the UI: `PATCH .../eval-suites/:id/
+ * schedule` is reachable by any API-key holder, and the SDK client, the
+ * `set_eval_suite_schedule` MCP tool, `mcpjam cloud eval schedule` and
+ * proposal execution all self-dispatch through it. One switch here is what
+ * makes "not yet tested" true for every writer instead of only the screen.
+ *
+ * GATES ENABLING ONLY, ON THE ROUTE — `enabled: false` passes through
+ * untouched. Precedent is the `trace-destinations` flag: delete, pause and
+ * disable stay ungated so an org that loses the feature can still switch a
+ * live one off. A gate that strands a running schedule with no way to stop it
+ * is the worse failure.
+ *
+ * THE AGENT IS STRICTER, and it is worth being plain about the asymmetry: the
+ * org policy withholds `set_eval_suite_schedule` outright (see
+ * `org-agent-policy.ts`), so the agent loses DISABLE as well as enable. That
+ * set gates by operation name and cannot read an argument, so the choice there
+ * is between an agent that can still enable and one that can do neither. The
+ * route above is what keeps a live schedule stoppable — by a person, through
+ * the API or the CLI.
+ *
+ * NOT the only gate, and not the one that stops a schedule already running:
+ * `SCHEDULED_EVALS_ENABLED` on the Convex deployment refuses every writer
+ * including the UI's direct mutation, and `SCHEDULED_EVALS_WORKER_ENABLED`
+ * stops execution.
+ */
+export const SCHEDULED_EVALS_WRITE_ENABLED =
+  process.env.MCPJAM_SCHEDULED_EVALS_WRITE_ENABLED === "true";
+
+/**
  * WebMCP Inspector (a managed browser the user points at a page, so its WebMCP
  * tools can be listed and invoked) — server-side kill switch, in BOTH modes.
  * `MCPJAM_WEBMCP_INSPECTOR_ENABLED=false` is the emergency/managed-install off
@@ -102,6 +135,26 @@ export function webmcpInspectorHostedEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return HOSTED_MODE && env.MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED === "1";
+}
+
+/**
+ * Can a WebMCP Inspector SESSION exist on this deployment at all?
+ *
+ * The kill switch and the hosted-reachability switch, composed — the same
+ * question the inspector router answers with a 404, asked by anything that
+ * must not offer a capability the session behind it cannot provide. The chat
+ * routes ask it before advertising a page's tools to a model: a turn that
+ * offered them where no session can exist would strand on a call nothing can
+ * fulfil.
+ *
+ * Lives HERE rather than in the router so a caller can ask without importing
+ * a Hono app.
+ */
+export function webmcpInspectorReachable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!WEBMCP_INSPECTOR_ENABLED) return false;
+  return !HOSTED_MODE || webmcpInspectorHostedEnabled(env);
 }
 
 /**
@@ -162,10 +215,18 @@ export const CORS_ORIGINS =
     ? WEB_ALLOWED_ORIGINS
     : Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
 
-// Hosted web route timeouts (ms)
-export const WEB_CONNECT_TIMEOUT_MS = 10_000;
-export const WEB_CALL_TIMEOUT_MS = 30_000;
-export const WEB_STREAM_TIMEOUT_MS = 120_000;
+// Hosted web route timeouts (ms). Defined in `shared/` so the client can read
+// the same numbers to DESCRIBE what a hosted run does (the eval settings
+// Connection card names the call timeout); every server importer keeps
+// importing them from here.
+export {
+  WEB_CONNECT_TIMEOUT_MS,
+  WEB_CALL_TIMEOUT_MS,
+  WEB_STREAM_TIMEOUT_MS,
+} from "../shared/hosted-web-timeouts.js";
+// Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
+// derived from the call timeout, and a re-export does not bind the name here.
+import { WEB_CALL_TIMEOUT_MS } from "../shared/hosted-web-timeouts.js";
 
 // ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
 // An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.
@@ -255,13 +316,35 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
-// Allowed hosts for token delivery in hosted mode (comma-separated)
-// These hosts will be allowed to receive session tokens in addition to localhost
-export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
-  ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-      h.trim().toLowerCase(),
-    )
-  : [];
+// Admin-controlled host allowlist (comma-separated), honored in BOTH hosted
+// and self-hosted modes. In addition to localhost, these hosts may receive the
+// session token / guest bootstrap and are accepted as request Origins: hosted
+// deployments set their canonical app host(s); self-hosted operators set their
+// own LAN host (e.g. 192.168.x.x) to reach the inspector off-localhost.
+//
+// Note the hosted nuance: `GET /api/session-token` short-circuits to 410 in
+// hosted mode (that endpoint is dev/self-hosted only), so an allowlisted hosted
+// host receives the session token via production HTML injection rather than the
+// endpoint, and the guest bearer via `mayServeGuestBootstrap`. Self-hosted
+// hosts use the `/api/session-token` endpoint. Both paths gate on this list.
+/**
+ * Parse a raw `MCPJAM_ALLOWED_HOSTS` value into normalized entries. Exported so
+ * the token gate (`ALLOWED_HOSTS` below, a module-load snapshot) and the origin
+ * gate (which re-reads `process.env` per request) share ONE parser and can't
+ * silently diverge on how entries are split/normalized.
+ */
+export function parseAllowedHosts(raw: string | undefined): string[] {
+  return raw
+    ? raw
+        .split(",")
+        .map((h) => h.trim().toLowerCase())
+        .filter((h) => h.length > 0)
+    : [];
+}
+
+export const ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS,
+);
 
 // Vanity domains whose root path ("/") should land on the host-compare
 // showcase ("Can I use" for MCP hosts). Override via env if more are added.

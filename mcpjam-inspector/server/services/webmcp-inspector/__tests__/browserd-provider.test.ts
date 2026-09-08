@@ -4,7 +4,7 @@ import {
   POLL_FAST_WINDOW_MS,
 } from "../browserd-provider";
 import { WebMcpBridge } from "../../browserd/daemon/webmcp-bridge";
-import type { HostedBrowserSessionHandle } from "../../browserd/browser-session";
+import type { ComputerHostedBrowserSessionHandle } from "../../browserd/browser-session";
 import type { BrowserCommand } from "../../browserd/protocol";
 import type {
   ProviderToolDescriptor,
@@ -13,6 +13,7 @@ import type {
 
 const HANDLE = {
   engine: "hosted" as const,
+  target: "computer" as const,
   sessionId: "sessions_1",
   computerId: "computers_1",
   bootId: "boot-1",
@@ -21,7 +22,7 @@ const HANDLE = {
   streamPassword: "pw",
   contextMode: "persistent",
   reused: true,
-} as HostedBrowserSessionHandle;
+} as ComputerHostedBrowserSessionHandle;
 
 type Reply = { status: string; result?: any; bootId: string };
 

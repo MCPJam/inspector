@@ -46,9 +46,41 @@ export interface BrowserdHealth {
  *  bearer's validity in one probe. `unauthorized` means the bearer this client
  *  holds is not the running daemon's secret (a relaunch signal for the durable
  *  session path, same as a bootId mismatch). */
+/**
+ * What a daemon says about itself beyond "alive".
+ *
+ * All optional, all additive: a daemon predating V-4a answers none of them,
+ * and every caller must treat absence as "unknown" rather than as a value.
+ * `protocolVersion` in particular is the ONLY field a reuse decision may key
+ * off — absent means "cannot prove compatibility", which is a relaunch.
+ */
+export interface BrowserdIdentity {
+  protocolVersion?: number;
+  /** Observability and the lazy-upgrade decision. Never admission. */
+  bundleHash?: string;
+  features?: readonly string[];
+  contextMode?: "persistent" | "ephemeral";
+  startedBy?: "prelaunch" | "inspector";
+  /**
+   * What "nobody is using this browser" is made of, reported as FACTS.
+   *
+   * The daemon deliberately does not decide: the quiet threshold lives in the
+   * inspector, so changing it does not need a daemon deploy — which is the
+   * exact cost this whole compatibility mechanism exists to avoid.
+   *
+   * A missing field is UNKNOWN, never zero. `watchers` absent means the stream
+   * host had not attached yet (or the daemon predates V-4a), and concluding
+   * "nobody is watching" from that would relaunch a browser somebody is
+   * looking at.
+   */
+  lease?: "free" | "held" | "parked";
+  watchers?: number;
+  msSinceActivity?: number;
+}
+
 export type BrowserdStatus =
-  | { kind: "ok"; bootId: string }
-  | { kind: "unhealthy"; bootId?: string; detail?: string }
+  | ({ kind: "ok"; bootId: string } & BrowserdIdentity)
+  | ({ kind: "unhealthy"; bootId?: string; detail?: string } & BrowserdIdentity)
   | { kind: "unauthorized" };
 
 /** What is holding the browser: a person at the pane, or a script over CDP. */
@@ -145,16 +177,18 @@ export function decodeHealth(reply: DecodableReply): BrowserdHealth {
 export function decodeStatus(reply: DecodableReply): BrowserdStatus {
   const body = reply.body;
   const bootId = typeof body.bootId === "string" ? body.bootId : undefined;
+  const identity = decodeIdentity(body);
   switch (reply.status) {
     case 200:
       return bootId
-        ? { kind: "ok", bootId }
-        : { kind: "unhealthy", detail: "status_missing_boot_id" };
+        ? { kind: "ok", bootId, ...identity }
+        : { kind: "unhealthy", detail: "status_missing_boot_id", ...identity };
     case 503:
       return {
         kind: "unhealthy",
         bootId,
         detail: typeof body.detail === "string" ? body.detail : undefined,
+        ...identity,
       };
     case 401:
       return { kind: "unauthorized" };
@@ -291,4 +325,57 @@ export function decodeCommandResponse(
         reply.status,
       );
   }
+}
+
+/**
+ * Read the compatibility fields off a status body.
+ *
+ * Every field is dropped rather than coerced when it is the wrong shape. A
+ * `protocolVersion: "1"` from a garbled build must read as UNKNOWN — which
+ * relaunches — and not as the number 1, which would adopt a daemon nobody can
+ * prove is compatible.
+ */
+function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
+  const protocolVersion = body.protocolVersion;
+  const bundleHash = body.bundleHash;
+  const features = body.features;
+  const contextMode = body.contextMode;
+  const startedBy = body.startedBy;
+  const lease = body.lease;
+  const watchers = body.watchers;
+  const msSinceActivity = body.msSinceActivity;
+  return {
+    ...(typeof protocolVersion === "number" &&
+    Number.isInteger(protocolVersion) &&
+    protocolVersion >= 1
+      ? { protocolVersion }
+      : {}),
+    ...(typeof bundleHash === "string" && bundleHash.length > 0
+      ? { bundleHash }
+      : {}),
+    ...(Array.isArray(features)
+      ? {
+          features: features.filter(
+            (entry): entry is string => typeof entry === "string",
+          ),
+        }
+      : {}),
+    ...(contextMode === "persistent" || contextMode === "ephemeral"
+      ? { contextMode }
+      : {}),
+    ...(startedBy === "prelaunch" || startedBy === "inspector"
+      ? { startedBy }
+      : {}),
+    ...(lease === "free" || lease === "held" || lease === "parked"
+      ? { lease }
+      : {}),
+    ...(typeof watchers === "number" && Number.isFinite(watchers) && watchers >= 0
+      ? { watchers }
+      : {}),
+    ...(typeof msSinceActivity === "number" &&
+    Number.isFinite(msSinceActivity) &&
+    msSinceActivity >= 0
+      ? { msSinceActivity }
+      : {}),
+  };
 }

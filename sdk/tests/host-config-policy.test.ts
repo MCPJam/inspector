@@ -223,6 +223,31 @@ describe("buildHostIterationMetadata", () => {
     expect(meta.tools_dropped_visibility).toBeUndefined();
   });
 
+  it("stamps tools_description_overridden only when > 0", () => {
+    const meta = buildHostIterationMetadata(
+      basePolicy,
+      { ...baseSignals, toolsDescriptionOverridden: 1 },
+      0,
+      false
+    );
+    expect(meta.tools_description_overridden).toBe(1);
+  });
+
+  it("does not stamp tools_description_overridden when 0 or absent", () => {
+    expect(
+      buildHostIterationMetadata(basePolicy, baseSignals, 0, false)
+        .tools_description_overridden
+    ).toBeUndefined();
+    expect(
+      buildHostIterationMetadata(
+        basePolicy,
+        { ...baseSignals, toolsDescriptionOverridden: 0 },
+        0,
+        false
+      ).tools_description_overridden
+    ).toBeUndefined();
+  });
+
   it("stamps approvals_would_require when requireToolApproval and count > 0", () => {
     const policy: HostExecutionPolicy = {
       ...basePolicy,

@@ -16,6 +16,10 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
+import type {
+  RunCiMetadata,
+  RunLauncher,
+} from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
@@ -397,8 +401,11 @@ export const startSuiteRunWithRecorder = async ({
   idempotencyKey,
   sourceHash,
   skillsOverride,
+  toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  launcher,
+  ciMetadata,
 }: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -508,6 +515,14 @@ export const startSuiteRunWithRecorder = async ({
    */
   skillsOverride?: "exclude";
   /**
+   * The REWRITE arm of a description-experiment. `{ experimentId }` only —
+   * the backend loads the experiment and copies its proposal onto
+   * `configSnapshot.toolDescriptionOverride`. Must be declared here or a
+   * reconstruction of the mutation args would silently drop it and launch
+   * an ORIGINAL arm.
+   */
+  toolDescriptionOverride?: { experimentId: string };
+  /**
    * Compose-and-run: accept a project-scoped, non-archived environment that
    * is not a suite member. Forwarded to `startTestSuiteRun`.
    */
@@ -526,6 +541,22 @@ export const startSuiteRunWithRecorder = async ({
    * backend refusing a run they did approve.
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
+  /**
+   * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
+   * boundary. A LABEL, not an authorization input: `source` is still stamped
+   * by the route and the verified attribution is still what the audit reads.
+   *
+   * Must be declared here — like every other field in this list — because the
+   * mutation args below are RECONSTRUCTED from these parameters, so anything
+   * nobody destructures is something the backend never sees.
+   */
+  launcher?: RunLauncher;
+  /**
+   * The CI envelope this launch came from, mapped to the run row's own
+   * spelling at the header boundary. Fills the Runs table's CI column and
+   * makes `--baseline-sha` resolvable for a CLI run inside GitHub Actions.
+   */
+  ciMetadata?: RunCiMetadata;
 }) => {
   let response: any;
   try {
@@ -564,10 +595,20 @@ export const startSuiteRunWithRecorder = async ({
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
+        ...(toolDescriptionOverride
+          ? { toolDescriptionOverride }
+          : {}),
         ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         ...(importApprovals && importApprovals.length
           ? { importApprovals }
           : {}),
+        // Forwarded only when present. An older backend's `startTestSuiteRun`
+        // validator does not know these args and rejects the whole call for an
+        // unknown field, so sending `launcher: undefined` would break every
+        // launch against a deployment that predates run provenance — including
+        // self-hosted ones this Inspector talks to.
+        ...(launcher ? { launcher } : {}),
+        ...(ciMetadata ? { ciMetadata } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
@@ -857,6 +898,21 @@ export const startSuiteRunWithRecorder = async ({
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
       | { mode?: unknown }
+      | undefined,
+    /**
+     * The run's FROZEN description-experiment marker, straight off its own
+     * snapshot. The runner applies `{ [toolName]: description }` and stamps
+     * `metadata.descriptionExperiment` from this — never from the launch
+     * body's experimentId alone, which does not carry the proposal text.
+     */
+    toolDescriptionOverride: (response?.configSnapshot as any)
+      ?.toolDescriptionOverride as
+      | {
+          experimentId?: string;
+          toolName?: string;
+          description?: string;
+          proposalHash?: string;
+        }
       | undefined,
   };
 };

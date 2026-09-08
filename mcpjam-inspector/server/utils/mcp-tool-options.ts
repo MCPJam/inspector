@@ -1,7 +1,7 @@
 /**
  * ONE builder for `getToolsForAiSdk`'s host-derived options.
  *
- * `MCPClientManager.getToolsForAiSdk(serverIds?, options = {})` takes five
+ * `MCPClientManager.getToolsForAiSdk(serverIds?, options = {})` takes six
  * host-derived inputs and, by its own docblock, refuses to resolve any of them
  * itself ("the mode is resolved by the CALLER — this class must not read host
  * configs"). Every execution surface therefore has to build the same object,
@@ -39,6 +39,8 @@
  *    `override ?? config?.toolCallCancellation`, so absent falls through to the
  *    connection's connect-time copy while `{}` overrides it with "no era is
  *    suppressed". A caller that resolved a host config says so with `{}`.
+ *  - `toolDescriptionOverrides` when defined and non-empty (a description-
+ *    experiment rewrite; absent and `{}` are both "no override").
  */
 import type { MCPClientManager, ToolTaskSeamOptions } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
@@ -76,6 +78,13 @@ export interface McpToolOptionsInput {
    * doing nothing.
    */
   toolCallCancellation?: { legacy?: boolean; modern?: boolean } | undefined;
+  /**
+   * Per-tool description rewrites for a description-experiment REWRITE arm.
+   * Included only when defined and non-empty — an empty record is the same
+   * instruction as absent (no override) and must not take the options
+   * overload on its own.
+   */
+  toolDescriptionOverrides?: Readonly<Record<string, string>> | undefined;
 }
 
 /**
@@ -94,6 +103,12 @@ export function mcpToolOptionsFor(
   if (input.tasks !== undefined) options.tasks = input.tasks;
   if (input.toolCallCancellation !== undefined) {
     options.toolCallCancellation = input.toolCallCancellation;
+  }
+  if (
+    input.toolDescriptionOverrides !== undefined &&
+    Object.keys(input.toolDescriptionOverrides).length > 0
+  ) {
+    options.toolDescriptionOverrides = input.toolDescriptionOverrides;
   }
   return Object.keys(options).length > 0 ? options : undefined;
 }

@@ -42,6 +42,8 @@ import {
   sendChatMessageOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   createEvalCaseOperation,
@@ -71,6 +73,11 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -1584,6 +1591,28 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
+    operation: getEvalRunGateOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_gate` returns the stored suite quality-gate report for ONE run: passed, failed, non_gateable, or not_configured. `not_configured` means the suite has no active conditions — it is a real report, never an absent route. A deployment that does not serve the route is a different fact: do not report that as 'no policy'. A run waiver never covers this report.",
+    ],
+  },
+  {
+    operation: getEvalRunRouteFactsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_route_facts` returns the MEASURED DESCRIPTION of which tool paths a run's trials took. The population is the trial. Substitution is named only for the one-to-one in-catalog shape (exactly one expected name missing and exactly one unexpected in-catalog name observed). Read `catalogState`: `loaded` means unexpected tools can be in- or outside-catalog; `notLoaded` forbids substitution and unexpected tools read as `catalogNotLoaded`. A zero denominator is NOT MEASURED, never 0%. `endedWithQuestion` stays notMeasured until a producer exists. Report-only: never a verdict.",
+      "- An ABSENT route-facts document means the run predates route measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalDescriptionExperimentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_description_experiment` returns one description-rewrite experiment: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
+    ],
+  },
+  {
     operation: listEvalSuiteStageAnalyticsOperation,
     tier: "direct",
     promptNotes: [
@@ -1799,17 +1828,52 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
     ],
   },
+  {
+    operation: proposeEvalDescriptionRewriteOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Draft a rewritten description for ${named(input, "toolName") ?? "(unnamed tool)"} from run ${named(input, "runId") ?? "(unnamed)"}`,
+      buttonLabel: "Propose the rewrite",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+    ],
+  },
+  {
+    operation: startEvalDescriptionExperimentOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Launch the two-arm description experiment ${named(input, "experiment") ?? "(unnamed)"} (original + rewrite)`,
+      buttonLabel: "Start the experiment",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
+    ],
+  },
 
-  // ── GitHub Checks. The read is free and is what makes the write
+  // ── GitHub checks. The read is free and is what makes the write
   // answerable: `connectable` names the repositories the App can actually
   // reach, so a proposal can quote a real one instead of a guess.
+  //
+  // `github` is the canonical spelling — `check` here is a GITHUB check, and
+  // the pre-rename `*_check_repo*` names read as a case's grading checks under
+  // the same `eval` noun. The old pair is still registered, unchanged, because
+  // an agent may already be calling one; only the prompt note names the
+  // canonical spelling, so nothing tells a model to prefer the old one.
+  { operation: listEvalGithubReposOperation, tier: "direct" },
   { operation: listEvalCheckReposOperation, tier: "direct" },
   // GATED for REACH, not spend. Connecting changes what happens in a SHARED
   // repository for everyone who opens a pull request against it, and with
   // `fail_closed` it can block their merges. `kind: "external"` is the honest
   // one: the effect lands on GitHub, where MCPJam cannot describe or undo it.
   {
-    operation: connectEvalCheckRepoOperation,
+    operation: connectEvalGithubRepoOperation,
     tier: "gated",
     proposal: {
       describe: (input) => {
@@ -1828,8 +1892,26 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "external",
     },
     promptNotes: [
-      "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
+      "- `connect_eval_github_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_github_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. `connect_eval_check_repo` and `list_eval_check_repos` are the pre-rename spellings of the same two operations — a `check` there is a GITHUB check, never a case's grading check.",
     ],
+  },
+  {
+    operation: connectEvalCheckRepoOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const repo = named(input, "repo") ?? "(unnamed repository)";
+        const suite = named(input, "suite") ?? "(unnamed)";
+        const policy =
+          input.outagePolicy === "fail_closed"
+            ? " (failing checks closed when MCPJam cannot conclude)"
+            : " (passing checks open when MCPJam cannot conclude)";
+        return `Run eval suite ${suite} on every pull request to ${repo}${policy}`;
+      },
+      buttonLabel: "Connect the repository",
+      kind: "external",
+      confirmSeverity: "external",
+    },
   },
 
   // ── GATED because the spend RECURS.

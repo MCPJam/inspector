@@ -7,6 +7,7 @@ import type { EnvironmentComposerState } from "@/components/environment-composer
 
 const {
   flagState,
+  capability,
   environmentsRef,
   resolveMock,
   attachmentsRef,
@@ -14,6 +15,7 @@ const {
   toastError,
 } = vi.hoisted(() => ({
   flagState: { environments: true },
+  capability: { matrix: true as boolean | undefined },
   environmentsRef: { current: [] as unknown[] },
   resolveMock: vi.fn(),
   attachmentsRef: {
@@ -31,6 +33,14 @@ const {
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => flagState.environments,
+}));
+// Compose mode follows the backend capability now; the flag above only hides
+// the named-environment picker inside the composer.
+vi.mock("@/components/environment-composer/use-eval-compose-capable", () => ({
+  useEvalComposeCapable: () => ({
+    capable: capability.matrix === true,
+    pending: capability.matrix === undefined,
+  }),
 }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => environmentsRef.current,
@@ -118,6 +128,7 @@ describe("CreateSuitePage", () => {
     onSubmit.mockResolvedValue(undefined);
     toastError.mockReset();
     flagState.environments = true;
+    capability.matrix = true;
     environmentsRef.current = [];
     resolveMock.mockReset();
     resolveMock.mockResolvedValue({
@@ -332,8 +343,8 @@ describe("CreateSuitePage", () => {
     });
   });
 
-  it("Continue sends legacy attachments when environments are off", async () => {
-    flagState.environments = false;
+  it("Continue sends legacy attachments when the backend cannot compose", async () => {
+    capability.matrix = false;
 
     render(
       <CreateSuitePage
@@ -373,7 +384,7 @@ describe("CreateSuitePage", () => {
     // when the user picks a different one, so carrying it into the attachment
     // would attach a server they have since navigated away from. Every other
     // creation path (compose mode, the shipped dialog) sends [].
-    flagState.environments = false;
+    capability.matrix = false;
 
     render(
       <CreateSuitePage

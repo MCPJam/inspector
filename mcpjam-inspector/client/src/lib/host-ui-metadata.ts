@@ -78,3 +78,56 @@ export const HOST_LOGO_OPTIONS = Object.entries(LOGO_BY_HOST_ID).map(
     logoSrcByTheme: LOGO_BY_HOST_ID_AND_THEME[id],
   }),
 );
+
+/**
+ * Third-party brand hues, and deliberately NOT design-system role tokens.
+ *
+ * `AGENTS.md` keeps the MCPJam palette in `design-system/src/tokens.css` and
+ * bans literal colors elsewhere — that rule governs *role* colors, the ones
+ * that must track the theme. These are external brand facts, the same
+ * category as the logo files they sit beside in this module and as the host
+ * chrome literals in `scenario-composer-appearance.ts`: Slack's purple is
+ * Slack's whether MCPJam is light, dark, or on a preset, so routing it
+ * through a theme-tracking role token would be wrong, and publishing it into
+ * the generated `DESIGN.md` front matter would claim it as ours.
+ *
+ * Only the tint's *backdrop* is themed, via the `var(--card)` mix below.
+ *
+ * Hosts whose mark is essentially black or white (ChatGPT, Codex, Cursor,
+ * Copilot, Goose, Cline, Notion) have no usable brand hue to tint with — a
+ * neutral gray keeps their circle reading neutral instead of arbitrarily
+ * colored, which is what the design's near-neutral swatches show.
+ */
+const NEUTRAL_HOST_TINT = "#6E6E80";
+
+const TINT_BY_HOST_ID: Record<string, string> = {
+  mcpjam: "#E07856",
+  claude: "#D97757",
+  "claude-desktop": "#D97757",
+  "claude-code": "#D97757",
+  chatgpt: NEUTRAL_HOST_TINT,
+  codex: NEUTRAL_HOST_TINT,
+  mistral: "#FA520F",
+  goose: NEUTRAL_HOST_TINT,
+  slack: "#611F69",
+  cursor: NEUTRAL_HOST_TINT,
+  "cursor-cli": NEUTRAL_HOST_TINT,
+  copilot: NEUTRAL_HOST_TINT,
+  vscode: "#0098FF",
+  agentcore: "#FF9900",
+  n8n: "#EA4B71",
+  perplexity: "#20808D",
+  cline: NEUTRAL_HOST_TINT,
+  notion: NEUTRAL_HOST_TINT,
+};
+
+/**
+ * A subtle circular backdrop for a host logo (the server card's support pill
+ * stacks these). The host's brand hue is mixed into `--card` rather than
+ * hardcoded per theme, so one value reads as a faint tint on the light card
+ * and on the dark one. Unknown host ids fall back to the neutral gray.
+ */
+export function getHostTintBackground(hostId: string): string {
+  const tint = TINT_BY_HOST_ID[hostId] ?? NEUTRAL_HOST_TINT;
+  return `color-mix(in oklch, ${tint} 12%, var(--card))`;
+}

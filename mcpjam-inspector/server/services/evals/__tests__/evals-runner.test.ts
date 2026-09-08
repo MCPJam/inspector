@@ -934,6 +934,113 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(updatePayload.metadata).not.toHaveProperty("compareRunId");
   });
 
+  describe("description-experiment rewrite stamp", () => {
+    const rewriteMarker = {
+      experimentId: "exp_1",
+      toolName: "search",
+      description: "Find documents by query.",
+      proposalHash: "hash_1",
+    };
+
+    async function runWithOverride(args: {
+      preparedDescription?: string;
+      suiteHostConfig?: Record<string, unknown>;
+      omitOverride?: boolean;
+      /** The prepared catalog does not offer the tool at all. */
+      absentTool?: boolean;
+    }) {
+      preparedToolsOverride.current = args.absentTool
+        ? { other_tool: { description: "unrelated" } }
+        : {
+            search: {
+              description: args.preparedDescription ?? rewriteMarker.description,
+            },
+          };
+      await runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        ...(args.omitOverride
+          ? {}
+          : { toolDescriptionOverride: rewriteMarker }),
+        ...(args.suiteHostConfig
+          ? { suiteHostConfig: args.suiteHostConfig }
+          : {}),
+      } as any);
+      const updateCall = convexClient.action.mock.calls.find(
+        (call) => call[0] === "testSuites:updateTestIteration"
+      );
+      return updateCall?.[1] as {
+        metadata?: Record<string, unknown>;
+      };
+    }
+
+    it("stamps applied true when the prepared tool description matches", async () => {
+      const orchestration = await import("../../../utils/chat-v2-orchestration");
+      const payload = await runWithOverride({});
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: true,
+      });
+      expect(vi.mocked(orchestration.prepareChatV2)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolDescriptionOverrides: { search: rewriteMarker.description },
+        })
+      );
+    });
+
+    it("stamps applied false when the prepared tool description does not match", async () => {
+      const payload = await runWithOverride({
+        preparedDescription: "the original catalog copy",
+      });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+    });
+
+    it("stamps applied false when the prepared catalog lacks the tool", async () => {
+      // The case a customer actually hits: the rewrite arm replays against
+      // servers that no longer offer the tool, so nothing was rewritten.
+      const payload = await runWithOverride({ absentTool: true });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+      expect(payload.metadata).not.toHaveProperty(
+        "tools_description_overridden"
+      );
+    });
+
+    it("does not stamp descriptionExperiment on the original arm", async () => {
+      const payload = await runWithOverride({ omitOverride: true });
+      expect(payload.metadata).not.toHaveProperty("descriptionExperiment");
+    });
+
+    it("refuses a harness host with DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED", async () => {
+      preparedToolsOverride.current = {
+        search: { description: rewriteMarker.description },
+      };
+      await expect(
+        runEvalSuiteWithAiSdk({
+          ...buildQuickRunConfig(),
+          toolDescriptionOverride: rewriteMarker,
+          suiteHostConfig: { harness: "claude-code" },
+        } as any)
+      ).rejects.toMatchObject({
+        status: 400,
+        details: { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" },
+      });
+    });
+  });
+
   it("does not throw from non-streaming onStepFinish and records tokens once", async () => {
     // PR 4b: local-BYOK path now drives `streamText` via `runDirectChatTurn`.
     // `onStepFinish` still fires once per step; the terminal totals come

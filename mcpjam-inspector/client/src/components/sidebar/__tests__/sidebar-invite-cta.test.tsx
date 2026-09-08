@@ -157,6 +157,7 @@ function renderSidebar(
         "project-b": makeProject("project-b", "Beta"),
       }}
       activeProjectId="project-a"
+      activeOrganizationId="org-1"
       onSwitchProject={vi.fn()}
       onCreateProject={vi.fn(async () => "project-created")}
       onDeleteProject={vi.fn()}
@@ -220,21 +221,40 @@ describe("sidebar invite CTA", () => {
     );
   });
 
-  it("keeps signed-in footer focused on invite CTA and the profile menu", () => {
+  it("orders the signed-in footer invite CTA, See credits, then the profile menu", () => {
     renderSidebar();
 
     const inviteButton = screen.getByRole("button", {
       name: "Invite team members",
     });
+    const seeCredits = screen.getByTestId("sidebar-see-credits");
     const sidebarUser = screen.getByTestId("sidebar-user");
 
     expect(
-      screen.queryByTestId("sidebar-credit-usage")
-    ).not.toBeInTheDocument();
-    expect(
-      inviteButton.compareDocumentPosition(sidebarUser) &
+      inviteButton.compareDocumentPosition(seeCredits) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
+    expect(
+      seeCredits.compareDocumentPosition(sidebarUser) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("hides See credits from guests, who have no organization to bill", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+    });
+
+    // The organization stays set so this isolates the auth half of the gate:
+    // with it also cleared, the assertion would pass even if the
+    // `isAuthenticated && user` check were dropped entirely.
+    renderSidebar();
+
+    expect(screen.queryByTestId("sidebar-see-credits")).not.toBeInTheDocument();
   });
 
   it("signed-in footer has no utility strip (everything lives in the account menu)", () => {
