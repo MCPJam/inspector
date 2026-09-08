@@ -431,13 +431,27 @@ describe("a suite managed by CI", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("does not offer the name at all — it lives outside the fieldset", () => {
+    renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
+
+    // The name is rendered by `SuiteHeader`, ABOVE the settings column's
+    // `fieldset[disabled]`, so the fieldset cannot reach it and it needs its
+    // own lock. Static text, not a button that opens an input: editing it fed
+    // the settings draft and put the suite in the commit flow.
+    expect(screen.queryByRole("textbox", { name: "Suite name" })).toBeNull();
+    expect(
+      document.querySelector('[data-setting-key="name"] button'),
+    ).toBeNull();
+  });
+
   it("cannot be committed even if a control is driven directly", () => {
     renderSettingsSheet({ suite: ciOwnedSuite, configLocked: true });
 
     // The second line of defence, and the one that does not depend on the
-    // browser honouring `fieldset[disabled]`: even a change event delivered
-    // straight to the field leaves nothing to save.
-    editName("Renamed");
+    // browser honouring `fieldset[disabled]`: jsdom does not enforce it, so
+    // this change event reaches the field exactly as a synthetic one would.
+    // There is still nothing to save.
+    editMinIterations("7");
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
     expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
