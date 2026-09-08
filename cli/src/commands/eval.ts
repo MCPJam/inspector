@@ -20,6 +20,7 @@ import {
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -4272,6 +4273,43 @@ export function registerEvalCommands(program: Command): void {
       );
       await executeOp(
         getEvalRunRouteFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        input,
+        options,
+        command
+      );
+    }
+  );
+
+  addProjectOption(
+    evals
+      .command("server-facts")
+      .description(
+        "Read the server a run was taken against — tool surface, catalog size, annotation coverage, tool-metadata signals, and what connect and discovery observed"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; run: string },
+      command
+    ) => {
+      const input = validateOpInput(
+        getEvalRunServerFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          runId: options.run,
+          ...(options.project === undefined
+            ? {}
+            : { project: options.project }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        getEvalRunServerFactsOperation as PlatformOperation<
           Record<string, unknown>,
           unknown
         >,

@@ -241,6 +241,24 @@ describe("captureToolSnapshotForEvalAuthoring", () => {
       promptSectionMaxChars: 2048,
       fallbackReason: "tool_snapshot_partial_capture",
       fullSnapshot: toolSnapshot,
+      // ONLY the server that answered. A server we could not list has no
+      // catalog to measure, and a `bytes: 0` row would read as "this server
+      // advertises nothing" rather than "we never got an answer" — which is
+      // the difference between a measurement and a blind spot.
+      catalogBytes: [
+        {
+          serverId: "alpha",
+          bytes: expect.any(Number),
+          basis: "aggregated_catalog_json",
+          complete: true,
+        },
+      ],
     });
+    // Measured on what the server SENT, before the snapshot transform drops
+    // and rewrites fields — so it is larger than what we retained.
+    const measured = (
+      toolSnapshotDebug as { catalogBytes: Array<{ bytes: number }> }
+    ).catalogBytes[0]!.bytes;
+    expect(measured).toBeGreaterThan(0);
   });
 });

@@ -566,7 +566,7 @@
       }
     },
     {
-      "label": "toolCalledAtLeastOnce — minimal",
+      "label": "toolCalledAtLeastOnce — minimal (2)",
       "value": {
         "type": "toolCalledAtLeastOnce",
         "toolName": "fetch"
@@ -580,7 +580,7 @@
       }
     },
     {
-      "label": "toolNeverCalled — minimal",
+      "label": "toolNeverCalled — minimal (2)",
       "value": {
         "type": "toolNeverCalled",
         "toolName": "delete_all"
@@ -608,7 +608,7 @@
       }
     },
     {
-      "label": "responseContains — caseSensitive true",
+      "label": "responseContains — caseSensitive true (2)",
       "value": {
         "type": "responseContains",
         "needle": "OK",
@@ -616,7 +616,7 @@
       }
     },
     {
-      "label": "responseMatches — minimal regex",
+      "label": "responseMatches — minimal regex (2)",
       "value": {
         "type": "responseMatches",
         "pattern": "^Done\\."
@@ -630,14 +630,14 @@
       }
     },
     {
-      "label": "tokenBudgetUnder — large budget",
+      "label": "tokenBudgetUnder — large budget (2)",
       "value": {
         "type": "tokenBudgetUnder",
         "tokens": 250000
       }
     },
     {
-      "label": "toolCalledWith — advisory warn",
+      "label": "toolCalledWith — advisory warn (2)",
       "value": {
         "type": "toolCalledWith",
         "toolName": "list_files",
@@ -649,7 +649,7 @@
       }
     },
     {
-      "label": "toolCalledAtLeastOnce — advisory warn",
+      "label": "toolCalledAtLeastOnce — advisory warn (2)",
       "value": {
         "type": "toolCalledAtLeastOnce",
         "toolName": "fetch",
@@ -658,7 +658,7 @@
       }
     },
     {
-      "label": "toolNeverCalled — advisory warn",
+      "label": "toolNeverCalled — advisory warn (2)",
       "value": {
         "type": "toolNeverCalled",
         "toolName": "delete_all",
@@ -667,7 +667,7 @@
       }
     },
     {
-      "label": "firstToolWas — advisory warn",
+      "label": "firstToolWas — advisory warn (2)",
       "value": {
         "type": "firstToolWas",
         "toolName": "list_files",
@@ -676,7 +676,7 @@
       }
     },
     {
-      "label": "responseMatches — advisory warn",
+      "label": "responseMatches — advisory warn (2)",
       "value": {
         "type": "responseMatches",
         "pattern": "^Done\\.",
@@ -1081,7 +1081,7 @@
       }
     },
     {
-      "label": "missing type discriminator",
+      "label": "missing type discriminator (2)",
       "value": {
         "toolName": "anything"
       },

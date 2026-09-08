@@ -75,6 +75,7 @@ import {
   getEvalRunStageAnalyticsOperation,
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -1603,6 +1604,15 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     promptNotes: [
       "- `get_eval_run_route_facts` returns the MEASURED DESCRIPTION of which tool paths a run's trials took. The population is the trial. Substitution is named only for the one-to-one in-catalog shape (exactly one expected name missing and exactly one unexpected in-catalog name observed). Read `catalogState`: `loaded` means unexpected tools can be in- or outside-catalog; `notLoaded` forbids substitution and unexpected tools read as `catalogNotLoaded`. A zero denominator is NOT MEASURED, never 0%. `endedWithQuestion` stays notMeasured until a producer exists. Report-only: never a verdict.",
       "- An ABSENT route-facts document means the run predates route measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalRunServerFactsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_server_facts` describes the SERVER a run was taken against: per server the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks, plus what the setup phase observed. None of it is a verdict — a large tool surface is not a defect, a slow connect is not a failure, and only a precheck with `class: \"spec_required\"` names a violation. A row marked `protocolDependent` is a rule we could not tell applied; reporting it as a defect accuses a server that may be correct.",
+      "- PAYLOAD SIZE IS THREE NUMBERS and only two are here. `payload.basis` says which: `aggregated_catalog_json` is the catalog as the client assembled it, `normalized_snapshot` is what we retained after redaction (smaller — `payload.complete` says so). What the model actually saw is a host fact and is NOT in this document. Never compare across bases, and never report any of them as context consumption. Tokens are `json_chars_div_4` against a REFERENCE window; quote the estimate with its caveat or not at all.",
+      "- `state: \"unavailable\"` is answered INSIDE the document with a reason, not as an absence: `snapshotMissing`, `snapshotPartial` (the servers that answered are still listed and their numbers are real), or `setupNotObserved` (unmeasured, NOT failed). A deployment that does not serve the route is a different fact and says nothing about the run. Related conformance and readiness runs are joined by server id ALONE — a different server version or environment is not excluded by that join, and none of them is this run's verdict.",
     ],
   },
   {
