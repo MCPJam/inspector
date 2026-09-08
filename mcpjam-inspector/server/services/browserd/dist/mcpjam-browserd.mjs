@@ -3557,6 +3557,8 @@ function emptyWebmcpState() {
   return { revision: 0, supported: false, tools: [] };
 }
 var MAX_TRACKED_INVOCATIONS = 256;
+var MAX_PENDING_CANCELS = 64;
+var PENDING_CANCEL_TTL_MS = 6e4;
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3650,20 +3652,25 @@ var ChromiumDriver = class {
    */
   invocationsByCommand = /* @__PURE__ */ new Map();
   /**
-   * Commands whose cancellation arrived before their invocation had an id.
+   * Commands whose cancellation arrived before their invocation could act on
+   * it, mapped to when that intent expires.
    *
-   * Bounded by the same ceiling as the map beside it: these are dropped on
-   * insert once full, which loses a cancellation rather than the memory — and
-   * a daemon holding 256 in-flight invocations has a different problem.
+   * Three moments a cancel BY ID cannot reach: while the invoke is still
+   * queued behind another command on its tab, while it is dequeued but the
+   * browser has not yet named the invocation, and the gap between. All three
+   * latch here; `webmcpInvoke` consults the latch on entry, so a command
+   * cancelled before it ran never touches the page, and `rememberInvocation`
+   * consults it when the id arrives. Bounded by `MAX_PENDING_CANCELS` and
+   * `PENDING_CANCEL_TTL_MS` (see `latchCancel`); a latch guarding a running
+   * invocation is never evicted and never expires.
    */
-  pendingCancels = /* @__PURE__ */ new Set();
+  pendingCancels = /* @__PURE__ */ new Map();
   /**
    * Commands whose `webmcp_invoke` is in flight RIGHT NOW.
    *
-   * The membership test for `pendingCancels`: a cancellation can only be
-   * latched for something still running, which is what keeps that set bounded
-   * by the number of concurrent invocations rather than by a ceiling. Held
-   * only across the bridge call, and cleared in its `finally`.
+   * Registered at dequeue, cleared in the `finally`. This is what protects a
+   * latch in `pendingCancels` from eviction and expiry: an intent for a
+   * running command is live for as long as the command is.
    */
   activeInvocations = /* @__PURE__ */ new Set();
   constructor(context, options = {}) {
@@ -3875,6 +3882,12 @@ var ChromiumDriver = class {
   async webmcpInvoke(tabId, action, permit, commandId) {
     this.activeInvocations.add(commandId);
     try {
+      if (this.consumeCancel(commandId)) {
+        return {
+          ok: false,
+          error: "webmcp_cancelled: the call was cancelled before it reached the page; nothing ran"
+        };
+      }
       return await this.runWebmcpInvoke(tabId, action, permit, commandId);
     } finally {
       this.activeInvocations.delete(commandId);
@@ -3970,9 +3983,7 @@ var ChromiumDriver = class {
     }
     const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
-      if (action.commandId && this.activeInvocations.has(action.commandId)) {
-        this.pendingCancels.add(action.commandId);
-      }
+      if (action.commandId) this.latchCancel(action.commandId);
       return { ok: true, output: { cancelled: false, known: false } };
     }
     const bridge = await entry.page.webmcp();
@@ -4015,13 +4026,53 @@ var ChromiumDriver = class {
   }
   /** Remember which invocation a command started, evicting oldest-first. */
   rememberInvocation(commandId, invocationId, tabId) {
-    const cancelWanted = this.pendingCancels.delete(commandId);
+    const cancelWanted = this.consumeCancel(commandId);
     if (this.invocationsByCommand.size >= MAX_TRACKED_INVOCATIONS) {
       const oldest = this.invocationsByCommand.keys().next().value;
       if (oldest !== void 0) this.invocationsByCommand.delete(oldest);
     }
     this.invocationsByCommand.set(commandId, { tabId, invocationId });
     return cancelWanted;
+  }
+  /**
+   * Remember that `commandId` was cancelled, whether or not it has started.
+   *
+   * Expired latches for commands that are not running are swept first. At the
+   * ceiling, the oldest latch that guards NO running invocation is evicted; if
+   * every slot guards one, this intent is dropped rather than a live one — a
+   * lost cancellation for a command that may never arrive is the cheaper
+   * mistake.
+   */
+  latchCancel(commandId) {
+    const now = Date.now();
+    for (const [id, expiresAt] of this.pendingCancels) {
+      if (expiresAt <= now && !this.activeInvocations.has(id)) {
+        this.pendingCancels.delete(id);
+      }
+    }
+    if (this.pendingCancels.size >= MAX_PENDING_CANCELS && !this.pendingCancels.has(commandId)) {
+      for (const id of this.pendingCancels.keys()) {
+        if (!this.activeInvocations.has(id)) {
+          this.pendingCancels.delete(id);
+          break;
+        }
+      }
+      if (this.pendingCancels.size >= MAX_PENDING_CANCELS) return;
+    }
+    this.pendingCancels.set(commandId, now + PENDING_CANCEL_TTL_MS);
+  }
+  /**
+   * Take the latch for `commandId`, if one is still live.
+   *
+   * A latch for a RUNNING command is live regardless of its timestamp — the
+   * TTL exists for commands that never arrive, not for ones taking their time
+   * inside the bridge.
+   */
+  consumeCancel(commandId) {
+    const expiresAt = this.pendingCancels.get(commandId);
+    if (expiresAt === void 0) return false;
+    this.pendingCancels.delete(commandId);
+    return this.activeInvocations.has(commandId) || expiresAt > Date.now();
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle

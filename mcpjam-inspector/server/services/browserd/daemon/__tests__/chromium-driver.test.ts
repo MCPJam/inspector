@@ -2334,14 +2334,15 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     await invoking;
   });
 
-  it("latches NOTHING for a command that is not running", async () => {
+  it("never evicts a LIVE invocation's latch, however many ghosts arrive", async () => {
     // A cancel can arrive long after its invoke failed early — a refused
-    // binding, no bridge, a lease. That command will never reach `onStarted`
-    // to consume a latch or `finally` to clear one, because both already
-    // happened, so an entry made here would sit until the ceiling evicted it.
-    // Enough of those would evict the one latch belonging to a live
-    // invocation, and a real Stop would be lost — the failure the latch exists
-    // to prevent, reached by filling it with commands that were never running.
+    // binding, no bridge, a lease — or for a command that never existed. Those
+    // ARE latched now (a Stop for a still-queued invoke looks exactly like one
+    // of them, and has to be kept), so the latch is bounded by a ceiling and a
+    // TTL instead. What the bound must never do is take the one latch that
+    // belongs to an invocation in flight: enough ghosts would otherwise lose a
+    // real Stop — the failure the latch exists to prevent, reached by filling
+    // it with commands that were never running.
     const cancelled: string[] = [];
     let startInvocation: (() => void) | undefined;
     let releaseInvoke: (() => void) | undefined;
@@ -2395,11 +2396,63 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     startInvocation?.();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // It survived the ghosts, because they were never recorded.
+    // It survived the ghosts: eviction never takes a running command's latch.
     expect(cancelled).toEqual(["inv-live"]);
 
     releaseInvoke?.();
     await invoking;
+  });
+
+  it("honours a Stop that arrived while the invoke was still QUEUED", async () => {
+    // The window every earlier fix left open, one queue position earlier: the
+    // model issues a page tool beside an observe on the same tab, the user
+    // presses Stop during the observe, and the cancel finds nothing in flight
+    // to attach to — the invoke has not been dequeued yet. Answering "nothing
+    // to stop" and forgetting let the invoke run to completion a moment later.
+    // Now the intent waits in the latch, and the invoke honours it at dequeue,
+    // before the bridge is even resolved.
+    const invoked: string[] = [];
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        invoked.push(String(args.toolName));
+        return { invocationId: "inv-should-not-run", output: { ok: true } };
+      },
+      cancel: async () => true,
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    // The Stop lands FIRST: from the driver's point of view the command it
+    // names does not exist yet.
+    const cancel = await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "cmd-queued" }),
+    );
+    expect(cancel).toMatchObject({ output: { known: false } });
+
+    // Then the command is dequeued.
+    const result = await driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "submit_order", input: {} }),
+      commandId: "cmd-queued",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("webmcp_cancelled");
+    // The page was never touched.
+    expect(invoked).toEqual([]);
+
+    // The latch was consumed: the same command id later runs normally.
+    const again = await driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "submit_order", input: {} }),
+      commandId: "cmd-queued",
+    });
+    expect(again.ok).toBe(true);
+    expect(invoked).toEqual(["submit_order"]);
   });
 
   it("does NOT deliver a remembered cancel under a handoff", async () => {
