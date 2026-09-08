@@ -121,6 +121,26 @@ export async function rememberSession(
   });
 }
 
+/**
+ * Forget this project's session ONLY IF it is still the one named.
+ *
+ * `close --session <other>` used to drop the remembered default whatever it
+ * closed, so the next command on the project reported no open session while
+ * that session was still running. Closing one session is not a statement about
+ * another.
+ */
+export async function forgetSessionIf(
+  filePath: string,
+  projectId: string,
+  sessionId: string,
+): Promise<boolean> {
+  if (readBrowserState(filePath).sessions?.[projectId] !== sessionId) {
+    return false;
+  }
+  await forgetSession(filePath, projectId);
+  return true;
+}
+
 export async function forgetSession(
   filePath: string,
   projectId: string,

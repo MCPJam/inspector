@@ -31,7 +31,7 @@ import {
 import { getGlobalOptions } from "../lib/server-config.js";
 import { operationalError, usageError, writeResult } from "../lib/output.js";
 import {
-  forgetSession,
+  forgetSessionIf,
   getBrowserStateFilePath,
   readBrowserState,
   rememberSession,
@@ -318,6 +318,18 @@ export function registerBrowserCommands(program: Command): void {
     .action(async (options, command) => {
       const globalOptions = getGlobalOptions(command);
       const projectId = projectOf(options);
+      // Caught here as well as at the door, because `--profile ephermal` asks
+      // for a throwaway browser and would otherwise open the real logged-in
+      // one. A usage error names the flag the person actually typed.
+      if (
+        options.profile !== "persistent" &&
+        options.profile !== "ephemeral"
+      ) {
+        throw usageError(
+          `Unknown --profile \`${String(options.profile)}\`.`,
+          "Use --profile persistent or --profile ephemeral.",
+        );
+      }
       const body = await post(
         options,
         "/session",
@@ -612,7 +624,8 @@ export function registerBrowserCommands(program: Command): void {
         },
         globalOptions.timeout,
       );
-      await forgetSession(getBrowserStateFilePath(), projectId);
+      // Only if it was the remembered one; see `forgetSessionIf`.
+      await forgetSessionIf(getBrowserStateFilePath(), projectId, sessionId);
       writeResult({ success: true, ...body }, globalOptions.format);
     });
 }

@@ -1019,6 +1019,77 @@ describe("the agent door's session routes", () => {
     expect(JSON.stringify(await trace.json())).not.toContain("after.example");
   });
 
+  it("will not serve another session's artifact from the shared store", async () => {
+    // The payload store is the PROJECT's, so the path stopped scoping the read.
+    // The descriptor lookup is the only thing left that says whose artifact it
+    // is — and reading it without acting on it made a guessed id enough.
+    const token = await grantConsent();
+    const mine = await openSession(
+      { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+      token,
+    );
+    const session = (await mine.json()) as any;
+    const res = await createApp().request(
+      "/api/mcp/computers/local-browser/artifact",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({
+          projectId: "proj",
+          sessionId: session.session.sessionId,
+          // Never in this session's ledger.
+          artifactId: "art_someone_elses",
+        }),
+      },
+    );
+    // 404, not 410: 410 would confirm the id is real somewhere.
+    expect(res.status).toBe(404);
+    expect((await res.json()) as any).toMatchObject({
+      error: "no_such_artifact",
+    });
+  });
+
+  it("refuses a misspelled profile rather than opening the real browser", async () => {
+    const token = await grantConsent();
+    const res = await openSession(
+      {
+        projectId: "proj",
+        profile: "ephermal",
+        policy: { mode: "allow_all" },
+      },
+      token,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as any).toMatchObject({
+      error: "invalid_profile",
+    });
+    // Nothing was started on the strength of a typo.
+    expect(browserState.launched).toEqual([]);
+  });
+
+  it("refuses a malformed runKey rather than minting a different one", async () => {
+    // Two opens naming one run would otherwise get two browsers, and neither
+    // could be reattached with the key the caller actually sent.
+    const token = await grantConsent();
+    const res = await openSession(
+      {
+        projectId: "proj",
+        profile: "ephemeral",
+        runKey: "not a valid key!",
+        policy: { mode: "allow_all" },
+      },
+      token,
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()) as any).toMatchObject({
+      error: "invalid_run_key",
+    });
+    expect(browserState.launched).toEqual([]);
+  });
+
   it("does not leave a browser behind when the attach race is lost", async () => {
     // `require` pre-checks for an open session, then starts a browser. A close
     // landing in between means the claim fails — and a browser this request

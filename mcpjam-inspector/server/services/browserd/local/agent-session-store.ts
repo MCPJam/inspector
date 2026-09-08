@@ -133,9 +133,13 @@ function sessionDir(projectId: string, sessionId: string): string {
  * copy, so the second session recorded the very same screenshot as `evicted`
  * and could never fetch it. The payload is the browser's, not a session's.
  *
- * Authorization does not live here and never did: a caller may fetch an
- * artifact only if the id appears in ITS OWN session's ledger, which the route
- * checks by reading the descriptor before it reads a byte.
+ * SO THE PATH NO LONGER SCOPES A READ. When every session had its own
+ * directory, `readArtifact` was authorized by where it looked; sharing the
+ * store took that away, and the route must now REFUSE an id that `artifactMediaType`
+ * does not find in this session's ledger. It did not at first — it read the
+ * descriptor and then read the bytes anyway — which made a guessed id enough to
+ * pull another session's screenshot out of the shared store. This function is
+ * not the place that check lives, but it is the reason it has to exist.
  */
 function artifactsRoot(projectId: string): string {
   return join(dirname(sessionsRoot(projectId)), ARTIFACTS_DIR);

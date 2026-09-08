@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   forgetSession,
+  forgetSessionIf,
   getBrowserStateFilePath,
   readBrowserState,
   rememberSession,
@@ -111,6 +112,21 @@ test("remembering a session does not disturb the consent or other projects", asy
   assert.deepEqual(after.sessions, { "proj-b": "bs_2" });
   // Closing one session must not sign the machine out of the browser.
   assert.equal(after.consent, "cap-abc");
+});
+
+test("forgetting only applies to the session actually named", async () => {
+  // `close --session <other>` used to drop this project's remembered default
+  // whatever it closed, so the next command reported no open session while
+  // that session was still running. Closing one is not a claim about another.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
+  const file = path.join(dir, "browser.json");
+  await rememberSession(file, "proj-a", "bs_live");
+
+  assert.equal(await forgetSessionIf(file, "proj-a", "bs_other"), false);
+  assert.equal(readBrowserState(file).sessions?.["proj-a"], "bs_live");
+
+  assert.equal(await forgetSessionIf(file, "proj-a", "bs_live"), true);
+  assert.equal(readBrowserState(file).sessions?.["proj-a"], undefined);
 });
 
 test("forgetting a session that was never remembered is a no-op", async () => {

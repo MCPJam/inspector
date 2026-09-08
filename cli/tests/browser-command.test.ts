@@ -255,6 +255,28 @@ test("a loopback URL still has to be http or https", async () => {
   }
 });
 
+test("a misspelled --profile is a usage error, not the real browser", async () => {
+  // `--profile ephermal` asked for a throwaway context; opening the project's
+  // logged-in Chromium instead is the mix-up this surface exists to prevent.
+  const file = await stateFile({ version: 1, consent: "cap" });
+  const result = await runCli(
+    [
+      "--format",
+      "json",
+      "browser",
+      "open",
+      "--project",
+      "p",
+      "--profile",
+      "ephermal",
+    ],
+    undefined,
+    { env: env(file) },
+  );
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr + result.stdout, /Unknown --profile/);
+});
+
 test("act and navigate default to folding in an a11y observation", async () => {
   // One round trip, one ledger row, and refs for the next act — a screenshot
   // carries none.

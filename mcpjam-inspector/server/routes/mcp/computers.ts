@@ -720,6 +720,23 @@ computers.post("/local-browser/session", async (c) => {
       400,
     );
   }
+  // REFUSED, not defaulted. Reading anything-but-`ephemeral` as `persistent`
+  // meant `--profile ephermal` opened the project's real logged-in Chromium —
+  // the precise mix-up this surface exists to prevent, reachable by a typo.
+  // An omitted profile still means `persistent`; a misspelled one is an error.
+  if (
+    body?.profile !== undefined &&
+    body?.profile !== "ephemeral" &&
+    body?.profile !== "persistent"
+  ) {
+    return c.json(
+      {
+        error: "invalid_profile",
+        detail: "profile must be 'persistent' or 'ephemeral'",
+      },
+      400,
+    );
+  }
   const profile = body?.profile === "ephemeral" ? "ephemeral" : "persistent";
   const captureTypedText = body?.captureTypedText === true;
   if (captureTypedText && profile === "persistent") {
@@ -776,10 +793,29 @@ computers.post("/local-browser/session", async (c) => {
   // profile, and without a key they would collide on the project alone. The
   // caller may name its run; otherwise one is minted, which is the honest
   // default for a throwaway browser nobody else will attach to.
+  // A runKey the caller SENT is either used or refused, never quietly swapped.
+  // Replacing a malformed one with a fresh uuid meant two `open` calls naming
+  // the same run got two different browsers, and neither could be reattached by
+  // repeating the key the caller actually sent — a caller that named its run
+  // deserves to be told the name was unusable.
+  if (
+    body?.runKey !== undefined &&
+    !(
+      typeof body.runKey === "string" &&
+      /^[A-Za-z0-9_.:-]{1,64}$/.test(body.runKey)
+    )
+  ) {
+    return c.json(
+      {
+        error: "invalid_run_key",
+        detail:
+          "runKey must be 1-64 characters of A-Z a-z 0-9 and _ . : -",
+      },
+      400,
+    );
+  }
   const runKey =
-    typeof body?.runKey === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(body.runKey)
-      ? body.runKey
-      : `agent-${randomUUID()}`;
+    typeof body?.runKey === "string" ? body.runKey : `agent-${randomUUID()}`;
   // ONE description of the browser, used to start it AND to name it on the
   // session record, so the two cannot drift into a session pointing at a
   // browser nobody opened.
@@ -1107,11 +1143,25 @@ computers.post("/local-browser/artifact", async (c) => {
   let mediaType: string | undefined;
   try {
     const validSession = validateSessionId(sessionId);
+    // THE DESCRIPTOR IS THE AUTHORIZATION, and it has to be acted on.
+    //
+    // The payload store is the PROJECT's — one copy of a screenshot two
+    // sessions share — so the path no longer scopes a read the way it did when
+    // every session had its own directory. Reading the descriptor and then
+    // reading the bytes regardless left the only check as decoration: a valid
+    // session id plus a guessed artifact id returned another session's
+    // screenshot out of the shared store.
     mediaType = await artifactMediaType({
       projectId,
       sessionId: validSession,
       artifactId,
     });
+    // Not in THIS session's ledger: as far as this caller is concerned the id
+    // does not exist, and saying anything more precise would confirm that it
+    // does somewhere else.
+    if (mediaType === undefined) {
+      return c.json({ error: "no_such_artifact", id: artifactId }, 404);
+    }
     bytes = await readArtifact({
       projectId,
       sessionId: validSession,
@@ -1121,8 +1171,9 @@ computers.post("/local-browser/artifact", async (c) => {
     return c.json({ error: "invalid_session" }, 404);
   }
   if (!bytes) {
-    // 410 rather than 404: this id was real and its payload has aged out, which
-    // points the caller at the row's `evicted` marker rather than at a typo.
+    // 410 rather than 404: the row names this id, so it was real and its
+    // payload has aged out — which points the caller at the row's `evicted`
+    // marker rather than at a typo.
     return c.json({ error: "artifact_evicted", id: artifactId }, 410);
   }
   // `Uint8Array`, not `Buffer`: a `Buffer` is one, but the response body type
