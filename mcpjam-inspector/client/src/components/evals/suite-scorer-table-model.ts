@@ -168,8 +168,26 @@ export type ScorerLibraryCategory = {
  * person to pick from nothing. Categories are listed only when they have
  * at least one kind.
  */
+/**
+ * Kinds no surface offers unless it asks for them by name.
+ *
+ * `onlyToolsCalled` generalizes the tool-call matcher's exclusivity option and
+ * the case-level negative flag into one check. Both of those still exist and
+ * still work, so offering this beside them on the suite settings page or the
+ * pre-spine case page would give a reader two controls for one claim with no
+ * way to tell which wins. It is offered only where it REPLACES them — the
+ * Evaluate spine, via {@link spineLibraryKinds}.
+ *
+ * The kind is readable and editable everywhere regardless; this governs where
+ * it can be ADDED.
+ */
+export const LIBRARY_OPT_IN_KINDS: ReadonlySet<PredicateKind> =
+  new Set<PredicateKind>(["onlyToolsCalled"]);
+
 export function scorerLibraryCategories(
-  kinds: readonly PredicateKind[] = PREDICATE_KINDS,
+  kinds: readonly PredicateKind[] = PREDICATE_KINDS.filter(
+    (kind) => !LIBRARY_OPT_IN_KINDS.has(kind),
+  ),
 ): ScorerLibraryCategory[] {
   const buckets: Record<ScorerLibraryCategoryId, PredicateKind[]> = {
     selection: [],

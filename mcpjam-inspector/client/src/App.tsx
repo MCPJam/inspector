@@ -207,7 +207,7 @@ import {
 import {
   captureAppSignInReturnPath,
   consumeAppSignInReturnPath,
-  readAppSignInReturnPath,
+  writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import {
   trackSignInReturnRestored,
@@ -300,6 +300,7 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
+  buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
   getInvalidOrganizationRouteNavigationTarget,
@@ -309,7 +310,6 @@ import {
   pathnameToActiveTab,
   routePaths,
   scopeNavigationTarget,
-  type OrganizationRouteSection,
   useCurrentLocationParts,
   useCurrentSearchParam,
   useActiveTab,
@@ -2516,14 +2516,8 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const [pendingProjectReturnRecovery, setPendingProjectReturnRecovery] =
-    useState<ProjectSignInReturnRecoveryIntent | null>(() => {
-      if (window.location.pathname === routePaths.callback) return null;
-      const restoredPath = readAppSignInReturnPath();
-      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-      return restoredPath === currentPath
-        ? createProjectSignInReturnRecoveryIntent(restoredPath)
-        : null;
-    });
+    useState<ProjectSignInReturnRecoveryIntent | null>(null);
+  const callbackReturnConsumedRef = useRef(false);
   const billingDeepLinkNavRef = useRef(false);
   /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
   const billingCheckoutQueryConsumedRef = useRef(false);
@@ -2538,25 +2532,6 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
-
-  // AuthKit can restore a permalink from `main.tsx` before the callback route
-  // ever renders. Consume the generic return path on that restored page so it
-  // can still arm stale-project recovery. Layout timing prevents the generic
-  // unavailable boundary from painting first.
-  useLayoutEffect(() => {
-    if (window.location.pathname === routePaths.callback) return;
-    const restoredPath = consumeAppSignInReturnPath();
-    if (!restoredPath) return;
-    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (restoredPath !== currentPath) {
-      trackSignInReturnRestored("superseded");
-      return;
-    }
-    trackSignInReturnRestored("restored");
-    setPendingProjectReturnRecovery(
-      createProjectSignInReturnRecoveryIntent(restoredPath),
-    );
-  }, []);
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -2928,6 +2903,8 @@ export default function App() {
 
   useEffect(() => {
     if (!isOAuthCallback) {
+      callbackReturnConsumedRef.current = false;
+      setPendingProjectReturnRecovery(null);
       setCallbackCompleted(false);
       setCallbackRecoveryExpired(false);
       return;
@@ -2950,8 +2927,15 @@ export default function App() {
       return;
     }
 
-    // Let AuthKit + Convex auth settle before leaving /callback.
-    if (!isAuthLoading && isAuthenticated) {
+    // Select the return exactly once after AuthKit + Convex auth settle. A
+    // project-scoped return stays on `/callback` until the database user and
+    // first authoritative membership response are ready below.
+    if (
+      !isAuthLoading &&
+      isAuthenticated &&
+      !callbackReturnConsumedRef.current
+    ) {
+      callbackReturnConsumedRef.current = true;
       const scenarioReturnPath = readScenarioSignInReturnPath();
       const persistedCheckoutIntent = readPersistedCheckoutIntent();
       const billingReturnPath = persistedCheckoutIntent
@@ -2984,9 +2968,12 @@ export default function App() {
             ? "restored"
             : "superseded",
       );
-      setPendingProjectReturnRecovery(
-        createProjectSignInReturnRecoveryIntent(restoredPath),
-      );
+      const projectReturnIntent =
+        createProjectSignInReturnRecoveryIntent(restoredPath);
+      if (projectReturnIntent) {
+        setPendingProjectReturnRecovery(projectReturnIntent);
+        return;
+      }
       // `navigateApp`, not `history.replaceState`: a raw history write leaves
       // the ROUTER matched on `/callback` while the address bar says
       // `/p/<id>/evals/...`, so the project boundary never mounts and the URL
@@ -2995,14 +2982,7 @@ export default function App() {
       navigateApp(restoredPath, { replace: true });
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
-      return;
     }
-
-    const timeout = setTimeout(() => {
-      setCallbackRecoveryExpired(true);
-    }, 15000);
-
-    return () => clearTimeout(timeout);
   }, [
     isOAuthCallback,
     isAuthLoading,
@@ -3011,15 +2991,30 @@ export default function App() {
     workOsUser,
   ]);
 
+  // One deadline covers both session bootstrap and the authoritative project
+  // response. Dependency changes must not restart it while either is pending.
+  useEffect(() => {
+    if (!isOAuthCallback || callbackCompleted) return;
+    const timeout = window.setTimeout(() => {
+      setCallbackRecoveryExpired(true);
+    }, 15000);
+    return () => window.clearTimeout(timeout);
+  }, [isOAuthCallback, callbackCompleted]);
+
   const handleRetryCallbackSignIn = useCallback(() => {
+    if (pendingProjectReturnRecovery) {
+      writeAppSignInReturnPath(pendingProjectReturnRecovery.path);
+    }
     clearHostedCallbackRetryState();
+    callbackReturnConsumedRef.current = false;
+    setPendingProjectReturnRecovery(null);
     window.history.replaceState({}, "", "/");
     setCallbackCompleted(true);
     setCallbackRecoveryExpired(false);
     queueMicrotask(() => {
       signIn();
     });
-  }, [signIn]);
+  }, [pendingProjectReturnRecovery, signIn]);
 
   const handleReloadFromCallback = useCallback(() => {
     clearHostedCallbackRetryState();
@@ -4394,31 +4389,28 @@ export default function App() {
     navigateToTarget(section);
   };
 
-  const handleSidebarSwitchOrganization = useCallback(
-    (
-      organizationId: string,
-      section: OrganizationRouteSection = "overview",
-    ) => {
-      setActiveOrganizationId(organizationId);
-      navigateApp(buildOrganizationPath(organizationId, section));
-    },
-    [setActiveOrganizationId],
-  );
+  // The URL owns which project this tab is on. This reconciles the two
+  // continuously — on cold open, on Back/Forward, and on every in-app
+  // navigation — switching organization first when the link crosses one.
+  const { allProjects: allMembershipProjects } = useProjectQueries({
+    isAuthenticated,
+  });
 
-  const handleSwitchActiveOrganization = useCallback(
+  const handleSidebarSwitchOrganization = useCallback(
     (organizationId: string) => {
       if (organizationId === activeOrganizationId) return;
-      // Mirror main's `handleSidebarSwitchOrganization`: only flip the active
-      // org. The auto-resolution effect in `use-project-state.ts` notices that
-      // the previous active project is no longer in the new org's filtered
-      // project list and picks a new one; we must NOT clear local/convex project
-      // selection here, otherwise the local-fallback default project (which can
-      // carry servers from earlier sessions) bleeds through during the
-      // transition.
-      setActiveOrganizationId(organizationId);
-      navigateToServers();
+      // The URL is the switch, exactly as it is for a project row. Navigating
+      // to a project that lives in the target organization is what makes the
+      // route coordinator switch the organization; setting the active org here
+      // and then asking for `/servers` could not work, because the logical
+      // path is already Servers (so the navigation no-ops) and the pathname
+      // keeps `/p/<project-in-the-old-org>` — which the coordinator then reads
+      // back as an instruction to return to the organization we just left.
+      navigateToTarget(
+        buildOrganizationSwitchTarget(organizationId, allMembershipProjects),
+      );
     },
-    [activeOrganizationId, setActiveOrganizationId, navigateToServers],
+    [activeOrganizationId, allMembershipProjects, navigateToTarget],
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -4524,12 +4516,6 @@ export default function App() {
     ],
   );
 
-  // The URL owns which project this tab is on. This reconciles the two
-  // continuously — on cold open, on Back/Forward, and on every in-app
-  // navigation — switching organization first when the link crosses one.
-  const { allProjects: allMembershipProjects } = useProjectQueries({
-    isAuthenticated,
-  });
   const allMembershipProjectIds = useMemo(
     () =>
       allMembershipProjects
@@ -4537,17 +4523,6 @@ export default function App() {
         : undefined,
     [allMembershipProjects],
   );
-  const currentLocation = useCurrentLocationParts();
-  const currentProjectPath = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`;
-  const confirmedStaleReturnProjectId =
-    pendingProjectReturnRecovery &&
-    isProjectIdShape(pendingProjectReturnRecovery.requestedProjectId) &&
-    allMembershipProjectIds !== undefined &&
-    !allMembershipProjectIds.has(
-      pendingProjectReturnRecovery.requestedProjectId,
-    )
-      ? pendingProjectReturnRecovery.requestedProjectId
-      : null;
   // Silent: the URL already told the user which project they are in, so a
   // toast on every cold open of a shared link would be narrating the address
   // bar back at them.
@@ -4565,48 +4540,46 @@ export default function App() {
     activeOrganizationId,
     setActiveOrganizationId,
     switchProject: switchProjectForRoute,
-    suppressInaccessibleTelemetryFor: confirmedStaleReturnProjectId,
   });
 
-  const fallbackProjectForStaleReturn =
-    activeProject && allMembershipProjectIds?.has(activeProjectId)
-      ? { id: activeProjectId, name: activeProject.name }
-      : null;
+  const authoritativeMembershipProjectIds =
+    isUserReady && !isLoadingRemoteProjects
+      ? allMembershipProjectIds
+      : undefined;
+  const fallbackProjectIdForStaleReturn =
+    activeProject && authoritativeMembershipProjectIds?.has(activeProjectId)
+      ? activeProjectId
+      : (allMembershipProjects?.[0]?._id ?? null);
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
-    routeState: projectRouteState,
-    currentPath: currentProjectPath,
-    membershipProjectIds: allMembershipProjectIds,
-    fallbackProject: fallbackProjectForStaleReturn,
+    membershipProjectIds: authoritativeMembershipProjectIds,
+    fallbackProjectId: fallbackProjectIdForStaleReturn,
   });
-  const projectRouteStateForBoundary =
-    projectReturnRecoveryDecision.kind === "switch" ||
-    projectReturnRecoveryDecision.kind === "home"
-      ? {
-          status: "resolving" as const,
-          requestedProjectId:
-            pendingProjectReturnRecovery?.requestedProjectId ?? "",
-        }
-      : projectRouteState;
 
-  // Layout timing keeps the generic unavailable screen from painting for a
-  // stale sign-in return. The intent is cleared before navigation so a bad
-  // fallback can show the normal error but can never loop.
+  // Resolve while `/callback` still owns the screen. Clear the one-shot intent
+  // before the only navigation so a bad destination can never loop.
   useLayoutEffect(() => {
-    if (projectReturnRecoveryDecision.kind === "none") return;
+    if (
+      projectReturnRecoveryDecision.kind === "none" ||
+      projectReturnRecoveryDecision.kind === "wait"
+    ) {
+      return;
+    }
     setPendingProjectReturnRecovery(null);
+    setCallbackCompleted(true);
+    setCallbackRecoveryExpired(false);
 
-    if (projectReturnRecoveryDecision.kind === "clear") return;
     if (projectReturnRecoveryDecision.kind === "home") {
       trackStaleProjectReturnRecovered("no-fallback");
       navigateApp(routePaths.root, { replace: true, unscoped: true });
       return;
     }
 
-    trackStaleProjectReturnRecovered("switched");
+    if (projectReturnRecoveryDecision.kind === "switch") {
+      trackStaleProjectReturnRecovered("switched");
+    }
     navigateApp(projectReturnRecoveryDecision.path, { replace: true });
-    toast.error(projectReturnRecoveryDecision.message);
-  }, [pendingProjectReturnRecovery, projectReturnRecoveryDecision]);
+  }, [projectReturnRecoveryDecision]);
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch
@@ -4627,6 +4600,43 @@ export default function App() {
       navigateToTarget(buildProjectSettingsTarget(projectId));
     },
     [navigateToTarget],
+  );
+
+  /**
+   * Creating from the switcher always lands you in the new project, and the
+   * URL is what performs that switch — same contract as picking an existing
+   * row. A project created in ANOTHER organization resolves through the route
+   * coordinator: the URL names a project the active org's filtered list does
+   * not contain, so the coordinator switches organization first and then the
+   * project, once the subscription delivers the new row.
+   *
+   * `switchTo` is off in cloud mode. Pre-selecting the new project would be
+   * the state-then-URL ordering this whole surface just stopped using, and for
+   * a cross-organization create the write is undone on the next render anyway:
+   * `activeProjectId` is derived from the organization-FILTERED project map,
+   * which does not contain a project in the org being moved to.
+   *
+   * Local fallback is the exception, and the only reason the switch is not
+   * purely a navigation: a local id is a UUID, which `buildProjectPath` refuses
+   * to put in the canonical position, so no URL can name the project and state
+   * is the only thing that can select it. That selection has to happen INSIDE
+   * `handleCreateProject`, atomically with the create — calling
+   * `handleSwitchProject` afterwards does not work, because it validates the id
+   * against the project map captured in the render it was created in, which
+   * cannot contain a project dispatched a moment ago, and answers
+   * "Project not found".
+   */
+  const handleSidebarCreateProject = useCallback(
+    async (name: string, organizationId?: string) => {
+      const projectId = await handleCreateProject(name, !isCloudSyncActive, {
+        organizationId,
+      });
+      if (projectId && isProjectIdShape(projectId)) {
+        navigateToTarget(buildProjectSwitchTarget(projectId));
+      }
+      return projectId;
+    },
+    [handleCreateProject, isCloudSyncActive, navigateToTarget],
   );
 
   /**
@@ -4992,7 +5002,7 @@ export default function App() {
     // What the URL's project segment resolved to. `ProjectRouteBoundary`
     // renders on it, and the legacy normalizer reads the rest of this bag to
     // decide which project an old link should adopt.
-    projectRouteState: projectRouteStateForBoundary,
+    projectRouteState,
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,
@@ -5093,13 +5103,12 @@ export default function App() {
         activeProjectId={activeProjectId}
         onSwitchProject={handleSidebarSwitchProject}
         onOpenProjectSettings={handleSidebarOpenProjectSettings}
-        onCreateProject={handleCreateProject}
+        onCreateProject={handleSidebarCreateProject}
         onDeleteProject={handleDeleteProjectAndLeave}
         isLoadingProjects={isLoadingRemoteProjects}
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
-        onSwitchActiveOrganization={handleSwitchActiveOrganization}
         onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}

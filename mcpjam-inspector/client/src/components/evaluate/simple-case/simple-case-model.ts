@@ -14,11 +14,13 @@
  */
 
 import {
+  insertStepAfter,
   isAssertStep,
   isInteractStep,
   isPromptStep,
   isToolCallStep,
   isWidgetAssertion,
+  newStepId,
   stepTurnIndices,
   WIDGET_ASSERTION_LABELS,
   type InteractAction,
@@ -28,65 +30,11 @@ import {
 } from "@/shared/steps";
 import {
   MATCH_OPTIONS_DEFAULTS,
+  checkRole,
   type CasePredicates,
   type EvalMatchOptions,
   type Predicate,
 } from "@/shared/eval-matching";
-import { labelForInlineAssert } from "@/components/evals/predicate-kind-meta";
-
-export type MoreCheckGroupId = "response" | "selection" | "appView";
-
-/**
- * The "More checks" groups, labelled by what a reader is checking rather
- * than by the analyzer's stage (`PREDICATE_STAGE` files every response
- * predicate at `userValue`, because no authorable grader measures the
- * `response` link today).
- *
- * Partition rule, test-enforced: every kind in `PREDICATE_KIND_LABELS` is
- * in exactly one group or in `EXCLUDED_FROM_MORE_CHECKS`. A kind added to
- * the catalog fails that test until somebody files it — a group list that
- * merely omits a kind would hide it silently.
- */
-export const MORE_CHECK_GROUPS: ReadonlyArray<{
-  id: MoreCheckGroupId;
-  label: string;
-  kinds: ReadonlyArray<Predicate["type"]>;
-}> = [
-  {
-    id: "response",
-    label: "Response",
-    kinds: [
-      "responseContains",
-      "responseMatches",
-      "finalAssistantMessageNonEmpty",
-      "noToolErrors",
-      "tokenBudgetUnder",
-      "turnCountUnder",
-    ],
-  },
-  {
-    id: "selection",
-    label: "Selection and call",
-    kinds: ["toolCalledAtLeastOnce", "toolNeverCalled", "firstToolWas"],
-  },
-  {
-    id: "appView",
-    label: "App view",
-    kinds: [
-      "widgetRendered",
-      "widgetRenderLatencyUnder",
-      "widgetNoConsoleErrors",
-    ],
-  },
-];
-
-/**
- * Owned by the tool question above the disclosure. Offering it again here
- * would author the route twice, and on a no-tool case would create the
- * contradiction the corpus guard rejects.
- */
-export const EXCLUDED_FROM_MORE_CHECKS: ReadonlySet<Predicate["type"]> =
-  new Set<Predicate["type"]>(["toolCalledWith"]);
 
 export const UNSET_TOOLS_BLOCK_REASON =
   "Choose which tool should handle it, or that no tool should be called.";
@@ -200,17 +148,23 @@ export type WriteSimpleCaseView = {
   noTool: boolean;
 };
 
-let stepIdCounter = 0;
-function newStepId(kind: string): string {
-  stepIdCounter += 1;
-  return `${kind}-${Date.now()}-${stepIdCounter}`;
-}
-
+/**
+ * A `toolCalledWith` assert that actually routes the case.
+ *
+ * GATING ONLY, and that qualifier is load-bearing. `deriveExpectedToolCalls`
+ * and `stepsToPromptTurns` both skip an advisory `toolCalledWith`, so an
+ * advisory one never becomes a matcher expectation — the runner grades it as
+ * an ordinary predicate instead. Treating it as the route here would show a
+ * Gate route on a case the backend does not route, which is the one thing the
+ * tool question exists to answer. It files as a step scorer instead
+ * (`isStepCheckAssert`), wearing its own Warn or Report role.
+ */
 export function isToolCalledWithAssert(step: TestStep): boolean {
   return (
     isAssertStep(step) &&
     !isWidgetAssertion(step.assertion) &&
-    step.assertion.type === "toolCalledWith"
+    step.assertion.type === "toolCalledWith" &&
+    checkRole(step.assertion) !== "advisory"
   );
 }
 
@@ -231,7 +185,7 @@ export function isStepCheckAssert(step: TestStep): boolean {
   return (
     isAssertStep(step) &&
     !isWidgetAssertion(step.assertion) &&
-    step.assertion.type !== "toolCalledWith"
+    !isToolCalledWithAssert(step)
   );
 }
 
@@ -268,11 +222,6 @@ export function updateStepCheck(
       ? { ...step, assertion: predicate }
       : step,
   );
-}
-
-/** The inline label — `noToolErrors` as a step means "so far", not whole-run. */
-export function stepCheckLabel(check: StepCheck): string {
-  return labelForInlineAssert(check.predicate.type);
 }
 
 /**
@@ -400,7 +349,12 @@ export function isSimpleCaseShape(steps: TestStep[]): boolean {
 }
 
 export function readSimpleCase(steps: TestStep[]): SimpleCaseView {
-  const prompt = isPromptStep(steps[0]) ? steps[0].prompt : "";
+  // `steps[0]` is `undefined` on an empty draft, and the narrowing helpers
+  // dereference `.kind`. The old form never saw that shape — the editor seeded
+  // a prompt before mounting it — but the first-run form renders a case that
+  // has nothing yet, which is exactly where a new case starts.
+  const first = steps.length > 0 ? steps[0] : undefined;
+  const prompt = first && isPromptStep(first) ? first.prompt : "";
   const inApp: InAppStep[] = [];
   const tools: SimpleCaseTool[] = [];
   for (const step of steps) {
@@ -452,7 +406,13 @@ export function writeSimpleCase(
   prevSteps: TestStep[],
   view: WriteSimpleCaseView,
 ): TestStep[] {
-  const prevPrompt = isPromptStep(prevSteps[0]) ? prevSteps[0] : undefined;
+  // Same guard as `readSimpleCase`: on a fresh draft `prevSteps[0]` is
+  // `undefined` and the narrowing helpers dereference `.kind`. The comment
+  // below already contemplates "the case is empty", so this shape was always
+  // meant to be reachable.
+  const prevFirst = prevSteps.length > 0 ? prevSteps[0] : undefined;
+  const prevPrompt =
+    prevFirst && isPromptStep(prevFirst) ? prevFirst : undefined;
   /**
    * Lead with a prompt only when the case already had one, the case is empty
    * (a fresh draft), or the author actually typed one. Every tool button in
@@ -477,7 +437,17 @@ export function writeSimpleCase(
   if (view.noTool) {
     // Negative applies to every model turn (and the backend rejects a negative
     // case that kept any `toolCalledWith`), so this drops them list-wide.
-    return [...lead, ...rest.filter((step) => !isToolCalledWithAssert(step))];
+    return [
+      ...lead,
+      ...rest.filter(
+        (step) =>
+          !(
+            step.kind === "assert" &&
+            "type" in step.assertion &&
+            step.assertion.type === "toolCalledWith"
+          ),
+      ),
+    ];
   }
 
   const prevTools = rest.filter(isToolCalledWithAssert);
@@ -529,13 +499,30 @@ export function writeSimpleCase(
       break;
     }
   }
-  const insertAt = lastToolIdx === -1 ? firstTurnEnd : lastToolIdx + 1;
-  kept.splice(
-    insertAt,
-    0,
-    ...brandNew.map((tool) => toolAssertStep(tool.id, tool)),
-  );
-  return [...lead, ...kept];
+  /**
+   * The anchor the bounded search above resolved to, as a step ID for the one
+   * shared splice (`insertStepAfter`):
+   *   - after the last tool assert in this turn, when there is one;
+   *   - else after the turn's last step, when the turn has any;
+   *   - else `null` — turn 1 is the prompt alone, so the tool goes to the front
+   *     of `kept`, which is directly after the prompt in `[...lead, ...kept]`.
+   * Each new tool then chains off the previous one's ID (an assert anchor
+   * inserts immediately after it), preserving the authored order.
+   */
+  const anchorId =
+    lastToolIdx !== -1
+      ? kept[lastToolIdx]!.id
+      : firstTurnEnd > 0
+        ? kept[firstTurnEnd - 1]!.id
+        : null;
+  let withTools = kept;
+  let previousId = anchorId;
+  for (const tool of brandNew) {
+    const step = toolAssertStep(tool.id, tool);
+    withTools = insertStepAfter(withTools, previousId, step);
+    previousId = step.id;
+  }
+  return [...lead, ...withTools];
 }
 
 export function removeStepById(steps: TestStep[], stepId: string): TestStep[] {

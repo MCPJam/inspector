@@ -184,8 +184,9 @@ describe("workspace tool catalog", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "request_eval_run_judge",
-      // The GitHub Checks READ. Its connect sibling is in
-      // EXCLUDED_FROM_WORKSPACE: it reaches a shared repository.
+      // The GitHub-checks READ, under both spellings. Their connect siblings
+      // are in EXCLUDED_FROM_WORKSPACE: they reach a shared repository.
+      "list_eval_github_repos",
       "list_eval_check_repos",
       "list_scenarios",
       "get_scenario",

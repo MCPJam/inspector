@@ -12,6 +12,7 @@ import {
 import { useAppNavigate } from "@/lib/app-navigation";
 import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
+  isSelectableGithubRepo,
   findRepoByPickerValue,
   installationBindingsKey,
   pickerLabelFor,
@@ -103,7 +104,7 @@ export function SuiteGithubChecksSection({
   // to offer, whatever it read when the page opened.
   const bindingsKey = useMemo(
     () => installationBindingsKey(bindings),
-    [bindings]
+    [bindings],
   );
 
   // The bindings key the listing on screen (or in flight) was fetched under.
@@ -125,7 +126,7 @@ export function SuiteGithubChecksSection({
       hasListedRef.current = false;
       listedBindingsKeyRef.current = null;
     },
-    []
+    [],
   );
 
   useEffect(() => {
@@ -173,7 +174,7 @@ export function SuiteGithubChecksSection({
     void listInstallationRepos()
       .then((repositories) => {
         if (listingGenerationRef.current !== generation) return;
-        setInstallationRepos(repositories);
+        setInstallationRepos(repositories.filter(isSelectableGithubRepo));
       })
       .catch(() => {
         // Silent here, unlike the settings page. This section is incidental to
@@ -189,19 +190,19 @@ export function SuiteGithubChecksSection({
 
   const allRepos = repos ?? [];
   const connectedToThisSuite = allRepos.filter(
-    (row) => row.suiteId === suiteId
+    (row) => row.suiteId === suiteId,
   );
   // Every repo already connected to ANY suite is excluded: a repo runs exactly
   // one suite, so offering one that is spoken for would produce a rejected
   // write, or silently retarget it away from the suite it is on today.
   const alreadyConnected = new Set(
-    allRepos.map((row) => row.repoFullName.toLowerCase())
+    allRepos.map((row) => row.repoFullName.toLowerCase()),
   );
   const connectableRepos =
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase()),
         );
 
   // Selection, labelling and the connect payload are shared with the settings
@@ -222,7 +223,7 @@ export function SuiteGithubChecksSection({
           projectId,
           suiteId,
           outagePolicy: pickerPolicy,
-        })
+        }),
       );
       if (!mountedRef.current) return;
       setPickerRepo("");
