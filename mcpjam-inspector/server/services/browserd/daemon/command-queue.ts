@@ -193,7 +193,7 @@ export class CommandQueue {
       // pre-normalized, so awaiting it here can never reject.
       const result =
         existing.state === "running" ? await existing.promise : existing.result;
-      return { status: "ok", result, bootId: this.bootId };
+      return { status: "ok", result, bootId: this.bootId, deduped: true };
     }
 
     // Rule 4: a commandId we retained a result for and then evicted is NOT safe

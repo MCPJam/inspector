@@ -12,6 +12,7 @@ import {
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
 import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
+import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
 import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
@@ -871,50 +872,109 @@ export function LocalBrowserBody({
   // differs is only that there is no picture to draw.
   if (native) {
     return (
-      <ElectronNativeBody
-        session={session}
-        holder={holder}
-        control={control}
-        holding={holding}
-        consentGranted={consentGranted}
-        onTakeControl={
-          session && !holding && lease.state === "free"
-            ? () => void setLeaseAction("acquire")
-            : undefined
-        }
-        onHandBack={
-          session && holding ? () => void setLeaseAction("resume") : undefined
-        }
-        placeholder={placeholder}
-        error={error}
-        active={active}
-        engine="local-native"
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        {/* `flex flex-col` and not merely `flex-1`: both pane bodies render a
+            control bar above a `min-h-0 flex-1` viewport and so expect a flex
+            COLUMN parent. A plain block wrapper leaves that `flex-1` with no
+            flex container to grow in, and the picture collapses to nothing. */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          <ElectronNativeBody
+            session={session}
+            holder={holder}
+            control={control}
+            holding={holding}
+            consentGranted={consentGranted}
+            onTakeControl={
+              session && !holding && lease.state === "free"
+                ? () => void setLeaseAction("acquire")
+                : undefined
+            }
+            onHandBack={
+              session && holding
+                ? () => void setLeaseAction("resume")
+                : undefined
+            }
+            placeholder={placeholder}
+            error={error}
+            active={active}
+            engine="local-native"
+          />
+        </div>
+        <Activity
+          projectId={projectId}
+          consentToken={consentToken}
+          consentGranted={consentGranted}
+          active={active}
+        />
+      </div>
     );
   }
 
   return (
-    <BrowserPaneSurface
-      // Gated as well as cleared: a frame that lands in the same tick as the
-      // revocation must not be the one that gets painted.
-      frame={consentGranted ? frame : null}
-      holding={holding}
-      control={control}
-      // Offered only when there is a browser to take and nobody has it. A
-      // lease held by somebody else is not something this pane may step over.
-      onTakeControl={
-        session && !holding && lease.state === "free"
-          ? () => void setLeaseAction("acquire")
-          : undefined
-      }
-      onHandBack={
-        session && holding ? () => void setLeaseAction("resume") : undefined
-      }
-      onInput={send}
-      placeholder={placeholder}
-      error={error}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <BrowserPaneSurface
+          // Gated as well as cleared: a frame that lands in the same tick as
+          // the revocation must not be the one that gets painted.
+          frame={consentGranted ? frame : null}
+          holding={holding}
+          control={control}
+          // Offered only when there is a browser to take and nobody has it. A
+          // lease held by somebody else is not something this pane may step
+          // over.
+          onTakeControl={
+            session && !holding && lease.state === "free"
+              ? () => void setLeaseAction("acquire")
+              : undefined
+          }
+          onHandBack={
+            session && holding
+              ? () => void setLeaseAction("resume")
+              : undefined
+          }
+          onInput={send}
+          placeholder={placeholder}
+          error={error}
+          active={active}
+          engine={status?.runtime ?? "local"}
+        />
+      </div>
+      <Activity
+        projectId={projectId}
+        consentToken={consentToken}
+        consentGranted={consentGranted}
+        active={active}
+      />
+    </div>
+  );
+}
+
+/**
+ * The Activity list, mounted only once consent is granted.
+ *
+ * Gated on consent for the same reason every other route here is: the rows
+ * carry a browsing history, and the consent capability is what authorizes
+ * reading it. Capped at a third of the pane so the picture — which is what a
+ * person came to the tab for — stays the larger half.
+ */
+function Activity({
+  projectId,
+  consentToken,
+  consentGranted,
+  active,
+}: {
+  projectId: string | null;
+  consentToken: string | null;
+  consentGranted: boolean;
+  active: boolean;
+}) {
+  if (!consentGranted || !projectId) return null;
+  return (
+    <BrowserActivityList
+      projectId={projectId}
+      consentToken={consentToken}
       active={active}
-      engine={status?.runtime ?? "local"}
+      className="max-h-[33%] shrink-0 border-t"
     />
   );
 }
