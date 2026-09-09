@@ -956,12 +956,17 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     // late answer rather than buffer it.
     expect(await cancelStillValid(first.invocationId)).toBe(false);
 
-    // A person now submits, and an invocation is answered. WHICH ONE is
-    // asserted rather than assumed: the first is still live in the page and
-    // could not be cancelled, so a test that only checked `status` would pass
-    // on whichever of the two Blink chose to answer. The form holds ONE
-    // invocation and the second replaces the first, so the second is the one
-    // the submit answers — pinned by the id assertions below.
+    // A person now submits, and an invocation is answered. WHICH ONE matters,
+    // because the first is still live in the page and could not be cancelled:
+    // the form holds ONE invocation and the second replaces the first, so the
+    // submit answers the second.
+    //
+    // That is asserted against the RAW response stream below, not through
+    // `invokeAndWait`'s return: it filters by the id it was given, so its
+    // `response.invocationId` is the second's by construction and comparing
+    // the two could never fail. `responded` accumulates across both
+    // invocations here (only `open()` clears it), so "the first was never
+    // answered" is a question that can actually come back false.
     //
     // The first is therefore left dangling on purpose, because nothing can
     // reach it. Contained rather than ignored: every test here starts with
@@ -978,9 +983,15 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
       // submit could answer the first.
       () => page.click("#confirm-submit"),
     );
-    expect(response?.invocationId).toBe(invocationId);
-    expect(response?.invocationId).not.toBe(first.invocationId);
+    // The submit answered the SECOND invocation...
     expect(response?.status).toBe("Completed");
+    expect(response?.invocationId).toBe(invocationId);
+    // ...and never the first, which stays unanswered for the rest of this
+    // document's life. This is the assertion that can fail if Blink ever
+    // starts answering the invocation a form held FIRST.
+    expect(
+      responded.filter((r) => r.invocationId === first.invocationId),
+    ).toEqual([]);
     expect(response?.output).toEqual([
       {
         "@context": "https://schema.org",
