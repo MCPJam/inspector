@@ -71,6 +71,43 @@ export class BrowserSessionServiceError extends Error {
   }
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  // WHATWG URL bracket-wraps IPv6 hosts, so the literal form is matched too.
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+/**
+ * Refuse to carry a user bearer over cleartext.
+ *
+ * The same policy `normalizeDataPlaneUrl` already applies to the computers
+ * data plane (utils/computers/remote-data-plane.ts), and the one the backend
+ * enforces on `/computers/data-plane-url`: http(s) only, and plain `http:`
+ * only for loopback, where nothing leaves the machine. This module was the
+ * one in the family without it — it posts a user's bearer and pulls back a
+ * saved profile archive full of that user's cookies, so a misconfigured
+ * `CONVEX_HTTP_URL` could have downgraded both onto the wire in the clear.
+ *
+ * Thrown, not silently skipped: a deployment pointed at a cleartext origin is
+ * misconfigured, and failing loudly at the first call is how that gets found.
+ */
+function assertSecureTransport(url: URL, source: string): void {
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      `${source} must be an http(s) URL (got ${url.protocol.replace(":", "")})`,
+    );
+  }
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+    throw new Error(
+      `${source} must use https for a non-loopback host (got ${url.origin})`,
+    );
+  }
+}
+
 function bearerHeader(value: string): string {
   return /^Bearer\s/i.test(value) ? value : `Bearer ${value}`;
 }
@@ -154,7 +191,9 @@ export class BrowserSessionService {
 
   private async post<T>(path: string, args: RequestArgs): Promise<T | null> {
     if (!this.enabled || !this.baseUrl) return null;
-    const response = await this.requestFetch(new URL(path, this.baseUrl), {
+    const target = new URL(path, this.baseUrl);
+    assertSecureTransport(target, "CONVEX_HTTP_URL");
+    const response = await this.requestFetch(target, {
       method: "POST",
       headers: {
         authorization: bearerHeader(args.bearer),
@@ -321,7 +360,14 @@ export class BrowserSessionService {
       },
     );
     if (!raw || typeof raw.url !== "string" || !raw.url) return null;
-    const response = await this.requestFetch(raw.url, {
+    // The storage URL comes back over the wire, so it gets the same scheme
+    // check as the control plane itself. What travels over it is a profile
+    // archive — the user's cookies and logged-in sessions — which is the last
+    // thing that should ride cleartext because a signed URL happened to say
+    // `http:`.
+    const downloadUrl = new URL(raw.url);
+    assertSecureTransport(downloadUrl, "browser profile download URL");
+    const response = await this.requestFetch(downloadUrl, {
       method: "GET",
       redirect: "error",
       signal: args.signal,

@@ -364,10 +364,20 @@ computers.post("/local-browser/ensure", async (c) => {
   }
   const body = (await c.req.json().catch(() => null)) as {
     projectId?: unknown;
+    sessionId?: unknown;
   } | null;
   const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  // The conversation's durable identity, when the rail has one. Without it
+  // this route keys on the project alone and hands the pane the legacy
+  // project-wide browser while the agent drives `<project>:session:<id>` —
+  // a rail watching a browser nobody is using, and a profile export saving
+  // the wrong one.
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   try {
-    const handle = await ensureLocalBrowserSession({ projectId });
+    const handle = await ensureLocalBrowserSession({
+      projectId,
+      ...(sessionId ? { sessionId } : {}),
+    });
     const lease = await handle.client.lease?.();
     return c.json({
       bootId: handle.bootId,

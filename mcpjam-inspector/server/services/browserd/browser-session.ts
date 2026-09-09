@@ -48,6 +48,7 @@ import {
 import type {
   BrowserContextMode,
   BrowserRelaunchClaim,
+  BrowserSessionLookup,
   BrowserSessionTargetArgs,
   BrowserSessionRecordResult,
   ComputerBrowserSessionLookup,
@@ -746,11 +747,20 @@ interface RelaunchFence {
   release(): Promise<void>;
 }
 
-interface RelaunchGate {
+interface RelaunchGate<Owner extends BrowserSessionLookup = BrowserSessionLookup> {
   /** The lease we took, or null when there was nothing to fence. */
   fence: RelaunchFence | null;
-  /** The row the ownership lookup saw, which may be a WINNER'S. */
-  owner: ComputerBrowserSessionLookup | null;
+  /**
+   * The row the ownership lookup saw, which may be a WINNER'S.
+   *
+   * Parameterised by TARGET, because the two arms return different rows: the
+   * computer overload can only ever see a computer row, the sandbox overload
+   * only a sandbox one. Pinning this to `ComputerBrowserSessionLookup`
+   * hard-coded the computer arm's answer for both and made the sandbox arm
+   * five type errors — invisible here only because this file's tsconfig is not
+   * a CI gate.
+   */
+  owner: Owner | null;
 }
 
 /**
@@ -783,6 +793,21 @@ interface RelaunchGate {
  * driving it through us either, so the relaunch proceeds — but a daemon that
  * answers "somebody else has it" always stops it.
  */
+// OVERLOADED per target, for the same reason `SessionStore.lookup` is: the
+// computer call site reads `owner` straight back into `tryReuse`, which takes
+// a computer lookup, while the sandbox call site takes only the fence.
+async function fenceForRelaunch(
+  deps: BrowserSessionDeps,
+  target: { computerId: string; sandboxRowId?: undefined },
+  bundleHash: string,
+  signal?: AbortSignal,
+): Promise<RelaunchGate<ComputerBrowserSessionLookup>>;
+async function fenceForRelaunch(
+  deps: BrowserSessionDeps,
+  target: { sandboxRowId: string; computerId?: undefined; watched?: boolean },
+  bundleHash: string,
+  signal?: AbortSignal,
+): Promise<RelaunchGate<SandboxBrowserSessionLookup>>;
 async function fenceForRelaunch(
   deps: BrowserSessionDeps,
   target: BrowserSessionTargetArgs,
@@ -1479,7 +1504,13 @@ async function ensureOnSandbox(
         claimId,
         ...(args.signal ? { signal: args.signal } : {}),
       });
-      if (claimed?.ok === false) {
+      // Only a REFUSAL stops us, exactly as on the computer arm. `undefined`
+      // (no claim support) and `unavailable` (unreachable, unconfigured, or a
+      // control plane that predates the sandbox claim shape and answers 400)
+      // both proceed unclaimed — otherwise every watched relaunch fails
+      // against the backend this module is written to ship ahead of, and fails
+      // naming a replica that does not exist.
+      if (claimed?.ok === false && claimed.reason === "claimed") {
         throw new BrowserSessionInUseError(
           "another replica is restarting this browser right now; try again in a moment",
         );

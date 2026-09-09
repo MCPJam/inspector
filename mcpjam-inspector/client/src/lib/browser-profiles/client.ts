@@ -28,6 +28,9 @@ async function postJson<T>(
         : "The browser profile request failed.",
     );
   }
+  if (payload === null) {
+    throw new Error("The browser profile request failed.");
+  }
   return payload as T;
 }
 

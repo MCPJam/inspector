@@ -135,20 +135,18 @@ export function ComputerTab({
             }
           />
         )}
-        {attached ? (
-          <FieldRow
-            label="Browser profile"
-            description="Optionally pin a saved browser profile for this host. Without a pin, new chats use your selected default profile."
-            control={
-              <BrowserProfilePicker
-                projectId={projectId}
-                value={draft.browserProfileId}
-                onChange={(browserProfileId) => update({ browserProfileId })}
-                disabled={readOnly}
-              />
-            }
-          />
-        ) : null}
+        <FieldRow
+          label="Browser profile"
+          description="Optionally pin a saved browser profile for this host. Without a pin, new chats use your selected default profile."
+          control={
+            <BrowserProfilePicker
+              projectId={projectId}
+              value={draft.browserProfileId}
+              onChange={(browserProfileId) => update({ browserProfileId })}
+              disabled={readOnly}
+            />
+          }
+        />
       </FocusBlock>
     </div>
   );

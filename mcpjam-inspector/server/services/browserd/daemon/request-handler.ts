@@ -531,7 +531,15 @@ export class BrowserdRequestHandler {
   }
 
   private async handleProfileExport(): Promise<DaemonResponse> {
-    if (!this.profileExport || !this.queue.isIdle?.()) {
+    if (!this.profileExport) {
+      // A daemon built without an export capability is not BUSY. `main.ts`
+      // wires `profileExport` for persistent contexts only, so on an ephemeral
+      // one this is permanent — and a caller that retries a 409 waits forever
+      // for a state that can never arrive. 501, exactly as `/v1/trace` answers
+      // for a daemon that keeps no ledger.
+      return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    if (!this.queue.isIdle?.()) {
       return { status: 409, body: { error: "profile_busy" } };
     }
     if (this.lease.state().state !== "free") {

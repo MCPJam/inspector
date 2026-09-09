@@ -1339,7 +1339,10 @@ var BrowserdRequestHandler = class {
     return { status: 404 };
   }
   async handleProfileExport() {
-    if (!this.profileExport || !this.queue.isIdle?.()) {
+    if (!this.profileExport) {
+      return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    if (!this.queue.isIdle?.()) {
       return { status: 409, body: { error: "profile_busy" } };
     }
     if (this.lease.state().state !== "free") {

@@ -367,6 +367,12 @@ export async function provisionPlaygroundSandbox(args: {
   const deadline = Date.now() + (args.timeoutMs ?? 10 * 60_000);
   let delayMs = 30_000;
   for (;;) {
+    // Bound each ATTEMPT, not only the sleeps. `postJson` sets no timeout of
+    // its own and `args.signal` fires only on a caller-level cancel, so a
+    // control plane that accepts the connection and then stalls parks this
+    // await well past the ten-minute ceiling. 30s is the per-request deadline
+    // `swarm-sandbox.ts` already puts on `provisionJourneySandbox`.
+    const attemptDeadline = AbortSignal.timeout(30_000);
     const result = await postJson<PlaygroundSandbox>(
       "/playground/sandbox/provision",
       bearerHeader(args.bearer),
@@ -375,7 +381,9 @@ export async function provisionPlaygroundSandbox(args: {
         chatSessionId: args.chatSessionId,
         ...(args.hostId ? { hostId: args.hostId } : {}),
       },
-      args.signal,
+      args.signal
+        ? AbortSignal.any([args.signal, attemptDeadline])
+        : attemptDeadline,
     );
     if (result.ok || result.status !== 503 || result.code !== "at_capacity") {
       return result;

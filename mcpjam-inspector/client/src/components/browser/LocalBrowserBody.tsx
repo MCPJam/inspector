@@ -284,15 +284,26 @@ export function LocalBrowserBody({
     if (!consentGranted) setFrame(null);
   }, [consentGranted]);
 
+  /**
+   * And which conversation. A durable session is a browser identity in its own
+   * right — the agent drives `<project>:session:<id>` — so carrying a session,
+   * a lease and a frame across a conversation switch shows one conversation's
+   * browser in another's rail, and aims input at it.
+   */
+  const sessionRef = useRef(sessionId);
+
   useEffect(() => {
-    if (projectRef.current === projectId) return;
+    if (projectRef.current === projectId && sessionRef.current === sessionId) {
+      return;
+    }
     projectRef.current = projectId;
+    sessionRef.current = sessionId;
     railGeneration.current += 1;
     setSession(null);
     setLease({ state: "free" });
     setFrame(null);
     setError(null);
-  }, [projectId]);
+  }, [projectId, sessionId]);
 
   const start = useCallback(async () => {
     if (!projectId) return;
@@ -321,15 +332,21 @@ export function LocalBrowserBody({
     if (!session || !projectId) {
       throw new Error("Open a browser before saving its profile.");
     }
+    const generation = railGeneration.current;
     const result = await fetchLocalBrowserProfileArchive({
       bootId: session.bootId,
       projectId,
       ...(sessionId ? { sessionId } : {}),
       consentToken,
     });
-    setSession(null);
-    setLease({ state: "free" });
-    setFrame(null);
+    // The export CLOSED that browser, so the pane must forget it — but only
+    // while it is still the browser on screen. A switch mid-request means
+    // these setters would otherwise clear a browser this export never touched.
+    if (railGeneration.current === generation) {
+      setSession(null);
+      setLease({ state: "free" });
+      setFrame(null);
+    }
     return result;
   }, [consentToken, projectId, session, sessionId]);
 

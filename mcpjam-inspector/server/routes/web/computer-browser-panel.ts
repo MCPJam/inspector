@@ -631,7 +631,16 @@ export function createComputerBrowserPanelRoutes(
         return c.json({ ok: false, error: "profile_export_unavailable" }, 409);
       }
       const archive = await client.exportProfile();
-      return browserProfileArchiveResponse(archive, session.sessionId);
+      // The DURABLE identity, never the boot row. `savedFrom` names the browser
+      // session an archive came from, and `session.sessionId` is replaced on
+      // every relaunch (`recordBrowserSession` hands back a new one), so a
+      // profile committed against it records provenance on a row that
+      // disappears. `currentSession` above already refused any row whose
+      // `logicalSessionId` disagrees with a conversation-scoped token's claim,
+      // so nothing needs re-checking here; a browser with no durable identity
+      // sends no header, and the Save button says it is not attached to a chat
+      // session yet.
+      return browserProfileArchiveResponse(archive, session.logicalSessionId);
     } catch (error) {
       reportRouteFailure("browser profile export failed", error, {
         source: "computer-browser-panel.profile-export",

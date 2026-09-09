@@ -1153,15 +1153,6 @@ export function HostedBrowserBody({
             tierRef.current = resolved;
             setStreamAttempt((n) => n + 1);
           }}
-          extra={
-            session && sessionId ? (
-              <BrowserProfileSaveButton
-                projectId={projectId}
-                exportArchive={exportProfile}
-                disabled={holding || busy}
-              />
-            ) : null
-          }
         />
         <div className="min-h-0 flex-1 px-3 pb-3">
           <BrowserPanel projectId={projectId} sessionId={sessionId} />

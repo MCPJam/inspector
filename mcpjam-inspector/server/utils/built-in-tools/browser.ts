@@ -81,6 +81,7 @@ import { ensureLiveBrowserSession } from "../../services/browserd/live-session-d
 import {
   ensureLocalBrowserSession,
   localBrowserKeyFor,
+  resolveLocalBrowserRuntime,
 } from "../../services/browserd/local/local-browser-session.js";
 import {
   getComputerSandboxInfo,
@@ -2213,8 +2214,34 @@ function defaultEnsureSession(
       if (service.enabled && opts.sessionScope && logicalSessionId && !logical) {
         throw new Error("The durable browser session could not be opened");
       }
+      // `startSession` derives its profile directory from exactly these two
+      // conditions and imports an archive only when it has one: Electron's
+      // profile is a session PARTITION it manages itself, and an ephemeral
+      // context has no profile at all. Downloading an archive that launch will
+      // drop spends up to 256 MB on nothing and leaves the pin looking
+      // honored — refuse it here, and say so.
+      const canImportProfile =
+        contextMode === "persistent" &&
+        resolveLocalBrowserRuntime() === "playwright";
+      if (
+        service.enabled &&
+        logical?.profileId &&
+        !logical.lastBootId &&
+        !canImportProfile
+      ) {
+        logger.warn(
+          "[built-in-tools] saved browser profile not applied: this local browser has no profile directory to import it into",
+          { projectId, contextMode, runtime: resolveLocalBrowserRuntime() },
+        );
+        opts.onBrowserNotice?.(
+          "The saved browser profile was not applied: the browser on this machine has no profile directory to import it into.",
+        );
+      }
       const profileArchive =
-        service.enabled && logical?.profileId && !logical.lastBootId
+        canImportProfile &&
+        service.enabled &&
+        logical?.profileId &&
+        !logical.lastBootId
           ? await service.downloadProfile({
               projectId,
               profileId: logical.profileId,

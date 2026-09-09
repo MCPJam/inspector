@@ -495,7 +495,7 @@ async function startSession(
           ...(persistent
             ? {
                 partitionKey: args.sessionId
-                  ? `persist:mcpjam-browser-${validateLocalProjectKey(args.projectId)}--session-${validateLogicalSessionId(args.sessionId)}`
+                  ? `${validateLocalProjectKey(args.projectId)}--session-${validateLogicalSessionId(args.sessionId)}`
                   : validateLocalProjectKey(args.projectId),
               }
             : {}),
