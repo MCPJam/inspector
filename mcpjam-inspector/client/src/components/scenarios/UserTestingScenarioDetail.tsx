@@ -13,6 +13,7 @@ import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { ScenarioShareEmptyPanel } from "@/components/scenarios/ScenarioShareEmptyPanel";
 import { ScenarioShareDialog } from "@/components/scenarios/ScenarioShareDialog";
 import { ScenarioShareSection } from "@/components/scenarios/ScenarioShareSection";
+import { ScenarioFindingsTab } from "@/components/scenarios/findings/scenario-findings-tab";
 import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPerTurnFeedbackToggle";
 import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
@@ -99,6 +100,7 @@ const TAB_OPTIONS: ReadonlyArray<{
   value: UserTestingDetailTab;
   label: string;
 }> = [
+  { value: "findings", label: "Findings" },
   { value: "insights", label: "Insights" },
   { value: "sessions", label: "Sessions" },
 ];
@@ -710,6 +712,24 @@ export function UserTestingScenarioDetail({
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        {tab === "findings" ? (
+          <div className="absolute inset-0 overflow-y-auto px-8 py-4">
+            <ScenarioFindingsTab
+              scenarioId={scenario.scenarioId}
+              onOpenSession={(threadId) =>
+                navigate(
+                  buildUserTestingScenarioPath(scenario.scenarioId, {
+                    tab: "sessions",
+                    session: threadId,
+                    sel: selParam ?? undefined,
+                    view,
+                  }),
+                  { replace: true },
+                )
+              }
+            />
+          </div>
+        ) : null}
         {tab === "sessions" ? (
           <div className="absolute inset-0">
             <ScenarioUsagePanel

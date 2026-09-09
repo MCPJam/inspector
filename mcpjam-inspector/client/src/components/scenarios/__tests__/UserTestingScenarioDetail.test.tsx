@@ -194,6 +194,12 @@ vi.mock("@/components/scenarios/ScenarioUsagePanel", () => ({
 // Insights are their own mount now (the shared workbench), not a `section` of
 // the sessions panel. Stubbed for the same reason: these specs are about which
 // tab renders, not what the workbench draws.
+// Findings is the landing tab and reads sessions through Convex. These tests
+// are about the detail shell, so it is stubbed the same way the workbench is.
+vi.mock("@/components/scenarios/findings/scenario-findings-tab", () => ({
+  ScenarioFindingsTab: () => <div data-testid="stub-scenario-findings" />,
+}));
+
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
@@ -297,15 +303,24 @@ beforeEach(() => {
 });
 
 describe("UserTestingScenarioDetail", () => {
-  it("lands on Insights by default", () => {
+  it("lands on Findings by default, with Insights still reachable", () => {
     renderDetail();
 
-    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    // `stub-share-empty` is the Insights empty state and no longer renders
+    // on the landing tab.
+    expect(
+      within(nav).getByRole("button", { name: "Findings" }),
+    ).toBeInTheDocument();
+    expect(
+      within(nav).getByRole("button", { name: "Insights" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId("user-testing-edit-tab"),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
     const tabNav = screen.getByRole("navigation", { name: "Scenario view" });
@@ -351,6 +366,7 @@ describe("UserTestingScenarioDetail", () => {
   });
 
   it("scopes Insights to this scenario's scenario", () => {
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
@@ -377,6 +393,7 @@ describe("UserTestingScenarioDetail", () => {
       );
     });
 
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
