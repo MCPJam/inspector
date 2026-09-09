@@ -157,6 +157,10 @@ When your deployment exposes computer-backed tools (such as **Bash**), a **Perso
 - **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
 - The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
 
+#### Browser profile
+
+The **Computer** tab of the host config editor includes a **Browser profile** field. Use it to pin a specific [saved browser profile](/inspector/computer#saved-browser-profiles) to this host. When a pin is set, browser sessions started by this host load from that profile's saved state (cookies, local storage, etc.) instead of your personal default. Leave the field on **Default profile for my chats** to use whichever profile you have set as your default in the Computer tab.
+
 ## What's Next
 
 - **[Servers](/inspector/connecting-servers)** - Configure MCP servers to add to your projects
