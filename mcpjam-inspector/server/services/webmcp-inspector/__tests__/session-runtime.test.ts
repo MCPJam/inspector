@@ -12,6 +12,8 @@ import {
   WebMcpSessionRuntime,
 } from "../session-runtime";
 import { WebMcpToolGoneError } from "../provider";
+import { WebMcpBridgeError } from "../../browserd/daemon/webmcp-bridge";
+import { translateBridgeError } from "../provider-shared";
 import { FakeBrowserSession, fakeTool } from "./fake-provider";
 
 function makeRuntime(
@@ -51,7 +53,8 @@ function entryOfKind<K extends WebMcpActivityEntry["kind"]>(
   kind: K,
 ): Extract<WebMcpActivityEntry, { kind: K }> | undefined {
   return entries.find((e) => e.kind === kind) as
-    Extract<WebMcpActivityEntry, { kind: K }> | undefined;
+    | Extract<WebMcpActivityEntry, { kind: K }>
+    | undefined;
 }
 
 describe("tool identity", () => {
@@ -302,6 +305,34 @@ describe("invocation", () => {
     expect(runtime.inFlight).toBe(0);
   });
 
+  it.each(["cancelled", "timeout"] as const)(
+    "records uncertain page effects after %s as unknown",
+    async (reason) => {
+      const { runtime, session, activity } = makeRuntime();
+      session.emitTools([fakeTool()]);
+      const message =
+        "Page execution may continue; verify the page state before retrying.";
+      vi.spyOn(session, "invokeTool").mockRejectedValue(
+        translateBridgeError(
+          new WebMcpBridgeError("webmcp_outcome_unknown", message, reason),
+          "echo",
+        ),
+      );
+      const { settled } = runtime.invoke(
+        "https://example.test::echo",
+        {},
+        "manual",
+      );
+      await expect(settled).rejects.toThrow(message);
+      await vi.waitFor(() =>
+        expect(entryOfKind(activity(), "invocation_settled")).toMatchObject({
+          state: "unknown",
+          errorMessage: message,
+        }),
+      );
+    },
+  );
+
   it("cancels a running invocation and records it as cancelled", async () => {
     const { runtime, session, activity } = makeRuntime();
     session.emitTools([fakeTool()]);
@@ -445,7 +476,10 @@ describe("an invokeId identifies ONE call", () => {
     // (a long call) where a retry is most likely.
     let clock = 0;
     const { runtime, session } = makeRuntime({ now: () => clock });
-    session.emitTools([fakeTool({ name: "slow" }), fakeTool({ name: "quick" })]);
+    session.emitTools([
+      fakeTool({ name: "slow" }),
+      fakeTool({ name: "quick" }),
+    ]);
     session.hangOnInvoke = true;
 
     const slow = runtime.invoke(

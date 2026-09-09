@@ -57,6 +57,23 @@ describe("invokePageToolForChat", () => {
     setAdvertisedPageTools([ENTRY]);
   });
 
+  it.each([
+    undefined,
+    "Cancellation requested. Page execution may continue; verify the page state before retrying.",
+  ])(
+    "reports an unknown outcome without claiming failure or retrying",
+    async (errorMessage) => {
+      const invoke = vi.fn(async () => ({ state: "unknown", errorMessage }));
+      stubStore("session-1", invoke);
+      const result = await invokePageToolForChat(ENTRY.alias, {});
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("may continue");
+      expect(textOf(result)).toContain("before retrying");
+      expect(textOf(result)).not.toContain("failed");
+      expect(invoke).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("returns the tool's output on success", async () => {
     stubStore("session-1", async () => ({
       state: "succeeded",

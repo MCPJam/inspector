@@ -519,6 +519,9 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
       throw new Error(`the browser rejected the command (${response.status})`);
     }
     if (!response.result.ok) {
+      if (response.result.error?.startsWith("webmcp_outcome_unknown:")) {
+        throw new WebMcpOutcomeUnknownError(response.result.error);
+      }
       throw new Error(
         response.result.error ?? "the browser could not complete the command",
       );
