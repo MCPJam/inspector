@@ -179,29 +179,30 @@ describe("suite settings ledger", () => {
     expect(screen.getByRole("textbox", { name: "Suite name" })).toBeTruthy();
   });
 
-  it("shows a stage-first table without a duplicate flow or grading rail", () => {
+  it("shows the scorers table, grouped by stage, with its editors", () => {
+    // WAS "shows a stage-first table without a duplicate flow or grading rail",
+    // which pinned a checkbox list whose 21 rows named checks the product does
+    // not run and whose save the backend refused. The stage GROUPING was the
+    // good half of that design and is kept — the scorer table has always
+    // grouped by the same six stages — but each group now lists the graders
+    // that actually run, and the judge, rubric and matcher editors are on the
+    // page again rather than asserted absent.
     const { container } = renderSettingsSheet({ suite: v2Suite });
-    expect(
-      screen.getByRole("heading", { name: "Checks by stage" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("columnheader", { name: "Stage of user value chain" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Scorers" })).toBeTruthy();
     expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
-    expect(
-      screen.queryByRole("navigation", { name: "Settings subsections" }),
-    ).toBeNull();
     expect(
       screen.queryByRole("tablist", { name: "User value chain" }),
     ).toBeNull();
     for (const key of [
       "judge",
       "judgeRubric",
-      "judgeGroundedness",
       "matchOptions",
       "validity",
     ]) {
-      expect(container.querySelector(`[data-setting-key="${key}"]`)).toBeNull();
+      expect(
+        container.querySelector(`[data-setting-key="${key}"]`),
+        key,
+      ).toBeTruthy();
     }
   });
 
@@ -233,7 +234,7 @@ describe("suite settings ledger", () => {
     ).toContain("Clients");
   });
 
-  it("shows the client table without a computer row or rail", () => {
+  it("shows the client table beside the computer image row", () => {
     const { container } = renderSettingsSheet();
     const tabs = screen.getByRole("navigation", { name: "Settings sections" });
     fireEvent.click(
@@ -243,7 +244,11 @@ describe("suite settings ledger", () => {
       (node) => node.getAttribute("data-setting-key"),
     );
     expect(keys.indexOf("environments")).toBeGreaterThanOrEqual(0);
-    expect(keys).not.toContain("computerEnvironment");
+    // With capabilities READY the image row is visible for any project suite —
+    // it edits `computerEnvironmentId`, which decides the image every trial
+    // boots. The flag only gates the fallback path, covered by the
+    // capabilities-unavailable case in the manifest ratchet.
+    expect(keys).toContain("computerEnvironment");
     expect(
       container.querySelector('[data-testid="suite-clients-table"]'),
     ).toBeTruthy();

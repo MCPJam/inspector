@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { EVAL_SUITE_SETTING_KEYS, EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manifest";
+import {
+  EVAL_SUITE_SETTING_KEYS,
+  EVAL_SUITE_SETTINGS_MANIFEST,
+  SETTINGS_PAGE_HIDDEN_KEYS,
+} from "@/shared/eval-suite-settings-manifest";
 import {
   NESTED_SETTING_KEYS,
   SUITE_SETTINGS_GROUPS,
@@ -18,7 +22,7 @@ describe("SUITE_SETTINGS_GROUPS", () => {
     }
     expect(placed).toEqual([...new Set(placed)]);
     const visibleKeys = EVAL_SUITE_SETTINGS_MANIFEST.filter(
-      (row) => !("settingsPage" in row && row.settingsPage === "hidden"),
+      (row) => !(row.key in SETTINGS_PAGE_HIDDEN_KEYS),
     ).map((row) => row.key);
     const missing = visibleKeys.filter((key) => !placed.includes(key));
     const unknown = placed.filter(
