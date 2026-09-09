@@ -94,10 +94,9 @@ export type ServerPickerPanelProps = {
    * How much room the chips get, in pixels. Defaults to the lane a `w-72`
    * popover leaves them, measured in the app.
    *
-   * A COUNT, while the design's own overflow looks driven by the width of the
-   * names it happens to hold. Width is not observable in jsdom, so a count is
-   * the part that can be pinned by a test; the visual pass in a browser owns
-   * the rest.
+   * Spent against `chipWidth`, an estimate rather than a measurement: real
+   * width is not observable in jsdom, so the budget is what a test can pin.
+   * The visual pass in a browser owns the rest.
    */
   chipRoomPx?: number;
 };
@@ -124,8 +123,8 @@ const CHIP =
  * the CJK rate, which under-reads them slightly — the flat 22 and the summary
  * reserve absorb it.
  *
- * ponytail: a formula, not a measurement. Swap in a real one only if a font
- * change makes it wrong enough to wrap.
+ * A formula, not a measurement. Swap in a real one only if a font change makes
+ * it wrong enough to wrap.
  */
 const WIDE =
   /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1FAFF}]|[\u{20000}-\u{3FFFD}]/u;
@@ -416,8 +415,8 @@ export function ServerPickerPanel({
               // shows all three. A fixed count rendered three wide names and wrapped
               // the row. Characters stand in for width — no measuring, no
               // ResizeObserver, and the row is one line either way.
-              // ponytail: character budget, measure for real if a name's glyph
-              // width ever diverges enough to wrap.
+              // A character budget, not a measurement: measure for real if a
+              // name's glyph width ever diverges enough to wrap.
               const shown: string[] = [];
               let used = 0;
               for (const [i, name] of group.serverNames.entries()) {

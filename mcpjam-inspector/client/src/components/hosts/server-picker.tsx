@@ -149,16 +149,6 @@ export function ServerPicker({
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   /**
-   * The writes this picker has made that the query has not caught up with.
-   *
-   * ONE overlay, not two bridges. Both halves exist for the same reason — a
-   * Convex query lags the mutation that changed it — and they release on the
-   * same rule: an entry lives exactly as long as the query still disagrees
-   * with it. Splitting that into a row-shaped "just created" and a list-shaped
-   * "just deleted" meant two release effects, two ideas of when a write has
-   * landed, and a third one waiting to be written for the next write kind.
-   */
-  /**
    * Servers whose handshake this picker started and has not seen settle.
    *
    * `canConnect` reads the RUNTIME status, which does not flip to `connecting`
@@ -168,6 +158,16 @@ export function ServerPicker({
    */
   const [connecting, setConnecting] = useState<readonly string[]>([]);
 
+  /**
+   * The writes this picker has made that the query has not caught up with.
+   *
+   * ONE overlay, not two bridges. Both halves exist for the same reason — a
+   * Convex query lags the mutation that changed it — and they release on the
+   * same rule: an entry lives exactly as long as the query still disagrees
+   * with it. Splitting that into a row-shaped "just created" and a list-shaped
+   * "just deleted" meant two release effects, two ideas of when a write has
+   * landed, and a third one waiting to be written for the next write kind.
+   */
   const [storedPending, setPending] = useState<PendingWrites>(NO_PENDING);
 
   /** The overlay, but only when it belongs to the project being rendered. */

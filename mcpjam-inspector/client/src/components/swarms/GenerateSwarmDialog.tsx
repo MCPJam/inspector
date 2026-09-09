@@ -393,7 +393,7 @@ export function GenerateSwarmDialog({
                 // environment editor uses: BB-3 was a user who could not find
                 // his servers because every label led with "server group".
                 emptyTriggerLabel="Client default · pick a server or group"
-                triggerTestId="generate-server-group-picker"
+                triggerTestId="generate-server-picker"
                 inModal
               />
             </div>

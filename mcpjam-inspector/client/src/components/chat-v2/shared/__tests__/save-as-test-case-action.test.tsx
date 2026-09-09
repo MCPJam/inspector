@@ -41,7 +41,7 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 
 vi.mock("@/components/hosts/server-picker", () => ({
-  ServerPicker: () => <div data-testid="server-attachment-picker" />,
+  ServerPicker: () => <div data-testid="server-picker" />,
 }));
 vi.mock("@/components/evals/client-attachments-editor", () => ({
   ClientAttachmentsEditor: () => (

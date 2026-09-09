@@ -46,7 +46,7 @@ vi.mock("@/hooks/useClients", () => ({
 // Surface the picker VALUES the core wires in, without the heavy editors.
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: ({ value }: { value: string | null }) => (
-    <div data-testid="server-attachment-picker" data-value={value ?? ""} />
+    <div data-testid="server-picker" data-value={value ?? ""} />
   ),
 }));
 vi.mock("@/components/evals/client-attachments-editor", () => ({
