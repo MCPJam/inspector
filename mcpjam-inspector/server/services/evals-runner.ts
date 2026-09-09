@@ -3019,6 +3019,46 @@ export const runEvalSuiteWithAiSdk = async ({
     const renderCheckLimit = createConcurrencyLimiter(
       MAX_CONCURRENT_RENDER_CHECKS,
     );
+    if (recorder?.beginExecutionAttempt) {
+      const modelIdentifiers = Array.from(
+        new Map(
+          tests
+            .filter(
+              (test) =>
+                !isPinnedOnly({
+                  caseType: test.caseType,
+                  promptTurns: resolveEvalTestCase(test).promptTurns,
+                }),
+            )
+            .map((test) => {
+              const modelDefinition = resolveEvalCaseModelDefinition({
+                hostConfig: suiteHostConfig,
+                caseModel: buildModelDefinition(test),
+              });
+              const provider = modelDefinition.provider;
+              const model = getCanonicalModelId(
+                String(modelDefinition.id),
+                provider,
+              );
+              return [
+                `${provider}\u0000${model}`,
+                { provider, model },
+              ] as const;
+            }),
+        ).values(),
+      );
+      await recorder.beginExecutionAttempt({
+        caseCount: tests.length,
+        // Cases may configure different repeat counts. This is the total
+        // number of iteration rows expected for the whole attempt.
+        repetitionCount: tests.reduce(
+          (sum, test) => sum + (test.runs || 1),
+          0,
+        ),
+        renderConcurrencyLimit: MAX_CONCURRENT_RENDER_CHECKS,
+        modelIdentifiers,
+      });
+    }
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -3602,6 +3642,11 @@ const runLocalIteration = async ({
     testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
+    executionType: !caseNeedsModel
+      ? ("model_free" as const)
+      : resolvedExecution.harness
+        ? ("harness" as const)
+        : ("model" as const),
   };
   const shouldOmitSnapshotForPairing =
     !caseNeedsModel &&
@@ -4787,6 +4832,9 @@ const runHostedIterationWithBrowser = async (
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
+    executionType: resolvedExecution.harness
+      ? ("harness" as const)
+      : ("model" as const),
   };
 
   const iterationId = precreatedIterationId
