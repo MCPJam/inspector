@@ -1783,6 +1783,7 @@ export async function executeClaimedCheck(
         conformanceRunId = conformance.runId;
       } catch (error: unknown) {
         assertLeaseHeld();
+        if (isCredentialPolicyBlocked(error)) throw error;
         if (
           !conformanceBound &&
           !(error instanceof PlanProtocolError) &&

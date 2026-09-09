@@ -1741,6 +1741,7 @@ describe("the clone-token wire contract", () => {
 
 describe("fork credential isolation", () => {
   it("runs a clean approved fork with only its execution bearer", async () => {
+    let cleanupBearer: string | undefined;
     const h = harness({
       credentialPreflight: async (_c, _h, mint) =>
         mint ? "restricted-bearer" : null,
@@ -1750,10 +1751,11 @@ describe("fork credential isolation", () => {
         return { runId: "fork-run" };
       },
       deleteEphemeralServer: async (args) => {
-        expect(args.bearer).toBe("delegated-jwt");
+        cleanupBearer = args.bearer;
       },
     });
     await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
+    expect(cleanupBearer).toBe("delegated-jwt");
     expect(h.completions[0].runId).toBe("fork-run");
   });
 
@@ -1777,6 +1779,31 @@ describe("fork credential isolation", () => {
       },
     });
     await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.events).toContain("killSandbox");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("an access refusal during conformance remains a policy verdict", async () => {
+    const h = harness(
+      {
+        runConformance: async () => {
+          throw new Error("credential_policy_blocked");
+        },
+      },
+      undefined,
+      { evalAction: "run_conformance" }
+    );
+    await executeClaimedCheck(
+      {
+        ...CLAIM,
+        isFork: true,
+        githubCredentialPolicy: "no_customer_credentials",
+        conformanceEnabled: true,
+      },
+      "worker",
+      h.deps
+    );
     expect(h.events).toContain("credentialBlocked");
     expect(h.events).toContain("killSandbox");
     expect(h.completions).toEqual([]);
