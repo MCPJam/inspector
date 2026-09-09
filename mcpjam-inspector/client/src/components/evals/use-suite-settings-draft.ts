@@ -48,7 +48,6 @@ const LEGACY_UNSUPPORTED_ARGS: ReadonlyMap<string, SuiteSettingsKey> = new Map<
 >([
   ["judgeRubric", "judgeRubric"],
   ["gatePolicy", "gatePolicy"],
-  ["disabledStageChecks", "disabledStageChecks"],
 ]);
 
 export type CommitOutcome =
