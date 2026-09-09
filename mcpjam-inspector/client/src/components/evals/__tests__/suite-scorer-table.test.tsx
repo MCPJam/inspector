@@ -306,9 +306,11 @@ describe("SuiteScorerTable", () => {
     expect(
       library.querySelector('[data-library-category="budget"]'),
     ).toBeTruthy();
+    // Response is populated as of analyzer 11 — `noToolErrors` files there,
+    // so the category shows even on the legacy kind set this render uses.
     expect(
       library.querySelector('[data-library-category="response"]'),
-    ).toBeNull();
+    ).toBeTruthy();
   });
 
   it("has no Last run or Trend column", () => {

@@ -5,6 +5,7 @@ import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   QUALITY_GATE_REQUEST_SAMPLES,
   SAMPLE_BY_PATH,
+  SETTINGS_PAGE_HIDDEN_KEYS,
 } from "@/shared/eval-suite-settings-manifest";
 
 /**
@@ -207,6 +208,42 @@ describe("eval suite settings manifest — API parity", () => {
     expect(refused.success).toBe(false);
   });
 
+  it("keeps the not-on-the-settings-page list closed", () => {
+    // `settingsPage: "hidden"` was once an open hatch, and twelve rows used it
+    // to leave the page while the render ratchet skipped every one of them.
+    // The list is frozen here so adding a key is a deliberate test change, and
+    // every key names where the row actually lives.
+    expect(Object.keys(SETTINGS_PAGE_HIDDEN_KEYS).sort()).toEqual([
+      "deleteSuite",
+      "githubChecks",
+      "schedule",
+    ]);
+    for (const [key, whereItLives] of Object.entries(
+      SETTINGS_PAGE_HIDDEN_KEYS,
+    )) {
+      const row = EVAL_SUITE_SETTINGS_MANIFEST.find(
+        (entry) => entry.key === key,
+      );
+      expect(row, `${key} is hidden but has no manifest row`).toBeDefined();
+      expect(
+        (row as { settingsPage?: string }).settingsPage,
+        `${key} is in the hidden list without the marker`,
+      ).toBe("hidden");
+      expect(
+        whereItLives.trim().length,
+        `${key} does not say where it is reached instead`,
+      ).toBeGreaterThanOrEqual(20);
+    }
+    // And the marker is never used off the list.
+    for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if (!("settingsPage" in row)) continue;
+      expect(
+        row.key in SETTINGS_PAGE_HIDDEN_KEYS,
+        `${row.key} is marked hidden but is not in SETTINGS_PAGE_HIDDEN_KEYS`,
+      ).toBe(true);
+    }
+  });
+
   it("gives every `excluded:` row a substantive reason", () => {
     // Short reasons are how an exclusion becomes permanent: nobody can argue
     // with "not supported".
@@ -216,6 +253,17 @@ describe("eval suite settings manifest — API parity", () => {
         row.excluded.trim().length,
         `${row.key}'s exclusion reason is too thin to argue with`
       ).toBeGreaterThanOrEqual(40);
+      // Length is not truth. The `checks` row once explained itself with
+      // "saved through applySuiteSettings.disabledStageChecks; it has no
+      // public PATCH field yet" — a sentence long enough to pass the check
+      // above, describing a Convex argument that mutation has never declared.
+      // Nothing in THIS repo can verify a claim about the backend's argument
+      // list, so a reason may not make one: say what the row is and why it is
+      // off the agent surfaces, not how some other service stores it.
+      expect(
+        /applySuiteSettings\.[A-Za-z0-9_]+/.test(row.excluded),
+        `${row.key}'s reason claims a backend save path this repo cannot check — describe the row instead`,
+      ).toBe(false);
     }
   });
 });

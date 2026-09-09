@@ -22,8 +22,24 @@
  */
 export type BootId = string;
 
-/** Where a command originated. All sources share one per-tab queue and timeline. */
-export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
+/**
+ * Where a command originated. All sources share one per-tab queue and timeline.
+ *
+ * `agent` is an outside coding agent driving this browser through the agent
+ * surface, as distinct from `chat` (the Playground model's own tool loop) and
+ * `inspector` (a pane acting on the user's behalf). It is a CATEGORY, not an
+ * identity: `BrowserCommand.actor` tells two agents apart. Like every source
+ * but `manual` it is refused outright while a person holds the lease — see
+ * `leaseRefusalFor`, which admits only `manual` and so needs no change to
+ * cover a new source. That default is the safe one, and it is deliberate that
+ * adding a source cannot accidentally widen the handoff gate.
+ */
+export type BrowserCommandSource =
+  | "manual"
+  | "chat"
+  | "inspector"
+  | "eval"
+  | "agent";
 
 /**
  * The FIFO/tab key a tab-less (whole-session) command uses. The command queue
@@ -53,8 +69,40 @@ export const DEFAULT_QUEUE_KEY = "@session";
  *
  * History:
  *   1 — the wire as of the viewport-fidelity wave (V-4a).
+ *   2 — `act` gained the `fill_form` VERB (and `submit`). Additive on the
+ *       wire and not additive in meaning: a daemon at 1 has no case for
+ *       `fill_form`, so it falls through its verb switch and answers `ok`
+ *       for a form it never touched, and it drops `submit` so a login is
+ *       typed and never sent. Both are commands whose SEMANTICS an older
+ *       daemon cannot honour while reporting success, which is exactly the
+ *       bump condition above — unlike `act`'s `observe` field, which an old
+ *       daemon ignores to produce the screenshot-only result it always did.
  */
-export const BROWSERD_PROTOCOL_VERSION = 1;
+export const BROWSERD_PROTOCOL_VERSION = 2;
+
+/**
+ * Capabilities every build of this daemon has, announced on `/v1/status`.
+ *
+ * A FEATURE FLAG RATHER THAN A PROTOCOL BUMP, because both additions are
+ * strictly additive on the wire: an older daemon ignores `expectedBinding` and
+ * `webmcp_cancel.commandId`, and answers `webmcp_revision` as an unknown observe
+ * mode. Bumping `BROWSERD_PROTOCOL_VERSION` would instead have killed every live
+ * hosted browser on deploy — a session someone was signing into included — to
+ * gain a capability the server can simply ask about.
+ *
+ *   - `webmcp-eager`: the bridge attaches on tab creation and keeps a per-tab
+ *     `{revision, hash}`, so `observe {mode:"webmcp_revision"}` is answerable
+ *     and every result carries `webmcpTools`. A server talking to a daemon
+ *     WITHOUT this must fall back to a full `webmcp_tools` observation.
+ *   - `webmcp-binding`: `webmcp_invoke` validates `expectedBinding` and refuses
+ *     `stale_binding`, and `webmcp_cancel` accepts a `commandId`. A server
+ *     talking to a daemon without this must not assume its bindings are
+ *     checked — the invocation would run against whatever carries that name now.
+ */
+export const BROWSERD_WEBMCP_FEATURES = [
+  "webmcp-eager",
+  "webmcp-binding",
+] as const;
 
 /**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
@@ -139,10 +187,103 @@ export interface ObservationStateToken {
   domHash: string;
 }
 
+/**
+ * WHICH REGISTRATION of a page tool a caller means, as a value it can carry
+ * across a round trip and hand back.
+ *
+ * Every field is load-bearing, and the set is what it is because each weaker
+ * key was tried and let a real mistake through:
+ *
+ *   - `bootId` — the daemon restarted, so every frame id it minted is a
+ *     coincidence now.
+ *   - `tabId` — a binding is for one tab; the same page in two tabs is two
+ *     documents with their own state.
+ *   - `navCounter` — the tab navigated. THE MAIN FRAME KEEPS ITS ID across
+ *     navigation (see `webmcp-bridge.ts`), so this is the only thing that
+ *     separates a page from the page that replaced it at the same URL.
+ *   - `frameId` — which frame. Two same-origin iframes of the same document
+ *     each register their own copy of a tool, and they are not
+ *     interchangeable: one is the left panel, one is the right.
+ *   - `registrationSeq` — which registration WITHIN a document generation. A
+ *     page that unregisters and re-registers a tool (a SPA re-mounting a
+ *     component) has a new handler behind an unchanged name, frame and
+ *     navCounter.
+ *
+ * Compared by the daemon immediately before it invokes, so an approval granted
+ * against one document cannot be spent on another.
+ */
+export interface WebMcpToolBinding {
+  bootId: BootId;
+  tabId: string;
+  navCounter: number;
+  frameId: string;
+  registrationSeq: number;
+}
+
+/**
+ * A tab's WebMCP tool set, described WITHOUT touching the page.
+ *
+ * Read from the daemon's own cache, which the bridge keeps current by push. It
+ * is what makes "has anything changed?" a cheap question the server can ask
+ * before EVERY model step: a page-touching `observe` per step would be a
+ * screenshot's worth of work to usually learn nothing, and would also settle
+ * the page — an observation with side effects on a loop.
+ */
+export interface WebMcpToolsRevision {
+  /** Bumps on every bridge change: add, remove, navigate, detach. */
+  revision: number;
+  /** Over name + description + schema + frame + generation. See `declaredToolsHash`. */
+  hash: string;
+  count: number;
+  /** Whether this page (and this browser) speaks WebMCP at all. */
+  supported: boolean;
+  url?: string;
+}
+
+/**
+ * What an `act` hands back once the page has settled.
+ *
+ * `both` is what an interactive model actually needs while acts still target
+ * by coordinate or selector: the tree says what is there, the screenshot says
+ * WHERE. `none` is for a caller driving a script it already trusts.
+ */
+export type ActObserve = "a11y" | "screenshot" | "both" | "none";
+
+/**
+ * Which reads an `observe` choice asks for — the ONE place guard and driver
+ * agree on the mapping, so a new member cannot mean two things in two files.
+ *
+ * `undefined` is the wire default (`"screenshot"`), not a synonym for `none`:
+ * a command from a caller that predates the field must still come back with
+ * the picture it has always come back with.
+ */
+export function wantsFor(observe: ActObserve | undefined): {
+  a11y: boolean;
+  screenshot: boolean;
+} {
+  const mode = observe ?? "screenshot";
+  return {
+    a11y: mode === "a11y" || mode === "both",
+    screenshot: mode === "screenshot" || mode === "both",
+  };
+}
+
 export type BrowserAction =
-  | { kind: "navigate"; url: string; newTab?: boolean }
-  | { kind: "back" }
-  | { kind: "reload" }
+  | {
+      kind: "navigate";
+      url: string;
+      newTab?: boolean;
+      /**
+       * What to capture once the navigation has settled. @see ActObserve
+       *
+       * Absent means `none` here, NOT `wantsFor`'s screenshot default: a
+       * navigation has always answered with its URL and nothing else, and the
+       * caller that wants a tree back from one has to ask.
+       */
+      observe?: ActObserve;
+    }
+  | { kind: "back"; observe?: ActObserve }
+  | { kind: "reload"; observe?: ActObserve }
   | {
       kind: "act";
       verb:
@@ -153,10 +294,31 @@ export type BrowserAction =
         | "hover"
         | "drag"
         | "select"
+        | "fill_form"
         | "close_tab"
         | "activate_tab";
       target?: BrowserActTarget;
       value?: string;
+      /**
+       * `fill_form` only: the fields to fill, IN ORDER.
+       *
+       * A login or a search was three gated calls — type, type, press — and so
+       * three approvals for a person and three observations for the model.
+       * This is the same work as one, which is the shape Playwright MCP
+       * settled on and the reason there is no generic multi-step verb here:
+       * a small composite is orderable and reviewable, a sequence verb is
+       * neither.
+       */
+      fields?: Array<{ selector: string; value: string }>;
+      /**
+       * Press Enter once the text is in (`type` and `fill_form`).
+       *
+       * One settle and one observation for what is otherwise two commands,
+       * and the submit is the half a model most often forgets to pin: it acts
+       * on the page the typing produced, which is by definition a page nothing
+       * has observed yet.
+       */
+      submit?: boolean;
       /**
        * The observation token this act was decided from (L3). When present, the
        * daemon refuses the act if the tab's current state token no longer matches
@@ -164,6 +326,16 @@ export type BrowserAction =
        * can re-decide. Optional: a caller that opts out accepts stale targeting.
        */
       expectedState?: ObservationStateToken;
+      /**
+       * What to CAPTURE once the act has settled, so the model does not spend a
+       * second call asking what changed.
+       *
+       * Absent means `"screenshot"` — exactly what an act returned before this
+       * existed, so an old caller against a new daemon reads today's result and
+       * a new caller against an old daemon reads today's result too (the field
+       * is simply ignored there). The tool layer always sends one explicitly.
+       */
+      observe?: ActObserve;
     }
   | {
       kind: "observe";
@@ -174,7 +346,16 @@ export type BrowserAction =
         | "a11y"
         | "console"
         | "url"
-        | "webmcp_tools";
+        | "webmcp_tools"
+        /**
+         * The cached `{revision, hash, count}` for this tab and NOTHING else.
+         *
+         * Touches no page: no screenshot, no settle, no DOM read. That is the
+         * whole point — the server asks it before every model step, and a mode
+         * that reached into the page would make discovery cost a page load per
+         * step and would itself change what it was measuring.
+         */
+        | "webmcp_revision";
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
@@ -223,9 +404,40 @@ export type BrowserAction =
        * caller against a new one.
        */
       frameId?: string;
+      /**
+       * The registration the CALLER means, validated immediately before the
+       * page is touched (`stale_binding` on any mismatch).
+       *
+       * Optional and additive: an older daemon ignores it and resolves by name
+       * exactly as before, and a caller that has no binding (the legacy
+       * `browser_webmcp_invoke`) sends none. A caller that DOES send one is
+       * also refused a frame fallback — the whole point is that this
+       * invocation reaches the tool that was listed and approved, or none.
+       */
+      expectedBinding?: WebMcpToolBinding;
       input: unknown;
     }
-  | { kind: "webmcp_cancel"; invocationId: string };
+  | {
+      kind: "webmcp_cancel";
+      /**
+       * The invocation to stop, when the caller knows its id.
+       *
+       * Optional now: a server aborting a tool call it issued does NOT know
+       * the invocation id — `webmcp_invoke` is synchronous and only reports one
+       * when it settles, which on a hung tool is never. See `commandId`.
+       */
+      invocationId?: string;
+      /**
+       * Stop whatever THIS command started.
+       *
+       * The daemon records `commandId → invocationId` the moment the browser
+       * accepts an invocation, so a caller can name the thing it wants stopped
+       * using the only id it had before the call: its own. Without this an
+       * aborted request left the page's tool running to completion — the user
+       * pressed Stop and the form still submitted.
+       */
+      commandId?: string;
+    };
 
 /**
  * One command envelope. `commandId` is the idempotency key: the daemon executes
@@ -251,6 +463,48 @@ export interface BrowserCommand {
    * source, which the lease blocks outright.
    */
   holder?: string;
+  /**
+   * WHO is sending this, for the ledger.
+   *
+   * Stamped by the inspector route that AUTHENTICATED the caller and echoed
+   * onto the row unchanged — never read from a caller's own request body. That
+   * is the same threat the lease gate already defends against for `manual`:
+   * an actor a caller could choose is an actor a caller can borrow, and a
+   * trace whose attribution is self-declared attributes nothing.
+   *
+   * Optional on the wire so an older caller still works; a command that
+   * carries none is recorded against an `inspector`/`unattributed` actor
+   * rather than being refused, because losing the command would be worse than
+   * losing the name.
+   */
+  actor?: BrowserCommandActor;
+  /**
+   * The LOGICAL session this command belongs to (`browserLogicalSessions`
+   * locally, a JSON file beside the profile). Opaque to the daemon, which
+   * neither mints nor validates it: the daemon's own identity is the `bootId`,
+   * and a boot is replaced whenever the bundle or the box changes, so it
+   * cannot be what a permalink or an agent's history hangs off.
+   */
+  sessionId?: string;
+  /** What else this command belongs to, when the caller knows. Echoed, never read. */
+  correlation?: BrowserCommandCorrelation;
+}
+
+/** @see BrowserCommand.actor */
+export interface BrowserCommandActor {
+  kind: "agent" | "model" | "human" | "inspector";
+  id: string;
+  label?: string;
+}
+
+/** @see BrowserCommand.correlation */
+export interface BrowserCommandCorrelation {
+  chatSessionId?: string;
+  turnId?: string;
+  toolCallId?: string;
+  evalRunId?: string;
+  iterationId?: string;
+  swarmId?: string;
 }
 
 /** The daemon's result for one executed command. Opaque to the queue. */
@@ -275,9 +529,18 @@ export interface BrowserCommandResult {
   settled?: boolean;
   /**
    * Set when an `act` was REFUSED because its `expectedState` no longer matched
-   * the live tab (L3). The action did NOT run; `output`/`stateToken` carry the
-   * fresh observation so the caller can re-decide. The HTTP layer maps a result
-   * with this flag to `409 stale_observation`.
+   * the live tab (L3). The action did NOT run.
+   *
+   * `stateToken` is the tab's CURRENT token and `output` the observation that
+   * goes with it — read the same way an act reads its own aftermath, in the
+   * shape the act asked for. The refusal used to carry the token alone, which
+   * told the model "re-read the page" and then made it spend a call doing so:
+   * the recovery from a stale observation cost exactly the round trip the
+   * token exists to save. `output` is absent only when the read itself could
+   * not happen (a driver with no way to observe, or a person taking the
+   * browser during it — which comes back as `leaseBlocked` instead).
+   *
+   * The HTTP layer maps a result with this flag to `409 stale_observation`.
    */
   staleObservation?: boolean;
   /**
@@ -292,6 +555,27 @@ export interface BrowserCommandResult {
    * one refusal whichever side of the queue it happened on.
    */
   leaseBlocked?: boolean;
+  /**
+   * The tab's WebMCP tool set at the moment this command finished, as a cheap
+   * `{revision, hash, count}` (never the definitions).
+   *
+   * ON THE ENVELOPE, beside `stateToken`, and deliberately NOT inside `output`:
+   * it is the daemon's bookkeeping rather than anything the model should read,
+   * and `output` is what gets presented. Riding along on every result is what
+   * lets a change the model's OWN action caused — a navigation, a click that
+   * mounted a component — be noticed without a second round trip.
+   */
+  webmcpTools?: WebMcpToolsRevision;
+  /**
+   * Where the page's console and page-error rings stood AFTER this command.
+   *
+   * Rides beside `stateToken` rather than inside `output` on purpose: `output`
+   * is the model-facing payload that goes through the untrusted-content fence,
+   * and two integers of our own accounting have no business in there. The
+   * ledger stores them so a reader can compute the console delta between any
+   * two rows without the ledger copying page text into every one of them.
+   */
+  cursors?: { console: number; errors: number };
 }
 
 /**
@@ -301,7 +585,22 @@ export interface BrowserCommandResult {
  */
 export type BrowserCommandOutcome =
   /** Executed (or de-duplicated to a prior execution). Carries the result. */
-  | { status: "ok"; result: BrowserCommandResult; bootId: BootId }
+  | {
+      status: "ok";
+      result: BrowserCommandResult;
+      bootId: BootId;
+      /**
+       * This result came from a PRIOR submission of the same commandId; nothing
+       * ran this time.
+       *
+       * Surfaced because the ledger's rule is "one execution, one row": a retry
+       * that resolves to a result already recorded must LINK to that row rather
+       * than mint a second one, or a caller retrying through a flaky transport
+       * would appear in the trace to have clicked the button twice. The queue is
+       * the only layer that knows, so it is the layer that says.
+       */
+      deduped?: boolean;
+    }
   /** Per-tab queue is at its depth cap; the caller should retry later. → 429 */
   | { status: "busy"; bootId: BootId }
   /**
@@ -389,6 +688,8 @@ export const BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
@@ -399,6 +700,12 @@ export const BROWSERD_ERROR_CODES = [
   "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
+  /**
+   * The tool the caller named is not the tool it bound to: the tab navigated,
+   * the frame is gone, or the page re-registered under the same name. Nothing
+   * was invoked. Recoverable — the caller re-reads the page's tools.
+   */
+  "stale_binding",
   /** A dialog is open and waiting for the person who holds the lease. */
   "dialog_pending",
   /** A download exceeded the per-file or per-session cap and was cancelled. */
@@ -413,6 +720,8 @@ export const BROWSERD_ERROR_CODES = [
   "profile_in_use",
   /** A result's URL is outside an unattended run's origin allowlist. */
   "origin_not_allowed",
+  /** The session policy does not admit this command. */
+  "tool_not_allowed",
 ] as const;
 
 export type BrowserdErrorCode = (typeof BROWSERD_ERROR_CODES)[number];

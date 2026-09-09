@@ -95,7 +95,7 @@ export function StageDetailCard({
               data-reason={entry.reason}
               className="text-[10px] text-muted-foreground/80"
             >
-              {entry.count} — {entry.label}
+              {entry.count}. {entry.label}
             </li>
           ))}
         </ul>

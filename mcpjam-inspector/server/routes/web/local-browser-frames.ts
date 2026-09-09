@@ -325,11 +325,26 @@ export function createLocalBrowserFramesWsHandler(
           if (closed || !subscription.ok) return;
           try {
             const counters = subscription.counters();
+            // The page-tool change signal, synthesized for the same reason the
+            // drop counters are: in-process there is no heartbeat to ride, so
+            // without this the Tools pane would be live on the hosted engine
+            // and permanently stale on the one a developer debugs against.
+            const webmcp = session.handler.webmcpSnapshot?.();
             stats?.mergeDaemon({
               framesIn: counters.framesIn,
               framesOut: counters.framesOut,
               bytesOut: counters.bytesOut,
               dropped: counters.dropped,
+              ...(webmcp
+                ? {
+                    webmcp: {
+                      revision: webmcp.revision,
+                      hash: webmcp.hash,
+                      count: webmcp.count,
+                      ...(webmcp.url ? { url: webmcp.url } : {}),
+                    },
+                  }
+                : {}),
             });
           } catch {
             // Telemetry. A subscription that cannot answer is not a reason to

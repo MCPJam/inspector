@@ -14,7 +14,9 @@ import {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { groupGradersByStage } from "../suite-grading-model";
 import {
+  LEGACY_PREDICATE_KINDS,
   ROLE_LEGEND,
+  authorablePredicateKinds,
   buildScorerTable,
   libraryCategoryOfKind,
   roleOfJudgeSlot,
@@ -39,6 +41,10 @@ function samplePredicate(kind: string): Predicate {
   if (kind === "tokenBudgetUnder") base.tokens = 100;
   if (kind === "turnCountUnder") base.turns = 3;
   if (kind === "widgetRenderLatencyUnder") base.ms = 500;
+  if (kind === "toolLatencyUnder") base.ms = 500;
+  if (kind === "toolResultSizeUnder") base.maxBytes = 32_000;
+  if (kind === "toolResultContains") base.needle = "hi";
+  if (kind === "toolResultMatchesSchema") base.schema = { type: "object" };
   return base as Predicate;
 }
 
@@ -66,12 +72,36 @@ describe("library categories", () => {
     );
   });
 
-  it("omits empty categories, including Response when no kind files there", () => {
+  it("shows Response now that kinds file there", () => {
+    // The category was empty and therefore omitted until analyzer 11 filed
+    // `noToolErrors` and the four payload/latency checks at `response`.
     const ids = scorerLibraryCategories().map((category) => category.id);
     expect(ids).toContain("selection");
     expect(ids).toContain("userValue");
     expect(ids).toContain("budget");
-    expect(ids).not.toContain("response");
+    expect(ids).toContain("response");
+  });
+
+  it("omits a category once its kinds are filtered out", () => {
+    // The omission rule itself, asserted over a set the caller controls
+    // instead of over whatever happens to be unimplemented this week.
+    const ids = scorerLibraryCategories(["responseContains"]).map(
+      (category) => category.id,
+    );
+    expect(ids).toEqual(["userValue"]);
+  });
+
+  it("offers only the legacy kinds when the backend advertises none", () => {
+    // A deployment that predates `scorers.predicateKinds` cannot evaluate the
+    // new ones: offering them would author a check that fails closed as
+    // "unknown predicate type" on every trial of the run.
+    const legacy = authorablePredicateKinds(undefined);
+    expect(legacy).toEqual(LEGACY_PREDICATE_KINDS);
+    expect(legacy).not.toContain("toolResultSizeUnder");
+    // …and only the intersection when it advertises a set.
+    expect(
+      authorablePredicateKinds(["responseContains", "notAKindThisBuildKnows"]),
+    ).toEqual(["responseContains"]);
   });
 });
 

@@ -13,6 +13,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
   PlatformEvalRouteFacts,
+  PlatformEvalServerFacts,
   PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
   PlatformEvalRunGate,
@@ -2286,6 +2287,35 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/route-facts`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's SERVER FACTS: the snapshot it ran against, and what the setup
+   * phase observed.
+   *
+   * COMPUTED ON READ, which is the difference from the three documents above.
+   * There is no materializer and no backfill window: a run that finished
+   * before this shipped still answers, because the answer is derived from the
+   * snapshot the run already stored. A run with no snapshot answers
+   * `state: "unavailable"` with a reason — a measured fact about that run,
+   * not a missing document.
+   *
+   * Everything it returns is a FACT and none of it is a verdict: a tool count
+   * is not a defect, a connect duration is not a failure, and a precheck is a
+   * signal. Nothing here feeds a gate.
+   */
+  getEvalRunServerFacts(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalServerFacts> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/server-facts`,
       {},
       options
     );

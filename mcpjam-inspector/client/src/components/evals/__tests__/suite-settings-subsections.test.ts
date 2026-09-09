@@ -14,12 +14,11 @@ describe("getSubsectionsForGroup", () => {
     showDelete: true,
   };
 
-  it("lists Quality gate, Scorers, and Judges — not chain stages", () => {
+  it("lists quality gate and the scorers table", () => {
     const subs = getSubsectionsForGroup("grading", base);
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
       "Scorers",
-      "Judges",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -32,14 +31,13 @@ describe("getSubsectionsForGroup", () => {
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
       "Scorers",
-      "Judges",
     ]);
   });
 
-  it("routes judge, rubric, and groundedness to the Judges subsection", () => {
+  it("routes old judge anchors to the stage checks", () => {
     for (const key of ["judge", "judgeRubric", "judgeGroundedness"] as const) {
       expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
-        "judge",
+        "checks",
       );
     }
   });
@@ -53,10 +51,9 @@ describe("getSubsectionsForGroup", () => {
       "qualityGateMaximumP95LatencyIncreaseMs",
       "qualityGateNoGatingScoreErrors",
     ] as const) {
-      expect(
-        subsectionForSettingKey(key, "grading", base)?.id,
-        key,
-      ).toBe("policy");
+      expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
+        "policy",
+      );
     }
   });
 
@@ -71,9 +68,7 @@ describe("getSubsectionsForGroup", () => {
     expect(checks && subsectionScrollTarget(checks)).toBe(
       '[data-setting-key="checks"]',
     );
-    expect(judge && subsectionScrollTarget(judge)).toBe(
-      '[data-subsection-id="judge"]',
-    );
+    expect(judge).toBeUndefined();
     expect(
       subsectionScrollTarget({
         id: "stage-selection",
@@ -102,13 +97,11 @@ describe("getSubsectionsForGroup", () => {
 
     const policy = document.createElement("div");
     policy.setAttribute("data-subsection-id", "policy");
-    policy.getBoundingClientRect = () =>
-      ({ top: -80, height: 40 } as DOMRect);
+    policy.getBoundingClientRect = () => ({ top: -80, height: 40 }) as DOMRect;
 
     const checks = document.createElement("div");
     checks.setAttribute("data-setting-key", "checks");
-    checks.getBoundingClientRect = () =>
-      ({ top: 40, height: 80 } as DOMRect);
+    checks.getBoundingClientRect = () => ({ top: 40, height: 80 }) as DOMRect;
 
     root.append(policy, checks);
 

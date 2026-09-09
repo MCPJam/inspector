@@ -6,9 +6,6 @@ import {
 import type { SuiteSettingsGroupId } from "./suite-settings-groups";
 import { NESTED_SETTING_KEYS } from "./suite-settings-groups";
 
-/** Rail label for the judge cards. The row itself stays "Judge". */
-const JUDGES_RAIL_LABEL = "Judges";
-
 export type SuiteSettingsSubsectionTarget =
   | { type: "row"; key: EvalSuiteSettingKey }
   | { type: "stage"; stage: UserValueStage }
@@ -48,15 +45,15 @@ export function getSubsectionsForGroup(
           label: manifestLabel("checks"),
           target: { type: "passOrFailChecks" },
         },
-        {
-          id: "judge",
-          label: JUDGES_RAIL_LABEL,
-          target: { type: "row", key: "judge" },
-        },
       ];
     }
     case "runs": {
       const subs: SuiteSettingsSubsection[] = [];
+      subs.push({
+        id: "environments",
+        label: manifestLabel("environments"),
+        target: { type: "row", key: "environments" },
+      });
       if (options.showComputerEnvironment) {
         subs.push({
           id: "computerEnvironment",
@@ -64,11 +61,6 @@ export function getSubsectionsForGroup(
           target: { type: "row", key: "computerEnvironment" },
         });
       }
-      subs.push({
-        id: "environments",
-        label: manifestLabel("environments"),
-        target: { type: "row", key: "environments" },
-      });
       return subs;
     }
     case "triggers": {
@@ -87,16 +79,6 @@ export function getSubsectionsForGroup(
       });
       return subs;
     }
-    case "danger":
-      return options.showDelete
-        ? [
-            {
-              id: "deleteSuite",
-              label: manifestLabel("deleteSuite"),
-              target: { type: "row", key: "deleteSuite" },
-            },
-          ]
-        : [];
     default:
       return [];
   }
@@ -126,7 +108,7 @@ export function subsectionForSettingKey(
     groupId === "grading" &&
     (key === "judge" || key === "judgeRubric" || key === "judgeGroundedness")
   ) {
-    return subsections.find((sub) => sub.id === "judge");
+    return subsections.find((sub) => sub.id === "checks");
   }
   if (groupId === "grading" && key === "validity") {
     return subsections.find((sub) => sub.id === "policy");
@@ -168,8 +150,7 @@ export function pickActiveSubsectionFromScroll(
   const activationY = root.scrollTop + root.clientHeight * 0.12;
   let activeId = anchors[0].id;
   for (const { id, element } of anchors) {
-    const top =
-      element.getBoundingClientRect().top - rootTop + root.scrollTop;
+    const top = element.getBoundingClientRect().top - rootTop + root.scrollTop;
     if (top <= activationY + 1) activeId = id;
   }
   return activeId;

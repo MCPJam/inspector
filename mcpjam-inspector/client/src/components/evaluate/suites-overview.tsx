@@ -1,4 +1,8 @@
-import { useMemo, type MouseEvent } from "react";
+import {
+  EvalListFilter,
+  ALL_EVAL_FILTER_VALUES,
+} from "../evals/eval-list-filter";
+import { useMemo, useState, type MouseEvent } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -7,7 +11,11 @@ import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "../evals/helpers";
-import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "../evals/types";
+import type {
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "../evals/types";
 
 interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];
@@ -44,12 +52,12 @@ export function SuitesOverview(props: SuitesOverviewProps) {
           className="flex flex-col items-center justify-center px-6 py-16 text-center"
           data-testid="evals-suites-overview-error"
         >
-          <AlertTriangle className="size-8 text-amber-500" />
+          <AlertTriangle className="size-8 text-warning" />
           <h2 className="mt-4 text-base font-semibold">
             Couldn&apos;t show your suites
           </h2>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            The list failed to render. Reload the page — this doesn&apos;t mean
+            The list failed to render. Reload the page. This doesn&apos;t mean
             anything happened to your suites.
           </p>
         </div>
@@ -72,6 +80,19 @@ function OverviewBody({
   deletingSuiteId = null,
 }: SuitesOverviewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [serverFilter, setServerFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const clientOptions = [
+    ...new Set(overview.flatMap((entry) => suiteClientNames(entry.suite))),
+  ].sort();
+  const serverOptions = [
+    ...new Set(
+      overview.flatMap((entry) => getEffectiveSuiteServers(entry.suite)),
+    ),
+  ].sort();
+  const isFiltering =
+    clientFilter !== ALL_EVAL_FILTER_VALUES ||
+    serverFilter !== ALL_EVAL_FILTER_VALUES;
 
   const sortedOverview = useMemo(
     () =>
@@ -83,12 +104,47 @@ function OverviewBody({
     [overview],
   );
 
+  const filteredOverview = sortedOverview.filter(
+    ({ suite }) =>
+      (clientFilter === ALL_EVAL_FILTER_VALUES ||
+        suiteClientNames(suite).includes(clientFilter)) &&
+      (serverFilter === ALL_EVAL_FILTER_VALUES ||
+        getEffectiveSuiteServers(suite).includes(serverFilter)),
+  );
+
   if (sortedOverview.length === 0) {
     return null;
   }
 
   return (
     <div className="min-w-0" data-testid="evals-suites-overview">
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-1.5">
+        <EvalListFilter
+          label="Client"
+          value={clientFilter}
+          options={clientOptions}
+          onChange={setClientFilter}
+        />
+        <EvalListFilter
+          label="Server"
+          value={serverFilter}
+          options={serverOptions}
+          onChange={setServerFilter}
+        />
+        {isFiltering && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px]"
+            onClick={() => {
+              setClientFilter(ALL_EVAL_FILTER_VALUES);
+              setServerFilter(ALL_EVAL_FILTER_VALUES);
+            }}
+          >
+            Clear filters
+          </Button>
+        )}
+      </div>
       <div
         className={cn(
           ROW_PAD,
@@ -105,7 +161,7 @@ function OverviewBody({
         <span className={ACTION_COL} aria-hidden />
       </div>
       <ul className="mt-1">
-        {sortedOverview.map((entry) => (
+        {filteredOverview.map((entry) => (
           <li key={entry.suite._id}>
             <div
               className={cn(
@@ -128,7 +184,11 @@ function OverviewBody({
                 <span className="min-w-0 truncate text-sm font-medium text-foreground">
                   {entry.suite.name || "Untitled suite"}
                 </span>
-                <ClientCell suite={entry.suite} themeMode={themeMode} />
+                <ClientCell
+                  suite={entry.suite}
+                  themeMode={themeMode}
+                  className="flex"
+                />
                 <span className="min-w-0 truncate text-sm text-muted-foreground">
                   {serverLabel(entry.suite)}
                 </span>
@@ -163,6 +223,11 @@ function OverviewBody({
           </li>
         ))}
       </ul>
+      {filteredOverview.length === 0 && (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          No suites match these filters.
+        </p>
+      )}
     </div>
   );
 }
@@ -192,9 +257,7 @@ function RowRunControl({
   const latestRunInProgress =
     latestRun?.status === "running" || latestRun?.status === "pending";
   const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;
-  const isCancelling = Boolean(
-    latestRun && cancellingRunId === latestRun._id,
-  );
+  const isCancelling = Boolean(latestRun && cancellingRunId === latestRun._id);
 
   if (latestRunInProgress && latestRun) {
     return (
@@ -223,7 +286,7 @@ function RowRunControl({
     return (
       <Button
         type="button"
-        variant="default"
+        variant="outline"
         size="sm"
         className="h-7 px-2.5"
         data-testid="evals-suites-overview-running"
@@ -238,7 +301,7 @@ function RowRunControl({
   return (
     <Button
       type="button"
-      variant="default"
+      variant="outline"
       size="sm"
       className="h-7 px-2.5"
       data-testid="evals-suites-overview-run"
@@ -293,37 +356,54 @@ function RowDeleteControl({
 function ClientCell({
   suite,
   themeMode,
+  className,
 }: {
   suite: EvalSuite;
   themeMode: "light" | "dark";
+  className?: string;
 }) {
   const attachments = suite.hostAttachments ?? [];
   if (attachments.length === 0) {
-    return <span className="text-sm text-muted-foreground">—</span>;
+    return (
+      <span className={cn(className, "text-sm text-muted-foreground")}>-</span>
+    );
   }
 
-  const name = attachments[0].hostName?.trim() || attachments[0].namedHostId;
-  const extra = attachments.length - 1;
-  const logoSrc = resolveHostLogoByName(name, themeMode);
+  const names = attachments.map(
+    (attachment) => attachment.hostName?.trim() || attachment.namedHostId,
+  );
 
   return (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background">
-        <img src={logoSrc} alt="" className="size-3.5 object-contain" />
+    <span
+      className={cn(className, "min-w-0 items-center gap-2")}
+      title={names.join(", ")}
+    >
+      <span className="flex shrink-0 -space-x-1.5">
+        {names.map((name, index) => (
+          <span
+            key={`${name}-${index}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background ring-1 ring-background"
+          >
+            <img
+              src={resolveHostLogoByName(name, themeMode)}
+              alt=""
+              className="size-3.5 object-contain"
+            />
+          </span>
+        ))}
       </span>
-      <span className="min-w-0 truncate text-sm text-foreground">{name}</span>
-      {extra > 0 ? (
-        <span className="shrink-0 text-sm text-muted-foreground">+{extra}</span>
-      ) : null}
+      <span className="min-w-0 truncate text-sm text-foreground">
+        {names.join(", ")}
+      </span>
     </span>
   );
 }
 
 function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
   return (
-    entry.suite.updatedAt ??
     entry.latestRun?.completedAt ??
     entry.latestRun?.createdAt ??
+    entry.suite.updatedAt ??
     entry.suite._creationTime ??
     0
   );
@@ -332,18 +412,29 @@ function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
 function serverLabel(suite: EvalSuite): string {
   const names = getEffectiveSuiteServers(suite);
   if (names.length > 0) return names[0];
-  return "—";
+  return "-";
 }
 
 function passRateLabel(entry: EvalSuiteOverviewEntry): string {
   const rate = entry.latestRun?.summary?.passRate;
-  if (typeof rate !== "number") return "—";
+  if (
+    typeof rate !== "number" ||
+    !Number.isFinite(rate) ||
+    !entry.latestRun?.summary?.total
+  )
+    return "—";
   return `${Math.round(rate * 100)}%`;
 }
 
 function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
   const timestamp =
     entry.latestRun?.completedAt ?? entry.latestRun?.createdAt ?? null;
-  if (!timestamp) return "—";
+  if (!timestamp) return "-";
   return formatDistanceToNow(timestamp, { addSuffix: true });
+}
+
+function suiteClientNames(suite: EvalSuite): string[] {
+  return (suite.hostAttachments ?? []).map(
+    (host) => host.hostName?.trim() || host.namedHostId,
+  );
 }

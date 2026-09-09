@@ -123,8 +123,8 @@ export function CompactIterationRow({
               className={cn(
                 "text-[10px] font-semibold rounded px-1.5 py-0.5 min-w-[100px] max-w-[110px] text-center",
                 allChecksPassed
-                  ? "bg-green-500/15 text-green-700 dark:text-green-300"
-                  : "bg-red-500/15 text-red-700 dark:text-red-300",
+                  ? "bg-success/15 text-success"
+                  : "bg-destructive/15 text-destructive",
               )}
               title={`${checksBadge.passed} of ${checksBadge.total} deterministic checks passed`}
             >

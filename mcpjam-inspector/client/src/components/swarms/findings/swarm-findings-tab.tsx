@@ -15,10 +15,11 @@ import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
+  runIsTerminal,
   type FindingsPersonaDoc,
 } from "./findings-derivation";
 import {
-  composeFindingsHeadline,
+  composeFindingsSummary,
   deriveHonestyFootnotes,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
@@ -48,7 +49,17 @@ export function SwarmFindingsTab({
       }),
     [wave.runs, waveSignals, personas]
   );
-  const headline = useMemo(() => composeFindingsHeadline(model), [model]);
+  // Signals carry the authoritative answer. A legacy wave has none, so fall
+  // back to the runs themselves rather than hiding that the run finished.
+  const summary = useMemo(
+    () =>
+      composeFindingsSummary(model, {
+        terminal: waveSignals
+          ? waveSignals.terminal
+          : wave.runs.every(runIsTerminal),
+      }),
+    [model, waveSignals, wave.runs]
+  );
   const footnotes = useMemo(
     () =>
       deriveHonestyFootnotes({
@@ -100,7 +111,7 @@ export function SwarmFindingsTab({
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
         data-testid="findings-empty"
       >
-        No findings yet — no sessions in this swarm run.
+        No sessions in this swarm run.
       </div>
     );
   }
@@ -109,7 +120,7 @@ export function SwarmFindingsTab({
     <div className="w-full" data-testid="swarm-findings-tab">
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
-        headline={headline}
+        summary={summary}
         footnotes={footnotes}
       />
       <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
