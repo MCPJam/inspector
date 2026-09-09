@@ -8,7 +8,6 @@ import {
   useMintBrowserToken,
   useMintConversationBrowserToken,
 } from "@/hooks/useProjectComputer";
-import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 
@@ -56,17 +55,14 @@ export function PlaygroundBrowserPanel({
   // THE DURABLE SESSION, in the panel as well as in the rail tab it replaces.
   // The browser a chat owns keeps its logins and its saved profile across
   // turns, and that identity travels on the token: minting the project-scoped
-  // one here would have handed the workspace a fresh anonymous browser every
-  // time the flag was on, which is every time this panel is the browser.
+  // one here would hand the workspace a fresh anonymous browser every time,
+  // which is every time this panel is the browser.
   // @see PlaygroundRightRail, which wires the fallback tab identically.
   const mintConversationBrowserToken = useMintConversationBrowserToken();
-  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const activeChatSessionId = useActiveChatSessionStore(
     (state) => state.sessionId,
   );
-  const browserSessionId = browserSessionsEnabled
-    ? (activeChatSessionId ?? undefined)
-    : undefined;
+  const browserSessionId = activeChatSessionId ?? undefined;
   const mintHostedBrowserToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) =>
       browserSessionId

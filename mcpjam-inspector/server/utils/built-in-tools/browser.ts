@@ -2414,7 +2414,20 @@ function defaultEnsureSession(
     logicalSessionId,
     signal,
   }) => {
-    if (opts.sessionScope && logicalSessionId) {
+    // A CONVERSATION-scoped hosted browser needs a host that advertises
+    // `browser`: the backend re-derives that permission from the frozen config
+    // (`iteration.hostConfigId` / `snapshot.hosts[]`) and refuses without one.
+    // A Playground turn may legitimately run with no `hostId` — an ad-hoc
+    // config carries `builtInToolIds` on the body — and before per-conversation
+    // browsers those turns used the member's project computer. Falling back to
+    // exactly that keeps them working; refusing here would turn a browser that
+    // works today into a fail-closed notice the moment this path became the
+    // default. An unattended run is unaffected: it brings its own `target`.
+    const conversationScoped =
+      opts.sessionScope?.kind === "conversation"
+        ? Boolean(opts.sessionScope.hostId)
+        : true;
+    if (opts.sessionScope && logicalSessionId && conversationScoped) {
       return ensureHostedConversationSession({
         bearer,
         projectId,
