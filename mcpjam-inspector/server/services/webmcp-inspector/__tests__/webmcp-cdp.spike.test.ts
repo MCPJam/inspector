@@ -948,7 +948,14 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     // A person now submits, and an invocation is answered. Which one is
     // asserted rather than assumed: the first is still live in the page and
     // could not be cancelled, so a test that only checked `status` would pass
-    // whichever of the two Blink chose to answer.
+    // whichever of the two Blink chose to answer. (It answers the SECOND — the
+    // form holds one invocation and the second replaced the first — which is
+    // what the id assertions below pin.)
+    //
+    // The first is therefore left dangling on purpose, because nothing can
+    // reach it. Contained rather than ignored: every test here starts with
+    // `open()`, which navigates, and a form invocation cannot outlive the
+    // document holding it.
     const second = invokeAndWait(
       frameId,
       FIXTURE_TOOLS.confirmOrder,
