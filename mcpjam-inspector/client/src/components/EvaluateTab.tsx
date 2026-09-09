@@ -660,20 +660,28 @@ function EvaluateTabContent({
       // A confirmed batch keeps its options on retries. Legacy callers without
       // explicit options continue using the suite's persisted configuration.
       const generateConfig = loadGenerateConfig(suite._id);
+      const baseOptions =
+        options ??
+        (totalCases(generateConfig) >= 1
+          ? toGenerationOptions(generateConfig)
+          : undefined);
+      const trimmedRefinement = refinement?.trim();
+      // The refinement rides along with explicit options too; a preset-driven
+      // generation must not drop what the user typed.
       const generationOptions =
-        options ?? (totalCases(generateConfig) >= 1
+        baseOptions || trimmedRefinement
           ? {
-              ...toGenerationOptions(generateConfig),
-              ...(refinement?.trim() ? { refinement: refinement.trim() } : {}),
+              ...(baseOptions ?? {}),
+              ...(trimmedRefinement ? { refinement: trimmedRefinement } : {}),
             }
-          : refinement?.trim()
-            ? { refinement: refinement.trim() }
-            : undefined);
+          : undefined;
       await handlers.handleGenerateTests(suite._id, suiteServers, {
         ...(stageCase
           ? {
               stageCase: (input: CreateEvalTestCaseInput) =>
-                stageCase(normalizeGeneratedDraft(input, suite.defaultPredicates)),
+                stageCase(
+                  normalizeGeneratedDraft(input, suite.defaultPredicates),
+                ),
             }
           : {}),
         ...(serverAttachment ? { serverAttachment } : {}),

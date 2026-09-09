@@ -97,7 +97,12 @@ export function ActionRow({
         >
           {action.ordinal}
         </span>
-        <Icon className={cn("size-4 shrink-0", step.kind === "prompt" ? "text-info" : meta.tint)} />
+        <Icon
+          className={cn(
+            "size-4 shrink-0",
+            step.kind === "prompt" ? "text-info" : meta.tint,
+          )}
+        />
         {expandable ? (
           <button
             type="button"
@@ -126,30 +131,35 @@ export function ActionRow({
           </Label>
         )}
         {status ? <StepStatusBadge status={status} /> : null}
-        {readOnly || total === 1 ? null : (
+        {readOnly ? null : (
           <>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Move step ${action.ordinal} up`}
-              disabled={action.ordinal === 1}
-              onClick={() => onMove(-1)}
-            >
-              ↑
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
-              aria-label={`Move step ${action.ordinal} down`}
-              disabled={action.ordinal === total}
-              onClick={() => onMove(1)}
-            >
-              ↓
-            </Button>
+            {/* A lone row cannot move, but a lone non-prompt row can still go. */}
+            {total === 1 ? null : (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                  aria-label={`Move step ${action.ordinal} up`}
+                  disabled={action.ordinal === 1}
+                  onClick={() => onMove(-1)}
+                >
+                  ↑
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                  aria-label={`Move step ${action.ordinal} down`}
+                  disabled={action.ordinal === total}
+                  onClick={() => onMove(1)}
+                >
+                  ↓
+                </Button>
+              </>
+            )}
             {step.kind !== "prompt" ? (
               <Button
                 type="button"

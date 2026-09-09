@@ -150,6 +150,9 @@ export function McpjamAgentThread({
       if (!isReady) {
         useEvalPromptQueue.getState().enqueue(sessionId, trimmed);
         setDraft(trimmed);
+        // The author chose to continue; the queue owns the resume from here,
+        // otherwise a stale `needsResume` keeps the drain effect from firing.
+        if (evalScope) setDescribeNeedsResume(sessionId, false);
         return;
       }
       if (evalScope) beginDescribe(sessionId, trimmed);
@@ -324,8 +327,8 @@ export function McpjamAgentThread({
           scopeMissing
             ? "Case context is missing. Your message is kept here."
             : contextLoading
-            ? "Connecting to your case… Your message is kept here."
-            : "Loading project…"
+              ? "Connecting to your case… Your message is kept here."
+              : "Loading project…"
         }
         placeholder={guidance?.placeholder ?? "Continue the conversation…"}
         isStreaming={isStreaming}
@@ -335,8 +338,8 @@ export function McpjamAgentThread({
           evalScope
             ? undefined
             : fillsParent
-            ? composerColumnClassName
-            : undefined
+              ? composerColumnClassName
+              : undefined
         }
         footerControls={
           evalScope ? undefined : (

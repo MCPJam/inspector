@@ -74,7 +74,7 @@ interface LoadedState {
 function loadPersisted(): LoadedState {
   const fallback: LoadedState = {
     isOpen: false,
-    width: AGENT_PANEL_DEFAULT_WIDTH,
+    width: clampAgentPanelWidth(AGENT_PANEL_DEFAULT_WIDTH),
     activeSessionId: null,
     activeSessionProjectId: null,
   };
@@ -102,7 +102,7 @@ function loadPersisted(): LoadedState {
       width:
         typeof parsed.width === "number"
           ? clampAgentPanelWidth(parsed.width)
-          : AGENT_PANEL_DEFAULT_WIDTH,
+          : fallback.width,
       // A v1-shape entry has a sessionId but no sessionProjectId. Treat that
       // as a cross-project pointer (we don't know its project) and drop it
       // rather than hydrate it against the wrong project.

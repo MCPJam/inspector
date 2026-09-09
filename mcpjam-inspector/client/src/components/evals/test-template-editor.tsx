@@ -369,7 +369,8 @@ interface TestTemplateEditorProps {
    *
    * "Run test" needs a suite run because the judge is keyed by `suiteRunId`
    * end to end; a quick run cannot be graded. Absent on a surface that cannot
-   * launch one, and Run test then does not render.
+   * launch one. The editor launches from the Setup Run sheet today, so this
+   * callback is accepted for callers but not consumed here.
    */
   onRunCase?: (
     caseId: string,
@@ -978,7 +979,6 @@ export function TestTemplateEditor({
   trialChainEnabled = false,
   simpleCaseEditor = false,
   observeFirst = false,
-  onRunCase,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -2112,45 +2112,6 @@ export function TestTemplateEditor({
     [suggestionBatch?.key],
   );
 
-  /** Save the current draft before launching a judged, case-scoped run. */
-  const [runTestPending, setRunTestPending] = useState(false);
-  /**
-   * `handleSave` closes over `editForm` and is rebuilt every render, so the
-   * copy captured by a memoized callback goes stale the moment the deps stop
-   * changing — which they do as soon as `hasUnsavedChanges` flips true. Run
-   * test then saved the draft as it stood at the FIRST edit and ran that,
-   * while the pane showed the latest. A ref always holds the current one.
-   */
-  const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const runTest = useCallback(async () => {
-    const caseId = currentTestCase?._id;
-    if (!onRunCase || !caseId || isDraft) return;
-    setRunTestPending(true);
-    try {
-      if (hasUnsavedChanges) {
-        // A refused save (an unset tool question, an invalid step list) must
-        // not launch: the run executes the PERSISTED case, so it would grade
-        // a version of the case the author is not looking at.
-        const saved = await handleSaveRef.current?.();
-        if (!saved) return;
-      }
-      await onRunCase(caseId, {
-        iterationOverride,
-        skipJudge:
-          editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
-      });
-    } finally {
-      setRunTestPending(false);
-    }
-  }, [
-    onRunCase,
-    currentTestCase?._id,
-    isDraft,
-    hasUnsavedChanges,
-    iterationOverride,
-    editForm?.judgeConfigOverride?.goalCompletion?.enabled,
-  ]);
-
   const arePromptTurnsValid = useMemo(() => {
     if (!editForm) return true;
     return validateSteps(editForm.steps);
@@ -2731,9 +2692,6 @@ export function TestTemplateEditor({
       throw error;
     }
   };
-  // Kept current so `runTest` never awaits a save built from a stale draft.
-  handleSaveRef.current = handleSave;
-
   const buildSelectedCompareModels = (
     modelValues: string[],
   ): Array<{ provider: string; model: string }> => {
@@ -4047,6 +4005,11 @@ export function TestTemplateEditor({
               availableTools={assertableTools}
               suiteServers={effectiveSuiteServers}
               projectServers={projectServers}
+              isNegativeTest={currentTestCase.isNegativeTest}
+              toolsChoice={simpleToolsChoice}
+              onToolsChoiceChange={setSimpleToolsChoice}
+              stashedTools={simpleStashedTools}
+              onStashedToolsChange={setSimpleStashedTools}
               suiteDefaultPredicates={
                 (suite?.defaultPredicates ?? []) as Predicate[]
               }
@@ -4054,7 +4017,6 @@ export function TestTemplateEditor({
               capabilities={caseCapabilities.capabilities}
               defaultChecks={
                 <DefaultChecksReference
-                  disabledChecks={suite?.disabledStageChecks}
                   onConfigureSuite={onOpenSuiteSettings}
                   onOverride={onOpenCaseChecks}
                 />
@@ -4590,6 +4552,11 @@ export function TestTemplateEditor({
                           )}
                         </>
                       }
+                      // A frozen snapshot holds the RESOLVED list, suite
+                      // defaults included. Unwrap an envelope the same way
+                      // `trial-authored.ts` does so this spine and the
+                      // scorecard label the rows identically ("Run snapshot"),
+                      // rather than presenting them as the case's own envelope.
                       snapshotPredicates={
                         Array.isArray(
                           workspaceLeftView.iteration.testCaseSnapshot
@@ -4597,17 +4564,12 @@ export function TestTemplateEditor({
                         )
                           ? (workspaceLeftView.iteration.testCaseSnapshot
                               .predicates as Predicate[])
-                          : undefined
+                          : (
+                              workspaceLeftView.iteration.testCaseSnapshot
+                                ?.predicates as CasePredicates | undefined
+                            )?.list
                       }
-                      predicates={
-                        Array.isArray(
-                          workspaceLeftView.iteration.testCaseSnapshot
-                            ?.predicates,
-                        )
-                          ? undefined
-                          : (workspaceLeftView.iteration.testCaseSnapshot
-                              ?.predicates as CasePredicates | undefined)
-                      }
+                      predicates={undefined}
                       suiteJudgeConfig={
                         workspaceTrialRun?.configSnapshot?.judgeConfig
                       }
@@ -4623,7 +4585,6 @@ export function TestTemplateEditor({
                     <CaseSpine
                       defaultChecks={
                         <DefaultChecksReference
-                          disabledChecks={suite?.disabledStageChecks}
                           onConfigureSuite={onOpenSuiteSettings}
                           onOverride={onOpenCaseChecks}
                         />
@@ -4685,15 +4646,6 @@ export function TestTemplateEditor({
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
                       validationAttempted={simpleValidationAttempted}
-                      recording={liveRecordMode}
-                      recordEntryPrimary={draftKind === "record"}
-                      onStartRecording={() => {
-                        setShowSpecOverride(false);
-                        setCaptureMode("record");
-                        setLiveRecordMode(true);
-                      }}
-                      onStopRecording={() => setLiveRecordMode(false)}
-                      onAddCheck={() => setCaptureMode("assert")}
                       stepStatusById={workspaceStepStatusById}
                       stepStatusByTurn={workspaceStepStatusByTurn}
                       syncedStepId={syncedStepId}
@@ -4714,27 +4666,6 @@ export function TestTemplateEditor({
                           setMissingAppEvidenceStepId(null);
                         }
                       }}
-                      runControl={
-                        onRunCase ? (
-                          <div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8"
-                              data-testid="case-run-test"
-                              disabled={
-                                isDraft ||
-                                runTestPending ||
-                                Boolean(simpleToolsBlock)
-                              }
-                              onClick={() => void runTest()}
-                            >
-                              <Play className="size-3.5 fill-current" />
-                              Run test
-                            </Button>
-                          </div>
-                        ) : null
-                      }
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
@@ -4823,6 +4754,20 @@ export function TestTemplateEditor({
                         }
                       }}
                     />
+                  ) : null
+                }
+                leftFooter={
+                  !isDraft && currentTestCase._id ? (
+                    <div className="pt-1">
+                      <EvalAttachmentsEditor
+                        suiteId={suiteId}
+                        testCaseId={currentTestCase._id}
+                        value={
+                          (currentTestCase.attachments as
+                            EvalAttachment[] | undefined) ?? []
+                        }
+                      />
+                    </div>
                   ) : null
                 }
                 history={(evidence) => (

@@ -53,6 +53,11 @@ export function CaseChecksPage({
             <Button variant="ghost" onClick={onBack}>
               Back to case
             </Button>
+            {hasUnsavedStageChanges ? (
+              <Button variant="outline" onClick={() => setStageOverrides({})}>
+                Discard stage preview
+              </Button>
+            ) : null}
             <Button
               onClick={onSave}
               disabled={saveDisabled || hasUnsavedStageChanges}

@@ -5568,7 +5568,10 @@ export function useServerState({
   );
 
   const ensureServersReady = useCallback(
-    async (serverNames: string[]): Promise<EnsureServersReadyResult> => {
+    async (
+      serverNames: string[],
+      options?: { allowInteractiveOAuthFlow?: boolean },
+    ): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
 
       const resolveToProjectServerKey = (serverRef: string): string => {
@@ -5649,7 +5652,8 @@ export function useServerState({
             }
 
             const outcome = await reconnectServerInternal(resolvedKey, {
-              allowInteractiveOAuthFlow: false,
+              allowInteractiveOAuthFlow:
+                options?.allowInteractiveOAuthFlow ?? false,
               select: false,
               suppressErrors: true,
             });

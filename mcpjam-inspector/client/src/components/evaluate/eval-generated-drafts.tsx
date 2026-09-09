@@ -23,7 +23,7 @@ import { caseViewModel } from "./case-workspace/case-view-model";
 import {
   useEvalGeneration,
   evalSuiteKey,
-  editGeneratedDraft,
+  editGeneratedDraftFromUi,
   saveGeneratedDraft,
   removeGeneratedDraft,
   importedDraftBlockedReason,
@@ -202,9 +202,14 @@ export function EvalGeneratedDrafts({
                         value={draft.input.title}
                         disabled={locked}
                         onChange={(e) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            title: e.target.value,
-                          })
+                          editGeneratedDraftFromUi(
+                            scope,
+                            draft.id,
+                            draft.revision,
+                            {
+                              title: e.target.value,
+                            },
+                          )
                         }
                       />
                     </label>
@@ -215,30 +220,50 @@ export function EvalGeneratedDrafts({
                         steps={caseViewModel("draft", draft.input).steps}
                         matchOptions={draft.input.matchOptions}
                         onMatchOptionsChange={(matchOptions) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            matchOptions,
-                          })
+                          editGeneratedDraftFromUi(
+                            scope,
+                            draft.id,
+                            draft.revision,
+                            {
+                              matchOptions,
+                            },
+                          )
                         }
                         expectedOutput={draft.input.expectedOutput}
                         onExpectedOutputChange={(expectedOutput) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            expectedOutput,
-                          })
+                          editGeneratedDraftFromUi(
+                            scope,
+                            draft.id,
+                            draft.revision,
+                            {
+                              expectedOutput,
+                            },
+                          )
                         }
                         predicates={draft.input.predicates}
                         onPredicatesChange={(predicates) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            predicates,
-                          })
+                          editGeneratedDraftFromUi(
+                            scope,
+                            draft.id,
+                            draft.revision,
+                            {
+                              predicates,
+                            },
+                          )
                         }
                         availableTools={[]}
                         suiteServers={[]}
                         evalValidationBorderClass="border-border"
                         readOnly={draft.saving}
                         onStepsChange={(steps) =>
-                          editGeneratedDraft(scope, draft.id, draft.revision, {
-                            steps,
-                          })
+                          editGeneratedDraftFromUi(
+                            scope,
+                            draft.id,
+                            draft.revision,
+                            {
+                              steps,
+                            },
+                          )
                         }
                       />
                     )}
@@ -277,6 +302,27 @@ export function EvalGeneratedDrafts({
                         ? "Retry save"
                         : "Add to suite"}
                   </Button>
+                  {draft.markdownImport?.prepared &&
+                  draft.error &&
+                  !draft.saving ? (
+                    // The save outcome is unknown, so edits stay locked for a
+                    // retry with the same idempotency key. Discarding is the
+                    // author's way out when the endpoint never recovers.
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="rounded-md text-secondary-foreground"
+                      aria-label={`Discard ${
+                        draft.input.title || "untitled draft"
+                      } without confirming its save`}
+                      onClick={() => {
+                        removeGeneratedDraft(scope, draft.id, { force: true });
+                        if (reviewing === draft.id) setReviewing(null);
+                      }}
+                    >
+                      Discard anyway
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"

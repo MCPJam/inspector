@@ -137,21 +137,21 @@ describe("shared agent docking", () => {
       screen.getByRole("button", { name: "Close MCPJam Agent" }),
     ).toBeVisible();
   });
-});
 
-it("pauses an active generation on close and does not resume automatically on reopen", () => {
-  beginDescribe("eval-panel", "Fetch issues");
-  chatState.status = "streaming";
-  render(
-    <AgentSidePanel projectId="p" organizationId={null} activeTab="evals" />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Close MCPJam Agent" }));
-  expect(stopAgentChat).toHaveBeenCalledWith("eval-panel");
-  expect(useDescribeFlow.getState().sessions["eval-panel"].needsResume).toBe(
-    true,
-  );
-  act(() => useAgentPanelStore.getState().setOpen(true));
-  expect(useDescribeFlow.getState().sessions["eval-panel"].needsResume).toBe(
-    true,
-  );
+  it("pauses an active generation on close and does not resume automatically on reopen", () => {
+    beginDescribe("eval-panel", "Fetch issues");
+    chatState.status = "streaming";
+    render(
+      <AgentSidePanel projectId="p" organizationId={null} activeTab="evals" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close MCPJam Agent" }));
+    expect(stopAgentChat).toHaveBeenCalledWith("eval-panel");
+    expect(useDescribeFlow.getState().sessions["eval-panel"].needsResume).toBe(
+      true,
+    );
+    act(() => useAgentPanelStore.getState().setOpen(true));
+    expect(useDescribeFlow.getState().sessions["eval-panel"].needsResume).toBe(
+      true,
+    );
+  });
 });

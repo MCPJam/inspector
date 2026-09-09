@@ -121,14 +121,13 @@ const openSpine = async (
 
 describe("the first-run form", () => {
   it("labels the prompt and outcome and offers Add", () => {
-    render(<StatefulSpine runControl={<button>Run test</button>} />);
+    render(<StatefulSpine />);
     expect(screen.getByTestId("case-spine")).toHaveAttribute(
       "data-state",
       "spine",
     );
     expect(screen.getByLabelText("What does the user ask?")).toBeTruthy();
     expect(screen.getByText("Expected Outcome")).toBeTruthy();
-    expect(screen.queryByText("Run test")).toBeNull();
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
     // The vocabulary a newcomer has not earned yet.
     const text = screen.getByTestId("case-spine").textContent ?? "";

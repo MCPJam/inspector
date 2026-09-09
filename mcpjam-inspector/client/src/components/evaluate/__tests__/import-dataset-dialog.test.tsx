@@ -174,6 +174,27 @@ describe("Markdown case import", () => {
     const calls = vi.mocked(saveMarkdownCases).mock.calls;
     expect(calls[0][0]).toEqual(calls[1][0]);
   });
+  it("lets the author discard a draft whose save outcome stays unknown", async () => {
+    vi.mocked(saveMarkdownCases).mockRejectedValue(
+      new Error("Connection lost"),
+    );
+    renderWithProviders(<Harness />);
+    await extract();
+    await review();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Add ${draft.title} to suite` }),
+    );
+    await screen.findByRole("alert");
+    expect(
+      screen.getByRole("button", { name: `Remove ${draft.title}` }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Discard ${draft.title} without confirming its save`,
+      }),
+    );
+    expect(screen.queryByRole("article")).toBeNull();
+  });
   it("ignores an extraction response after cancellation", async () => {
     let resolve!: (value: any) => void;
     vi.mocked(extractMarkdownCases).mockImplementation(
@@ -260,12 +281,15 @@ describe("Markdown case import", () => {
     renderWithProviders(<Harness />);
     await extract();
     await review();
-    expect(screen.queryByText("Needs independent checks")).not.toBeInTheDocument();
-    const add = screen.getByRole("button", { name: `Add ${draft.title} to suite` });
+    expect(
+      screen.queryByText("Needs independent checks"),
+    ).not.toBeInTheDocument();
+    const add = screen.getByRole("button", {
+      name: `Add ${draft.title} to suite`,
+    });
     expect(add).toBeEnabled();
     fireEvent.click(add);
     await waitFor(() => expect(saveMarkdownCases).toHaveBeenCalledOnce());
-
   });
   it("preserves imports when navigating away and returns collapsed", async () => {
     const view = renderWithProviders(<Harness />);

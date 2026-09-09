@@ -5,7 +5,6 @@ export function DefaultChecksReference({
   onOverride,
   onConfigureSuite,
 }: {
-  disabledChecks?: readonly string[];
   onConfigureSuite?: () => void;
   onOverride?: () => void;
 }) {

@@ -137,6 +137,9 @@ export async function loadEvalToolMetadata(
             action: reconnect ? "reconnect" : "retry",
             updatedAt: Date.now(),
           });
+          // Terminal: a reconnect-class failure must not fall through into
+          // an immediate second attempt against the same server.
+          return;
         }
       }
     })().finally(() => pending.delete(id));

@@ -221,7 +221,7 @@ export function EvalsHeader({
                     {landingView === "suites" && (
                       <DropdownMenuItem onSelect={onSetupRun}>
                         <Play className="h-4 w-4" />
-                        Setup run
+                        Setup Run
                       </DropdownMenuItem>
                     )}
                     {onAddCase && (

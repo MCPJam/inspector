@@ -108,15 +108,9 @@ export type CaseSpineProps = {
   suiteJudgeConfig?: EvalJudgeConfig;
   suiteJudgeRubric?: EvalJudgeRubric;
   capabilities?: SuiteCapabilities | null;
-  onOpenSuiteSettings?: () => void;
   evalValidationBorderClass?: string;
   autoFocusPrompt?: boolean;
   validationAttempted?: boolean;
-  recording?: boolean;
-  onStartRecording?: () => void;
-  onStopRecording?: () => void;
-  onAddCheck?: () => void;
-  recordEntryPrimary?: boolean;
   trialIteration?: EvalIteration;
   trialChain?: TrialFacts["chain"];
   readOnly?: boolean;
@@ -126,8 +120,6 @@ export type CaseSpineProps = {
   syncedStepId?: string | null;
   onHoverStep?: (stepId: string | null) => void;
   onSelectStep?: (stepId: string) => void;
-  /** The Run control. A slot so the spine never owns launching a run. */
-  runControl?: ReactNode;
   defaultChecks?: ReactNode;
 };
 

@@ -1,6 +1,10 @@
 import { EvalGeneratedDrafts } from "../eval-generated-drafts";
 import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import { useDescribeFlow } from "@/lib/mcpjam-agent/describe-flow";
+import {
+  evalSuiteKey,
+  useEvalGeneration,
+} from "@/lib/mcpjam-agent/eval-workspace";
 import { MessageCircle } from "lucide-react";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import type { ReactNode } from "react";
@@ -26,7 +30,19 @@ export function DescribeCaseWorkspace({
   const flow = useDescribeFlow((s) =>
     sessionId ? s.sessions[sessionId] : undefined,
   );
-  const batch = !!flow?.createdIds?.length;
+  const createdIds = flow?.phase === "reviewing" ? flow.createdIds : undefined;
+  // The review branch replaces the manual editor, so it must give the editor
+  // back once the batch is drained: `createdIds` is persisted across reloads
+  // and would otherwise pin this surface on "All tests in this batch are
+  // saved." with no way to author anything.
+  const batch = useEvalGeneration((state) => {
+    if (!scope || !createdIds?.length) return false;
+    const drafts =
+      state.suites[
+        evalSuiteKey({ projectId: scope.projectId, suiteId: scope.suiteId })
+      ]?.drafts ?? [];
+    return createdIds.some((id) => drafts.some((draft) => draft.id === id));
+  });
   const chatOpen = useAgentPanelStore((state) => state.isOpen);
   return (
     <div

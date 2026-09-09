@@ -49,9 +49,7 @@ function snapshotPredicates(
   iteration: EvalIteration | undefined,
 ): Predicate[] | undefined {
   const frozen = iteration?.testCaseSnapshot?.predicates as
-    | Predicate[]
-    | CasePredicates
-    | undefined;
+    Predicate[] | CasePredicates | undefined;
   return Array.isArray(frozen) ? frozen : frozen?.list;
 }
 
@@ -87,7 +85,11 @@ export function authoredForTrial(input: {
     // An attempt in flight was launched from a snapshot taken at launch, which
     // is what it will be graded against even if the author keeps typing.
     const launch = trial.record.launchSnapshot;
-    if (!launch?.steps)
+    // Resolve through the view model first: a legacy launch snapshot carries
+    // `promptTurns` / `query` rather than `steps`, and gating on the raw field
+    // dropped its steps, predicates, and expected output.
+    const launchView = caseViewModel("live", launch);
+    if (!launch || !launchView.availability.steps)
       return {
         authored: { steps: [], toolsChoice: "unset" },
         basis: "snapshot",
@@ -95,7 +97,7 @@ export function authoredForTrial(input: {
     return {
       authored: {
         numbering: input.draft.numbering,
-        steps: caseViewModel("live", launch).steps,
+        steps: launchView.steps,
         predicates: asCasePredicates(launch.predicates),
         matchOptions: launch.matchOptions,
         expectedOutput: launch.expectedOutput,

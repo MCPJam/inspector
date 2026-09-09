@@ -1044,34 +1044,35 @@ describe("TestTemplateEditor run view from route", () => {
     expect(screen.queryByTestId("case-workspace")).not.toBeInTheDocument();
   });
 
-  it("Run test saves the latest keystrokes", async () => {
+  it("Setup Run launches the latest keystrokes", async () => {
+    const user = userEvent.setup();
     activeCaseDoc = goldenCaseDoc;
-    const onRunCase = vi.fn();
-    renderGoldenCase({ observeFirst: true, onRunCase });
+    renderGoldenCase({ observeFirst: true });
     const prompt = await screen.findByLabelText("What does the user ask?");
     fireEvent.change(prompt, { target: { value: "Intermediate prompt" } });
     fireEvent.change(prompt, {
       target: { value: "Final prompt to actually run" },
     });
-    fireEvent.click(screen.getByTestId("case-run-test"));
-    await waitFor(() => expect(onRunCase).toHaveBeenCalled());
-    expect(
-      updateTestCaseMutationMock.mock.calls.at(-1)?.[0].steps[0].prompt,
-    ).toBe("Final prompt to actually run");
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+    await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
+    const request = streamEvalTestCaseMock.mock.calls.at(-1)?.[0];
+    expect(request.testCaseOverrides.steps[0].prompt).toBe(
+      "Final prompt to actually run",
+    );
   });
 
-  it("Run test stops when save validation fails", async () => {
+  it("Setup Run does not launch an empty prompt", async () => {
+    const user = userEvent.setup();
     activeCaseDoc = goldenCaseDoc;
-    const onRunCase = vi.fn();
-    renderGoldenCase({ observeFirst: true, onRunCase });
+    renderGoldenCase({ observeFirst: true });
     const prompt = await screen.findByLabelText("What does the user ask?");
     fireEvent.change(prompt, { target: { value: "" } });
-    fireEvent.click(screen.getByTestId("case-run-test"));
-    await waitFor(() =>
-      expect(screen.getByTestId("case-run-test")).not.toBeDisabled(),
-    );
+    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    const run = screen.getByRole("button", { name: "Run test case" });
+    if (!(run as HTMLButtonElement).disabled) await user.click(run);
+    expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
     expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
-    expect(onRunCase).not.toHaveBeenCalled();
   });
 
   it("accepting a no-tool suggestion persists a restriction", async () => {

@@ -49,7 +49,7 @@ describe("EvalsHeader", () => {
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Setup run" }));
+    await user.click(screen.getByRole("menuitem", { name: "Setup Run" }));
     expect(setup).toHaveBeenCalledOnce();
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),

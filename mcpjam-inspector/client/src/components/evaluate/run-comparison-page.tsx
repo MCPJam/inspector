@@ -189,8 +189,13 @@ export function RunComparisonPage({
         </div>
         <div className="flex flex-wrap gap-4" aria-label="Runs to compare">
           {options.map((run) => (
-            <label key={run._id} className="flex items-center gap-2 text-sm">
+            <label
+              key={run._id}
+              htmlFor={`compare-${run._id}`}
+              className="flex items-center gap-2 text-sm"
+            >
               <Checkbox
+                id={`compare-${run._id}`}
                 checked={selected.includes(run._id)}
                 onCheckedChange={(checked) =>
                   setSelected((ids) =>

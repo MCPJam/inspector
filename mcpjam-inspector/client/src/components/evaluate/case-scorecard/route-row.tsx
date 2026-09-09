@@ -90,7 +90,13 @@ export function RouteRow({
         <RoleChip role={row.role} />
       </div>
       <div className="space-y-3 p-3">
-        <details className="text-[11px] text-muted-foreground">
+        <details
+          // The route choice lives inside this disclosure. Open it when the
+          // reader needs it: a no-tool route has no tool section below, and
+          // an unset route asks for a choice the collapsed summary would hide.
+          open={showUnsetError || route.kind === "noTool"}
+          className="text-[11px] text-muted-foreground"
+        >
           <summary className="cursor-pointer">Matching options</summary>
           <div className="flex flex-wrap items-center gap-2 py-2">
             {" "}

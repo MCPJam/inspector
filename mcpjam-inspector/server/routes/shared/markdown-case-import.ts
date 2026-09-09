@@ -5,6 +5,7 @@ import {
   markdownSaveSchema,
   MAX_MARKDOWN_BYTES,
 } from "../../../shared/markdown-case-import.js";
+import { DEFAULT_RUNS_PER_TEST } from "../../../shared/eval-defaults.js";
 import {
   createConvexClient,
   requireConvexHttpUrl,
@@ -112,7 +113,10 @@ export async function handleMarkdownImport(
           requestId: response.headers.get("x-request-id"),
         };
         // Do not log document text, credentials, or the upstream response body.
-        logger.warn("Markdown extraction returned a non-JSON response", upstream);
+        logger.warn(
+          "Markdown extraction returned a non-JSON response",
+          upstream,
+        );
         return c.json(
           {
             code: "extraction_upstream_invalid_response",
@@ -137,7 +141,7 @@ export async function handleMarkdownImport(
         steps: [{ id: "prompt", kind: "prompt", prompt }],
         // Inherit the suite model at run time; this stays stable on retries.
         models: [],
-        runs: 1,
+        runs: DEFAULT_RUNS_PER_TEST,
         isNegativeTest: false,
         changeSource: "manual",
       })),

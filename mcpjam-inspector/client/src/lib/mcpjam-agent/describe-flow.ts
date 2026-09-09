@@ -92,7 +92,7 @@ export function beginDescribe(session: string, text: string) {
   const words = ["one", "two", "three", "four", "five"];
   const requestedCount = match
     ? Number(match[1]) || words.indexOf(match[1].toLowerCase()) + 1
-    : previous?.requestedCount ?? 1;
+    : (previous?.requestedCount ?? 1);
   put(session, {
     phase: "describing",
     questionUsed: previous?.questionUsed ?? false,
@@ -128,10 +128,17 @@ function toolContracts(
     cases.flatMap((draft) =>
       draft.steps.flatMap((step) => {
         if (step.kind !== "toolCall") return [];
-        const serverId = step.serverId ?? step.serverName;
-        const server = metadata.servers.find(
-          (server) => server.serverId === serverId && server.status === "ready",
+        // Metadata is keyed by the suite's server reference, which may be the
+        // stable id or the display name; a step can carry either. Accept a
+        // ready server under whichever identifier matches.
+        const refs = [step.serverId, step.serverName].filter(
+          (ref): ref is string => Boolean(ref),
         );
+        const server = metadata.servers.find(
+          (server) =>
+            server.status === "ready" && refs.includes(server.serverId),
+        );
+        const serverId = server?.serverId ?? step.serverId ?? step.serverName;
         const tool = server?.tools.find((tool) => tool.name === step.toolName);
         if (!tool)
           throw new Error(

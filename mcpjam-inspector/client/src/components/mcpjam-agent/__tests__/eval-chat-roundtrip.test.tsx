@@ -2,7 +2,7 @@ import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import { useDescribeFlow } from "@/lib/mcpjam-agent/describe-flow";
 import { registerEvalDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { act, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { McpjamAgentThread } from "../McpjamAgentThread";
 import {
@@ -75,7 +75,12 @@ let requests: any[];
 let generated: ReturnType<typeof vi.fn>;
 let save: ReturnType<typeof vi.fn>;
 let unregister: () => void;
+let cleanups: Array<() => void>;
+afterEach(() => {
+  for (const cleanup of cleanups.reverse()) cleanup();
+});
 beforeEach(() => {
+  cleanups = [];
   __resetAgentChatInstancesForTests();
   useAgentPanelStore.getState().setActiveSession(null, null);
   useEvalAgentScopes.setState({ scopes: {} });
@@ -85,17 +90,19 @@ beforeEach(() => {
     scope: { ...scope, kind: "evals", version: 1, id: "active" },
   });
   useDescribeFlow.setState({ sessions: {} });
-  registerEvalDraft(
-    { ...scope, kind: "evals", version: 1, id: "active" },
-    {
-      read: () => ({
-        draft: { title: "", steps: [] },
-        revision: "r1",
-        tools: [],
-      }),
-      edit: vi.fn(),
-      undo: vi.fn(),
-    },
+  cleanups.push(
+    registerEvalDraft(
+      { ...scope, kind: "evals", version: 1, id: "active" },
+      {
+        read: () => ({
+          draft: { title: "", steps: [] },
+          revision: "r1",
+          tools: [],
+        }),
+        edit: vi.fn(),
+        undo: vi.fn(),
+      },
+    ),
   );
   requests = [];
   save = vi.fn();
@@ -222,9 +229,8 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   });
   const a = openEvalChat({ ...scope, caseId: "case-a" });
   // Seed a real hoisted Chat with A's history as if the user had already chatted.
-  const { getOrCreateAgentChat } = await import(
-    "@/lib/mcpjam-agent/agent-chat-instances"
-  );
+  const { getOrCreateAgentChat } =
+    await import("@/lib/mcpjam-agent/agent-chat-instances");
   const entry = getOrCreateAgentChat(a);
   entry.config.seeded = true;
   entry.chat.messages = [
@@ -284,17 +290,19 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   ).toBeEnabled(); // Input can queue while B’s bridge mounts.
   expect(requests).toHaveLength(0);
   act(() => {
-    registerEvalDraft(
-      { ...scope, caseId: "case-b", kind: "evals", version: 1, id: "b" },
-      {
-        read: () => ({
-          draft: { title: "B", steps: [] },
-          revision: "b1",
-          tools: [],
-        }),
-        edit: vi.fn(),
-        undo: vi.fn(),
-      },
+    cleanups.push(
+      registerEvalDraft(
+        { ...scope, caseId: "case-b", kind: "evals", version: 1, id: "b" },
+        {
+          read: () => ({
+            draft: { title: "B", steps: [] },
+            revision: "b1",
+            tools: [],
+          }),
+          edit: vi.fn(),
+          undo: vi.fn(),
+        },
+      ),
     );
   });
   expect(screen.getByRole("textbox")).toHaveValue("Help with case B");
@@ -439,7 +447,7 @@ it("queues a description during tool loading and sends it once when metadata arr
     edit: vi.fn(),
     undo: vi.fn(),
   });
-  registerEvalDraft(currentScope, bridge(false));
+  cleanups.push(registerEvalDraft(currentScope, bridge(false)));
   // A text-only response makes duplicate user submissions observable.
   vi.mocked(authFetch).mockImplementation(async (_url, init) => {
     requests.push(JSON.parse(init!.body as string));
@@ -471,7 +479,7 @@ it("queues a description during tool loading and sends it once when metadata arr
   expect(requests).toHaveLength(0);
   expect(input).toHaveValue("Search for matching issues");
   act(() => {
-    registerEvalDraft(currentScope, bridge(true));
+    cleanups.push(registerEvalDraft(currentScope, bridge(true)));
   });
   await waitFor(() => expect(requests).toHaveLength(1));
   expect(input).toHaveValue("");

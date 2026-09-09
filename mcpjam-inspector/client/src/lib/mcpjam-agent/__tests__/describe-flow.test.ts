@@ -121,86 +121,131 @@ describe("Describe workflow", () => {
       createDescribeCases("s", { ...scope, suiteId: "other" }, id),
     ).toThrow(/target/i);
   });
-});
 
-it("blocks creation after the tool environment changes", () => {
-  let environmentKey = "v1";
-  registerEvalDraft(scope, {
-    read: () => ({
-      draft,
-      revision,
-      tools: [],
-      metadata: {
-        environmentKey,
-        tools: [{ name: "search" }],
-        servers: [
-          {
-            serverId: "server",
-            status: "ready",
-            tools: [{ name: "search" }],
-            updatedAt: 1,
-          },
-        ],
-      },
-    }),
-    edit,
-    undo: vi.fn(),
+  it("blocks creation after the tool environment changes", () => {
+    let environmentKey = "v1";
+    registerEvalDraft(scope, {
+      read: () => ({
+        draft,
+        revision,
+        tools: [],
+        metadata: {
+          environmentKey,
+          tools: [{ name: "search" }],
+          servers: [
+            {
+              serverId: "server",
+              status: "ready",
+              tools: [{ name: "search" }],
+              updatedAt: 1,
+            },
+          ],
+        },
+      }),
+      edit,
+      undo: vi.fn(),
+    });
+    beginDescribe("s", "Search");
+    const id = proposeDescribeCases("s", scope, proposal());
+    environmentKey = "v2";
+    expect(() => createDescribeCases("s", scope, id)).toThrow(/tools changed/i);
+    expect(edit).not.toHaveBeenCalled();
   });
-  beginDescribe("s", "Search");
-  const id = proposeDescribeCases("s", scope, proposal());
-  environmentKey = "v2";
-  expect(() => createDescribeCases("s", scope, id)).toThrow(/tools changed/i);
-  expect(edit).not.toHaveBeenCalled();
-});
 
-it("rejects unavailable tool calls and rechecks used contracts on Create", () => {
-  let tools = [
-    { name: "search", serverId: "server", inputSchema: { type: "object" } },
-  ];
-  registerEvalDraft(scope, {
-    read: () => ({
-      draft,
-      revision,
-      tools,
-      metadata: {
-        environmentKey: "v1",
+  it("rejects unavailable tool calls and rechecks used contracts on Create", () => {
+    let tools = [
+      { name: "search", serverId: "server", inputSchema: { type: "object" } },
+    ];
+    registerEvalDraft(scope, {
+      read: () => ({
+        draft,
+        revision,
         tools,
-        servers: [{ serverId: "server", status: "ready", tools, updatedAt: 1 }],
-      },
-    }),
-    edit,
-    undo: vi.fn(),
+        metadata: {
+          environmentKey: "v1",
+          tools,
+          servers: [
+            { serverId: "server", status: "ready", tools, updatedAt: 1 },
+          ],
+        },
+      }),
+      edit,
+      undo: vi.fn(),
+    });
+    const input = {
+      ...proposal(),
+      cases: [
+        {
+          ...draft,
+          steps: [
+            ...draft.steps,
+            {
+              id: "call",
+              kind: "toolCall",
+              serverName: "server",
+              toolName: "missing",
+              arguments: {},
+            },
+          ],
+        },
+      ],
+    };
+    beginDescribe("s", "Search");
+    expect(() => proposeDescribeCases("s", scope, input)).toThrow(
+      /not available/i,
+    );
+    input.cases[0].steps[1] = {
+      ...input.cases[0].steps[1],
+      toolName: "search",
+    } as any;
+    const id = proposeDescribeCases("s", scope, input);
+    tools = [
+      { name: "search", serverId: "server", inputSchema: { type: "string" } },
+    ];
+    expect(() => createDescribeCases("s", scope, id)).toThrow(/tools changed/i);
+    expect(edit).not.toHaveBeenCalled();
   });
-  const input = {
-    ...proposal(),
-    cases: [
-      {
-        ...draft,
-        steps: [
-          ...draft.steps,
-          {
-            id: "call",
-            kind: "toolCall",
-            serverName: "server",
-            toolName: "missing",
-            arguments: {},
-          },
-        ],
-      },
-    ],
-  };
-  beginDescribe("s", "Search");
-  expect(() => proposeDescribeCases("s", scope, input)).toThrow(
-    /not available/i,
-  );
-  input.cases[0].steps[1] = {
-    ...input.cases[0].steps[1],
-    toolName: "search",
-  } as any;
-  const id = proposeDescribeCases("s", scope, input);
-  tools = [
-    { name: "search", serverId: "server", inputSchema: { type: "string" } },
-  ];
-  expect(() => createDescribeCases("s", scope, id)).toThrow(/tools changed/i);
-  expect(edit).not.toHaveBeenCalled();
+
+  it("resolves a tool call by server name when metadata is keyed by id", () => {
+    const tools = [
+      { name: "search", serverId: "srv_1", inputSchema: { type: "object" } },
+    ];
+    registerEvalDraft(scope, {
+      read: () => ({
+        draft,
+        revision,
+        tools,
+        metadata: {
+          environmentKey: "v1",
+          tools,
+          servers: [
+            { serverId: "srv_1", status: "ready", tools, updatedAt: 1 },
+          ],
+        },
+      }),
+      edit,
+      undo: vi.fn(),
+    });
+    beginDescribe("s", "Search");
+    const id = proposeDescribeCases("s", scope, {
+      ...proposal(),
+      cases: [
+        {
+          ...draft,
+          steps: [
+            ...draft.steps,
+            {
+              id: "call",
+              kind: "toolCall",
+              serverId: "srv_1",
+              serverName: "Search server",
+              toolName: "search",
+              arguments: {},
+            },
+          ],
+        },
+      ],
+    });
+    expect(id).toBeTruthy();
+  });
 });

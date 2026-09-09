@@ -336,7 +336,11 @@ export function TrialScorecard({
             chain={chain}
             resetKey={iteration?._id}
             stageFooter={(stage) => {
-              const selected = groups.find((group) => group.stage === stage);
+              // Default assertions only: added ones render once, under
+              // "Added assertions" below.
+              const selected = defaultGroups.find(
+                (group) => group.stage === stage,
+              );
               return selected ? (
                 <div
                   className="mt-3 space-y-2"
@@ -352,16 +356,21 @@ export function TrialScorecard({
                       onSyncStep={onSyncStep}
                     />
                   ))}
-                  {stage === "userValue" && showUserValueEvidence && (
-                    <div
-                      className="text-xs text-muted-foreground"
-                      data-testid="user-value-pass-evidence"
-                    >
-                      {userValueEvidence.length
-                        ? userValueEvidence.join(" ")
-                        : "This run recorded a pass without supporting evidence."}
-                    </div>
-                  )}
+                  {stage === "userValue" &&
+                    showUserValueEvidence &&
+                    // `renderGroups` mounts the same block for an unverified
+                    // chain; emit it here only when this footer is the sole
+                    // renderer of the stage.
+                    chain?.status === "verified" && (
+                      <div
+                        className="text-xs text-muted-foreground"
+                        data-testid="user-value-pass-evidence"
+                      >
+                        {userValueEvidence.length
+                          ? userValueEvidence.join(" ")
+                          : "This run recorded a pass without supporting evidence."}
+                      </div>
+                    )}
                 </div>
               ) : null;
             }}

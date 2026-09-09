@@ -2,7 +2,7 @@ import { MessageSquare, Target } from "lucide-react";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
 import {
-  editGeneratedDraft,
+  editGeneratedDraftFromUi,
   type GeneratedDraft,
 } from "@/lib/mcpjam-agent/eval-workspace";
 
@@ -30,7 +30,7 @@ export function ImportedDraftEditor({
           maxLength={20000}
           disabled={locked}
           onChange={(event) =>
-            editGeneratedDraft(scope, draft.id, draft.revision, {
+            editGeneratedDraftFromUi(scope, draft.id, draft.revision, {
               steps: [
                 { id: "prompt", kind: "prompt", prompt: event.target.value },
               ],
@@ -50,7 +50,7 @@ export function ImportedDraftEditor({
           maxLength={10000}
           disabled={locked}
           onChange={(event) =>
-            editGeneratedDraft(scope, draft.id, draft.revision, {
+            editGeneratedDraftFromUi(scope, draft.id, draft.revision, {
               expectedOutput: event.target.value,
             })
           }

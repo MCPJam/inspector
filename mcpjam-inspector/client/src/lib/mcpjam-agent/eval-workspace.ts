@@ -10,6 +10,7 @@ import type { GenerationOptions } from "@/lib/apis/evals-api";
 import { generateId } from "ai";
 import { mintCaseId, stepsSchema, type TestStep } from "@mcpjam/sdk/contract";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
+import { DEFAULT_RUNS_PER_TEST } from "@/shared/eval-defaults";
 import type { CreateEvalTestCaseInput } from "@/lib/evals/generate-and-persist-tests";
 
 export interface EvalDraft {
@@ -87,8 +88,7 @@ export function isEvalContextReady(scope: EvalAgentScope) {
 
 let activeDraftScope: EvalAgentScope | undefined;
 let activeSuiteScope:
-  | Omit<EvalAgentScope, "id" | "kind" | "version">
-  | undefined;
+  Omit<EvalAgentScope, "id" | "kind" | "version"> | undefined;
 export function currentEvalPageScope() {
   if (activeDraftScope) {
     const {
@@ -286,7 +286,7 @@ export function stageMarkdownDrafts(
       expectedOutput: draft.expectedOutput,
       steps: [{ id: "prompt", kind: "prompt", prompt: draft.prompt }],
       models: [],
-      runs: 1,
+      runs: DEFAULT_RUNS_PER_TEST,
       isNegativeTest: false,
       expectedToolCalls: [],
     },
@@ -415,13 +415,52 @@ export function editGeneratedDraft(
     changedFields: Object.keys(patch),
   };
 }
-/** Discard only an unsaved draft; pending saves must finish first. */
-export function removeGeneratedDraft(scope: EvalAgentScope, id: string) {
+/**
+ * UI edits go through here: `editGeneratedDraft` throws on a stale revision
+ * or a locked draft, which is the right contract for the agent tool but would
+ * escape a React event handler. Surface the message as draft state instead.
+ */
+export function editGeneratedDraftFromUi(
+  scope: EvalAgentScope,
+  id: string,
+  revision: string,
+  patch: Parameters<typeof editGeneratedDraft>[3],
+) {
+  try {
+    editGeneratedDraft(scope, id, revision, patch);
+  } catch (error) {
+    updateGeneration(evalSuiteKey(scope), (state) => ({
+      ...state,
+      drafts: state.drafts.map((draft) =>
+        draft.id === id
+          ? {
+              ...draft,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          : draft,
+      ),
+    }));
+  }
+}
+
+/**
+ * Discard an unsaved draft; pending saves must finish first.
+ *
+ * A Markdown draft whose save outcome is unknown (`prepared` set, no answer
+ * from the server) stays put by default so a retry reuses its idempotency
+ * key. `force` is the author's escape hatch when the endpoint never recovers.
+ */
+export function removeGeneratedDraft(
+  scope: EvalAgentScope,
+  id: string,
+  options?: { force?: boolean },
+) {
   const key = evalSuiteKey(scope);
   const current = useEvalGeneration
     .getState()
     .suites[key]?.drafts.find((draft) => draft.id === id);
-  if (!current || current.saving || current.markdownImport?.prepared) return;
+  if (!current || current.saving) return;
+  if (current.markdownImport?.prepared && !options?.force) return;
   updateGeneration(key, (state) => ({
     ...state,
     drafts: state.drafts.filter((draft) => draft.id !== id),

@@ -63,6 +63,7 @@ export function useEvalAgentDraft<T extends EvalDraft>({
     current.current.retryTools = retryTools;
     notifyEvalContextChanged();
   }, [draft, tools, metadata, retryTools]);
+  const canRetryTools = retryTools != null;
   const hasCaseContent = Boolean(
     draft?.steps.some((step) => step.kind !== "prompt" || step.prompt.trim()),
   );
@@ -189,19 +190,26 @@ export function useEvalAgentDraft<T extends EvalDraft>({
           metadata: state.metadata,
         };
       },
-      retryTools: (serverId) =>
-        current.current.retryTools?.(serverId) ?? Promise.resolve(),
+      // Advertise retry only when the surface can actually do it; a no-op
+      // button would promise recovery it cannot deliver.
+      ...(canRetryTools
+        ? {
+            retryTools: (serverId?: string) =>
+              current.current.retryTools?.(serverId) ??
+              Promise.reject(new Error("Retrying tools is unavailable.")),
+          }
+        : {}),
       edit: (revision, patch) => apply(revision, patch),
       undo: (revision) => apply(revision),
     });
-  }, [projectId, suiteId, caseId, setDraft]);
+  }, [projectId, suiteId, caseId, setDraft, canRetryTools]);
   return {
     scope,
     change,
     canUndo: Boolean(
       change &&
-        current.current.draft === draft &&
-        change.revision === current.current.revision,
+      current.current.draft === draft &&
+      change.revision === current.current.revision,
     ),
     open: () => {
       if (!projectId || !autoOpen) return;

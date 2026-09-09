@@ -1,3 +1,5 @@
+import { DEFAULT_RUNS_PER_TEST } from "@/shared/eval-defaults";
+
 /** Tag on manually-created suites that represent MCPJam Explore flows for a server */
 export const EXPLORE_SUITE_TAG = "explore";
 
@@ -22,7 +24,7 @@ export type RunFilterValue =
 // Default values
 export const DEFAULTS = {
   MIN_PASS_RATE: 100,
-  RUNS_PER_TEST: 5,
+  RUNS_PER_TEST: DEFAULT_RUNS_PER_TEST,
   CHART_HEIGHT: "h-32",
   MAX_QUERY_DISPLAY_LENGTH: 100,
   BATCH_DELETE_CONFIRMATION_DELAY: 0,

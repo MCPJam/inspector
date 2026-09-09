@@ -10,6 +10,7 @@ export interface ServerActions {
    */
   ensureServersReady: (
     serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
   /**
    * Flip a server's runtime state to "disconnected" WITHOUT going through
