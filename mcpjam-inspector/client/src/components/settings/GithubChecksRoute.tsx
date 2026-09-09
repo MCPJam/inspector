@@ -912,28 +912,11 @@ export function GithubChecksRoute({
             Loading…
           </div>
         ) : rows.length === 0 ? (
-          <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
+          <div className="px-4 py-8 text-sm text-muted-foreground">
             <p>
               No repositories connected yet. Connect a GitHub account above,
               then connect one of its repositories below to start running checks
               on its pull requests.
-            </p>
-            <p>
-              A repository can declare its check recipe in a{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                mcpjam.yaml
-              </code>{" "}
-              at the repo root. Without one, MCPJam detects a recipe
-              automatically.{" "}
-              <a
-                className="underline underline-offset-2 hover:text-foreground"
-                href="https://docs.mcpjam.com/github-checks"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Read the docs
-              </a>
-              .
             </p>
           </div>
         ) : (
@@ -1104,6 +1087,23 @@ export function GithubChecksRoute({
             </div>
           ))
         )}
+        <p className="px-4 py-3 text-xs text-muted-foreground">
+          MCPJam detects how to build and start your server automatically. To
+          pin those commands, add{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">
+            mcpjam.yaml
+          </code>{" "}
+          at the repository root.{" "}
+          <a
+            className="underline underline-offset-2 hover:text-foreground"
+            href="https://docs.mcpjam.com/github-checks"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read the recipe docs
+          </a>
+          .
+        </p>
       </SettingsSection>
 
       <SettingsSection title="Connect a repository">

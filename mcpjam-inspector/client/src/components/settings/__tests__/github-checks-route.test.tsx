@@ -315,6 +315,10 @@ describe("GithubChecksRoute availability gate", () => {
     mockRepos.value = [ROW];
     renderRoute();
     expect(screen.getByText("mcpjam/mcp-check-fixture")).toBeInTheDocument();
+    expect(screen.getByText("mcpjam.yaml")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the recipe docs" })
+    ).toHaveAttribute("href", "https://docs.mcpjam.com/github-checks");
   });
 
   it("shows the install-App empty state when there are no repos", () => {

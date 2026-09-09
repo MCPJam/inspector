@@ -644,6 +644,46 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
   launchContext?: LaunchContext;
 } & EvalRunProvenance;
 
+export type GithubCheckServerOverride = Array<{
+  serverName: string;
+  projectServerId: string;
+}>;
+
+/** Pair the temporary PR server's display name with its project server row. */
+export function buildGithubCheckServerOverride(args: {
+  source: RunEvalsWithManagerRequest["source"];
+  persistedServerRefs: string[];
+  serverNames?: string[];
+}): GithubCheckServerOverride | undefined {
+  if (args.source !== "github_check") return undefined;
+  if (
+    !args.serverNames?.length ||
+    args.serverNames.length !== args.persistedServerRefs.length
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "GitHub checks require one name for each temporary PR server",
+    );
+  }
+  const names = new Set(args.serverNames.map((name) => name.toLowerCase()));
+  const ids = new Set(args.persistedServerRefs);
+  if (
+    names.size !== args.serverNames.length ||
+    ids.size !== args.persistedServerRefs.length
+  ) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "GitHub checks require unique temporary PR server names and ids",
+    );
+  }
+  return args.serverNames.map((serverName, index) => ({
+    serverName,
+    projectServerId: args.persistedServerRefs[index],
+  }));
+}
+
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
@@ -2334,6 +2374,12 @@ export async function prepareEvalRun(
   const committedCases = authoredCaseUpsert.committed;
   const failedCases = authoredCaseUpsert.failed;
 
+  const githubCheckServerOverride = buildGithubCheckServerOverride({
+    source: request.source,
+    persistedServerRefs,
+    serverNames,
+  });
+
   const {
     runId,
     config,
@@ -2358,6 +2404,7 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     environmentId,
+    ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
     // All three preconditions come from the SAME resolution the tool snapshot
     // was captured against. The revision alone is not enough: an environment
     // pins a `hostId` and optionally an attachment, both dereferenced live, so
