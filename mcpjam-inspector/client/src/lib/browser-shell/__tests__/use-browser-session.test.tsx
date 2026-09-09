@@ -176,3 +176,68 @@ describe("the session's own state", () => {
     await waitFor(() => expect(result.current.holding).toBe(true));
   });
 });
+
+describe("an engine that cannot answer pane commands", () => {
+  // `supportsPane()` duck-types the browserd client, so a daemon from before
+  // the pane endpoints existed answers 501 on all three of them — which the
+  // shared wire mapper turns into `unsupported`. The session is real and the
+  // frames still paint; only the shell's controls have nothing to talk to.
+  it("goes unsupported on the first refusal", async () => {
+    const { transport } = harness({
+      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+    });
+    const { result } = mount(transport);
+    // True up front: nothing has refused yet, and `readState` cannot tell us
+    // — it answers null for an old engine, a held browser and no browser at
+    // all alike.
+    expect(result.current.supported).toBe(true);
+    act(() => result.current.run({ op: "reload" }));
+    await waitFor(() => expect(result.current.supported).toBe(false));
+  });
+
+  it("says nothing, because the controls going inert is the message", async () => {
+    const { transport } = harness({
+      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+    });
+    const { result } = mount(transport);
+    act(() => result.current.run({ op: "reload" }));
+    await waitFor(() => expect(result.current.supported).toBe(false));
+    // A banner here would say in words what the person can already see in the
+    // control they just clicked.
+    expect(result.current.notice).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  it("stays supported when the refusal is somebody else holding it", async () => {
+    // `lease_held` is a refusal too, and a shell that latched on any refusal
+    // would disable its own controls the first time a script had the browser
+    // — permanently, for a condition that clears on its own.
+    const { transport } = harness({
+      sendCommand: async () =>
+        ({ ok: false, reason: "lease_held", holder: { kind: "script" } }) as const,
+    });
+    const { result } = mount(transport);
+    act(() => result.current.run({ op: "reload" }));
+    await waitFor(() => expect(result.current.notice).not.toBeNull());
+    expect(result.current.supported).toBe(true);
+  });
+
+  it("comes back supported when a new browser replaces the old one", async () => {
+    // The latch must not outlive the session that earned it: close a browser
+    // running an old daemon, start one that speaks the shell's language, and
+    // its controls would otherwise come up dead.
+    const old = harness({
+      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+    }).transport;
+    const fresh = harness().transport;
+    const { result, rerender } = renderHook(
+      ({ transport }: { transport: BrowserSessionTransport }) =>
+        useBrowserSession({ transport, holderId: "pane-1", active: true }),
+      { initialProps: { transport: old } },
+    );
+    act(() => result.current.run({ op: "reload" }));
+    await waitFor(() => expect(result.current.supported).toBe(false));
+    rerender({ transport: fresh });
+    await waitFor(() => expect(result.current.supported).toBe(true));
+  });
+});

@@ -1071,7 +1071,10 @@ export function LocalBrowserBody({
           // The shell owns the picture's SIZE, so it is the shell that
           // measures. @see BrowserShellProps.onViewportMeasured
           onViewportMeasured={shell.reportViewport}
-          ready={!!session}
+          // Not just "is there a browser": an engine too old to answer pane
+          // commands has a perfectly real session, and controls that look live
+          // and swallow every click read as broken rather than old.
+          ready={!!session && shell.supported}
           // The shell's own notice wins over the pane's — a dropped takeover
           // click is about this interaction, while the pane's notices are
           // about the stream — and the pane's shows through when there is no

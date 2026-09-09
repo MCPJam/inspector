@@ -23,6 +23,13 @@ const api = vi.hoisted(() => ({
   state: null as unknown,
   /** Every pane command the shell sent, in order. */
   paneCommands: [] as unknown[],
+  /**
+   * Answer pane commands 501, as a daemon older than these endpoints does.
+   *
+   * `supportsPane()` duck-types the browserd client, so a browser started by
+   * a pre-pane daemon has a real session and refuses all three routes.
+   */
+  paneUnsupported: false,
   /** Every panel measurement reported. */
   viewports: [] as Array<{ width: number; height: number }>,
   /** The last socket handed to the pane, so a test can deliver a frame. */
@@ -88,6 +95,9 @@ vi.mock("@/lib/local-browser/client", async () => {
     fetchLocalBrowserState: async () => api.state,
     sendLocalPaneCommand: async (args: any) => {
       api.paneCommands.push(args.command);
+      if (api.paneUnsupported) {
+        return { ok: false as const, reason: "unsupported" as const };
+      }
       return { ok: true as const };
     },
     reportLocalPaneViewport: async (args: any) => {
@@ -125,6 +135,7 @@ beforeEach(() => {
   api.socket = null;
   api.state = null;
   api.paneCommands = [];
+  api.paneUnsupported = false;
   api.viewports = [];
   window.sessionStorage.clear();
 });
@@ -685,5 +696,33 @@ describe("the agent browser pane — when somebody else is driving", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("a browser whose daemon predates the pane endpoints", () => {
+  it("stops offering controls that swallow every click", async () => {
+    // The whole chain, because each link on its own looks fine: the routes
+    // answer 501, the wire mapper calls that `unsupported`, and the hook
+    // swallows it deliberately. Only here does it show up as a tab strip and
+    // an address field that look live and do nothing.
+    api.paneUnsupported = true;
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    const newTab = await screen.findByTestId("browser-new-tab");
+    // Enabled first: nothing has refused yet, and the state poll cannot tell
+    // us — it answers null for an old engine and a busy one alike.
+    expect(newTab).not.toBeDisabled();
+
+    await userEvent.click(newTab);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("browser-new-tab")).toBeDisabled(),
+    );
+    // The strip stays on screen. A browser whose chrome vanishes reads as one
+    // that crashed, which is a worse lie than one that is merely old.
+    expect(screen.getByTestId("browser-tab-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("browser-address")).toBeDisabled();
   });
 });

@@ -87,6 +87,21 @@ export interface BrowserSessionHandle {
   state: BrowserSessionState;
   /** True while this pane holds the browser. */
   holding: boolean;
+  /**
+   * Can this engine answer pane commands at all?
+   *
+   * Latched false by the first refusal rather than read up front, because
+   * `readState` cannot tell us: it answers null for an engine too old to
+   * speak, for a browser somebody else holds and for one that has not started
+   * yet, and collapsing those three is exactly what keeps the poll from
+   * flickering. @see BrowserSessionTransport.readState
+   *
+   * The shell renders its controls inert on false. Without that a browser
+   * running an older daemon draws a full tab strip and address field that
+   * swallow every click in silence, which reads as a broken browser rather
+   * than an old one.
+   */
+  supported: boolean;
   /** Run one command, taking the browser first if it is free. */
   run: (command: BrowserPaneCommand) => void;
   /** Hand it back, then let the agent continue from a fresh look. */
@@ -112,6 +127,7 @@ export function useBrowserSession({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [unsupported, setUnsupported] = useState(false);
 
   // Read through a ref inside the poll and the command path, so neither
   // restarts when the transport identity changes on a re-render — which it
@@ -123,6 +139,18 @@ export function useBrowserSession({
   const setConnection = useCallback((connection: BrowserConnectionState) => {
     dispatch({ type: "connection_changed", connection });
   }, []);
+
+  /**
+   * A new transport is a new browser, and possibly a newer engine.
+   *
+   * Without this the refusal latched by one session outlives it: close a
+   * browser running an old daemon, start one that speaks the shell's language,
+   * and its controls would come up dead. Keyed on the same `transport` the
+   * poll restarts on, so the two agree on when a session became a new one.
+   */
+  useEffect(() => {
+    setUnsupported(false);
+  }, [transport]);
 
   useEffect(() => {
     if (!active || !transport) {
@@ -189,9 +217,11 @@ export function useBrowserSession({
             setError("This browser is no longer running.");
             return;
           case "unsupported":
-            // Silent. The controls are already inert on an engine that cannot
-            // answer, so a message here would explain something the person
-            // cannot see the effect of.
+            // No message, because the latch IS the message: the controls this
+            // click came from go inert on the same render, which says "this
+            // browser cannot do that" in the place the person is already
+            // looking. A banner would say it twice.
+            setUnsupported(true);
             return;
           default:
             setError(outcome.detail ?? "The browser did not accept that.");
@@ -287,6 +317,7 @@ export function useBrowserSession({
   return {
     state,
     holding,
+    supported: !unsupported,
     run,
     resume,
     resuming,

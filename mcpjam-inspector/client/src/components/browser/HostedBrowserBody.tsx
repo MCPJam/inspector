@@ -1285,7 +1285,10 @@ export function HostedBrowserBody({
       {...(session && holding ? { onResumeAgent: shell.resume } : {})}
       resuming={shell.resuming}
       onViewportMeasured={shell.reportViewport}
-      ready={!!session}
+      // Not just "is there a browser": an engine too old to answer pane
+      // commands has a perfectly real session, and controls that look live
+      // and swallow every click read as broken rather than old.
+      ready={!!session && shell.supported}
       // `notice` is the socket's lease-handoff message — somebody took the
       // browser, somebody handed it back. That is a STATUS, and the shell
       // renders notices as a polite live region while errors are static
