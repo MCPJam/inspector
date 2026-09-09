@@ -311,6 +311,11 @@ export function UserTestingScenarioDetail({
   // later completion that is no longer the newest must not reconcile against
   // it — its value has already been superseded.
   const descriptionSaveRef = useRef(0);
+  // Read by `adoptRemoteDescription`, which can run after an await: the render
+  // it was defined in may already be stale, and rolling back to that render's
+  // value would drop a collaborator's edit that landed mid-flight.
+  const remoteDescriptionRef = useRef(scenario.description ?? "");
+  remoteDescriptionRef.current = scenario.description ?? "";
   useEffect(() => {
     if (descriptionFocusedRef.current) return;
     descriptionSeedRef.current = scenario.description ?? "";
@@ -328,8 +333,8 @@ export function UserTestingScenarioDetail({
   };
 
   const adoptRemoteDescription = () => {
-    descriptionSeedRef.current = scenario.description ?? "";
-    setDescriptionDraft(scenario.description ?? "");
+    descriptionSeedRef.current = remoteDescriptionRef.current;
+    setDescriptionDraft(remoteDescriptionRef.current);
   };
 
   const persistDescription = async () => {

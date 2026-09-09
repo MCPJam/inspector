@@ -780,6 +780,36 @@ describe("UserTestingScenarioDetail", () => {
       expect(toast.error).not.toHaveBeenCalled();
     });
 
+    it("adopts a collaborator's value when our save fails mid-flight", async () => {
+      // The rollback runs after the await, so reading `scenario` from its
+      // defining render restored a value the collaborator had already replaced.
+      // The reseed effect had consumed the new one, so the field stayed wrong.
+      let failSave: (err: Error) => void = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, reject) => {
+          failSave = reject;
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Mine" } });
+      fireEvent.blur(textarea);
+
+      // A collaborator's edit lands while our write is still unresolved.
+      rerender(detail({ description: "Theirs" }, { editMode: true }));
+
+      await act(async () => {
+        failSave(new Error("save rejected"));
+      });
+
+      expect(screen.getByTestId("user-testing-description")).toHaveValue(
+        "Theirs",
+      );
+      expect(toast.error).toHaveBeenCalled();
+    });
+
     it("keeps the description out of the header, where it crowded the tabs", () => {
       renderDetail({ description: "Old copy" });
 
