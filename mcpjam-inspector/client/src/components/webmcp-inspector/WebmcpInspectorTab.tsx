@@ -1,18 +1,20 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Globe, RotateCw, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Input } from "@mcpjam/design-system/input";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { useHostContextStore } from "@/stores/client-context-store";
-import { ToolsPanel } from "./ToolsPanel";
+import { ThreePanelLayout } from "@/components/ui/three-panel-layout";
 import {
   ElectronWebviewPane,
   type ElectronWebviewHandle,
 } from "./ElectronWebviewPane";
-import { ToolInvokePane } from "./ToolInvokePane";
 import { ActivityTimeline } from "./ActivityTimeline";
+import { WebmcpToolsSidebar } from "./WebmcpToolsSidebar";
+import { copyToClipboard } from "@/lib/clipboard";
+import { toast } from "@/lib/toast";
 import {
   buildOtlpExport,
   buildSessionExport,
@@ -58,24 +60,11 @@ const SCREENSHOT_POLL_MS = 1_000;
 const PANE_MOUNT_TIMEOUT_MS = 2_000;
 
 /**
- * The WebMCP workspace: a URL bar, the live tool registry, one tool's schema
- * and invoke form, and the activity timeline.
+ * The WebMCP workspace, laid out like the Tools tab: URL and tools on the
+ * left, the live page in the center, activity as a log rail on the right.
  *
- * There is no embedded viewport, and for the LOCAL provider that is the design
- * rather than a gap: the browser opens as a real window on this machine, so the
- * developer drives their own page with their own devtools open, and this screen
- * is the instrument panel beside it.
- *
- * The hosted provider changes where the browser is, not what this screen does.
- * Its session reports `remote-interactive-url`, and the viewport lives in the
- * Browser panel, which can both show the stream and hand control to a person.
- * So the notice at the top of this screen has to say which of those situations
- * the viewer is actually in. Telling someone driving a datacenter browser to
- * look at a window on their own desk sends them hunting for something that is
- * not there.
- *
- * Every one of those per-transport differences lives in `viewportBehaviour`,
- * whose `satisfies never` makes the next transport kind a compile error here
+ * Every per-transport difference lives in `viewportBehaviour`, whose
+ * `satisfies never` makes the next transport kind a compile error here
  * instead of a silent fall-through to window behaviour.
  */
 export function WebmcpInspectorTab() {
@@ -106,7 +95,8 @@ export function WebmcpInspectorTab() {
 
   const [url, setUrl] = useState("http://localhost:3000");
   const [selectedToolKey, setSelectedToolKey] = useState<string | undefined>();
-  const [rightTab, setRightTab] = useState<"tools" | "activity">("tools");
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [activityOpen, setActivityOpen] = useState(true);
   /**
    * Opt-in, and deliberately not remembered: a hosted session reserves a
    * desktop computer and bills its awake time, so it is a choice made per
@@ -554,22 +544,9 @@ export function WebmcpInspectorTab() {
     }
   };
 
-  const selectedTool = tools.find((tool) => tool.toolKey === selectedToolKey);
   const pendingForSelected = pending.find(
     (item) => item.toolKey === selectedToolKey,
   );
-  const lastResultForSelected = [...activity]
-    .reverse()
-    .find(
-      (
-        entry,
-      ): entry is Extract<
-        WebMcpActivityEntry,
-        { kind: "invocation_settled" }
-      > =>
-        entry.kind === "invocation_settled" &&
-        entry.toolKey === selectedToolKey,
-    );
 
   /**
    * Hand the session's evidence to the developer as a file.
@@ -602,104 +579,53 @@ export function WebmcpInspectorTab() {
     setTimeout(() => URL.revokeObjectURL(href), 0);
   };
 
-  return (
-    <div className="flex h-full flex-col">
-      <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-        <Input
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            void (live
-              ? sendCommand({ type: "navigate", url })
-              : openBrowser());
-          }}
-          placeholder="http://localhost:3000"
-          className="max-w-md font-mono text-sm"
-          spellCheck={false}
-          // The placeholder never shows — `url` starts populated — so without
-          // this the field has no accessible name at all.
-          aria-label="Page URL to inspect"
-        />
-        {live ? (
-          <>
-            <Button
-              size="sm"
-              onClick={() => void sendCommand({ type: "navigate", url })}
-            >
-              Go
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void sendCommand({ type: "reload" })}
-            >
-              Reload
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void captureScreenshot()}
-            >
-              Screenshot
-            </Button>
-            {/* Hidden when the stream is not optional (an in-app session has
-                no other viewport) and when there is no stream at all (a
-                client-owned surface is always on, and cannot be turned off
-                without unmounting the session). */}
-            {behaviour.streamRequired || !behaviour.serverPaints ? null : (
-              <Button
-                size="sm"
-                variant={liveView ? "default" : "outline"}
-                aria-pressed={liveView}
-                onClick={() => setLiveView((on) => !on)}
-                title={
-                  liveView
-                    ? "Streaming the page here. Turn it off to stop the browser encoding frames."
-                    : "Not streaming. Turn it on to watch the page here."
-                }
-              >
-                Live view
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void closeSession()}
-            >
-              Close browser
-            </Button>
-          </>
-        ) : null}
-        {/* Available after the browser closes too: the timeline is the point
-            of the session, and it is most wanted once something went wrong. */}
-        {activity.length > 0 ? (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => exportAs("json")}
-            >
-              Export JSON
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => exportAs("otlp")}
-            >
-              Export OTLP
-            </Button>
-          </>
-        ) : null}
-        {/* Everything the pane knows about itself, as one paste-able object.
-            The viewport degrades silently by design — a fallback transport, a
-            stepped-down quality — so "it looks bad" and "it is bad" are not
-            distinguishable from a screenshot. */}
-        {session ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
+  const copyActivity = async (entries: WebMcpActivityEntry[]) => {
+    const copied = await copyToClipboard(JSON.stringify(entries, null, 2));
+    if (copied) toast.success("Activity copied");
+    else toast.error("Could not copy activity to your clipboard");
+  };
+
+  const overflowActions = [
+    ...(live
+      ? [
+          {
+            label: "Screenshot",
+            onSelect: () => void captureScreenshot(),
+          },
+        ]
+      : []),
+    ...(live && !behaviour.streamRequired && behaviour.serverPaints
+      ? [
+          {
+            label: "Live view",
+            onSelect: () => setLiveView((on) => !on),
+            pressed: liveView,
+          },
+        ]
+      : []),
+    ...(!live && !hosted && !isPackaged && !HOSTED_MODE
+      ? [
+          {
+            label: inApp ? "In app" : "Chrome window",
+            onSelect: () => setInApp((on) => !on),
+            pressed: inApp,
+          },
+        ]
+      : []),
+    ...(!live && activeProjectId && !HOSTED_MODE
+      ? [
+          {
+            label: hosted ? "On my computer" : "On this machine",
+            onSelect: () => setHosted((on) => !on),
+            pressed: hosted,
+          },
+        ]
+      : []),
+    ...(session
+      ? [
+          {
+            label: "Copy diagnostics",
+            onSelect: () =>
               void copyWebMcpDiagnostics({
                 session,
                 frameTransport,
@@ -710,94 +636,121 @@ export function WebmcpInspectorTab() {
                       seq: liveFrame.seq,
                     }
                   : undefined,
-              })
-            }
-          >
-            Copy diagnostics
-          </Button>
-        ) : null}
-        {/* Hidden in the PACKAGED app, where "Chrome window" cannot work:
-            forge ships `.vite` with no node_modules and `playwright` is
-            externalized, so launching one always fails. A button that can only
-            produce an error is worse than no button. */}
-        {!live && !hosted && !isPackaged && !HOSTED_MODE ? (
-          <Button
-            size="sm"
-            variant="outline"
-            aria-pressed={inApp}
-            onClick={() => setInApp((on) => !on)}
-            disabled={starting || openingSurface}
-            title={
-              inApp
-                ? isElectron
-                  ? "The page runs right here, in the app — click and type into it directly."
-                  : "The page runs headless and appears in this pane; click and type into it here."
-                : "The page opens in a real Chrome window on this machine, with your own devtools available."
-            }
-          >
-            {inApp ? "In app" : "Chrome window"}
-          </Button>
-        ) : null}
-        {/* WHERE the browser runs is a choice only a local inspector has. A
-            hosted replica has no display to open a window on, so offering the
-            toggle would offer an option the server refuses. */}
-        {!live && activeProjectId && !HOSTED_MODE ? (
-          <Button
-            size="sm"
-            variant={hosted ? "default" : "outline"}
-            aria-pressed={hosted}
-            onClick={() => setHosted((on) => !on)}
-            disabled={starting || openingSurface}
-            title={
-              hosted
-                ? "Runs on your MCPJam computer. It cannot reach localhost, and its awake time is billed."
-                : "Runs in a window on this machine."
-            }
-          >
-            {hosted ? "On my computer" : "On this machine"}
-          </Button>
-        ) : null}
-        {!live ? (
-          <Button
-            size="sm"
-            onClick={() => void openBrowser()}
-            // Hosted has nowhere to run a browser without a project: the
-            // machine belongs to one. Disabled rather than hidden, so the
-            // reason can be read off the tooltip instead of guessed at.
-            disabled={
-              starting || openingSurface || (HOSTED_MODE && !hostedReady)
-            }
-            title={
-              HOSTED_MODE && !hostedReady
-                ? "Sign in and pick a project first — the browser runs on that project's computer."
-                : undefined
-            }
-          >
-            {starting || openingSurface ? "Opening…" : "Open browser"}
-          </Button>
-        ) : null}
-        {session ? <StatusBadge status={session.status} /> : null}
-        {/* Only when the pane is on a WORSE path than it should be, and only
-            once retrying has stopped: a socket that is mid-ladder is about to
-            be fine, and a badge that flickered on every reconnect would train
-            people to ignore it. */}
-        {transportKind === "frame-stream" &&
-        ((frameTransport.rung === "sse-frames" && frameTransport.latched) ||
-          frameTransport.rung === "poll") ? (
-          <Badge
-            variant="outline"
-            className="text-[10px]"
-            title={
-              frameTransport.rung === "poll"
-                ? "This server cannot stream the viewport, so the pane is polling screenshots."
-                : `The frame socket could not be used, so frames are riding the event stream. Attempts: ${frameTransport.attempts}`
-            }
-          >
-            {frameTransport.rung === "poll" ? "Frames: polling" : "Frames: SSE"}
-          </Badge>
-        ) : null}
-      </header>
+              }),
+          },
+        ]
+      : []),
+  ];
 
+  const framesDegraded =
+    transportKind === "frame-stream" &&
+    ((frameTransport.rung === "sse-frames" && frameTransport.latched) ||
+      frameTransport.rung === "poll");
+
+  const showViewport = webviewMounted || live;
+  const hostedBlocked = HOSTED_MODE && !hostedReady;
+
+  const centerContent = showViewport ? (
+    <div className="flex h-full min-h-0 flex-col">
+      {live ? (
+        <div className="flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => void sendCommand({ type: "reload" })}
+          >
+            <RotateCw className="h-3 w-3" />
+            <span className="ml-1">Reload</span>
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => void closeSession()}
+          >
+            <X className="h-3 w-3" />
+            <span className="ml-1">Close browser</span>
+          </Button>
+          {session ? <StatusBadge status={session.status} /> : null}
+          {framesDegraded ? (
+            <Badge
+              variant="outline"
+              className="text-[10px]"
+              title={
+                frameTransport.rung === "poll"
+                  ? "This server cannot stream the viewport, so the pane is polling screenshots."
+                  : `The frame socket could not be used, so frames are riding the event stream. Attempts: ${frameTransport.attempts}`
+              }
+            >
+              {frameTransport.rung === "poll"
+                ? "Frames: polling"
+                : "Frames: SSE"}
+            </Badge>
+          ) : null}
+          <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+            {behaviour.notice}
+          </p>
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {/* The client-owned surface renders INSTEAD of the viewport pane, not
+            inside it: the pane's aspect lock, image element and input
+            forwarder are all wrong for a live Chromium view, and mounting it
+            alongside would put two things on screen claiming to be the page.
+            It also stays mounted while the start request is in flight, which
+            is what makes mount-then-start possible. */}
+        {webviewMounted ? (
+          <ElectronWebviewPane
+            key={webviewAttempt}
+            ref={attachPane}
+            onNavigate={setUrl}
+            onError={setLocalError}
+          />
+        ) : live && behaviour.embedsBrowserPanel && sessionProjectId ? (
+          /* The remote browser's own live view, in the pane rather than
+             somewhere else to go and find.
+
+             Mounted only once the session REPORTS this transport, never
+             before: the panel mints a token for a desktop computer, and
+             asking for one before the session has reserved that computer
+             throws. `ensure={false}` for the same reason the panel refuses
+             to reserve anywhere — a viewport must not be able to provision a
+             machine; the session it is watching already did. */
+          <div className="min-h-0 flex-1">
+            <BrowserPanel projectId={sessionProjectId} ensure={false} />
+          </div>
+        ) : live ? (
+          <ViewportPane
+            frame={liveFrame}
+            fallbackScreenshot={lastScreenshot}
+            fallbackScreenshotAt={lastScreenshotAt}
+            streaming={streaming}
+            transport={session?.viewportTransport}
+            behaviour={behaviour}
+            onInput={sendInput}
+          />
+        ) : null}
+      </div>
+    </div>
+  ) : (
+    <div className="flex h-full items-center justify-center">
+      <div className="mx-auto max-w-sm p-8 text-center">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+          <Globe className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <p className="mb-1 text-xs font-semibold text-foreground">Open a page</p>
+        <p className="text-xs font-medium text-muted-foreground">
+          {hostedBlocked
+            ? "A hosted browser runs on your own MCPJam computer, so it needs a signed-in account and a project to run under. Pick a project to get started — and note it cannot reach anything on your own network, including localhost."
+            : "Enter a URL on the left to inspect the tools it registers."}
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-full flex-col">
       {error || localError ? (
         <ErrorBanner
           message={error?.message ?? localError!}
@@ -809,132 +762,70 @@ export function WebmcpInspectorTab() {
         />
       ) : null}
 
-      {!live && HOSTED_MODE && !hostedReady ? (
-        <p className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-          {/* Names BOTH reasons, because from here they are indistinguishable
-              and only one of them used to be mentioned. A signed-out viewer
-              told to "pick a project" goes looking for a picker that is not
-              there for them; the hosted route refuses their bearer outright,
-              so it is not a nicety. */}
-          A hosted browser runs on your own MCPJam computer, so it needs a
-          signed-in account and a project to run under. Pick a project to get
-          started — and note it cannot reach anything on your own network,
-          including localhost.
-        </p>
-      ) : null}
-
-      {live ? (
-        <p className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-          {/* Never promise a window that does not exist. A headless session has
-              no viewport at all, and a HOSTED one has a browser running on a
-              machine in a datacenter — telling someone to look at a window on
-              their own desk would send them hunting for something that is not
-              there. */}
-          {behaviour.notice}
-          {session?.url ? (
-            <span className="ml-1 font-mono">{session.url}</span>
-          ) : null}
-        </p>
-      ) : null}
-
-      <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col overflow-auto border-r">
-          {/* The client-owned surface renders INSTEAD of the viewport pane, not
-              inside it: the pane's aspect lock, image element and input
-              forwarder are all wrong for a live Chromium view, and mounting it
-              alongside would put two things on screen claiming to be the page.
-              It also stays mounted while the start request is in flight, which
-              is what makes mount-then-start possible. */}
-          {webviewMounted ? (
-            <ElectronWebviewPane
-              key={webviewAttempt}
-              ref={attachPane}
-              onNavigate={setUrl}
-              onError={setLocalError}
-            />
-          ) : live && behaviour.embedsBrowserPanel && sessionProjectId ? (
-            /* The remote browser's own live view, in the pane rather than
-               somewhere else to go and find.
-       
-               Mounted only once the session REPORTS this transport, never
-               before: the panel mints a token for a desktop computer, and
-               asking for one before the session has reserved that computer
-               throws. `ensure={false}` for the same reason the panel refuses
-               to reserve anywhere — a viewport must not be able to provision a
-               machine; the session it is watching already did. */
-            <div className="min-h-0 flex-1 border-b">
-              <BrowserPanel projectId={sessionProjectId} ensure={false} />
-            </div>
-          ) : live ? (
-            <ViewportPane
-              frame={liveFrame}
-              fallbackScreenshot={lastScreenshot}
-              fallbackScreenshotAt={lastScreenshotAt}
-              streaming={streaming}
-              transport={session?.viewportTransport}
-              behaviour={behaviour}
-              onInput={sendInput}
-            />
-          ) : null}
-          <ToolInvokePane
-            tool={selectedTool}
-            lastResult={lastResultForSelected}
+      <ThreePanelLayout
+        id="webmcp"
+        sidebar={
+          <WebmcpToolsSidebar
+            url={url}
+            onUrlChange={setUrl}
+            onUrlSubmit={() => {
+              void (live
+                ? sendCommand({ type: "navigate", url })
+                : openBrowser());
+            }}
+            tools={tools}
+            selectedToolKey={selectedToolKey}
+            onSelectTool={setSelectedToolKey}
+            hasSession={live}
+            live={live}
+            starting={starting || openingSurface}
             pendingInvokeId={pendingForSelected?.invokeId}
+            primaryLabel={
+              live
+                ? "Go"
+                : starting || openingSurface
+                  ? "Opening…"
+                  : "Open browser"
+            }
+            primaryDisabled={
+              starting || openingSurface || hostedBlocked
+            }
+            primaryTitle={
+              hostedBlocked
+                ? "Sign in and pick a project first — the browser runs on that project's computer."
+                : undefined
+            }
+            onPrimary={() => {
+              void (live
+                ? sendCommand({ type: "navigate", url })
+                : openBrowser());
+            }}
+            overflowActions={overflowActions}
+            onClose={() => setSidebarVisible(false)}
             onInvoke={(input) => {
               if (!selectedToolKey) return;
               void invokeTool(selectedToolKey, input);
             }}
             onCancel={(invokeId) => void cancelInvocation(invokeId)}
           />
-          {lastScreenshot ? (
-            <figure className="border-t p-3">
-              <img
-                src={`data:image/jpeg;base64,${lastScreenshot}`}
-                alt="The inspected page"
-                className="max-h-64 rounded border"
-              />
-              <figcaption className="pt-1 text-[11px] text-muted-foreground">
-                Snapshot of the page as of the last capture.
-              </figcaption>
-            </figure>
-          ) : null}
-        </div>
-
-        <aside className="flex w-96 min-w-80 flex-col">
-          <div className="flex border-b">
-            {(["tools", "activity"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setRightTab(tab)}
-                className={cn(
-                  "flex-1 px-3 py-2 text-xs font-medium capitalize transition-colors",
-                  rightTab === tab
-                    ? "border-b-2 border-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {tab}
-                {tab === "tools" && tools.length > 0
-                  ? ` (${tools.length})`
-                  : ""}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            {rightTab === "tools" ? (
-              <ToolsPanel
-                tools={tools}
-                selectedToolKey={selectedToolKey}
-                onSelect={setSelectedToolKey}
-                hasSession={live}
-              />
-            ) : (
-              <ActivityTimeline entries={activity} />
-            )}
-          </div>
-        </aside>
-      </div>
+        }
+        content={centerContent}
+        sidebarVisible={sidebarVisible}
+        onSidebarVisibilityChange={setSidebarVisible}
+        sidebarTooltip="Show tools"
+        right={
+          <ActivityTimeline
+            entries={activity}
+            onCopy={(entries) => void copyActivity(entries)}
+            onExportJson={() => exportAs("json")}
+            onExportOtlp={() => exportAs("otlp")}
+            onClose={() => setActivityOpen(false)}
+          />
+        }
+        rightVisible={activityOpen}
+        onRightVisibilityChange={setActivityOpen}
+        rightTooltip="Show activity"
+      />
     </div>
   );
 }
@@ -1187,7 +1078,7 @@ function ViewportPane({
     : {};
 
   return (
-    <figure className="m-0 border-b bg-muted/20 p-3">
+    <figure className="m-0 flex h-full min-h-0 flex-col bg-muted/20 p-3">
       <div
         ref={paneRef}
         // Focusable only when it drives something: a tab stop that does nothing

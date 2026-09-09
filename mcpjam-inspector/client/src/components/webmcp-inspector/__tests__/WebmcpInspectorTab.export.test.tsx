@@ -4,6 +4,7 @@
  * mode with no error to show for it.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ReactNode } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
@@ -11,6 +12,24 @@ import type {
   WebMcpActivityEntry,
   WebMcpSessionPublic,
 } from "@/shared/webmcp-inspector-protocol";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
+
+function openExportMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "Export activity" }));
+}
+
+function openMoreActions() {
+  fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+}
 
 // jsdom implements neither, and the tab reconnects its stream on mount.
 class FakeEventSource {
@@ -66,7 +85,8 @@ describe("WebmcpInspectorTab — export", () => {
   it("copies the viewport's own diagnostics, and only with a session", async () => {
     clipboard.copy.mockClear();
     const view = render(<WebmcpInspectorTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+    openMoreActions();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy diagnostics" }));
     await Promise.resolve();
 
     const copied = JSON.parse(String(clipboard.copy.mock.calls[0]![0]));
@@ -101,7 +121,8 @@ describe("WebmcpInspectorTab — export", () => {
       .mockImplementation(() => {});
 
     render(<WebmcpInspectorTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
+    openExportMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export JSON" }));
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
@@ -124,8 +145,10 @@ describe("WebmcpInspectorTab — export", () => {
     });
 
     render(<WebmcpInspectorTab />);
-    fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
-    fireEvent.click(screen.getByRole("button", { name: "Export OTLP" }));
+    openExportMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export JSON" }));
+    openExportMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export OTLP" }));
 
     expect(downloads).toEqual([
       "webmcp-session-426581af.json",
@@ -139,13 +162,13 @@ describe("WebmcpInspectorTab — export", () => {
     useWebmcpInspectorStore.setState({ session: undefined });
     render(<WebmcpInspectorTab />);
     expect(
-      screen.getByRole("button", { name: "Export JSON" }),
+      screen.getByRole("button", { name: "Export activity" }),
     ).toBeInTheDocument();
   });
 
   it("offers no export for a session with an empty timeline", () => {
     useWebmcpInspectorStore.setState({ activity: [] });
     render(<WebmcpInspectorTab />);
-    expect(screen.queryByRole("button", { name: "Export JSON" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export activity" })).toBeNull();
   });
 });

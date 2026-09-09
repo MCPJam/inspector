@@ -12,11 +12,21 @@
  * know the arm is load-bearing rather than decorative.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import type { WebMcpSessionPublic } from "@/shared/webmcp-inspector-protocol";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
 
 /**
  * The `<webview>` the pane renders, as jsdom leaves it: an unknown element with
@@ -406,12 +416,18 @@ describe("WebmcpInspectorTab — mounting the surface", () => {
     // "Chrome window" cannot work there — forge ships no node_modules and
     // `playwright` is externalized — so the button would only ever error.
     expect(screen.queryByRole("button", { name: "In app" })).toBeNull();
+    const more = screen.queryByRole("button", { name: "More actions" });
+    if (more) {
+      fireEvent.click(more);
+      expect(screen.queryByRole("menuitem", { name: "In app" })).toBeNull();
+    }
   });
 
   it("keeps the destination toggle in a dev run", async () => {
     render(<WebmcpInspectorTab />);
     await act(async () => {});
-    expect(screen.getByRole("button", { name: "In app" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getByRole("menuitem", { name: "In app" })).toBeInTheDocument();
   });
 });
 

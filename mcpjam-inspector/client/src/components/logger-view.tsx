@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { track } from "@/lib/analytics";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
-  ChevronRight,
   AlertCircle,
   Search,
   Trash2,
@@ -10,6 +9,7 @@ import {
   Copy,
   Download,
 } from "lucide-react";
+import { LogRow } from "@/components/ui/log-row";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@mcpjam/design-system/input";
 import { Button } from "@mcpjam/design-system/button";
@@ -973,26 +973,14 @@ export function LoggerView({
                 oauthDebuggerTargetServerName !== undefined;
 
               return (
-                <div
+                <LogRow
                   key={it.id}
-                  className={cn(
-                    "group border-b border-border border-l-2",
-                    borderClass,
-                    isError && "bg-destructive/5",
-                    isExpanded && "bg-muted/20"
-                  )}
-                >
-                  <div
-                    className="h-7 px-2 flex items-center gap-1.5 cursor-pointer select-none hover:bg-muted/30 transition-colors"
-                    onClick={() => toggleExpanded(it.id)}
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform duration-150",
-                        isExpanded && "rotate-90"
-                      )}
-                    />
-                    {isError && !isOAuthTraffic && !isHttpExchange ? (
+                  expanded={isExpanded}
+                  onToggle={() => toggleExpanded(it.id)}
+                  isError={isError}
+                  borderClass={borderClass}
+                  badge={
+                    isError && !isOAuthTraffic && !isHttpExchange ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel
@@ -1005,134 +993,121 @@ export function LoggerView({
                         }
                         oauthRecovered={it.oauthRecovered}
                       />
-                    )}
-                    <span
-                      className={cn(
-                        "flex-1 min-w-0 font-mono text-xs truncate",
-                        isError ? "text-destructive" : "text-foreground"
-                      )}
-                      title={displayMethod}
-                    >
-                      {displayMethod}
-                    </span>
-                    <span
-                      className={cn(
-                        "hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]",
-                        showOAuthDebuggerCta &&
-                          "order-4 max-sm:order-5 group-hover:order-5 group-focus-within:order-5"
-                      )}
-                      title={getDisplayServerTitle(it)}
-                    >
-                      {getDisplayServerLabel(it)}
-                    </span>
-                    {showOAuthDebuggerCta && (
-                      <div
+                    )
+                  }
+                  title={displayMethod}
+                  titleTooltip={displayMethod}
+                  meta={
+                    <>
+                      <span
                         className={cn(
-                          "order-5 max-sm:order-4 flex max-h-7 shrink-0 overflow-hidden transition-[max-width,opacity] duration-150 ease-out",
-                          "max-w-0 opacity-0",
-                          "max-sm:max-w-[min(100%,15rem)] max-sm:opacity-100",
-                          "group-hover:order-4 group-focus-within:order-4",
-                          "group-hover:max-w-[min(100%,15rem)] group-hover:opacity-100",
-                          "group-focus-within:max-w-[min(100%,15rem)] group-focus-within:opacity-100"
+                          "hidden sm:inline text-muted-foreground truncate max-w-[120px] text-[11px]",
+                          showOAuthDebuggerCta &&
+                            "order-4 max-sm:order-5 group-hover:order-5 group-focus-within:order-5"
                         )}
+                        title={getDisplayServerTitle(it)}
                       >
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="h-6 shrink-0 px-2 text-[10px] leading-none"
-                          asChild
+                        {getDisplayServerLabel(it)}
+                      </span>
+                      {showOAuthDebuggerCta && (
+                        <div
+                          className={cn(
+                            "order-5 max-sm:order-4 flex max-h-7 shrink-0 overflow-hidden transition-[max-width,opacity] duration-150 ease-out",
+                            "max-w-0 opacity-0",
+                            "max-sm:max-w-[min(100%,15rem)] max-sm:opacity-100",
+                            "group-hover:order-4 group-focus-within:order-4",
+                            "group-hover:max-w-[min(100%,15rem)] group-hover:opacity-100",
+                            "group-focus-within:max-w-[min(100%,15rem)] group-focus-within:opacity-100"
+                          )}
                         >
-                          <a
-                            href={OAUTH_DEBUGGER_HASH}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (oauthDebuggerTargetServerName) {
-                                requestOpenOAuthDebugger(
-                                  oauthDebuggerTargetServerName,
-                                );
-                              }
-                            }}
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="h-6 shrink-0 px-2 text-[10px] leading-none"
+                            asChild
                           >
-                            Continue in OAuth Debugger
-                          </a>
-                        </Button>
+                            <a
+                              href={OAUTH_DEBUGGER_HASH}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (oauthDebuggerTargetServerName) {
+                                  requestOpenOAuthDebugger(
+                                    oauthDebuggerTargetServerName,
+                                  );
+                                }
+                              }}
+                            >
+                              Continue in OAuth Debugger
+                            </a>
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  }
+                  timestamp={new Date(it.timestamp).toLocaleTimeString()}
+                >
+                  <div className="max-h-[40vh] overflow-auto">
+                    {isHttpExchange ? (
+                      <HttpExchangeDetails
+                        exchange={it.payload as HttpExchangeLogEvent}
+                        // The `Mcp-Param-*` verdicts need the call's
+                        // arguments, which live on the JSON-RPC frame this
+                        // exchange carried — capture stores no bodies. The
+                        // dedicated HTTP row has no frame in hand, so it
+                        // hands over the raw materials and lets the details
+                        // component pair back to one INSIDE a memo: the
+                        // reverse correlation is the expensive direction,
+                        // and deriving it here would re-run it on every
+                        // render of the list (each search keystroke, each
+                        // log-store update) and hand a fresh object down
+                        // that defeats the memo below it.
+                        exchangeItem={it}
+                        items={allItems}
+                      />
+                    ) : (
+                      <div className="space-y-2">
+                        {/*
+                          A body over the retention cap was never kept — by
+                          the server bus, by the store, or by both. Say so
+                          in a sentence, then show what did survive: the
+                          JSON-RPC envelope is preserved, so the frame's
+                          id and method are still worth rendering.
+                        */}
+                        {isTruncatedRpcPayload(it.payload) && (
+                          <p className="text-muted-foreground px-1 text-xs">
+                            {describeTruncatedRpcPayload(it.payload)}
+                          </p>
+                        )}
+                        <JsonEditor
+                          height="100%"
+                          value={normalizePayload(it.payload) as object}
+                          readOnly
+                          showToolbar={false}
+                          collapsible
+                          defaultExpandDepth={2}
+                          collapseStringsAfterLength={100}
+                        />
+                        {/*
+                          The headers this frame rode in, when they can be
+                          correlated confidently. Collapsed by default: the
+                          body is what a reader opened the row for, and on
+                          every era before 2026-07-28 the headers carry
+                          nothing they need. Absent entirely when nothing
+                          matched — see `findExchangeForFrame`.
+                        */}
+                        {/*
+                          Correlated against `allItems`, never
+                          `filteredItems`: with the funnel on "Server" the
+                          exchanges are filtered OUT of the list, and
+                          searching the filtered view would make the
+                          headers vanish under exactly the filter a reader
+                          picks to look at frames.
+                        */}
+                        <InlineFrameHeaders frame={it} items={allItems} />
                       </div>
                     )}
-                    <span
-                      className={cn(
-                        "text-muted-foreground font-mono text-[11px] whitespace-nowrap tabular-nums",
-                        showOAuthDebuggerCta && "order-6"
-                      )}
-                    >
-                      {new Date(it.timestamp).toLocaleTimeString()}
-                    </span>
                   </div>
-                  {isExpanded && (
-                    <div className="border-t border-border bg-muted/10 p-2">
-                      <div className="max-h-[40vh] overflow-auto">
-                        {isHttpExchange ? (
-                          <HttpExchangeDetails
-                            exchange={it.payload as HttpExchangeLogEvent}
-                            // The `Mcp-Param-*` verdicts need the call's
-                            // arguments, which live on the JSON-RPC frame this
-                            // exchange carried — capture stores no bodies. The
-                            // dedicated HTTP row has no frame in hand, so it
-                            // hands over the raw materials and lets the details
-                            // component pair back to one INSIDE a memo: the
-                            // reverse correlation is the expensive direction,
-                            // and deriving it here would re-run it on every
-                            // render of the list (each search keystroke, each
-                            // log-store update) and hand a fresh object down
-                            // that defeats the memo below it.
-                            exchangeItem={it}
-                            items={allItems}
-                          />
-                        ) : (
-                          <div className="space-y-2">
-                            {/*
-                              A body over the retention cap was never kept — by
-                              the server bus, by the store, or by both. Say so
-                              in a sentence, then show what did survive: the
-                              JSON-RPC envelope is preserved, so the frame's
-                              id and method are still worth rendering.
-                            */}
-                            {isTruncatedRpcPayload(it.payload) && (
-                              <p className="text-muted-foreground px-1 text-xs">
-                                {describeTruncatedRpcPayload(it.payload)}
-                              </p>
-                            )}
-                            <JsonEditor
-                              height="100%"
-                              value={normalizePayload(it.payload) as object}
-                              readOnly
-                              showToolbar={false}
-                              collapsible
-                              defaultExpandDepth={2}
-                              collapseStringsAfterLength={100}
-                            />
-                            {/*
-                              The headers this frame rode in, when they can be
-                              correlated confidently. Collapsed by default: the
-                              body is what a reader opened the row for, and on
-                              every era before 2026-07-28 the headers carry
-                              nothing they need. Absent entirely when nothing
-                              matched — see `findExchangeForFrame`.
-                            */}
-                            {/*
-                              Correlated against `allItems`, never
-                              `filteredItems`: with the funnel on "Server" the
-                              exchanges are filtered OUT of the list, and
-                              searching the filtered view would make the
-                              headers vanish under exactly the filter a reader
-                              picks to look at frames.
-                            */}
-                            <InlineFrameHeaders frame={it} items={allItems} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                </LogRow>
               );
             })}
           </>

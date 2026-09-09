@@ -8,6 +8,7 @@
  * they never typed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
@@ -19,6 +20,16 @@ import type {
   WebMcpInputEvent,
   WebMcpSessionPublic,
 } from "@/shared/webmcp-inspector-protocol";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
 
 class FakeEventSource {
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -160,7 +171,10 @@ describe("WebmcpInspectorTab — viewport", () => {
     ).toBeInTheDocument();
 
     await act(async () => {
-      screen.getByRole("button", { name: "Live view" }).click();
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Live view" }));
     });
 
     // Holding the screenshot would freeze the pane on an old picture still
@@ -189,7 +203,10 @@ describe("WebmcpInspectorTab — viewport", () => {
     setScreencast.mockClear();
 
     await act(async () => {
-      screen.getByRole("button", { name: "Live view" }).click();
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Live view" }));
     });
     expect(setScreencast).toHaveBeenCalledWith(false);
     expect(setScreencast).not.toHaveBeenCalledWith(true);
@@ -892,7 +909,10 @@ describe("WebmcpInspectorTab — viewport", () => {
     });
 
     await act(async () => {
-      screen.getByRole("button", { name: "In app" }).click();
+      fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "In app" }));
     });
     await act(async () => {
       screen.getByRole("button", { name: "Open browser" }).click();
