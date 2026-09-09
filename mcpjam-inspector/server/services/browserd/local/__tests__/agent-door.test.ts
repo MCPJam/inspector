@@ -530,10 +530,12 @@ describe("runAgentCommand", () => {
     expect(JSON.stringify(ran.result)).not.toContain("evil.test");
   });
 
-  it("refuses a ref target as caller-fixable, not as a policy denial", async () => {
-    // 400 and `unsupported_target`: the caller can fix this by using a
-    // selector. Reporting it as `tool_not_allowed` would tell an agent to give
-    // up on a capability the session actually has.
+  it("DISPATCHES a ref target — the daemon is the only layer that can judge it", async () => {
+    // The door used to refuse this outright, because ref resolution did not
+    // exist. It does now, and the judgement belongs at the daemon: a ref is
+    // scoped to the tab that issued it and validated against that
+    // observation's state token, neither of which this layer knows. A daemon
+    // too old to resolve one still answers `unsupported_target` itself.
     const fake = fakeClient({ status: "ok", result: { ok: true }, bootId: "boot-1" });
     const ran = await runAgentCommand({
       session: await session(),
@@ -543,12 +545,10 @@ describe("runAgentCommand", () => {
       actor: ACTOR,
       command: { op: "act", verb: "click", target: { ref: "e7" } },
     });
-    expect(ran.status).toBe(400);
-    if (ran.result.status !== "refused") throw new Error("wrong arm");
-    expect(ran.result.refusal.code).toBe("unsupported_target");
-    expect(fake.sent).toHaveLength(0);
-    // Recorded as the act it was, with the ref it named.
-    expect(fake.refusals[0]?.command.action).toMatchObject({
+    expect(ran.status).toBe(200);
+    expect(ran.result.status).toBe("executed");
+    // Sent as the act it was, with the ref translated to the daemon's name.
+    expect(fake.sent[0]?.action).toMatchObject({
       kind: "act",
       target: { a11yRef: "e7" },
     });

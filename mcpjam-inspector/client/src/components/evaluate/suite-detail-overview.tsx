@@ -59,6 +59,7 @@ import {
   runHistoryFilterOptions,
   suiteRunBlockedReason,
   runTimestamp,
+  formatRunHistoryDate,
 } from "./suite-detail-model";
 import type {
   EvalCase,
@@ -512,7 +513,10 @@ export function SuiteDetailOverview({
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-border/30">
                     <TableHead className={runHistoryHeadClass}>
-                      Run / Date
+                      Date
+                    </TableHead>
+                    <TableHead className={runHistoryHeadClass}>
+                      Run
                     </TableHead>
                     <TableHead className={runHistoryHeadClass}>
                       Client : model
@@ -560,14 +564,7 @@ export function SuiteDetailOverview({
                         historyRows={rowMap}
                         showGitContext={false}
                         label={`Run #${representative.runNumber}`}
-                        detail={new Date(
-                          representative.createdAt,
-                        ).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
+                        date={formatRunHistoryDate(representative.createdAt)}
                         onOpen={() => onRunClick(representative._id)}
                       />
                     );
@@ -617,7 +614,7 @@ export function SuiteDetailOverview({
           <div
             className={cn(
               evalSurfaceHeaderClass,
-              "flex items-center justify-between gap-3 px-4 py-3",
+              "flex items-center justify-between gap-3 bg-muted/55 px-4 py-3",
             )}
           >
             <h3 className="text-sm font-semibold text-foreground">

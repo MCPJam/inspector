@@ -72,10 +72,10 @@ describe("SuiteRunHistorySnapshot", () => {
 
     const root = screen.getByTestId("suite-run-history-snapshot");
     expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
-    expect(within(root).getByText("1 failed iteration")).toBeTruthy();
+    expect(within(root).queryByText(/failed iteration/)).toBeNull();
     expect(within(root).getByText("50%")).toBeTruthy();
     expect(within(root).getByText("1/2 passed")).toBeTruthy();
-    expect(within(root).getByText("Latest run")).toBeTruthy();
+    expect(within(root).queryByText("Latest run")).toBeNull();
 
     const latency = within(root).getByTestId("metric-strip-latency");
     expect(within(latency).getByText("P50")).toBeTruthy();
@@ -119,7 +119,8 @@ describe("SuiteRunHistorySnapshot", () => {
       />,
     );
 
-    expect(screen.getByText("Latest run · trends across 2 runs")).toBeTruthy();
+    expect(screen.queryByText(/Latest run/)).toBeNull();
+    expect(screen.queryByText(/trends across/)).toBeNull();
     expect(screen.getByText("0%")).toBeTruthy();
   });
   it("shows measured history trends with real run labels and leaves unpriced cost blank", () => {
@@ -176,7 +177,7 @@ describe("SuiteRunHistorySnapshot", () => {
       }
       expect(screen.queryByTestId("metric-sparkline-cost")).toBeNull();
       expect(screen.getByText("not priced")).toBeVisible();
-      expect(screen.getByText("↓100 pp")).toBeVisible();
+      expect(screen.queryByText(/ pp$/)).toBeNull();
       const latency = screen.getByTestId("metric-sparkline-latency");
       fireEvent.mouseMove(latency, { clientX: 0 });
       expect(within(latency).getByText(/Run #7/)).toBeVisible();
@@ -202,7 +203,9 @@ describe("SuiteRunHistorySnapshot", () => {
         allIterations={[iteration({ result: "pending", status: "running" })]}
       />,
     );
-    expect(screen.getByText("No failed iterations")).toBeVisible();
+    expect(screen.queryByText(/failed iteration/)).toBeNull();
     expect(screen.queryByText("All iterations passed")).toBeNull();
+    expect(screen.getByText("0%")).toBeVisible();
+    expect(screen.getByText("0/1 passed")).toBeVisible();
   });
 });

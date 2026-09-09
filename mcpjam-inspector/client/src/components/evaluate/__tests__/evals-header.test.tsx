@@ -15,7 +15,7 @@ describe("EvalsHeader", () => {
     expect(screen.getByRole("heading", { name: "Evaluate" })).toBeTruthy();
     expect(
       screen.getByText(
-        "The manual pass you'd do before a ship, automated and run whenever the server changes.",
+        "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.",
       ),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
@@ -49,7 +49,7 @@ describe("EvalsHeader", () => {
     expect(runs).not.toHaveAttribute("aria-current");
     expect(
       screen.getByText(
-        "The manual pass you'd do before a ship, automated and run whenever the server changes.",
+        "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.",
       ),
     ).toBeTruthy();
 
@@ -67,7 +67,7 @@ describe("EvalsHeader", () => {
 
     expect(screen.queryByRole("heading", { name: "Evaluate" })).toBeNull();
     expect(
-      screen.queryByText(/manual pass you'd do before a ship/i),
+      screen.queryByText(/durable test suite from the prompts/i),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: /^suites$/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^runs$/i })).toBeNull();

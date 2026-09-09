@@ -35,13 +35,13 @@ export function EvalsEmptyHero({
   const visibleServers = servers.slice(0, EVALS_EMPTY_HERO_MAX_SERVERS);
   const showServerCards = visibleServers.length > 0;
   // Sample-suite lives down here because it has no other entry point. A
-  // blank suite does: the header Create suite. Server cards start the
-  // first-run preview, not that form. Loading withholds the row so it
-  // does not reflow when servers arrive.
+  // blank suite does: the header Create suite. Server cards open that
+  // same form with the server and a name already filled in. Loading
+  // withholds the row so it does not reflow when servers arrive.
   const showCtas = !serversLoading;
   // Without `onEvalServer` the card can only open the blank suite form, so it
-  // must say so: a card that reads "Eval my server" and opens Create suite
-  // promises a preview it cannot start.
+  // must say so: a card that reads "Eval my server" and opens a blank form
+  // promises a server-scoped start it cannot provide.
   const cardAction = onEvalServer ? "Eval my server" : "Create suite";
 
   return (
@@ -104,7 +104,7 @@ export function EvalsEmptyHero({
 
 /**
  * When server cards are up, only the sample suite stays here. Create suite
- * lives in the header. The cards start the first-run preview.
+ * lives in the header. The cards open that form with the server prefilled.
  */
 function EmptyHeroCtas({
   onCreateSuite,

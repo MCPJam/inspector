@@ -361,6 +361,40 @@ export function formatRunHistoryMetric(
   return formatCompactNumber(value);
 }
 
+const RUN_HISTORY_DAY: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+};
+
+export function formatRunHistoryDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
+  return new Date(timestamp).toLocaleString(undefined, {
+    ...RUN_HISTORY_DAY,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Earliest → latest calendar day for a suite group. Same day collapses to one date. */
+export function formatRunHistoryDateRange(
+  earliest: number,
+  latest: number,
+): string {
+  const timestamps = [earliest, latest].filter(
+    (timestamp) => Number.isFinite(timestamp) && timestamp > 0,
+  );
+  if (timestamps.length === 0) return "-";
+  const start = new Date(Math.min(...timestamps));
+  const end = new Date(Math.max(...timestamps));
+  const startLabel = start.toLocaleString(undefined, RUN_HISTORY_DAY);
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  if (sameDay) return startLabel;
+  return `${startLabel} – ${end.toLocaleString(undefined, RUN_HISTORY_DAY)}`;
+}
+
 export type SuiteTestCaseRow = {
   caseId: string;
   title: string;

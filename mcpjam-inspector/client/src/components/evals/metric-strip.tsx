@@ -386,10 +386,12 @@ export function MetricStrip({
         )
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2">
-            {verdictBadge}
-            {deltaBadge}
-          </div>
+          {context !== "history" && (
+            <div className="flex flex-wrap items-center gap-2">
+              {verdictBadge}
+              {deltaBadge}
+            </div>
+          )}
           <div className="flex items-baseline gap-2">
             {passRateHeadline}
             <span className="text-[11px] tabular-nums text-muted-foreground">
