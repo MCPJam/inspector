@@ -173,14 +173,14 @@ describe("EvalServerPreviewPage", () => {
       "Claude",
     );
     expect(screen.getByText(/This first run is exploratory/)).toBeTruthy();
-    expect(screen.getByLabelText("Iterations per case")).toHaveValue(1);
+    expect(screen.getByLabelText("Iterations per case")).toHaveValue(5);
     expect(
       screen.getByText(/Leave it if you are just looking around/),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Run first evals" }));
     expect(onRunFirstEvals).toHaveBeenCalledWith(
-      expect.objectContaining({ iterationsPerCase: 1 }),
+      expect.objectContaining({ iterationsPerCase: 5 }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));

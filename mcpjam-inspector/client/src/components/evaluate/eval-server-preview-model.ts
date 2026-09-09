@@ -1,3 +1,4 @@
+import { DEFAULTS } from "../evals/constants";
 /**
  * First-run preview after "Eval my server".
  *
@@ -33,7 +34,7 @@ export type PreviewSuite = {
 };
 
 /** Exploratory first-run default. Later runs can raise this. */
-export const DEFAULT_FIRST_RUN_ITERATIONS = 1;
+export const DEFAULT_FIRST_RUN_ITERATIONS = DEFAULTS.RUNS_PER_TEST;
 
 export type PreviewFindingSeverity = "info" | "warning";
 

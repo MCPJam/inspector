@@ -1,3 +1,7 @@
+// General-agent behavior remains covered with the Describe-only MVP gate disabled.
+vi.mock("../../../../shared/eval-agent-scope.js", async (importOriginal) => ({
+  ...await importOriginal<object>(), DESCRIBE_ONLY_AGENT: false,
+}));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 

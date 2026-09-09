@@ -1,3 +1,5 @@
+import type { MetadataSnapshot } from "./eval-tool-metadata";
+import { useDescribeSurface } from "./describe-surface";
 import {
   useLayoutEffect,
   useRef,
@@ -9,7 +11,11 @@ import {
 import { flushSync } from "react-dom";
 import { generateId } from "ai";
 import type { EvalAgentScope } from "@/shared/eval-agent-scope";
-import { registerEvalDraft, type EvalDraft } from "./eval-workspace";
+import {
+  notifyEvalContextChanged,
+  registerEvalDraft,
+  type EvalDraft,
+} from "./eval-workspace";
 import { openEvalChat, useEvalAgentScopes } from "./eval-scope";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 
@@ -21,6 +27,8 @@ export function useEvalAgentDraft<T extends EvalDraft>({
   draft,
   setDraft,
   tools,
+  metadata,
+  retryTools,
   autoOpen,
 }: {
   projectId: string | null;
@@ -30,9 +38,17 @@ export function useEvalAgentDraft<T extends EvalDraft>({
   draft: T | null;
   setDraft: Dispatch<SetStateAction<T | null>>;
   tools: unknown[];
+  metadata?: MetadataSnapshot;
+  retryTools?: (serverId?: string) => Promise<void>;
   autoOpen: boolean;
 }) {
-  const current = useRef({ draft, tools, revision: generateId() });
+  const current = useRef({
+    draft,
+    tools,
+    metadata,
+    retryTools,
+    revision: generateId(),
+  });
   const undo = useRef<{ draft: T; expected: string } | null>(null);
   const [change, setChange] = useState<{
     fields: string[];
@@ -43,7 +59,10 @@ export function useEvalAgentDraft<T extends EvalDraft>({
       current.current.revision = generateId();
     current.current.draft = draft;
     current.current.tools = tools;
-  }, [draft, tools]);
+    current.current.metadata = metadata;
+    current.current.retryTools = retryTools;
+    notifyEvalContextChanged();
+  }, [draft, tools, metadata, retryTools]);
   const hasCaseContent = Boolean(
     draft?.steps.some((step) => step.kind !== "prompt" || step.prompt.trim()),
   );
@@ -58,9 +77,17 @@ export function useEvalAgentDraft<T extends EvalDraft>({
     caseTitle: draft?.title,
     hasCaseContent,
   };
+  useLayoutEffect(() => {
+    if (!autoOpen || !projectId) return;
+    useDescribeSurface.setState({ scope });
+    return () => {
+      useDescribeSurface.setState({ scope: null });
+      useAgentPanelStore.getState().setOpen(false);
+    };
+  }, [autoOpen, projectId, suiteId, caseId]);
   const enteredDraft = useRef<string | null>(null);
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !autoOpen) return;
     const panel = useAgentPanelStore.getState();
     const currentScope = panel.activeSessionId
       ? useEvalAgentScopes.getState().scopes[panel.activeSessionId]
@@ -104,14 +131,12 @@ export function useEvalAgentDraft<T extends EvalDraft>({
         selected.suiteName !== suiteName ||
         selected.hasCaseContent !== hasCaseContent)
     ) {
-      useEvalAgentScopes
-        .getState()
-        .set(sessionId, {
-          ...selected,
-          caseTitle: draft?.title,
-          suiteName,
-          hasCaseContent,
-        });
+      useEvalAgentScopes.getState().set(sessionId, {
+        ...selected,
+        caseTitle: draft?.title,
+        suiteName,
+        hasCaseContent,
+      });
     }
   }, [draft?.title, suiteName, projectId, suiteId, caseId, hasCaseContent]);
   useLayoutEffect(() => {
@@ -154,11 +179,18 @@ export function useEvalAgentDraft<T extends EvalDraft>({
         const state = current.current;
         if (!state.draft) throw new Error("Case draft is loading.");
         return {
-          draft: { title: state.draft.title, steps: state.draft.steps },
+          draft: {
+            title: state.draft.title,
+            steps: state.draft.steps,
+            expectedOutput: state.draft.expectedOutput,
+          },
           revision: state.revision,
           tools: state.tools,
+          metadata: state.metadata,
         };
       },
+      retryTools: (serverId) =>
+        current.current.retryTools?.(serverId) ?? Promise.resolve(),
       edit: (revision, patch) => apply(revision, patch),
       undo: (revision) => apply(revision),
     });
@@ -168,17 +200,24 @@ export function useEvalAgentDraft<T extends EvalDraft>({
     change,
     canUndo: Boolean(
       change &&
-      current.current.draft === draft &&
-      change.revision === current.current.revision,
+        current.current.draft === draft &&
+        change.revision === current.current.revision,
     ),
     open: () => {
-      if (!projectId) return;
+      if (!projectId || !autoOpen) return;
       const identity = JSON.stringify([projectId, suiteId, caseId]);
       const fresh =
         caseId.startsWith("draft:") && enteredDraft.current !== identity;
       enteredDraft.current = identity;
       openEvalChat(
-        { projectId, suiteId, suiteName, caseId, caseTitle: draft?.title, hasCaseContent },
+        {
+          projectId,
+          suiteId,
+          suiteName,
+          caseId,
+          caseTitle: draft?.title,
+          hasCaseContent,
+        },
         { fresh },
       );
     },

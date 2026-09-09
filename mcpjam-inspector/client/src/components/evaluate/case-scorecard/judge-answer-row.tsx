@@ -130,7 +130,7 @@ function Body({
   if (state.kind === "withheld") {
     return (
       <span className="text-xs text-muted-foreground">
-        Hidden until you label this trial
+        Hidden until you label this iteration
       </span>
     );
   }
