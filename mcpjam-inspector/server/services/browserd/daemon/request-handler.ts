@@ -22,6 +22,7 @@ import {
   parsePaneCommand,
 } from "./pane-command";
 import { shortHash } from "./state-token";
+import { randomUUID } from "node:crypto";
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
@@ -145,7 +146,11 @@ export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit"> & Partial<Pick<CommandQueue, "isIdle">>;
   driver: Pick<
     BrowserDriver,
-    "health" | "viewport" | "viewportIfWatched" | "tabsSnapshot" | "webmcpToolsSnapshot"
+    | "health"
+    | "viewport"
+    | "viewportIfWatched"
+    | "tabsSnapshot"
+    | "webmcpToolsSnapshot"
   > &
     /**
      * PARTIAL, so a driver that predates the browser shell is still a driver.
@@ -156,7 +161,11 @@ export interface BrowserdHandlerDeps {
     Partial<
       Pick<
         BrowserDriver,
-        "sessionViewportState" | "stateSnapshot" | "requestViewport" | "currentStateToken"
+        | "sessionViewportState"
+        | "stateSnapshot"
+        | "requestViewport"
+        | "currentStateToken"
+        | "interactionAnchor"
       >
     >;
   /** Minted once per daemon process start; echoed on every response. */
@@ -253,7 +262,7 @@ const UNATTRIBUTED_ACTOR: BrowserLedgerActor = {
 const RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class BrowserdRequestHandler {
-  private readonly queue: Pick<CommandQueue, "submit">;
+  private readonly queue: BrowserdHandlerDeps["queue"];
   private readonly driver: BrowserdHandlerDeps["driver"];
   private readonly bootId: string;
   private readonly token: string;
@@ -319,7 +328,8 @@ export class BrowserdRequestHandler {
    * reads as "this engine cannot tell you" rather than as "no tabs".
    */
   tabsSnapshot():
-    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
+    | { active?: string; list?: Array<{ id: string; url: string }> }
+    | undefined {
     return this.driver.tabsSnapshot?.();
   }
 
@@ -632,9 +642,7 @@ export class BrowserdRequestHandler {
    * it is a different page. Dispatching first would race the agent; checking
    * the anchor first would check a page that could still move.
    */
-  private async handlePaneCommand(
-    req: DaemonRequest,
-  ): Promise<DaemonResponse> {
+  private async handlePaneCommand(req: DaemonRequest): Promise<DaemonResponse> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(req.body || "{}");
@@ -713,6 +721,7 @@ export class BrowserdRequestHandler {
       // held, which is what lets this run at all now that the pane owns the
       // browser.
       source: "manual",
+      holder,
       commandId:
         typeof body.commandId === "string" && body.commandId
           ? body.commandId
@@ -783,7 +792,11 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_json", bootId: this.bootId },
       };
     }
-    const body = parsed as { width?: unknown; height?: unknown };
+    const body = parsed as {
+      width?: unknown;
+      height?: unknown;
+      policy?: unknown;
+    };
     if (typeof body?.width !== "number" || typeof body?.height !== "number") {
       return {
         status: 400,
@@ -802,6 +815,9 @@ export class BrowserdRequestHandler {
     // OS reflows it. Watching already defers the reap; this must not be a
     // second, quieter way to keep a metered box awake forever.
     const viewport = await this.driver.requestViewport({
+      ...(body.policy === "fixed" || body.policy === "followPane"
+        ? { policy: body.policy }
+        : {}),
       width: body.width,
       height: body.height,
     });
@@ -823,6 +839,13 @@ export class BrowserdRequestHandler {
     if (this.lease.state().state !== "free") {
       return { status: 423, body: { error: "lease_held" } };
     }
+    // Reserve the browser synchronously with the idle check. Expiry parks the
+    // lease, so even a long archive cannot reopen admission midway through it.
+    const holder = `profile-export:${randomUUID()}`;
+    const claim = this.lease.acquire(holder, undefined, "script");
+    if (claim.state === "free" || claim.holder !== holder) {
+      return { status: 423, body: { error: "lease_held" } };
+    }
     try {
       const archive = await this.profileExport();
       return {
@@ -841,6 +864,8 @@ export class BrowserdRequestHandler {
             error instanceof Error ? error.message : "profile_export_failed",
         },
       };
+    } finally {
+      this.lease.resume(holder);
     }
   }
 
@@ -1123,7 +1148,8 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_input", bootId: this.bootId },
       };
     }
-    const { holder, tabId, events } = parsed as {
+    const { holder, tabId, events, anchor } = parsed as {
+      anchor?: unknown;
       holder?: unknown;
       tabId?: unknown;
       events?: unknown;
@@ -1154,11 +1180,17 @@ export class BrowserdRequestHandler {
       ...(typeof tabId === "string" ? { tabId } : {}),
       holder,
       events: events as ViewportInputEvent[],
+      ...(anchor !== undefined ? { anchor } : {}),
     });
     if (outcome.ok)
       return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
-      status: outcome.error === "unknown_tab" ? 404 : 423,
+      status:
+        outcome.error === "page_changed"
+          ? 409
+          : outcome.error === "unknown_tab"
+          ? 404
+          : 423,
       body: { error: outcome.error, bootId: this.bootId },
     };
   }
@@ -1697,15 +1729,36 @@ export class BrowserdRequestHandler {
     tabId?: string;
     holder: string;
     events: readonly ViewportInputEvent[];
+    anchor?: unknown;
   }): Promise<{ ok: true } | { ok: false; error: string }> {
-    const stillTheirs = () =>
-      leaseRefusalFor(this.lease.state(), {
+    const stillTheirs = () => {
+      const refused = leaseRefusalFor(this.lease.state(), {
         source: "manual",
         holder: args.holder,
       });
+      if (refused) return refused;
+      if (args.anchor !== undefined) {
+        const before = parseAnchor(args.anchor);
+        const after = this.driver.interactionAnchor?.();
+        if (
+          !before ||
+          !after ||
+          before.bootId !== this.bootId ||
+          before.tabId !== after.tabId ||
+          before.url !== after.url ||
+          before.navCounter !== after.navCounter ||
+          before.viewportRevision !== after.viewportRevision
+        ) {
+          return "page_changed";
+        }
+      }
+      return undefined;
+    };
     const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
-    const viewport = await this.driver.viewport?.(args.tabId);
+    const viewport = await this.driver.viewport?.(
+      parseAnchor(args.anchor)?.tabId ?? args.tabId,
+    );
     if (!viewport) return { ok: false, error: "unknown_tab" };
     // Re-asked after the await and then before EVERY event: a batch is up to
     // 64 keystrokes and pointer moves, and a lease that expires or is handed
@@ -1713,11 +1766,17 @@ export class BrowserdRequestHandler {
     // somebody else's page.
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
+    let inputRefusal: string | undefined;
     await viewport.dispatchInput(
       args.events,
-      () => stillTheirs() === undefined,
+      () => {
+        inputRefusal = stillTheirs();
+        return inputRefusal === undefined;
+      },
       args.holder,
     );
+    if (inputRefusal === "page_changed")
+      return { ok: false, error: inputRefusal };
     // AFTER the dispatch, so the boost covers the repaint it caused rather
     // than the frame before it — and only when there WAS a dispatch: an empty
     // batch changed nothing on the page, and raising the screencast to 30fps

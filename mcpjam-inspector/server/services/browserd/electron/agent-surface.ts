@@ -174,7 +174,7 @@ export interface ContextSurface {
    */
   setShieldFactory(factory: ShieldFactory | null): void;
   /** Which holder this pane is, so the lease can be compared against it. */
-  setPaneHolder(holder: string | undefined): void;
+  setPaneHolder(holder: string | undefined, takeoverEnabled?: boolean): void;
   /**
    * The holder this pane last identified itself as.
    *
@@ -307,6 +307,7 @@ export function createContextSurface(
   /** The view currently parented into `holderWindow`. */
   let parented: SurfaceView | undefined;
   let paneHolder: string | undefined;
+  let takeoverEnabled = true;
   let lease: { state: "free" | "held" | "parked"; holder?: string } = {
     state: "free",
   };
@@ -446,7 +447,9 @@ export function createContextSurface(
       shield =
         shieldFactory?.({
           window: holderWindow!,
-          onGesture: () => options.onShieldGesture?.(),
+          onGesture: () => {
+            if (takeoverEnabled) options.onShieldGesture?.();
+          },
         }) ?? null;
     }
     const rect = viewRect();
@@ -511,8 +514,9 @@ export function createContextSurface(
       lease = state;
       apply();
     },
-    setPaneHolder(holder) {
+    setPaneHolder(holder, allowTakeover = true) {
       paneHolder = holder;
+      takeoverEnabled = allowTakeover;
       apply();
     },
     isShown: () => !!parented,

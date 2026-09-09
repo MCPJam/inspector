@@ -3,7 +3,7 @@
 
 // server/services/browserd/daemon/server.ts
 import { createServer } from "node:http";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
@@ -753,7 +753,9 @@ function parseAnchor(raw) {
   return {
     tabId: value.tabId,
     url: value.url,
-    navCounter: value.navCounter
+    navCounter: value.navCounter,
+    ...typeof value.bootId === "string" ? { bootId: value.bootId } : {},
+    ...typeof value.viewportRevision === "number" ? { viewportRevision: value.viewportRevision } : {}
   };
 }
 function paneCommandToAction(command) {
@@ -821,6 +823,9 @@ function computeStateToken(inputs) {
     ...inputs.viewportRevision !== void 0 ? { viewportRevision: inputs.viewportRevision } : {}
   };
 }
+
+// server/services/browserd/daemon/request-handler.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -1620,6 +1625,7 @@ var BrowserdRequestHandler = class {
       // held, which is what lets this run at all now that the pane owns the
       // browser.
       source: "manual",
+      holder,
       commandId: typeof body.commandId === "string" && body.commandId ? body.commandId : `pane-${Math.random().toString(36).slice(2)}-${Date.now()}`,
       ...mapped.tabId !== void 0 ? { tabId: mapped.tabId } : {},
       action: mapped.action
@@ -1683,6 +1689,7 @@ var BrowserdRequestHandler = class {
       };
     }
     const viewport = await this.driver.requestViewport({
+      ...body.policy === "fixed" || body.policy === "followPane" ? { policy: body.policy } : {},
       width: body.width,
       height: body.height
     });
@@ -1696,6 +1703,11 @@ var BrowserdRequestHandler = class {
       return { status: 409, body: { error: "profile_busy" } };
     }
     if (this.lease.state().state !== "free") {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    const holder = `profile-export:${randomUUID2()}`;
+    const claim = this.lease.acquire(holder, void 0, "script");
+    if (claim.state === "free" || claim.holder !== holder) {
       return { status: 423, body: { error: "lease_held" } };
     }
     try {
@@ -1715,6 +1727,8 @@ var BrowserdRequestHandler = class {
           error: error instanceof Error ? error.message : "profile_export_failed"
         }
       };
+    } finally {
+      this.lease.resume(holder);
     }
   }
   handleTrace(req) {
@@ -1936,7 +1950,7 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_input", bootId: this.bootId }
       };
     }
-    const { holder, tabId, events } = parsed;
+    const { holder, tabId, events, anchor } = parsed;
     if (typeof holder !== "string" || holder.length === 0) {
       return {
         status: 400,
@@ -1959,12 +1973,13 @@ var BrowserdRequestHandler = class {
     const outcome = await this.dispatchInput({
       ...typeof tabId === "string" ? { tabId } : {},
       holder,
-      events
+      events,
+      ...anchor !== void 0 ? { anchor } : {}
     });
     if (outcome.ok)
       return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
-      status: outcome.error === "unknown_tab" ? 404 : 423,
+      status: outcome.error === "page_changed" ? 409 : outcome.error === "unknown_tab" ? 404 : 423,
       body: { error: outcome.error, bootId: this.bootId }
     };
   }
@@ -2291,21 +2306,40 @@ var BrowserdRequestHandler = class {
    * reached the endpoint".
    */
   async dispatchInput(args) {
-    const stillTheirs = () => leaseRefusalFor(this.lease.state(), {
-      source: "manual",
-      holder: args.holder
-    });
+    const stillTheirs = () => {
+      const refused = leaseRefusalFor(this.lease.state(), {
+        source: "manual",
+        holder: args.holder
+      });
+      if (refused) return refused;
+      if (args.anchor !== void 0) {
+        const before = parseAnchor(args.anchor);
+        const after = this.driver.interactionAnchor?.();
+        if (!before || !after || before.bootId !== this.bootId || before.tabId !== after.tabId || before.url !== after.url || before.navCounter !== after.navCounter || before.viewportRevision !== after.viewportRevision) {
+          return "page_changed";
+        }
+      }
+      return void 0;
+    };
     const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
-    const viewport = await this.driver.viewport?.(args.tabId);
+    const viewport = await this.driver.viewport?.(
+      parseAnchor(args.anchor)?.tabId ?? args.tabId
+    );
     if (!viewport) return { ok: false, error: "unknown_tab" };
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
+    let inputRefusal;
     await viewport.dispatchInput(
       args.events,
-      () => stillTheirs() === void 0,
+      () => {
+        inputRefusal = stillTheirs();
+        return inputRefusal === void 0;
+      },
       args.holder
     );
+    if (inputRefusal === "page_changed")
+      return { ok: false, error: inputRefusal };
     if (args.events.length > 0) {
       viewport.boost?.(ACTIVITY_BOOST_INTERVAL_MS, ACTIVITY_BOOST_WINDOW_MS);
     }
@@ -2971,6 +3005,58 @@ function statsFor(subscription, previousFramesIn) {
   };
 }
 
+// shared/browser-viewport.ts
+var DEFAULT_SESSION_VIEWPORT = { width: 1024, height: 768 };
+var MIN_SESSION_VIEWPORT = { width: 400, height: 300 };
+var MAX_SESSION_VIEWPORT = { width: 2560, height: 1600 };
+var INITIAL_SESSION_VIEWPORT = {
+  width: DEFAULT_SESSION_VIEWPORT.width,
+  height: DEFAULT_SESSION_VIEWPORT.height,
+  revision: 0
+};
+function normalizeViewportSize(size) {
+  return {
+    width: clampDimension(
+      size.width,
+      MIN_SESSION_VIEWPORT.width,
+      MAX_SESSION_VIEWPORT.width
+    ),
+    height: clampDimension(
+      size.height,
+      MIN_SESSION_VIEWPORT.height,
+      MAX_SESSION_VIEWPORT.height
+    )
+  };
+}
+function clampDimension(value, min, max) {
+  const numeric = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(numeric)) return min;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+function advanceViewport(current, requested, policy) {
+  if (policy === "fixed") return current;
+  const next = normalizeViewportSize(requested);
+  if (next.width === current.width && next.height === current.height) {
+    return current;
+  }
+  return {
+    width: next.width,
+    height: next.height,
+    revision: current.revision + 1
+  };
+}
+function isPointInSessionViewport(x, y, viewport) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= viewport.width - 1 && y <= viewport.height - 1;
+}
+function negotiateViewport(policy, capability) {
+  if (policy === "fixed") return { ok: true, policy };
+  if (capability?.responsiveViewport === true) return { ok: true, policy };
+  return { ok: false, reason: "responsive_viewport_required" };
+}
+function parseViewportPolicy(value) {
+  return value === "followPane" ? "followPane" : "fixed";
+}
+
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
   const viewportAgrees = a.viewportRevision === void 0 || b.viewportRevision === void 0 || a.viewportRevision === b.viewportRevision;
@@ -2979,6 +3065,12 @@ function stateTokensMatch(a, b) {
 function guardStaleness(driver, lease) {
   return async (command) => {
     const { action } = command;
+    if (command.source !== "manual" && action.kind !== "webmcp_cancel" && !negotiateViewport(driver.sessionViewportPolicy?.() ?? "fixed", command).ok) {
+      return {
+        ok: false,
+        error: "responsive_viewport_required: this session follows an interactive pane; use a fixed session or declare responsiveViewport support"
+      };
+    }
     if (action.kind !== "act" || action.expectedState === void 0) {
       return driver.execute(command);
     }
@@ -3132,7 +3224,7 @@ function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }
 function buildBrowserdStack(driver, config) {
-  const bootId = config.bootId ?? randomUUID2();
+  const bootId = config.bootId ?? randomUUID3();
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
@@ -4036,8 +4128,7 @@ var SessionBarrier = class {
     }, Math.max(0, ms));
   }
   /**
-   * Run the pending resize if the session is quiet — or if it has waited long
-   * enough that quiet is no longer worth waiting for.
+   * Run the pending resize only when the session is quiet.
    *
    * Called from three places (the debounce firing, work finishing, a drag
    * ending) because those are the three ways the answer can change, and a
@@ -4049,8 +4140,8 @@ var SessionBarrier = class {
     if (this.debounceHandle !== void 0) return;
     const waited = this.now() - this.pendingSince;
     const expired = waited >= this.maxWaitMs;
-    if (!expired && (this.inFlight > 0 || this.dragging)) {
-      this.armExpiry(this.maxWaitMs - waited);
+    if (this.inFlight > 0 || this.dragging) {
+      if (!expired) this.armExpiry(this.maxWaitMs - waited);
       return;
     }
     this.clearTimer(this.expiryHandle);
@@ -4132,49 +4223,6 @@ async function readTabMetadata(cdp, fallbackUrl, options = {}) {
     canGoBack: !!history && history.currentIndex > 0,
     canGoForward: !!history && history.currentIndex < history.entries.length - 1
   };
-}
-
-// shared/browser-viewport.ts
-var DEFAULT_SESSION_VIEWPORT = { width: 1024, height: 768 };
-var MIN_SESSION_VIEWPORT = { width: 400, height: 300 };
-var MAX_SESSION_VIEWPORT = { width: 2560, height: 1600 };
-var INITIAL_SESSION_VIEWPORT = {
-  width: DEFAULT_SESSION_VIEWPORT.width,
-  height: DEFAULT_SESSION_VIEWPORT.height,
-  revision: 0
-};
-function normalizeViewportSize(size) {
-  return {
-    width: clampDimension(
-      size.width,
-      MIN_SESSION_VIEWPORT.width,
-      MAX_SESSION_VIEWPORT.width
-    ),
-    height: clampDimension(
-      size.height,
-      MIN_SESSION_VIEWPORT.height,
-      MAX_SESSION_VIEWPORT.height
-    )
-  };
-}
-function clampDimension(value, min, max) {
-  const numeric = typeof value === "number" ? value : Number.NaN;
-  if (!Number.isFinite(numeric)) return min;
-  return Math.min(max, Math.max(min, Math.round(numeric)));
-}
-function advanceViewport(current, requested, policy) {
-  if (policy === "fixed") return current;
-  const next = normalizeViewportSize(requested);
-  if (next.width === current.width && next.height === current.height) {
-    return current;
-  }
-  return { width: next.width, height: next.height, revision: current.revision + 1 };
-}
-function isPointInSessionViewport(x, y, viewport) {
-  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= viewport.width - 1 && y <= viewport.height - 1;
-}
-function parseViewportPolicy(value) {
-  return value === "followPane" ? "followPane" : "fixed";
 }
 
 // server/services/browserd/daemon/observation-budget.ts
@@ -5961,7 +6009,9 @@ var ChromiumDriver = class {
   sessionViewport;
   /** Monotonic per boot, so two snapshots in one millisecond still order. */
   stateSeq = 0;
+  allowPaneResize;
   viewportPolicy;
+  latestViewportRequest;
   onViewportChange;
   barrier;
   resizeDisplay;
@@ -5976,6 +6026,7 @@ var ChromiumDriver = class {
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    this.allowPaneResize = options.viewport?.allowPaneResize === true;
     const initial = options.viewport?.initial;
     this.sessionViewport = initial ? { width: initial.width, height: initial.height, revision: 0 } : INITIAL_SESSION_VIEWPORT;
     this.onViewportChange = options.viewport?.onChange;
@@ -5997,9 +6048,16 @@ var ChromiumDriver = class {
    * that transition lands, whatever size it carried. A `fixed` session
    * resolves immediately, having changed nothing.
    */
+  sessionViewportPolicy() {
+    return this.viewportPolicy;
+  }
   async requestViewport(size) {
+    if (size.policy === "followPane" && this.allowPaneResize)
+      this.viewportPolicy = "followPane";
     if (this.viewportPolicy === "fixed") return this.sessionViewport;
-    await this.barrier.request(size);
+    const request = size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request;
+    await this.barrier.request(request);
     return this.sessionViewport;
   }
   /** Is a resize waiting or transitioning? Surfaces as the pane's affordance. */
@@ -6018,10 +6076,16 @@ var ChromiumDriver = class {
    * the new size, so the published number never runs ahead of the picture.
    */
   async applyViewport(size) {
-    const next = advanceViewport(this.sessionViewport, size, this.viewportPolicy);
-    if (next === this.sessionViewport) return;
+    const next = advanceViewport(this.sessionViewport, size, "followPane");
+    if (next === this.sessionViewport) {
+      if (size.policy === "fixed" && this.latestViewportRequest === size)
+        this.viewportPolicy = "fixed";
+      return;
+    }
     const pages = [...this.tabs.values()].map((entry) => entry.page).filter((page) => !page.isClosed());
-    const unable = pages.find((page) => typeof page.setViewportSize !== "function");
+    const unable = pages.find(
+      (page) => typeof page.setViewportSize !== "function"
+    );
     if (unable) {
       throw new Error(
         "viewport_unsupported: this engine cannot resize its pages"
@@ -6042,7 +6106,10 @@ var ChromiumDriver = class {
     const applied = [];
     try {
       for (const page of pages) {
-        await page.setViewportSize?.({ width: next.width, height: next.height });
+        await page.setViewportSize?.({
+          width: next.width,
+          height: next.height
+        });
         applied.push(page);
       }
     } catch (error) {
@@ -6059,6 +6126,8 @@ var ChromiumDriver = class {
       throw error;
     }
     this.sessionViewport = next;
+    if (size.policy === "fixed" && this.latestViewportRequest === size)
+      this.viewportPolicy = "fixed";
     for (const entry of this.tabs.values()) {
       if (applied.includes(entry.page) || entry.page.isClosed()) continue;
       await entry.page.setViewportSize?.({ width: next.width, height: next.height }).catch(() => {
@@ -6098,6 +6167,12 @@ var ChromiumDriver = class {
     return this.barrier.run(() => this.executeInBarrier(command));
   }
   async executeInBarrier(command) {
+    if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
+      return {
+        ok: false,
+        error: "responsive_viewport_required: read the session viewport before acting"
+      };
+    }
     this.purgeHandoffRings();
     const permit = this.permitFor(command);
     if (!permit()) {
@@ -6645,7 +6720,13 @@ var ChromiumDriver = class {
     }
     const binding = action.expectedBinding;
     if (binding) {
-      const stale = this.bindingRefusal(tabId, entry, bridge, action.toolKey, binding);
+      const stale = this.bindingRefusal(
+        tabId,
+        entry,
+        bridge,
+        action.toolKey,
+        binding
+      );
       if (stale) {
         return {
           ok: false,
@@ -6726,7 +6807,10 @@ var ChromiumDriver = class {
       );
     }
     const known = await bridge.cancel(invocationId);
-    return { ok: true, output: { cancelled: known, known: true, invocationId } };
+    return {
+      ok: true,
+      output: { cancelled: known, known: true, invocationId }
+    };
   }
   /**
    * Why this binding does not describe the tool that is here now, or undefined
@@ -7107,6 +7191,17 @@ var ChromiumDriver = class {
    * inside the same millisecond are ordinary on a fast box, and a reducer that
    * cannot order them would drop one at random.
    */
+  interactionAnchor() {
+    const tabId = this.activeTabId;
+    const entry = tabId ? this.tabs.get(tabId) : void 0;
+    if (!tabId || !entry || entry.page.isClosed()) return void 0;
+    return {
+      tabId,
+      url: safeUrl(entry.page),
+      navCounter: entry.navCounter,
+      viewportRevision: this.sessionViewport.revision
+    };
+  }
   async stateSnapshot() {
     const live = [...this.tabs.entries()].filter(
       ([, entry]) => !entry.page.isClosed()
@@ -7123,8 +7218,9 @@ var ChromiumDriver = class {
     this.stateSeq += 1;
     return {
       seq: this.stateSeq,
-      tabs: read.map(({ id, meta }) => ({
+      tabs: read.map(({ id, meta, entry }) => ({
         id,
+        navCounter: entry.navCounter,
         url: meta.url,
         title: meta.title,
         ...meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {},
@@ -8446,7 +8542,9 @@ async function resizeHostedDisplay(deps, next, previous) {
   if (!display) {
     return {
       ok: false,
-      reason: `refusing to resize a display named ${JSON.stringify(deps.display)}`,
+      reason: `refusing to resize a display named ${JSON.stringify(
+        deps.display
+      )}`,
       restored: true
     };
   }
@@ -8454,7 +8552,21 @@ async function resizeHostedDisplay(deps, next, previous) {
     ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
   });
   const applyDisplay = async (size) => {
-    const command = `xrandr --display ${display} --fb ${size.width}x${size.height}`;
+    const { width, height } = size;
+    if (![width, height].every(
+      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
+    )) {
+      return { ok: false, reason: "invalid display geometry" };
+    }
+    const mode = `mcpjam-${width}x${height}`;
+    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
+    const randr = `xrandr --display ${display}`;
+    const command = [
+      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
+      `${randr} --addmode VNC-0 ${mode} &&`,
+      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
+      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
+    ].join("\n");
     try {
       const result = await deps.run(command);
       return result.exitCode === 0 ? { ok: true } : {
@@ -8948,6 +9060,9 @@ async function main() {
   });
   const lease = new HandoffLease();
   let encoder;
+  const canResize = config.contextMode === "persistent" && config.kiosk && (await runShell(
+    `xrandr --display ${process.env.DISPLAY || ":0"} --current | awk '$1 == "VNC-0" { found = 1 } END { exit !found }'`
+  )).exitCode === 0;
   const driver = new ChromiumDriver(context, {
     lease,
     viewport: {
@@ -8961,6 +9076,7 @@ async function main() {
        * the first time somebody dragged a panel.
        */
       policy: config.viewportPolicy,
+      allowPaneResize: canResize,
       // KIOSK IS THE TEST for "does this box have a display of its own". It is
       // the switch that makes "the display IS the page" true for the encoder,
       // and it is set only on the hosted image; a local Chromium's page is a
@@ -9036,7 +9152,13 @@ async function main() {
     features,
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
-    ...config.contextMode === "persistent" ? { profileExport: () => exportBrowserProfileArchive(config.userDataDir) } : {},
+    ...config.contextMode === "persistent" ? {
+      profileExport: async () => {
+        await context.close();
+        await driver.close();
+        return exportBrowserProfileArchive(config.userDataDir);
+      }
+    } : {},
     // THE DISPLAY AS IT IS NOW, not as it booted.
     //
     // `cssViewport` below already follows the session, and these two are one

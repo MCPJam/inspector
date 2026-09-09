@@ -84,7 +84,9 @@ describe("the native input shield", () => {
     window.contentView.addChildView({ id: "browser" } as never);
     shield.cover({ x: 4, y: 8, width: 100, height: 50 });
     expect(window.children).toHaveLength(2);
-    expect((window.children[1] as ShieldView & { bounds: unknown }).bounds).toEqual({
+    expect(
+      (window.children[1] as ShieldView & { bounds: unknown }).bounds,
+    ).toEqual({
       x: 4,
       y: 8,
       width: 100,
@@ -141,9 +143,9 @@ describe("the native input shield", () => {
     const { shield, made } = build();
     shield.cover({ x: 0, y: 0, width: 10, height: 10 });
     const throwing = createElectronInputShield(
-      (function () {
+      function () {
         return made[0]!.view;
-      } as unknown) as ShieldViewConstructor,
+      } as unknown as ShieldViewConstructor,
       fakeWindow(),
       () => {
         throw new Error("nope");
@@ -297,6 +299,12 @@ describe("the surface's use of the shield", () => {
     surface.show({ holder: fakeHolder(), bounds });
     fire?.();
     expect(gestures).toEqual(["gesture"]);
+    surface.setPaneHolder("pane", false);
+    fire?.();
+    expect(gestures).toEqual(["gesture"]);
+    surface.setPaneHolder("pane", true);
+    fire?.();
+    expect(gestures).toEqual(["gesture", "gesture"]);
   });
 
   it("works without a shield at all", () => {
@@ -304,9 +312,7 @@ describe("the surface's use of the shield", () => {
     // before shields: a click reaches the page and does not take the browser.
     const surface = createContextSurface();
     surface.registerTab(view() as never);
-    expect(() =>
-      surface.show({ holder: fakeHolder(), bounds }),
-    ).not.toThrow();
+    expect(() => surface.show({ holder: fakeHolder(), bounds })).not.toThrow();
     expect(surface.isShielded()).toBe(false);
   });
 });

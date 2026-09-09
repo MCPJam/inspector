@@ -69,6 +69,9 @@ export function decodeBrowserTab(raw: unknown): BrowserTabState | null {
       typeof value.title === "string" ? value.title.slice(0, MAX_TITLE_CHARS) : "",
     ...(favicon ? { faviconUrl: favicon } : {}),
     loading: value.loading === true,
+    ...(Number.isSafeInteger(value.navCounter)
+      ? { navCounter: value.navCounter as number }
+      : {}),
   };
 }
 
@@ -110,7 +113,7 @@ export function decodeStateSnapshot(raw: unknown): BrowserStateSnapshot | null {
     activeTabId:
       activeTabId && tabs.some((tab) => tab.id === activeTabId)
         ? activeTabId
-        : (tabs[0]?.id ?? null),
+        : tabs[0]?.id ?? null,
     canGoBack: body.canGoBack === true,
     canGoForward: body.canGoForward === true,
     control: decodeBrowserControl(body.control),

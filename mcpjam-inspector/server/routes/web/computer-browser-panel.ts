@@ -154,7 +154,7 @@ function browserTarget(
 ): { computerId: string } | { sandboxRowId: string } {
   return claims.computerId
     ? { computerId: claims.computerId }
-    : { sandboxRowId: claims.sandboxRowId };
+    : { sandboxRowId: claims.sandboxRowId! };
 }
 
 function targetId(claims: Claims): string {
@@ -228,16 +228,19 @@ export function createComputerBrowserPanelRoutes(
     target: { computerId: string } | { sandboxRowId: string },
     sessionId?: string,
   ): Promise<BrowserSessionRecord | null> {
-    const lookup = await lookupSession({
-      ...target,
-      ...("sandboxRowId" in target ? { watched: true } : {}),
+    const options = {
       expectedBundleHash: bundleHash(),
-      // `"any"`: the panel is about THIS COMPUTER'S browser, whatever profile
-      // it happens to be running. Pinning `persistent` here reported "no
-      // browser" for a box that plainly had one, and — worse — paired with an
-      // attach that then relaunched it into the other mode.
-      expectedContextMode: "any",
-    });
+      expectedContextMode: "any" as const,
+    };
+    const lookup =
+      "computerId" in target
+        ? await lookupSession({ computerId: target.computerId, ...options })
+        : await lookupSession({
+            sandboxRowId: target.sandboxRowId,
+            watched: true,
+            ...options,
+          });
+
     if (!lookup.session) return null;
     if (sessionId && lookup.session.logicalSessionId !== sessionId) return null;
     return lookup.session;
@@ -470,7 +473,11 @@ export function createComputerBrowserPanelRoutes(
     ) {
       return c.json({ ok: false, error: "Expected a JSON object." }, 400);
     }
-    const body = parsed as { events?: unknown; tabId?: unknown };
+    const body = parsed as {
+      events?: unknown;
+      tabId?: unknown;
+      anchor?: unknown;
+    };
     // Sliced rather than refused, matching the local route: the daemon caps at
     // the same number and is the enforcement point, since it is reachable on
     // its own public host and a cap that lives only here is one an attacker
@@ -503,6 +510,7 @@ export function createComputerBrowserPanelRoutes(
         // request body would let anyone who echoed the right id type into
         // somebody else's held session — which is a password field, mid-login.
         holder: userId,
+        ...(body.anchor !== undefined ? { anchor: body.anchor } : {}),
         events,
         ...(typeof body.tabId === "string" ? { tabId: body.tabId } : {}),
       });
@@ -522,6 +530,7 @@ export function createComputerBrowserPanelRoutes(
         // up as a lease refusal tells the pane to wait for a hand-back from a
         // holder who does not exist, forever.
         const status =
+          outcome.status === 409 ||
           outcome.status === 400 ||
           outcome.status === 404 ||
           outcome.status === 413 ||
@@ -597,7 +606,10 @@ export function createComputerBrowserPanelRoutes(
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
     const { computerId, userId } = auth.claims;
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(
+        browserTarget(auth.claims),
+        auth.claims.sessionId,
+      );
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
@@ -653,7 +665,10 @@ export function createComputerBrowserPanelRoutes(
     }
     const anchor = parseAnchor(body.anchor);
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(
+        browserTarget(auth.claims),
+        auth.claims.sessionId,
+      );
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
@@ -693,7 +708,7 @@ export function createComputerBrowserPanelRoutes(
         sessionId: session.sessionId,
         kind: "command",
       }).catch(() => {});
-      void touchActivity({ computerId }).catch(() => {});
+      if (computerId) void touchActivity({ computerId }).catch(() => {});
       return c.json({
         ok: true,
         ...(outcome.viewport ? { viewport: outcome.viewport } : {}),
@@ -728,16 +743,26 @@ export function createComputerBrowserPanelRoutes(
     if (typeof parsed !== "object" || parsed === null) {
       return c.json({ ok: false, error: "Expected a JSON object." }, 400);
     }
-    const body = parsed as { width?: unknown; height?: unknown };
+    const body = parsed as {
+      width?: unknown;
+      policy?: unknown;
+      height?: unknown;
+    };
     if (typeof body.width !== "number" || typeof body.height !== "number") {
       return c.json({ ok: false, error: "invalid_viewport" }, 400);
     }
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(
+        browserTarget(auth.claims),
+        auth.claims.sessionId,
+      );
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
       const viewport = await createClient(session).paneViewport({
+        ...(body.policy === "fixed" || body.policy === "followPane"
+          ? { policy: body.policy }
+          : {}),
         width: body.width,
         height: body.height,
       });

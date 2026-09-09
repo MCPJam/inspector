@@ -19,6 +19,7 @@ import {
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
+  workspaceEnabled: true,
   /** What `/session` answers, or an error to throw. */
   session: null as unknown,
   sessionError: null as { status: number } | null,
@@ -43,6 +44,10 @@ const api = vi.hoisted(() => ({
   }>,
 }));
 
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useBrowserWorkspaceEnabled: () => api.workspaceEnabled,
+}));
+
 vi.mock("@/lib/hosted-browser/client", async () => {
   const actual = await vi.importActual<
     typeof import("@/lib/hosted-browser/client")
@@ -61,7 +66,25 @@ vi.mock("@/lib/hosted-browser/client", async () => {
     // The shell's three calls. Answered rather than left to the real module,
     // which would reach the network and leave the shell permanently
     // reconnecting.
-    fetchHostedBrowserState: async () => api.state,
+    fetchHostedBrowserState: async () =>
+      api.state ?? {
+        seq: 1,
+        tabs: [
+          {
+            id: "t1",
+            url: "https://example.test",
+            title: "Example",
+            loading: false,
+            navCounter: 0,
+          },
+        ],
+        activeTabId: "t1",
+        canGoBack: false,
+        canGoForward: false,
+        viewport: { width: 1024, height: 768, revision: 0 },
+        policy: "fixed",
+        control: { kind: "agent" },
+      },
     sendHostedPaneCommand: async (_tokens: unknown, args: any) => {
       api.paneCommands.push(args.command);
       return { ok: true as const };
@@ -123,6 +146,7 @@ const RUNNING = {
 };
 
 beforeEach(() => {
+  api.workspaceEnabled = true;
   api.session = RUNNING;
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
@@ -241,9 +265,7 @@ describe("the hosted pane — who has control", () => {
       yours: false,
     };
     renderBody();
-    expect(
-      await screen.findByText("Someone else is driving"),
-    ).toBeTruthy();
+    expect(await screen.findByText("Someone else is driving")).toBeTruthy();
     // There is no button to withhold any more: using the browser is what
     // takes it, and the server refuses a click into somebody else's hold.
     expect(screen.queryByText(/resume agent/i)).toBeNull();
@@ -256,7 +278,7 @@ describe("the hosted pane — who has control", () => {
     renderBody();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
     const before = api.sockets.length;
     // Clicking the page IS taking it. There is no button.
     fireEvent.click(image, { clientX: 10, clientY: 10 });
@@ -948,4 +970,14 @@ describe("the hosted pane — quality tiers", () => {
     expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
   });
+});
+
+it("keeps the hosted legacy controls when the workspace flag is off", async () => {
+  api.workspaceEnabled = false;
+  renderBody();
+  await deliverFrame();
+  expect(
+    await screen.findByRole("button", { name: "Take control" }),
+  ).toBeTruthy();
+  expect(screen.queryByTestId("browser-new-tab")).toBeNull();
 });

@@ -1199,9 +1199,13 @@ export function buildBrowserTools(
           : undefined;
       let response;
       try {
-        response = await client.sendCommand(command, handle.bootId, {
-          ...(args.signal ? { signal: args.signal } : {}),
-        });
+        response = await client.sendCommand(
+          { ...command, responsiveViewport: true },
+          handle.bootId,
+          {
+            ...(args.signal ? { signal: args.signal } : {}),
+          },
+        );
       } catch (error) {
         disarm?.();
         if (args.signal?.aborted) {
@@ -1360,7 +1364,9 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(engine)} (or go back / forward / reload). Returns the page ` +
+        `Open a URL in ${engineLabel(
+          engine,
+        )} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting.",
       inputSchema: z.object({
@@ -2360,22 +2366,9 @@ function defaultEnsureSession(
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),
-        /**
-         * `followPane` for the interactive session, `fixed` for everything
-         * else, and `contextMode` is exactly that distinction already made.
-         *
-         * `persistent` is the interactive Playground's browser: one per
-         * project, keeping its logins between turns, watched by a panel
-         * somebody can drag. `ephemeral` is an eval iteration, a swarm, a
-         * journey attempt — a throwaway browser with no panel and a replay
-         * artifact that is only comparable against a run at the same size.
-         *
-         * Reusing the existing distinction rather than adding a second flag
-         * beside it: two ways to say "is this a real person's session" is two
-         * ways for them to disagree, and the disagreement would be an eval
-         * silently recorded at whatever size somebody's window happened to be.
-         */
-        viewportPolicy: contextMode === "persistent" ? "followPane" : "fixed",
+        // Start fixed regardless of opening order. An enabled interactive
+        // pane negotiates followPane through the authenticated viewport route.
+        viewportPolicy: "fixed",
         ...(logicalSessionId ? { sessionId: logicalSessionId } : {}),
         ...(profileArchive ? { profileArchive } : {}),
       });
@@ -2856,7 +2849,9 @@ function fencePageContent(
 ): string {
   const nonce = pageContentNonce();
   return (
-    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(origin)} ---\n` +
+    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(
+      origin,
+    )} ---\n` +
     JSON.stringify(page) +
     `\n--- END_MCPJAM_PAGE_CONTENT nonce=${nonce} ---`
   );

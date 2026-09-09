@@ -139,6 +139,8 @@ export interface BrowserPaneHolder {
  * remember what it was looking at.
  */
 export interface InteractionAnchor {
+  bootId?: string;
+  viewportRevision?: number;
   tabId: string;
   /**
    * The observation the click was aimed at, as the pane knows it.
@@ -167,7 +169,9 @@ export function anchorStillValid(
   return (
     after.tabId === before.tabId &&
     after.url === before.url &&
-    after.navCounter === before.navCounter
+    after.navCounter === before.navCounter &&
+    after.bootId === before.bootId &&
+    after.viewportRevision === before.viewportRevision
   );
 }
 
@@ -314,4 +318,20 @@ export function addressAtRest(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** Snapshot the target before acquiring control; old daemons cannot validate it. */
+export function paneInteractionAnchor(
+  state: import("./browser-session-state").BrowserSessionState,
+  bootId: string | null | undefined,
+): InteractionAnchor | undefined {
+  const tab = state.tabs.find((tab) => tab.id === state.activeTabId);
+  if (!bootId || !tab || tab.navCounter === undefined) return undefined;
+  return {
+    bootId,
+    tabId: tab.id,
+    url: tab.url,
+    navCounter: tab.navCounter,
+    viewportRevision: state.viewport.revision,
+  };
 }

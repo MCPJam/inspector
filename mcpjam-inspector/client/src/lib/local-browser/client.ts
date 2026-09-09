@@ -126,7 +126,8 @@ async function post<T>(
     ...(options?.keepalive ? { keepalive: true } : {}),
   });
   const json = (await response.json().catch(() => null)) as
-    (T & { error?: string }) | null;
+    | (T & { error?: string })
+    | null;
   if (!response.ok) {
     throw new LocalBrowserRequestError(
       typeof json?.error === "string"
@@ -320,7 +321,8 @@ export interface LocalBrowserTraceGap {
 }
 
 export type LocalBrowserTraceEntry =
-  LocalBrowserTraceRow | LocalBrowserTraceGap;
+  | LocalBrowserTraceRow
+  | LocalBrowserTraceGap;
 
 export interface LocalBrowserTracePage {
   entries: LocalBrowserTraceEntry[];
@@ -330,7 +332,12 @@ export interface LocalBrowserTracePage {
 }
 
 export function sendLocalBrowserInput(
-  args: { bootId: string; holder: string; events: BrowserInputEvent[] },
+  args: {
+    bootId: string;
+    holder: string;
+    events: BrowserInputEvent[];
+    anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
+  },
   consentToken: string | null,
 ): Promise<{ ok: true }> {
   return post("input", args, consentToken);
@@ -501,6 +508,7 @@ export async function sendLocalPaneCommand(args: {
 export async function reportLocalPaneViewport(args: {
   bootId: string;
   width: number;
+  policy?: "fixed" | "followPane";
   height: number;
   consentToken: string | null;
 }): Promise<SessionViewport | null> {

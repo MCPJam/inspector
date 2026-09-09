@@ -128,7 +128,9 @@ export async function resizeHostedDisplay(
   if (!display) {
     return {
       ok: false,
-      reason: `refusing to resize a display named ${JSON.stringify(deps.display)}`,
+      reason: `refusing to resize a display named ${JSON.stringify(
+        deps.display,
+      )}`,
       restored: true,
     };
   }
@@ -142,12 +144,30 @@ export async function resizeHostedDisplay(
     width: number;
     height: number;
   }): Promise<{ ok: boolean; reason?: string }> => {
-    // `--fb` rather than `-s`, because `-s` only selects among the modes the
-    // server already advertises and Xvnc advertises one. `--fb` sets the
-    // framebuffer size directly, which is the RandR operation Xvnc implements
-    // for exactly this.
-    const command =
-      `xrandr --display ${display} --fb ${size.width}x${size.height}`;
+    const { width, height } = size;
+    if (
+      ![width, height].every(
+        (value) => Number.isInteger(value) && value >= 32 && value <= 32768,
+      )
+    ) {
+      return { ok: false, reason: "invalid display geometry" };
+    }
+    // TigerVNC accepts custom RandR modes. Change the output and framebuffer
+    // together: --fb alone leaves the output at its old size (or disconnected).
+    // The same sequence repairs a partially applied transition during rollback.
+    const mode = `mcpjam-${width}x${height}`;
+    const clock = (((width + 160) * (height + 45) * 60) / 1_000_000).toFixed(3);
+    const randr = `xrandr --display ${display}`;
+    const command = [
+      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${
+        width + 80
+      } ${width + 160} ${height} ${height + 3} ${height + 6} ${
+        height + 45
+      } 2>/dev/null || true`,
+      `${randr} --addmode VNC-0 ${mode} &&`,
+      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
+      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`,
+    ].join("\n");
     try {
       const result = await deps.run(command);
       return result.exitCode === 0

@@ -9,6 +9,7 @@ import {
 } from "vitest";
 import {
   ensureLocalBrowserSession,
+  closeLocalBrowserSession,
   findLocalBrowserSession,
   getLocalBrowserProfileDir,
   killLocalBrowserSessions,
@@ -714,4 +715,44 @@ describe("local browser session — the pane's own view of it", () => {
     expect(calls[0]!.surface).toBeUndefined();
     expect(contextSurfaceFor(handle.bootId)).toBeUndefined();
   });
+});
+
+it("keeps the profile closed until export completes even if ensure races", async () => {
+  const { deps, launched } = makeDeps();
+  const first = await ensureLocalBrowserSession(
+    { projectId: "export-race" },
+    deps,
+  );
+  let finish!: () => void;
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const exporting = closeLocalBrowserSession(first.bootId, async () => {
+    started();
+    await gate;
+  });
+  await entered;
+  const opening = ensureLocalBrowserSession({ projectId: "export-race" }, deps);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(launched).toHaveLength(1);
+  finish();
+  expect(await exporting).toEqual({ closed: true });
+  expect((await opening).bootId).not.toBe(first.bootId);
+  expect(launched).toHaveLength(2);
+});
+
+it("releases the teardown lease when Chromium cannot flush a profile", async () => {
+  const { deps, contexts } = makeDeps();
+  const session = await ensureLocalBrowserSession({ projectId: "export-flush-failure" }, deps);
+  const close = contexts[0].ctx.close.bind(contexts[0].ctx);
+  contexts[0].ctx.close = async () => { throw new Error("flush failed"); };
+  const archive = vi.fn(async () => {});
+  await expect(closeLocalBrowserSession(session.bootId, archive)).rejects.toThrow("flush failed");
+  expect(archive).not.toHaveBeenCalled();
+  expect((await session.client.lease!()).state).toBe("free");
+  contexts[0].ctx.close = close;
 });

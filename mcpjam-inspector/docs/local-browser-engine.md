@@ -477,3 +477,33 @@ loads and runs, (c) reparenting into a visible window keeps the page, (d)
 lets `window-all-closed` still fire with agent tabs open. Each is a claim about
 Electron's own implementation, which is exactly the class of thing a fake in a
 unit test cannot answer.
+
+## Browser workspace integration
+
+`browser-workspace-enabled` gates the shared browser shell, automatic takeover,
+and responsive pane measurements, including Electron's native surface. With the
+flag off, the pane keeps explicit Take control / Hand back controls and requests
+a fixed 1024 × 768 viewport.
+
+Sessions begin fixed. An enabled pane sends `policy: "followPane"` with its
+measurement; persistent local sessions and hosted sessions with a TigerVNC
+`VNC-0` output can opt in without a restart. Evals and older display images
+remain fixed. Browser tool commands declare `responsiveViewport: true`; callers
+without that capability receive `responsive_viewport_required` before acting on
+a responsive session. Pane-first and agent-first launches use the same path.
+
+Resize requests coalesce and wait for active commands and pointer drags to end.
+Hosted resizing switches both the active output mode and framebuffer, verifies
+the output geometry, and uses the same operation for rollback. A newer pane
+measurement supersedes a pending fixed-mode reset.
+
+The initiating streamed takeover gesture carries the daemon boot, active tab,
+URL, navigation counter, and viewport revision. The input boundary rechecks them
+after acquisition and before each event. If they changed, or an older daemon
+cannot supply an anchor, control is acquired but the gesture is discarded and
+the pane asks the user to try again.
+
+Profile export reserves an exclusive lease, closes Chromium to flush its
+persistent storage, and holds the reservation until archiving finishes. Local
+export also holds the session's creation lock, so reopening cannot race the
+archive. Export closes the live browser; the next ensure call relaunches it.
