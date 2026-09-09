@@ -136,6 +136,16 @@ describe("MetricStrip sparkline hover", () => {
     expect(within(sparkline).getByText("Run 1")).toBeInTheDocument();
   });
 
+  it("omits failed-iteration and point-change chips in history context", () => {
+    render(
+      <MetricStrip data={sampleData} context="history" testId="metric-strip" />,
+    );
+    expect(screen.queryByText(/failed iteration/)).toBeNull();
+    expect(screen.queryByText(/pp/)).toBeNull();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.getByText("1/2 passed")).toBeInTheDocument();
+  });
+
   it("renders card sparkline tooltips below the chart", () => {
     render(<MetricStrip data={sampleData} testId="metric-strip" />);
     const sparkline = screen.getByTestId("metric-sparkline-latency");

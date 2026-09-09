@@ -15,7 +15,7 @@ import {
 } from "@/components/shared/view-mode-selector";
 
 const EVALUATE_HEADER_DESCRIPTION =
-  "The manual pass you'd do before a ship, automated and run whenever the server changes.";
+  "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.";
 
 export const EVAL_LANDING_VIEW_OPTIONS = [
   { value: "runs", label: "Runs" },
@@ -155,7 +155,7 @@ export function EvalsHeader({
               </Button>
             ) : null}
           </div>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          <p className="mt-2 w-full text-sm text-muted-foreground">
             {EVALUATE_HEADER_DESCRIPTION}
           </p>
         </>

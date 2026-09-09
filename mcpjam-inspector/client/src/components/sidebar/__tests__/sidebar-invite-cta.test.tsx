@@ -2,11 +2,22 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPSidebar } from "@/components/mcp-sidebar";
+import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
 
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
 const mockShareProjectDialog = vi.fn();
+const mockInviteSignUpDialog = vi.fn();
 const mockFeatureFlags: Record<string, boolean | undefined> = {};
+
+// The guest invite CTA only exists on hosted deployments — a local/self-hosted
+// install has no WorkOS to sign up through — so these tests run hosted.
+vi.mock("@/lib/config", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/config")>(
+    "@/lib/config"
+  );
+  return { ...actual, HOSTED_MODE: true };
+});
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
@@ -68,6 +79,10 @@ vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
 
 vi.mock("@/components/project/ShareProjectDialog", () => ({
   ShareProjectDialog: (props: unknown) => mockShareProjectDialog(props),
+}));
+
+vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
+  InviteTeamSignUpDialog: (props: unknown) => mockInviteSignUpDialog(props),
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
@@ -192,9 +207,16 @@ describe("sidebar invite CTA", () => {
           </div>
         ) : null
     );
+    mockInviteSignUpDialog.mockImplementation(
+      ({ isOpen }: { isOpen: boolean }) =>
+        isOpen ? <div data-testid="invite-signup-nudge" /> : null
+    );
+    // The pending-invite marker is module state in sessionStorage — a leftover
+    // would auto-open the share dialog in an unrelated test.
+    sessionStorage.clear();
   });
 
-  it("hides the CTA for guest users", () => {
+  it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: false,
       isLoading: false,
@@ -205,9 +227,63 @@ describe("sidebar invite CTA", () => {
 
     renderSidebar();
 
+    fireEvent.click(
+      screen.getByRole("button", { name: "Invite team members" })
+    );
+
+    expect(screen.getByTestId("invite-signup-nudge")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("share-project-dialog")
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the guest CTA while auth is still resolving, so it never flashes for signed-in users", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: true,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+      isLoading: true,
+    });
+
+    renderSidebar();
+
     expect(
       screen.queryByRole("button", { name: "Invite team members" })
     ).not.toBeInTheDocument();
+  });
+
+  it("auto-opens the share dialog for a user returning from the sign-up nudge", () => {
+    // What the nudge's Create account / Sign in buttons write right before
+    // WorkOS navigates away.
+    markPendingInviteDialog();
+
+    renderSidebar();
+
+    expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
+      "Share dialog for Acme"
+    );
+  });
+
+  it("ignores the pending-invite marker for guests — the dialog needs an authed user and a project", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+    });
+    markPendingInviteDialog();
+
+    renderSidebar();
+
+    expect(
+      screen.queryByTestId("share-project-dialog")
+    ).not.toBeInTheDocument();
+    // …and the marker is still there for when sign-in completes, not consumed
+    // by a render that could not act on it.
+    expect(sessionStorage.length).toBeGreaterThan(0);
   });
 
   it("shows the CTA for signed-in users and keeps the collapsed text class", () => {

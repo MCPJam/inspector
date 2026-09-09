@@ -1,25 +1,39 @@
 /**
- * The verdict, the sentence, the action — then the numbers.
+ * Pairing pass/fail bars, the sentence, the action — then the page measurements.
  *
- * Reading order IS the design here. The old page opened with a 67% and four
- * metric tiles, so the first thing a reader met was an arithmetic summary of a
- * run whose one interesting fact (a case broke, here, for this reason) was
- * three panels down behind a "Show more". This block inverts that: decision,
- * then the failing case in one sentence, then what to do about it, and the
- * measurements last and small.
+ * Reading order IS the design here. Pass/fail is a per-client decision, so it
+ * sits with the pairing — logo, name, bar, and key — not as one rolled-up
+ * PASSED tile. Insights follow. Latency, tokens, and tool calls stay a
+ * page-level strip at the bottom.
  *
  * Every string comes from {@link buildRunVerdictHero}. The view chooses type
  * and colour; it never decides what is true.
  */
 import { useRunHeaderVerdict } from "./evaluate-run-page";
 import { remedyForDiagnostic } from "./stage-remedy";
-import { ArrowUpRight } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpRight,
+  CircleAlert,
+  CircleCheck,
+  Lightbulb,
+  TriangleAlert,
+  Wrench,
+} from "lucide-react";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
-import { measurementUnitLabel } from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import { resolveHostLogoByName } from "@/lib/host-logo";
+import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
+import {
+  formatHeroCount,
+  type HeroPairingPass,
+  type HeroStatDelta,
+} from "./run-verdict-hero-deltas";
+import { ResultCountBar, ResultCountKey } from "./result-count-bar";
 import type {
   HeroVerdictTone,
   RunVerdictHeroView,
@@ -36,31 +50,58 @@ const VERDICT_TONE_CLASS: Record<HeroVerdictTone, string> = {
 
 function formatCount(value: number | null): string {
   if (value === null) return "not recorded";
-  if (value >= 1000) {
-    const thousands = value / 1000;
-    return `${
-      thousands >= 100 ? Math.round(thousands) : thousands.toFixed(1)
-    }k`;
-  }
-  return String(value);
+  return formatHeroCount(value);
+}
+
+const DELTA_TONE_CLASS = {
+  progress: "text-success",
+  regression: "text-destructive",
+  same: "text-muted-foreground",
+} as const;
+
+function StatDelta({ delta }: { delta: HeroStatDelta }) {
+  const Arrow =
+    delta.direction === "up"
+      ? ArrowUp
+      : delta.direction === "down"
+        ? ArrowDown
+        : null;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-0.5 text-[11.5px] font-medium tabular-nums",
+        DELTA_TONE_CLASS[delta.tone],
+      )}
+      aria-label={`${delta.label} vs previous run`}
+      data-testid="run-verdict-stat-delta"
+    >
+      {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
+      {delta.label}
+    </span>
+  );
 }
 
 function Stat({
   label,
   value,
   detail,
+  delta,
 }: {
   label: string;
   value: string;
   detail?: string;
+  delta?: HeroStatDelta | null;
 }) {
   return (
     <div className="min-w-0 px-4 py-2 first:pl-0">
       <div className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
-      <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-foreground">
-        {value}
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
+        <div className="text-[15px] font-semibold tabular-nums text-foreground">
+          {value}
+        </div>
+        {delta ? <StatDelta delta={delta} /> : null}
       </div>
       {detail ? (
         <div className="text-[11.5px] text-muted-foreground">{detail}</div>
@@ -69,48 +110,64 @@ function Stat({
   );
 }
 
-/**
- * The unit is `measurementUnitLabel`'s word, never a literal.
- *
- * A 3-case suite fanned out over 2 models has 6 CASE VARIANTS, so "6 of 6
- * cases" beside a Cases list showing 3 is a number contradicting the page it
- * sits on. And a legacy run's counts are TRIALS — the one thing this hero must
- * never call cases. The contract owns both spellings; this only renders them.
- */
-function caseStatText(view: RunVerdictHeroView): {
-  value: string;
-  detail: string;
-} {
-  const { cases, iterations } = view.stats;
-  if (cases.kind === "cases") {
-    const unit = measurementUnitLabel("caseVariant", cases.total);
-    return {
-      value: `${cases.passed} of ${cases.total}`,
-      detail:
-        cases.inconclusive > 0
-          ? `${unit} · ${cases.inconclusive} inconclusive`
-          : unit,
-    };
-  }
-  if (cases.kind === "trials") {
-    if (cases.passed === null || cases.total === null) {
-      // Absent stays absent. A run that recorded no total has not recorded a
-      // total of zero, and "0 of 0" would be a claim it never made. Plural,
-      // because there is no count to agree with.
-      return {
-        value: "not recorded",
-        detail: measurementUnitLabel("trial", 0),
-      };
-    }
-    return {
-      value: `${cases.passed} of ${cases.total}`,
-      detail: `${measurementUnitLabel("trial", cases.total)}, not ${measurementUnitLabel("caseVariant", 0)}`,
-    };
-  }
-  return {
-    value: `${iterations.passed} of ${iterations.total}`,
-    detail: `${measurementUnitLabel("trial", iterations.total)} on this page`,
-  };
+function AiGeneratedLabel() {
+  return (
+    <span
+      className="shrink-0 text-[10.5px] font-medium text-muted-foreground"
+      data-testid="run-verdict-ai-insight"
+    >
+      AI generated
+    </span>
+  );
+}
+
+function PairingPassList({ pairings }: { pairings: HeroPairingPass[] }) {
+  const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
+  return (
+    <ul
+      className="divide-y divide-border/60"
+      data-testid="run-verdict-pairings"
+    >
+      {pairings.map((pairing) => {
+        const counts = {
+          passed: pairing.passed,
+          failed: pairing.failed,
+          pending: pairing.pending,
+          cancelled: pairing.cancelled,
+        };
+        const showDelta =
+          pairing.delta != null && pairing.delta.direction !== "same";
+        return (
+          <li
+            key={pairing.key}
+            className="flex min-w-0 items-center gap-4 py-4"
+            data-testid="run-verdict-pairing"
+          >
+            <div className="flex w-44 shrink-0 items-center gap-2">
+              <img
+                src={resolveHostLogoByName(pairing.client, theme)}
+                alt=""
+                className="size-4 shrink-0 object-contain"
+              />
+              <span className="min-w-0 truncate text-[13px] leading-none">
+                <span className="font-medium text-foreground">
+                  {pairing.client}
+                </span>
+                <span className="text-muted-foreground"> · {pairing.model}</span>
+              </span>
+            </div>
+            <div className="flex w-40 shrink-0 items-center gap-2">
+              <ResultCountKey counts={counts} />
+              {showDelta && pairing.delta ? (
+                <StatDelta delta={pairing.delta} />
+              ) : null}
+            </div>
+            <ResultCountBar counts={counts} className="min-w-0 flex-1" />
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 export function RunVerdictHero({
@@ -127,7 +184,8 @@ export function RunVerdictHero({
 }) {
   const inHeader = useRunHeaderVerdict(headerVerdict);
   const showVerdict = !inHeader && view.verdict.word !== "Running";
-  const caseStat = caseStatText(view);
+  const pairings = view.pairings ?? [];
+  const hasPairings = pairings.length > 0;
   const remedy = view.focus ? remedyForDiagnostic(view.focus.diagnostic) : null;
   const hasSentence = view.sentence.text.trim().length > 0;
   const summaryLoading =
@@ -161,17 +219,23 @@ export function RunVerdictHero({
           </div>
         ) : null}
 
+        {hasPairings ? (
+          <div className={cn(showVerdict && "mt-4")}>
+            <PairingPassList pairings={pairings} />
+          </div>
+        ) : null}
+
         {summaryLoading ? (
           <div
-            className={cn("grid gap-4 lg:grid-cols-2", showVerdict && "mt-5")}
+            className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
             role="status"
             aria-label="Loading run summary"
             data-testid="run-summary-loading"
           >
-            {[0, 1].map((card) => (
+            {[0, 1].map((column) => (
               <div
-                key={card}
-                className="space-y-3 rounded-lg border border-border p-4"
+                key={column}
+                className="min-w-0 space-y-3 py-3 lg:px-4 lg:py-2 lg:first:pl-0"
                 aria-hidden="true"
               >
                 <Skeleton className="h-3 w-24" />
@@ -182,16 +246,36 @@ export function RunVerdictHero({
           </div>
         ) : hasSentence ? (
           <div
-            className={cn("grid gap-4 lg:grid-cols-2", showVerdict && "mt-5")}
+            className="grid divide-y divide-border/40 border-t border-border/60 pt-3 lg:grid-cols-2 lg:divide-x lg:divide-y-0"
+            data-testid="run-verdict-insights"
           >
-            <div className="rounded-lg border border-border p-4">
-              <h4 className="text-xs font-semibold">
-                {view.sentence.kind === "noFailure"
-                  ? "What passed"
-                  : view.sentence.kind === "brokeAt"
-                    ? "What broke"
-                    : "What happened"}
-              </h4>
+            <div className="min-w-0 py-3 lg:px-4 lg:py-2 lg:first:pl-0">
+              <div className="flex items-baseline justify-between gap-3">
+                <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                  {view.sentence.kind === "noFailure" ? (
+                    <CircleCheck
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                  ) : view.sentence.kind === "brokeAt" ? (
+                    <TriangleAlert
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                  ) : (
+                    <CircleAlert
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                  )}
+                  {view.sentence.kind === "noFailure"
+                    ? "What passed"
+                    : view.sentence.kind === "brokeAt"
+                      ? "What broke"
+                      : "What happened"}
+                </h4>
+                <AiGeneratedLabel />
+              </div>
               {hasSentence ? (
                 <p
                   className="mt-2 max-w-[72ch] text-sm leading-relaxed text-foreground"
@@ -201,11 +285,28 @@ export function RunVerdictHero({
                 </p>
               ) : null}
             </div>
-            <div className="rounded-lg border border-border p-4">
-              <h4 className="text-xs font-semibold">
-                {remedy ? "How to fix" : "Next step"}
-              </h4>
-              <p className="mt-2 text-sm leading-relaxed text-foreground">
+            <div className="min-w-0 py-3 lg:px-4 lg:py-2">
+              <div className="flex items-baseline justify-between gap-3">
+                <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                  {remedy ? (
+                    <Wrench
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                  ) : (
+                    <Lightbulb
+                      className="size-4 text-muted-foreground"
+                      aria-hidden
+                    />
+                  )}
+                  {remedy ? "How to fix" : "Next step"}
+                </h4>
+                <AiGeneratedLabel />
+              </div>
+              <p
+                className="mt-2 text-sm leading-relaxed text-foreground"
+                data-testid="run-verdict-remedy"
+              >
                 {remedy?.text ??
                   (view.pending
                     ? "Results are still arriving. Inspect the live case matrix below as iterations complete."
@@ -237,15 +338,26 @@ export function RunVerdictHero({
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 divide-x divide-border/40 border-t border-border/60 pt-3 sm:grid-cols-4">
-        <Stat label="Passed" value={caseStat.value} detail={caseStat.detail} />
+      <div
+        className="grid grid-cols-3 divide-x divide-border/40 border-t border-border/60 pt-3"
+        data-testid="run-verdict-stats"
+      >
         <Stat
           label="Latency p50"
           value={formatRunCaseLatencyMs(view.stats.latencyP50Ms)}
           detail={`p95 ${formatRunCaseLatencyMs(view.stats.latencyP95Ms)}`}
+          delta={view.deltas?.latency}
         />
-        <Stat label="Tokens" value={formatCount(view.stats.tokens)} />
-        <Stat label="Tool calls" value={formatCount(view.stats.toolCalls)} />
+        <Stat
+          label="Tokens"
+          value={formatCount(view.stats.tokens)}
+          delta={view.deltas?.tokens}
+        />
+        <Stat
+          label="Tool calls"
+          value={formatCount(view.stats.toolCalls)}
+          delta={view.deltas?.toolCalls}
+        />
       </div>
     </section>
   );

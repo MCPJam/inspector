@@ -275,6 +275,12 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
+  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
+  // on hosted): shown/dismissed measure the gate's conversion funnel; the
+  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with location "invite_signup_nudge".
+  invite_signup_nudge_shown: { source: "client" },
+  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },

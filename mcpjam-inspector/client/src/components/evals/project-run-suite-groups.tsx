@@ -11,6 +11,8 @@ import { RunClientsCell } from "./run-clients-cell";
 import { RunPlatformBadge } from "./run-git-metadata";
 import {
   buildSuiteRunHistoryAggregates,
+  formatRunHistoryDate,
+  formatRunHistoryDateRange,
   formatRunHistoryMetric,
   type SuiteRunHistoryRow,
 } from "../evaluate/suite-detail-model";
@@ -138,7 +140,7 @@ export function ProjectRunSuiteGroup({
       {expanded && !ready && (
         <TableRow>
           <TableCell
-            colSpan={8 + (shared.showGitContext ? 1 : 0)}
+            colSpan={9 + (shared.showGitContext ? 1 : 0)}
             className="h-16 px-7"
           >
             {loading ? (
@@ -169,15 +171,7 @@ export function ProjectRunSuiteGroup({
               {...shared}
               rows={launch.runs}
               label={`Run #${representative.runNumber}`}
-              detail={new Date(representative.createdAt).toLocaleString(
-                undefined,
-                {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                },
-              )}
+              date={formatRunHistoryDate(representative.createdAt)}
               onOpen={
                 representative.suiteName !== null
                   ? () =>
@@ -192,7 +186,7 @@ export function ProjectRunSuiteGroup({
         })}
       {expanded && ready && group.launches.length > 5 && (
         <TableRow>
-          <TableCell colSpan={8 + (shared.showGitContext ? 1 : 0)}>
+          <TableCell colSpan={9 + (shared.showGitContext ? 1 : 0)}>
             <Button
               variant="ghost"
               size="sm"
@@ -217,6 +211,7 @@ export function GroupSummaryRow({
   showGitContext,
   label,
   detail,
+  date,
   expanded,
   onToggle,
   suite = false,
@@ -226,7 +221,8 @@ export function GroupSummaryRow({
 }: SharedProps & {
   rows: ProjectRunRow[];
   label: string;
-  detail: string;
+  detail?: string;
+  date?: string;
   expanded?: boolean;
   onToggle?: () => void;
   onOpen?: () => void;
@@ -242,6 +238,14 @@ export function GroupSummaryRow({
     ...new Set(rows.map((row) => row.source ?? row.suiteSource ?? "ui")),
   ];
   const Icon = expanded ? ChevronDown : ChevronRight;
+  const dateLabel =
+    date ??
+    (rows.length > 0
+      ? formatRunHistoryDateRange(
+          Math.min(...rows.map((row) => row.createdAt)),
+          Math.max(...rows.map((row) => row.createdAt)),
+        )
+      : undefined);
   return (
     <TableRow
       data-testid={testId}
@@ -267,37 +271,43 @@ export function GroupSummaryRow({
           }
         : {})}
     >
-      <TableCell className="max-w-80">
+      <TableCell className="whitespace-nowrap text-muted-foreground">
         {suite ? (
           <button
             type="button"
             aria-label={`${expanded ? "Collapse" : "Expand"} suite ${label}`}
             aria-expanded={expanded}
             onClick={onToggle}
-            className="flex w-full items-start gap-2 rounded-sm text-left focus-visible:outline-ring"
+            className="flex items-center gap-2 rounded-sm text-left focus-visible:outline-ring"
           >
             <Icon
-              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+              className="size-3.5 shrink-0 text-muted-foreground"
               aria-hidden
             />
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-semibold">
-                {label}
-              </span>
+            <span>{dateLabel}</span>
+          </button>
+        ) : (
+          dateLabel
+        )}
+      </TableCell>
+      <TableCell className="max-w-80">
+        {suite ? (
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-semibold">
+              {label}
+            </span>
+            {detail ? (
               <span
                 className="mt-1 block truncate text-[10px] text-muted-foreground"
                 title={detail}
               >
                 {detail}
               </span>
-            </span>
-          </button>
+            ) : null}
+          </span>
         ) : (
           <div className="pl-5">
             <span className="block text-xs font-medium">{label}</span>
-            <span className="mt-1 block text-[10px] text-muted-foreground">
-              {detail}
-            </span>
           </div>
         )}
       </TableCell>
