@@ -4032,6 +4032,7 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
+    if (this.disposed) return;
     if (!this.onChange && this.subscribers.size === 0) return;
     const tools = this.list();
     for (const listener of [this.onChange, ...this.subscribers]) {
@@ -4133,6 +4134,24 @@ var WebMcpBridge = class {
     return this.sessions.get(MAIN_SESSION_KEY);
   }
   /**
+   * Whether events from this session still count.
+   *
+   * `CdpLike` has deliberately no `off`, so nothing can UNSUBSCRIBE a session's
+   * handlers — `removeSession` and `dispose` drop the bridge's bookkeeping and
+   * leave the wiring in place. Without this check a `toolsAdded` arriving after
+   * either one would find the frame unowned, claim it, re-populate the map the
+   * teardown just cleared, and publish it: tools resurrected for a session the
+   * provider has already closed.
+   *
+   * Identity, not just presence: a replacement attachment for the same frame is
+   * a DIFFERENT session object under a different key, so a stale one must not
+   * pass by having a live namesake.
+   */
+  live(session) {
+    if (this.disposed) return false;
+    return this.sessions.get(session.key) === session;
+  }
+  /**
    * Subscribe one session's events. Every handler closes over the session it
    * belongs to, because almost every one of them has to answer "whose?" —
    * which frames this session owns, whose tools a removal may delete, and
@@ -4140,6 +4159,7 @@ var WebMcpBridge = class {
    */
   wireSession(session) {
     session.cdp.on("WebMCP.toolsAdded", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
       const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
@@ -4155,6 +4175,7 @@ var WebMcpBridge = class {
       this.announce();
     });
     session.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
       for (const tool of tools ?? []) {
         const key = this.key(tool.frameId, tool.name);
@@ -4188,6 +4209,7 @@ var WebMcpBridge = class {
       this.deliver(waiter, responded);
     });
     session.cdp.on("Page.frameNavigated", (payload) => {
+      if (!this.live(session)) return;
       const { frame } = payload ?? {};
       if (!frame) return;
       this.frames.set(frame.id, frame.url);
@@ -4199,6 +4221,7 @@ var WebMcpBridge = class {
       this.announce();
     });
     session.cdp.on("Page.frameDetached", (payload) => {
+      if (!this.live(session)) return;
       const { frameId, reason } = payload ?? {};
       if (!frameId) return;
       if (reason === "swap") {
@@ -4253,6 +4276,7 @@ var WebMcpBridge = class {
     });
     await this.seedFrames(cdp).catch(() => {
     });
+    if (!this.live(session)) return key;
     this.announce();
     return key;
   }
@@ -7329,7 +7353,12 @@ function attachFrameSessions(page, bridge) {
       const tree = await session.send("Page.getFrameTree");
       const frameId = tree?.frameTree?.frame?.id;
       if (!frameId) return;
-      tokens.set(frame, await bridge.addSession(frameId, session));
+      const token = await bridge.addSession(frameId, session);
+      if (!page.frames?.().includes(frame)) {
+        bridge.removeSession(token);
+        return;
+      }
+      tokens.set(frame, token);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/does not have a separate CDP session/i.test(message)) return;

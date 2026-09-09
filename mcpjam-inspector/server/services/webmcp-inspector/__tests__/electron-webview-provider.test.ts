@@ -492,9 +492,69 @@ describe("electron-webview provider — the session surface", () => {
         ),
       ).toContain("inner_tool"),
     );
+    // BY NAME, not `.at(-1)`: the bridge publishes its map in registration
+    // order, so a later registration would move the entry this checks while the
+    // name assertion above still passed.
     expect(
-      (recorder.toolSnapshots.at(-1) as { origin: string }[]).at(-1)?.origin,
+      (recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]).find(
+        (tool) => tool.name === "inner_tool",
+      )?.origin,
     ).toBe("https://inner.test");
+  });
+
+  it("undoes an attach whose frame detached while it was still in flight", async () => {
+    // The window: `attachFrameSession` awaits a frame tree and the bridge's own
+    // domain enables, and the detach can land in the middle of that — with no
+    // token recorded yet, so the detach handler has nothing to remove. Without
+    // a tombstone the attach completes afterwards and the bridge goes on
+    // publishing a departed frame's tools.
+    const { guest, recorder } = await startSession();
+    // Hold `Page.getFrameTree` open, so the detach is guaranteed to land INSIDE
+    // the attach rather than racing it.
+    let answerTree: (tree: unknown) => void = () => {};
+    guest.debugger.replies.set(
+      "gone:Page.getFrameTree",
+      new Promise((resolve) => {
+        answerTree = resolve;
+      }),
+    );
+
+    guest.debugger.emitCdp("Target.attachedToTarget", {
+      sessionId: "gone",
+      targetInfo: { type: "iframe", url: "https://gone.test/" },
+    });
+    await vi.waitFor(() =>
+      expect(
+        guest.debugger.calls.some(
+          (call) =>
+            call.sessionId === "gone" && call.method === "Page.getFrameTree",
+        ),
+      ).toBe(true),
+    );
+
+    // The frame goes away while the attach is still waiting on that reply.
+    guest.debugger.emitCdp("Target.detachedFromTarget", { sessionId: "gone" });
+    answerTree({
+      frameTree: { frame: { id: "frame-gone", url: "https://gone.test/" } },
+    });
+
+    // The attach now completes — and must undo itself rather than register.
+    await vi.waitFor(() =>
+      expect(
+        guest.debugger.calls.some(
+          (call) =>
+            call.sessionId === "gone" && call.method === "WebMCP.enable",
+        ),
+      ).toBe(true),
+    );
+    guest.debugger.emitCdp(
+      "WebMCP.toolsAdded",
+      { tools: [{ name: "gone_tool", frameId: "frame-gone" }] },
+      "gone",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const names = (recorder.toolSnapshots.at(-1) ?? []) as { name: string }[];
+    expect(names.map((tool) => tool.name)).not.toContain("gone_tool");
   });
 
   it("carries a cross-document JSON-LD ARRAY through the webview adapter", async () => {

@@ -1197,19 +1197,34 @@ describe("WebMcpBridge — more than one CDP session", () => {
   it("refuses an invocation whose owning session cannot be resolved", async () => {
     const main = fakeCdp();
     const bridge = await started(main);
+    // The tool is registered by the PAGE's session, which claims the frame...
+    main.emit("WebMCP.toolsAdded", {
+      tools: [{ ...TOOL, name: "sub_tool", frameId: "frame-sub" }],
+    });
+    // ...then that frame turns out to have its own target, which takes
+    // ownership of it, and registers something else there.
     const child = fakeCdp();
     const token = await bridge.addSession("frame-sub", child.cdp);
     child.emit("WebMCP.toolsAdded", {
-      tools: [{ ...TOOL, name: "sub_tool", frameId: "frame-sub" }],
+      tools: [{ ...TOOL, name: "other_tool", frameId: "frame-sub" }],
     });
-    // The session goes away while the tool is still listed by a stale caller.
+    // The child session goes away. Removal is scoped to what THAT session
+    // registered, so `sub_tool` is still listed — but the frame it belongs to
+    // now has no session at all, which is the state this test is about.
     bridge.removeSession(token);
+    expect(bridge.list().map((tool) => tool.name)).toEqual(["sub_tool"]);
 
     // No silent default to the page's session: a call sent somewhere plausible
-    // is a call to the wrong renderer, and the caller is told which frame.
+    // is a call to the wrong renderer, and the caller is told which frame. The
+    // MESSAGE is asserted because the lenient path fails with a different one
+    // ("no longer offers a tool named"), and a test that accepted either would
+    // pass without ever reaching session resolution.
     await expect(
       bridge.invoke({ toolName: "sub_tool", frameId: "frame-sub", input: {} }),
-    ).rejects.toMatchObject({ failure: "webmcp_tool_gone" });
+    ).rejects.toMatchObject({
+      failure: "webmcp_tool_gone",
+      message: expect.stringMatching(/no longer attached to this session/),
+    });
     expect(
       main.sent.filter((entry) => entry.method === "WebMCP.invokeTool"),
     ).toEqual([]);
@@ -1257,6 +1272,57 @@ describe("WebMcpBridge — more than one CDP session", () => {
       tools: [{ ...TOOL, name: "sub_ghost", frameId: "frame-sub" }],
     });
     expect(bridge.list().map((tool) => tool.name)).not.toContain("sub_ghost");
+  });
+
+  it("goes inert once removed, rather than resurrecting the map it just cleared", async () => {
+    const main = fakeCdp();
+    const published: string[][] = [];
+    const bridge = await started(main, {
+      onChange: (tools) => published.push(tools.map((tool) => tool.name)),
+    });
+    const child = fakeCdp();
+    const token = await bridge.addSession("frame-sub", child.cdp);
+    child.emit("WebMCP.toolsAdded", {
+      tools: [{ ...TOOL, name: "sub_tool", frameId: "frame-sub" }],
+    });
+    bridge.removeSession(token);
+    expect(bridge.list()).toEqual([]);
+
+    // `CdpLike` has no `off`, so this session's handlers are STILL WIRED and a
+    // detaching target can still deliver into them. Without the liveness check
+    // this event would find the frame unowned, claim it, and publish a tool for
+    // a session the provider has already closed.
+    const before = published.length;
+    child.emit("WebMCP.toolsAdded", {
+      tools: [{ ...TOOL, name: "ghost", frameId: "frame-sub" }],
+    });
+    expect(bridge.list()).toEqual([]);
+    expect(published.length).toBe(before);
+  });
+
+  it("publishes nothing at all after dispose, on any session", async () => {
+    const main = fakeCdp();
+    const published: string[][] = [];
+    const bridge = await started(main, {
+      onChange: (tools) => published.push(tools.map((tool) => tool.name)),
+    });
+    const child = fakeCdp();
+    await bridge.addSession("frame-sub", child.cdp);
+    bridge.dispose();
+
+    // `dispose` clears `subscribers`, but `onChange` is the CONSTRUCTOR's
+    // callback and survives it — so "nobody is listening" was never true, and a
+    // late event from either session would have reached the provider.
+    const before = published.length;
+    child.emit("WebMCP.toolsAdded", {
+      tools: [{ ...TOOL, name: "ghost", frameId: "frame-sub" }],
+    });
+    main.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+    main.emit("Page.frameNavigated", {
+      frame: { id: "frame-main", url: "https://example.com/after" },
+    });
+    expect(bridge.list()).toEqual([]);
+    expect(published.length).toBe(before);
   });
 
   it("drops only the reporting session's tools on a `swap` detach", async () => {

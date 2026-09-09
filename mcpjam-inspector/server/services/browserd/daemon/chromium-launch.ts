@@ -565,7 +565,18 @@ function attachFrameSessions(page: AnyPage, bridge: WebMcpBridge): void {
       };
       const frameId = tree?.frameTree?.frame?.id;
       if (!frameId) return;
-      tokens.set(frame, await bridge.addSession(frameId, session));
+      const token = await bridge.addSession(frameId, session);
+      // The frame can go away DURING those two awaits, and its `framedetached`
+      // has then already run and found no token to remove — leaving a session
+      // wired to the bridge publishing tools for a frame that is off the page.
+      // The local inspector closes the same window with `frame.isDetached()`;
+      // `AnyFrame` exposes only `url()`, so membership in the CURRENT frame
+      // list is the equivalent question here.
+      if (!page.frames?.().includes(frame)) {
+        bridge.removeSession(token);
+        return;
+      }
+      tokens.set(frame, token);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/does not have a separate CDP session/i.test(message)) return;

@@ -67,6 +67,12 @@
  *  13. A tool that returns a value and THEN navigates is answered TWICE for one
  *      invocation id: its own value first, the destination document's JSON-LD
  *      second. The first is the true outcome; the second must not displace it.
+ *  14. A pending DECLARATIVE invocation cannot be cancelled: `cancelInvocation`
+ *      rejects its id ("No pending execution for invocation id") while the same
+ *      call on a pending imperative one is accepted and answers `Canceled`. So
+ *      a form waiting on a person stays live after we have given up on it, and
+ *      the bridge has to remember that it settled the caller and drop the
+ *      answer that arrives if the person submits later.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Browser, CDPSession, Page } from "playwright";
@@ -710,6 +716,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   let cdp: CDPSession;
   const responded: RespondedPayload[] = [];
   const navigations: { url: string; at: number }[] = [];
+  const added: ToolPayload[] = [];
 
   beforeAll(async () => {
     fixture = await startWebMcpFixtureServer();
@@ -719,6 +726,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     });
     page = await browser.newPage();
     cdp = await page.context().newCDPSession(page);
+    cdp.on("WebMCP.toolsAdded", (e) =>
+      added.push(...(e as { tools: ToolPayload[] }).tools),
+    );
     cdp.on("WebMCP.toolResponded", (e) => responded.push(e as never));
     cdp.on("Page.frameNavigated", (e) =>
       navigations.push({
@@ -735,14 +745,24 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     await fixture?.close();
   });
 
-  /** Load a fixture page and answer with its (current) main frame id. */
-  async function open(url: string): Promise<string> {
+  /**
+   * Load a fixture page, wait until it has REGISTERED `expected`, and answer
+   * with the main frame id to invoke against.
+   *
+   * The wait is on the registration, not on the load: `networkidle` says the
+   * network went quiet, which is not the same as `WebMCP.toolsAdded` having
+   * arrived — and invoking a tool the browser has not been told about yet fails
+   * as `Tool not found`, which would read like a finding about the domain.
+   */
+  async function open(url: string, expected: string): Promise<string> {
     responded.length = 0;
     navigations.length = 0;
+    added.length = 0;
     await page.goto(url, { waitUntil: "networkidle" });
-    // The declarative page registers from markup at parse time; the imperative
-    // one from a script. Either way, wait for the tool set rather than a timer.
-    await waitFor(async () => true);
+    await waitFor(() =>
+      added.some((tool) => tool.name === expected) ? true : undefined,
+      10_000,
+    );
     return (
       (await cdp.send("Page.getFrameTree" as never)) as {
         frameTree: { frame: { id: string } };
@@ -815,7 +835,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }
 
   it("answers a same-document autosubmit with the destination's JSON-LD array", async () => {
-    const frameId = await open(fixture.declarativeUrl);
+    const frameId = await open(fixture.declarativeUrl, FIXTURE_TOOLS.submitOrder);
     const { response, all, invocationId, elapsedMs } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.submitOrder,
@@ -848,7 +868,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("answers when the result lands in a NAMED TARGET FRAME", async () => {
-    const frameId = await open(fixture.declarativeUrl);
+    const frameId = await open(fixture.declarativeUrl, FIXTURE_TOOLS.frameOrder);
     const { response } = await invokeAndWait(frameId, FIXTURE_TOOLS.frameOrder, {
       sku: "F1",
     });
@@ -866,7 +886,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("LOSES the response when the form targets _blank", async () => {
-    const frameId = await open(fixture.declarativeUrl);
+    const frameId = await open(fixture.declarativeUrl, FIXTURE_TOOLS.openReport);
     const opened = page
       .context()
       .waitForEvent("page", { timeout: 8_000 })
@@ -903,7 +923,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("stays pending while a non-autosubmit form waits for a person", async () => {
-    const frameId = await open(fixture.declarativeUrl);
+    const frameId = await open(fixture.declarativeUrl, FIXTURE_TOOLS.confirmOrder);
     const first = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.confirmOrder,
@@ -913,8 +933,22 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     // "Waiting for a human" and "stuck" look identical from here — which is the
     // point of having the shape: nothing settles, and nothing claims to.
     expect(first.response).toBeUndefined();
+    // AND IT CANNOT BE CANCELLED. A declarative invocation waiting on a person
+    // is not a "pending execution" as far as the domain is concerned, so
+    // `cancelInvocation` rejects its id outright — where the same call on a
+    // pending IMPERATIVE invocation is accepted and answers `Canceled` (the
+    // contract suite's cancel test). Consequences in the bridge: a caller who
+    // stops one of these is still freed, by the grace timer that settles a
+    // cancel the page never answers, but the page's form invocation stays live
+    // — so a person submitting later answers an invocation already reported as
+    // cancelled, and `settle()` must therefore remember the id and DROP that
+    // late answer rather than buffer it.
+    expect(await cancelStillValid(first.invocationId)).toBe(false);
 
-    // Now a person submits it, and the same invocation is answered.
+    // A person now submits, and an invocation is answered. Which one is
+    // asserted rather than assumed: the first is still live in the page and
+    // could not be cancelled, so a test that only checked `status` would pass
+    // whichever of the two Blink chose to answer.
     const second = invokeAndWait(
       frameId,
       FIXTURE_TOOLS.confirmOrder,
@@ -923,7 +957,9 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 400));
     await page.click("#confirm-submit");
-    const { response } = await second;
+    const { response, invocationId } = await second;
+    expect(response?.invocationId).toBe(invocationId);
+    expect(response?.invocationId).not.toBe(first.invocationId);
     expect(response?.status).toBe("Completed");
     expect(response?.output).toEqual([
       {
@@ -936,7 +972,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 40_000);
 
   it("answers an IMPERATIVE navigation that never returns", async () => {
-    const frameId = await open(fixture.url);
+    const frameId = await open(fixture.url, FIXTURE_TOOLS.goElsewhere);
     const { response, all } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.goElsewhere,
@@ -957,7 +993,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("collects EVERY JSON-LD block, in document order", async () => {
-    const frameId = await open(fixture.url);
+    const frameId = await open(fixture.url, FIXTURE_TOOLS.goElsewhere);
     const { response } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.goElsewhere,
@@ -975,7 +1011,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("skips a malformed block and keeps the valid one", async () => {
-    const frameId = await open(fixture.url);
+    const frameId = await open(fixture.url, FIXTURE_TOOLS.goElsewhere);
     const { response } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.goElsewhere,
@@ -994,7 +1030,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("answers a document with NO JSON-LD as Completed with an empty array", async () => {
-    const frameId = await open(fixture.url);
+    const frameId = await open(fixture.url, FIXTURE_TOOLS.goElsewhere);
     const { response } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.goElsewhere,
@@ -1009,7 +1045,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("keeps a tool's OWN returned value when it navigates afterwards", async () => {
-    const frameId = await open(fixture.url);
+    const frameId = await open(fixture.url, FIXTURE_TOOLS.submitAndReturn);
     const { all } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.submitAndReturn,
@@ -1030,7 +1066,7 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("cross-document tool results", () => {
   }, 30_000);
 
   it("answers a tool that refuses without navigating, as itself", async () => {
-    const frameId = await open(fixture.url);
+    const frameId = await open(fixture.url, FIXTURE_TOOLS.validateFirst);
     const { response, all } = await invokeAndWait(
       frameId,
       FIXTURE_TOOLS.validateFirst,

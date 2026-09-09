@@ -665,6 +665,15 @@ Details worth keeping:
   the bridge settles on it and DROPS the second rather than buffering it as
   somebody's early response.
 - **Once answered, the invocation id is spent**: `cancelInvocation` rejects it.
+- **A pending DECLARATIVE invocation cannot be cancelled at all.** A form
+  waiting on a person is not a "pending execution" to the domain, so
+  `cancelInvocation` rejects its id — where the same call on a pending
+  *imperative* invocation is accepted and answers `Canceled`. Stopping one still
+  frees the caller, through the grace timer that settles a cancel the page never
+  answers; what it does not do is stop the page. So the form stays live, a
+  person submitting later answers an invocation already reported as cancelled,
+  and `settle()` remembering the id is what makes that late answer get dropped
+  instead of buffered.
 
 `target="_blank"` is the one shape that loses the response, and it is lost in
 the browser rather than on the way to us: nothing arrives on the opener's

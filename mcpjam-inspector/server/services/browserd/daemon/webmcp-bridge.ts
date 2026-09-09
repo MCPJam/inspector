@@ -400,6 +400,10 @@ export class WebMcpBridge {
    * responsible for the bridge's own bookkeeping.
    */
   private announce(): void {
+    // Nothing is published after dispose. `subscribers` is cleared there, but
+    // `onChange` is the CONSTRUCTOR's callback and is not — so without this a
+    // late event would still reach the provider, on a session it has closed.
+    if (this.disposed) return;
     if (!this.onChange && this.subscribers.size === 0) return;
     const tools = this.list();
     for (const listener of [this.onChange, ...this.subscribers]) {
@@ -530,6 +534,25 @@ export class WebMcpBridge {
   }
 
   /**
+   * Whether events from this session still count.
+   *
+   * `CdpLike` has deliberately no `off`, so nothing can UNSUBSCRIBE a session's
+   * handlers — `removeSession` and `dispose` drop the bridge's bookkeeping and
+   * leave the wiring in place. Without this check a `toolsAdded` arriving after
+   * either one would find the frame unowned, claim it, re-populate the map the
+   * teardown just cleared, and publish it: tools resurrected for a session the
+   * provider has already closed.
+   *
+   * Identity, not just presence: a replacement attachment for the same frame is
+   * a DIFFERENT session object under a different key, so a stale one must not
+   * pass by having a live namesake.
+   */
+  private live(session: BridgeSession): boolean {
+    if (this.disposed) return false;
+    return this.sessions.get(session.key) === session;
+  }
+
+  /**
    * Subscribe one session's events. Every handler closes over the session it
    * belongs to, because almost every one of them has to answer "whose?" —
    * which frames this session owns, whose tools a removal may delete, and
@@ -537,6 +560,7 @@ export class WebMcpBridge {
    */
   private wireSession(session: BridgeSession): void {
     session.cdp.on("WebMCP.toolsAdded", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = (payload ?? {}) as { tools?: WebMcpCdpTool[] };
       // ONE sequence for the whole event, minted before the loop: tools a page
       // registers together belong to one registration, and a per-tool counter
@@ -564,6 +588,7 @@ export class WebMcpBridge {
     });
 
     session.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = (payload ?? {}) as {
         tools?: Array<{ name: string; frameId: string }>;
       };
@@ -596,6 +621,12 @@ export class WebMcpBridge {
       this.onExternalInvocation?.(invoked.toolName ?? "");
     });
 
+    // NOT guarded by `live`. A response settles a PENDING INVOCATION, and a
+    // caller waiting on one is owed its answer even if the session it was
+    // issued on has since been removed — refusing it here would strand that
+    // caller until its deadline. `dispose` rejects the waiters itself, and an
+    // id nobody is waiting for goes no further than the bounded early-response
+    // buffer.
     session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = (payload ?? {}) as RespondedPayload;
       const id = responded.invocationId;
@@ -625,6 +656,7 @@ export class WebMcpBridge {
     });
 
     session.cdp.on("Page.frameNavigated", (payload) => {
+      if (!this.live(session)) return;
       const { frame } = (payload ?? {}) as {
         frame?: { id: string; url: string; parentId?: string };
       };
@@ -653,6 +685,7 @@ export class WebMcpBridge {
     });
 
     session.cdp.on("Page.frameDetached", (payload) => {
+      if (!this.live(session)) return;
       const { frameId, reason } = (payload ?? {}) as {
         frameId?: string;
         reason?: string;
@@ -718,6 +751,11 @@ export class WebMcpBridge {
     await cdp.send("Page.enable").catch(() => {});
     await cdp.send("WebMCP.enable").catch(() => {});
     await this.seedFrames(cdp).catch(() => {});
+    // Three round trips have passed. A `dispose`, or a replacement attachment
+    // for this frame, may have retired this session in that window — and
+    // publishing here would announce a session nobody is listening on. The
+    // handlers are already inert (`live`); this stops the announcement too.
+    if (!this.live(session)) return key;
     this.announce();
     return key;
   }
@@ -1194,8 +1232,11 @@ export class WebMcpBridge {
     this.subscribers.clear();
     this.probe = undefined;
     // Child sessions are the provider's to close; what the bridge drops is its
-    // own listening and routing, so a late event from a detaching target
-    // cannot resurrect a tool map nobody is reading.
+    // own bookkeeping. It cannot UNSUBSCRIBE them — `CdpLike` has no `off` —
+    // so the handlers stay wired and `live()` is what makes them inert. Without
+    // that, a `toolsAdded` from a target still detaching would repopulate this
+    // map and publish it through `onChange`, which `subscribers.clear()` does
+    // not cover.
     for (const key of [...this.sessions.keys()]) {
       if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
     }

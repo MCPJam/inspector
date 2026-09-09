@@ -130,6 +130,17 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
    * replacement has already re-registered.
    */
   private readonly frameSessions = new Map<string, string>();
+  /**
+   * Sessions that detached while their attachment was still in flight.
+   *
+   * `attachFrameSession` awaits a frame tree and the bridge's own domain
+   * enables, and `Target.detachedFromTarget` can land in that window — with no
+   * token yet in `frameSessions`, so the handler has nothing to remove. Without
+   * this tombstone the attachment completes afterwards and the bridge keeps
+   * publishing a departed frame's tools. Bounded by the attach it belongs to:
+   * every entry is consumed or discarded when that attach finishes.
+   */
+  private readonly detachedWhileAttaching = new Set<string>();
   private url: string;
   private disposed = false;
   private lastActivityReport = 0;
@@ -265,6 +276,10 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
       // been re-attached under a new session, and anything scoped to the frame
       // would empty a frame that is working.
       if (token !== undefined) this.bridge.removeSession(token);
+      // No token yet means the attach for this session is still in flight, so
+      // there is nothing to remove HERE — the tombstone is what makes that
+      // attach undo itself when it lands.
+      else this.detachedWhileAttaching.add(sessionId);
     });
     void Promise.resolve(
       cdp.send("Target.setAutoAttach", {
@@ -289,6 +304,10 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
 
   private async attachFrameSession(sessionId: string): Promise<void> {
     if (this.disposed || this.frameSessions.has(sessionId)) return;
+    // Cleared on entry and again on exit: the tombstone belongs to THIS attach,
+    // and a stale one from a previous attach of the same id would make this
+    // attempt undo itself for no reason.
+    this.detachedWhileAttaching.delete(sessionId);
     const child = this.cdp.childFor(sessionId);
     try {
       // Before anything else, so a frame nested inside THIS one is announced.
@@ -299,7 +318,7 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
       const frameId = tree?.frameTree?.frame?.id;
       if (!frameId) return;
       const token = await this.bridge.addSession(frameId, child);
-      if (this.disposed) {
+      if (this.disposed || this.detachedWhileAttaching.has(sessionId)) {
         this.bridge.removeSession(token);
         return;
       }
@@ -312,6 +331,8 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
       this.callbacks.onSessionNotice?.(
         `Could not inspect a cross-origin frame in this page: ${message}. Any WebMCP tools it registers are not listed.`,
       );
+    } finally {
+      this.detachedWhileAttaching.delete(sessionId);
     }
   }
 

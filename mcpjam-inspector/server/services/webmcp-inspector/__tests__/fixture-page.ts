@@ -440,8 +440,14 @@ const SUB_HTML = `<!doctype html><html><body>
 /**
  * A cross-origin document that itself embeds a THIRD origin.
  *
- * The nested-target case: attaching to this frame's session is not enough to
- * see the inner frame's tools, which is what makes attachment recursive.
+ * The nested-target case: the inner frame's tools live in a THIRD target, so
+ * every transport has to reach one level deeper than "the page and its
+ * frames". HOW differs, and the spike measures both: Playwright's
+ * `page.frames()` is already flat across targets and reaches every depth, so
+ * the Playwright providers sweep it and never recurse; Electron has no such
+ * list and must re-issue `Target.setAutoAttach` on each child session, or
+ * attachment stops one level down. See the spike's "enumerates a cross-origin
+ * frame INSIDE a cross-origin frame".
  */
 const NESTED_OUTER_HTML = (innerOrigin: string) => `<!doctype html><html><body>
 <p>nested outer</p>
