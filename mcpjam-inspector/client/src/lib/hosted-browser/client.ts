@@ -13,6 +13,8 @@
  * can, because a pane that had to branch on more than that would be two panes.
  */
 
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
+
 export const HOSTED_BROWSER_BASE = "/api/web/computers/browser";
 
 /** Loopback is fine unencrypted; nothing leaves the machine. */
@@ -261,6 +263,21 @@ export async function touchHostedBrowser(
 ): Promise<{ counted: boolean }> {
   const res = await authorized(tokens, "/keepalive", { method: "POST" });
   return decode<{ counted: boolean }>(res);
+}
+
+/** Export the hosted persistent profile after the daemon queue is drained. */
+export async function fetchHostedBrowserProfileArchive(
+  tokens: BrowserTokenCache,
+): Promise<{ archive: Blob; savedFrom?: string }> {
+  const res = await authorized(tokens, "/profile/export", { method: "POST" });
+  if (!res.ok) {
+    throw new HostedBrowserError(
+      "The hosted browser profile could not be exported.",
+      res.status,
+    );
+  }
+  const savedFrom = res.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+  return { archive: await res.blob(), ...(savedFrom ? { savedFrom } : {}) };
 }
 
 /**

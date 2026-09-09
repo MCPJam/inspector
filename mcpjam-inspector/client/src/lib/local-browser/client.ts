@@ -10,6 +10,7 @@
  */
 import { authFetch } from "@/lib/session-token";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /**
  * Refuse to hand the device-consent capability to a page that is not on this
@@ -161,8 +162,13 @@ export function startLocalBrowserInstall(
 export function ensureLocalBrowser(
   projectId: string,
   consentToken: string | null,
+  sessionId?: string,
 ): Promise<LocalBrowserSession> {
-  return post("ensure", { projectId }, consentToken);
+  return post(
+    "ensure",
+    { projectId, ...(sessionId ? { sessionId } : {}) },
+    consentToken,
+  );
 }
 
 export function mintLocalBrowserFrameNonce(
@@ -270,7 +276,12 @@ export interface LocalBrowserTraceRow {
   url?: string;
   title?: string;
   artifacts?: {
-    screenshot?: { id: string; bytes: number; mediaType: string; evicted?: boolean };
+    screenshot?: {
+      id: string;
+      bytes: number;
+      mediaType: string;
+      evicted?: boolean;
+    };
   };
 }
 
@@ -285,8 +296,7 @@ export interface LocalBrowserTraceGap {
 }
 
 export type LocalBrowserTraceEntry =
-  | LocalBrowserTraceRow
-  | LocalBrowserTraceGap;
+  LocalBrowserTraceRow | LocalBrowserTraceGap;
 
 export interface LocalBrowserTracePage {
   entries: LocalBrowserTraceEntry[];
@@ -300,6 +310,49 @@ export function sendLocalBrowserInput(
   consentToken: string | null,
 ): Promise<{ ok: true }> {
   return post("input", args, consentToken);
+}
+
+/** Export one persistent local browser profile after closing its session. */
+export async function fetchLocalBrowserProfileArchive(args: {
+  bootId: string;
+  projectId?: string;
+  sessionId?: string;
+  consentToken: string | null;
+}): Promise<{ archive: Blob; savedFrom?: string }> {
+  assertSecureLocalOrigin();
+  const response = await authFetch(
+    "/api/mcp/computers/local-browser/profile/export",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(args.consentToken
+          ? { [LOCAL_CONSENT_HEADER]: args.consentToken }
+          : {}),
+      },
+      body: JSON.stringify({
+        bootId: args.bootId,
+        ...(args.projectId ? { projectId: args.projectId } : {}),
+        ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+      }),
+    },
+  );
+  if (!response.ok) {
+    const json = (await response.json().catch(() => null)) as {
+      error?: unknown;
+    } | null;
+    throw new LocalBrowserRequestError(
+      typeof json?.error === "string"
+        ? json.error
+        : "The local browser profile could not be exported.",
+      response.status,
+    );
+  }
+  const savedFrom = response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+  return {
+    archive: await response.blob(),
+    ...(savedFrom ? { savedFrom } : {}),
+  };
 }
 
 /**

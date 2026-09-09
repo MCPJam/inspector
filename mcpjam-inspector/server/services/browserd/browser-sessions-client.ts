@@ -62,10 +62,12 @@ export type BrowserContextMode = "persistent" | "ephemeral";
  */
 export type BrowserSessionTargetArgs =
   | { computerId: string; sandboxRowId?: undefined }
-  | { sandboxRowId: string; computerId?: undefined };
+  | { sandboxRowId: string; computerId?: undefined; watched?: boolean };
 
 interface BrowserSessionRecordCommon {
   sessionId: string;
+  /** Durable logical identity, when this boot belongs to one. */
+  logicalSessionId?: string;
   bootId: string;
   browserdToken: string;
   browserdPort: number;
@@ -86,8 +88,7 @@ interface BrowserSessionRecordCommon {
  * only in memory and this row is the only durable copy any replica can recover
  * it from.
  */
-export interface ComputerBrowserSessionRecord
-  extends BrowserSessionRecordCommon {
+export interface ComputerBrowserSessionRecord extends BrowserSessionRecordCommon {
   target: "computer";
   computerId: string;
   streamUrl: string;
@@ -100,15 +101,16 @@ export interface ComputerBrowserSessionRecord
  * to cache. A UNION member rather than optional fields, so a `streamUrl: ""`
  * placeholder that some future panel renders into an iframe cannot exist.
  */
-export interface SandboxBrowserSessionRecord
-  extends BrowserSessionRecordCommon {
+export interface SandboxBrowserSessionRecord extends BrowserSessionRecordCommon {
   target: "sandbox";
   sandboxRowId: string;
+  /** Present only for a watched Playground sandbox. */
+  stream?: { url: string; password: string };
+  watched?: boolean;
 }
 
 export type BrowserSessionRecord =
-  | ComputerBrowserSessionRecord
-  | SandboxBrowserSessionRecord;
+  ComputerBrowserSessionRecord | SandboxBrowserSessionRecord;
 
 interface BrowserSessionLookupCommon {
   /**
@@ -162,19 +164,16 @@ interface BrowserSessionLookupCommon {
   };
 }
 
-export interface ComputerBrowserSessionLookup
-  extends BrowserSessionLookupCommon {
+export interface ComputerBrowserSessionLookup extends BrowserSessionLookupCommon {
   session: ComputerBrowserSessionRecord | null;
 }
 
-export interface SandboxBrowserSessionLookup
-  extends BrowserSessionLookupCommon {
+export interface SandboxBrowserSessionLookup extends BrowserSessionLookupCommon {
   session: SandboxBrowserSessionRecord | null;
 }
 
 export type BrowserSessionLookup =
-  | ComputerBrowserSessionLookup
-  | SandboxBrowserSessionLookup;
+  ComputerBrowserSessionLookup | SandboxBrowserSessionLookup;
 
 const LOOKUP_PATH = "/browser-runtime/session/lookup";
 const RECORD_PATH = "/browser-runtime/session/record";
@@ -313,6 +312,7 @@ function parseSession(
    * target is that same check applied to the field that SELECTS the shape.
    */
   expectedTarget: BrowserSessionRecord["target"],
+  expectedWatched = false,
 ): BrowserSessionRecord | null {
   if (!isRecord(raw)) return null;
   const {
@@ -325,6 +325,7 @@ function parseSession(
     publicOrigin,
     streamUrl,
     streamPassword,
+    logicalSessionId,
     bundleHash,
     contextMode,
     protocolVersion,
@@ -350,6 +351,9 @@ function parseSession(
   }
   const common = {
     sessionId,
+    ...(typeof logicalSessionId === "string" && logicalSessionId.length > 0
+      ? { logicalSessionId }
+      : {}),
     bootId,
     browserdToken,
     browserdPort,
@@ -373,8 +377,31 @@ function parseSession(
     // A per-run box. The stream is not merely optional here — its PRESENCE
     // would mean the backend recorded desktop-control credentials for a box
     // nobody is watching, which is a row we should not act on.
-    if (streamUrl !== undefined || streamPassword !== undefined) return null;
-    return { ...common, target: "sandbox", sandboxRowId };
+    const hasStream = streamUrl !== undefined || streamPassword !== undefined;
+    if (hasStream && !expectedWatched) return null;
+    if (
+      expectedWatched &&
+      (typeof streamUrl !== "string" ||
+        streamUrl.length === 0 ||
+        typeof streamPassword !== "string" ||
+        streamPassword.length === 0)
+    ) {
+      return null;
+    }
+    return {
+      ...common,
+      target: "sandbox",
+      sandboxRowId,
+      ...(expectedWatched
+        ? {
+            watched: true,
+            stream: {
+              url: streamUrl as string,
+              password: streamPassword as string,
+            },
+          }
+        : {}),
+    };
   }
   if (
     expectedTarget !== "computer" ||
@@ -501,6 +528,7 @@ export async function lookupBrowserSession(
     session: parseSession(
       raw.session,
       targetsSandbox(args) ? "sandbox" : "computer",
+      targetsSandbox(args) && args.watched === true,
     ),
     ...(staleSession ? { staleSession } : {}),
     ...(stale === "bundle_changed" ||
@@ -528,8 +556,11 @@ function targetsSandbox(args: BrowserSessionTargetArgs): boolean {
 
 /** The one target id a request carries, as the wire spells it. */
 function targetBody(args: BrowserSessionTargetArgs): Record<string, string> {
-  return args.computerId !== undefined
-    ? { computerId: args.computerId }
+  if (args.computerId !== undefined) {
+    return { computerId: args.computerId };
+  }
+  return args.watched
+    ? { sandboxRowId: args.sandboxRowId!, watched: "true" }
     : { sandboxRowId: args.sandboxRowId! };
 }
 
@@ -569,6 +600,8 @@ interface BrowserSessionRecordArgsCommon {
   /** Announced by the daemon at boot; absent from one that predates V-4a. */
   protocolVersion?: number;
   replacesSessionId?: string;
+  logicalSessionId?: string;
+  watched?: boolean;
   signal?: AbortSignal;
 }
 
@@ -595,9 +628,13 @@ type ComputerBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
 type SandboxBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
   sandboxRowId: string;
   computerId?: undefined;
-  /** REFUSED: nobody is watching a per-run box, so nothing minted a password. */
-  stream?: undefined;
-};
+} &
+  /** Unattended run: nobody is watching, so no stream is started. */
+  (
+    | { watched?: false; stream?: undefined }
+    /** Watched Playground run: the stream password is durable session state. */
+    | { watched: true; stream: { url: string; password: string } }
+  );
 
 export async function recordBrowserSession(
   args: ComputerBrowserSessionRecordArgs | SandboxBrowserSessionRecordArgs,
@@ -621,6 +658,10 @@ export async function recordBrowserSession(
       ...(args.replacesSessionId
         ? { replacesSessionId: args.replacesSessionId }
         : {}),
+      ...(args.logicalSessionId
+        ? { logicalSessionId: args.logicalSessionId }
+        : {}),
+      ...(args.watched ? { watched: true } : {}),
     },
     args.signal,
   );
@@ -685,15 +726,31 @@ export type BrowserRelaunchClaim =
  */
 export async function claimBrowserRelaunch(args: {
   computerId: string;
+  sandboxRowId?: undefined;
   /** This attempt's identity; only it may release the claim. */
   claimId: string;
   ttlMs?: number;
   signal?: AbortSignal;
-}): Promise<BrowserRelaunchClaim> {
+}): Promise<BrowserRelaunchClaim>;
+export async function claimBrowserRelaunch(args: {
+  sandboxRowId: string;
+  computerId?: undefined;
+  claimId: string;
+  ttlMs?: number;
+  signal?: AbortSignal;
+}): Promise<BrowserRelaunchClaim>;
+export async function claimBrowserRelaunch(
+  args: BrowserSessionTargetArgs & {
+    /** This attempt's identity; only it may release the claim. */
+    claimId: string;
+    ttlMs?: number;
+    signal?: AbortSignal;
+  },
+): Promise<BrowserRelaunchClaim> {
   const raw = await postServiceAuthorized(
     RELAUNCH_CLAIM_PATH,
     {
-      computerId: args.computerId,
+      ...targetBody(args),
       claimId: args.claimId,
       ...(args.ttlMs === undefined ? {} : { ttlMs: args.ttlMs }),
     },
@@ -715,12 +772,25 @@ export async function claimBrowserRelaunch(args: {
  */
 export async function releaseBrowserRelaunch(args: {
   computerId: string;
+  sandboxRowId?: undefined;
   claimId: string;
   signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<void>;
+export async function releaseBrowserRelaunch(args: {
+  sandboxRowId: string;
+  computerId?: undefined;
+  claimId: string;
+  signal?: AbortSignal;
+}): Promise<void>;
+export async function releaseBrowserRelaunch(
+  args: BrowserSessionTargetArgs & {
+    claimId: string;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
   await postServiceAuthorized(
     RELAUNCH_RELEASE_PATH,
-    { computerId: args.computerId, claimId: args.claimId },
+    { ...targetBody(args), claimId: args.claimId },
     args.signal,
   ).catch(() => null);
 }

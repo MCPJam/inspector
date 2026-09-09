@@ -682,3 +682,74 @@ describe("browser panel — is this lease mine?", () => {
     });
   });
 });
+
+describe("POST /profile/export", () => {
+  it("calls exportProfile ON its client, not detached from it", async () => {
+    // THE REGRESSION, and the reason it was invisible: the real client is a
+    // CLASS whose `exportProfile` reaches `this.request(...)`, while every
+    // other test here injects an object literal that survives losing its
+    // receiver. The route pulled the method off the instance and called it
+    // bare, so export threw a TypeError and 502'd in production while the
+    // suite stayed green. The fake below is a class for exactly that reason —
+    // do not simplify it to an object literal.
+    class FakeBrowserdClient {
+      readonly marker = "bound";
+      async exportProfile(): Promise<Uint8Array> {
+        // Throws a TypeError when invoked without its receiver, which is
+        // precisely what the bug did.
+        if (this.marker !== "bound") throw new Error("wrong receiver");
+        return new Uint8Array([1, 2, 3]);
+      }
+    }
+    const panel = build({
+      createClient: (() => new FakeBrowserdClient()) as never,
+      lookupSession: (async () => ({
+        reachable: true,
+        session: { ...SESSION, logicalSessionId: "logical_1" },
+      })) as never,
+    });
+
+    const res = await panel.call("/profile/export", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    // The DURABLE identity, not `SESSION.sessionId`. The boot row's id is
+    // replaced on every relaunch, so provenance recorded against it points at
+    // a row that disappears — and it would disagree with what the local export
+    // path reports for the same browser.
+    expect(res.headers.get("x-browser-session-id")).toBe("logical_1");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("sends no session header when the browser has no durable identity", async () => {
+    // Omitted rather than falling back to the boot row: absent means "this
+    // archive is not tied to a conversation", which is true, and which the
+    // boot row's id would misstate.
+    class FakeBrowserdClient {
+      readonly marker = "bound";
+      async exportProfile(): Promise<Uint8Array> {
+        if (this.marker !== "bound") throw new Error("wrong receiver");
+        return new Uint8Array([1]);
+      }
+    }
+    const panel = build({
+      createClient: (() => new FakeBrowserdClient()) as never,
+    });
+
+    const res = await panel.call("/profile/export", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-browser-session-id")).toBeNull();
+  });
+
+  it("answers 409 when the daemon cannot export a profile", async () => {
+    const panel = build({ createClient: (() => ({})) as never });
+    const res = await panel.call("/profile/export", { method: "POST" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "profile_export_unavailable",
+    });
+  });
+});

@@ -81,6 +81,8 @@ export interface BootBrowserdOptions {
    * paints past the edge of what is captured.
    */
   deviceScaleFactor?: number;
+  /** One-shot profile archive written before browserd starts. */
+  profileArchivePath?: string;
 }
 
 export interface BrowserdHandle {
@@ -300,6 +302,9 @@ function buildEnv(
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";
   if (options.contextMode === "ephemeral") {
     env.MCPJAM_BROWSERD_EPHEMERAL = "true";
+  }
+  if (options.profileArchivePath) {
+    env.MCPJAM_BROWSERD_PROFILE_ARCHIVE = options.profileArchivePath;
   }
   return env;
 }

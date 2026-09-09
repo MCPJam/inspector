@@ -102,6 +102,7 @@ import {
 } from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
@@ -213,6 +214,7 @@ import {
 } from "@/shared/hosted-task-created";
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type {
@@ -454,11 +456,7 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  | "auth-bootstrap"
-  | "hydrate"
-  | "fork"
-  | "servers-changed"
-  | "reset";
+  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -1720,6 +1718,7 @@ export function useChatSession(
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
+  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -2297,8 +2296,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName]
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2770,9 +2769,8 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError = await classifyScenarioAccessResponse(
-                response,
-              );
+              const replayError =
+                await classifyScenarioAccessResponse(response);
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2962,6 +2960,9 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        ...(browserSessionsEnabled && isHostedDirectChat
+          ? { browserScope: "conversation" as const }
+          : {}),
         // Handshake: tells the server this bundle can render an elicitation
         // prompt. Catalog hosts already declare the capability, so without
         // this a stale bundle would leave the turn blocked for a full TTL on
@@ -2999,13 +3000,13 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-          // re-resolves the host's authoritative runtime config (harness /
-          // computer included). Only on the direct path — scenario sessions own
-          // their host via scenarioId and the server ignores hostId when
-          // scenarioId is set.
-          isHostedDirectChat && hostedHostId
-          ? { hostId: hostedHostId }
-          : {}),
+            // re-resolves the host's authoritative runtime config (harness /
+            // computer included). Only on the direct path — scenario sessions own
+            // their host via scenarioId and the server ignores hostId when
+            // scenarioId is set.
+            isHostedDirectChat && hostedHostId
+            ? { hostId: hostedHostId }
+            : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -3023,7 +3024,7 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? hostedProjectId ?? undefined
+          ? (hostedProjectId ?? undefined)
           : getTrackedTaskScope();
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
@@ -3047,6 +3048,9 @@ export function useChatSession(
             : {
                 selectedServers,
                 chatSessionId,
+                ...(browserSessionsEnabled && !hostedScenarioId
+                  ? { browserScope: "conversation" as const }
+                  : {}),
                 // `directVisibility` only applies to direct chat. The
                 // /mcp/chat-v2 route gates it off when scenarioId is present
                 // (owner-preview persists as `sourceType: "scenario"`), but
@@ -3254,6 +3258,7 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
+    browserSessionsEnabled,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -4316,9 +4321,28 @@ export function useChatSession(
       // superseding session change — is the one that actually went live.
       // Existing callers that ignore the return value are unaffected.
       const nextSessionId = generateId();
+      const previousSessionHadBrowser =
+        useActiveChatSessionStore.getState().browserSessionId ===
+        chatSessionIdRef.current;
+      const branchMessages = previousSessionHadBrowser
+        ? [
+            {
+              id: `browser-fork-note-${nextSessionId}`,
+              role: "system" as const,
+              parts: [
+                {
+                  type: "text" as const,
+                  text: "Browser state was not copied to this thread.",
+                },
+              ],
+              metadata: { source: "browser-fork-note" },
+            },
+            ...messages,
+          ]
+        : messages;
       const hydrationPromise = queueSessionHydration({
         sessionId: nextSessionId,
-        messages,
+        messages: branchMessages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],

@@ -403,6 +403,7 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // bearer before the consent check ever runs, and the terminal can never
   // open on a WorkOS-signed-in inspector.
   "/api/mcp/computers/local-terminal-token",
+  "/api/mcp/computers/local-browser/profile/export",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute

@@ -31,6 +31,7 @@ import {
 } from "./host-focus-shell";
 
 interface HostFocusPanelProps {
+  projectId?: string;
   /**
    * Stable host identifier. Used as a React key on the JSON-native tabs so
    * they hard-remount when the user switches hosts — otherwise the
@@ -55,10 +56,7 @@ interface HostFocusPanelProps {
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
-  onSaveLatest: (
-    name: string,
-    draft: HostConfigInputV2,
-  ) => Promise<boolean>;
+  onSaveLatest: (name: string, draft: HostConfigInputV2) => Promise<boolean>;
   hostLoaded: boolean;
   saveInFlight: boolean;
   attention: ReadonlyArray<HostAttentionIssue>;
@@ -71,6 +69,7 @@ interface HostFocusPanelProps {
 }
 
 export function HostFocusPanel({
+  projectId,
   hostId,
   tab,
   onTabChange,
@@ -102,10 +101,7 @@ export function HostFocusPanel({
   const activeTab = activeHostFocusTab(tab, visibleTabs);
 
   return (
-    <div
-      className={hostFocusShellRootClass}
-      aria-busy={saveInFlight}
-    >
+    <div className={hostFocusShellRootClass} aria-busy={saveInFlight}>
       <div className="contents" inert={saveInFlight || undefined}>
         <HostIdentityRow
           className={cn(hostFocusShellHeaderRowClass, "py-2")}
@@ -177,7 +173,11 @@ export function HostFocusPanel({
           <ToolsTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
         {activeTab === "computer" ? (
-          <ComputerTab draft={draft} onDraftChange={onDraftChange} />
+          <ComputerTab
+            projectId={projectId}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
         ) : null}
         {activeTab === "appearance" ? (
           <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
