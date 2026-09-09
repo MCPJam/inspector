@@ -28,6 +28,29 @@ vi.mock("@/stores/traffic-log-store", async () => {
   };
 });
 
+const browserActivityState = vi.hoisted(() => ({
+  entries: [] as Array<{
+    kind: "command";
+    seq: number;
+    commandId: string;
+    ts: number;
+    durationMs: number;
+    source: string;
+    actor: { kind: string; id: string };
+    command: { kind: string };
+    outcome: "executed";
+    ok: boolean;
+  }>,
+  warning: null as string | null,
+}));
+
+vi.mock("@/components/browser/useLocalBrowserActivity", () => ({
+  useLocalBrowserActivity: () => ({
+    entries: browserActivityState.entries,
+    warning: browserActivityState.warning,
+  }),
+}));
+
 // Real dropdown menu is a Radix popover; swap it for plain markup so the
 // source-filter radio items are directly clickable in jsdom.
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
@@ -78,6 +101,8 @@ import { subscribeToOAuthDebuggerRequests } from "@/lib/oauth/oauth-debugger-nav
 describe("LoggerView hosted rpc logs", () => {
   beforeEach(() => {
     useTrafficLogStore.getState().clear();
+    browserActivityState.entries = [];
+    browserActivityState.warning = null;
   });
 
   it("renders hosted server names and filters by server name prop", () => {
@@ -517,5 +542,74 @@ describe("LoggerView truncated payloads", () => {
     await expandRow("notifications/initialized");
 
     expect(screen.queryByText(/Payload not recorded/)).not.toBeInTheDocument();
+  });
+});
+
+describe("LoggerView browser activity", () => {
+  beforeEach(() => {
+    useTrafficLogStore.getState().clear();
+    browserActivityState.entries = [];
+    browserActivityState.warning = null;
+  });
+
+  it("keeps MCP traffic and browser commands in one list", () => {
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "tools/list",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    });
+    browserActivityState.entries = [
+      {
+        kind: "command",
+        seq: 1,
+        commandId: "c1",
+        ts: Date.parse("2026-04-10T12:00:02.000Z"),
+        durationMs: 12,
+        source: "agent",
+        actor: { kind: "agent", id: "cli" },
+        command: { kind: "reload" },
+        outcome: "executed",
+        ok: true,
+      },
+    ];
+
+    render(
+      <LoggerView
+        browserActivity={{
+          projectId: "proj-1",
+          consentToken: "tok",
+          active: true,
+        }}
+      />,
+    );
+
+    expect(screen.getAllByPlaceholderText("Search logs")).toHaveLength(1);
+    expect(screen.getByText("tools/list")).toBeInTheDocument();
+    expect(screen.getByText("reload")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemradio", { name: "Browser" }),
+    ).toBeInTheDocument();
+  });
+
+  it("uses one empty state when the browser source is attached", () => {
+    render(
+      <LoggerView
+        browserActivity={{
+          projectId: "proj-1",
+          consentToken: "tok",
+          active: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("No logs yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(/MCP traffic and browser commands show up here/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing has driven/)).not.toBeInTheDocument();
+    expect(screen.getAllByPlaceholderText("Search logs")).toHaveLength(1);
   });
 });

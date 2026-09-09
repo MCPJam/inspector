@@ -3,6 +3,7 @@ import { track } from "@/lib/analytics";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
   AlertCircle,
+  AlertTriangle,
   Trash2,
   Download,
 } from "lucide-react";
@@ -59,8 +60,14 @@ import { cn } from "@/lib/utils";
 import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
 import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
+import { useLocalBrowserActivity } from "@/components/browser/useLocalBrowserActivity";
+import {
+  CommandRow,
+  GapRow,
+} from "@/components/browser/BrowserActivityList";
+import type { LocalBrowserTraceEntry } from "@/lib/local-browser/client";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http" | "browser";
 
 interface RenderableRpcItem {
   id: string;
@@ -84,6 +91,16 @@ interface LoggerViewProps {
   isLogLevelVisible?: boolean;
   isCollapsable?: boolean;
   isSearchVisible?: boolean;
+  /**
+   * When set, the local browser ledger is a source in this same list — not a
+   * second log rail. Gated by the caller (consent, local engine) because the
+   * rows are a browsing history.
+   */
+  browserActivity?: {
+    projectId: string;
+    consentToken: string | null;
+    active: boolean;
+  } | null;
 }
 
 const LOGGING_LEVELS: LoggingLevel[] = [
@@ -303,6 +320,7 @@ export function LoggerView({
   isLogLevelVisible = true,
   isCollapsable = true,
   isSearchVisible = true,
+  browserActivity = null,
 }: LoggerViewProps = {}) {
   const appState = useSharedAppState();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -322,6 +340,15 @@ export function LoggerView({
     "all"
   );
   const lastIngestedOAuthTraceKeysRef = useRef<Map<string, string>>(new Map());
+  const browser = useLocalBrowserActivity({
+    projectId: browserActivity?.projectId ?? null,
+    consentToken: browserActivity?.consentToken ?? null,
+    active: Boolean(browserActivity?.active),
+  });
+
+  useEffect(() => {
+    if (!browserActivity && sourceFilter === "browser") setSourceFilter("all");
+  }, [browserActivity, sourceFilter]);
 
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
   const uiLogItems = useTrafficLogStore((s) => s.items);
@@ -390,6 +417,20 @@ export function LoggerView({
       oauthRecovered: item.oauthRecovered,
     }));
   }, [mcpServerRpcItems]);
+
+  const browserItems = useMemo<RenderableRpcItem[]>(() => {
+    if (!browserActivity) return [];
+    return browser.entries.map((entry) => ({
+      id: `browser-${entry.seq}`,
+      serverId: "browser",
+      serverName: "browser",
+      direction: "browser",
+      method: entry.kind === "gap" ? "gap" : entry.command.kind,
+      timestamp: new Date(entry.ts).toISOString(),
+      payload: entry,
+      source: "browser" as TrafficSource,
+    }));
+  }, [browserActivity, browser.entries]);
 
   const connectedServers = useMemo<
     Array<{ id: string; server: ServerWithName }>
@@ -491,12 +532,12 @@ export function LoggerView({
 
   // Combine and sort all items by timestamp (newest first)
   const allItems = useMemo(() => {
-    const combined = [...mcpServerItems, ...mcpAppsItems];
+    const combined = [...mcpServerItems, ...mcpAppsItems, ...browserItems];
     return combined.sort(
       (a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
-  }, [mcpServerItems, mcpAppsItems]);
+  }, [mcpServerItems, mcpAppsItems, browserItems]);
 
   // Precomputed, lowercased search text per item — the same four fields the
   // search used to concatenate inline (server label, method, direction, and
@@ -538,6 +579,7 @@ export function LoggerView({
       const serverIdSet = new Set(serverIds);
       result = result.filter(
         (item) =>
+          item.source === "browser" ||
           serverIdSet.has(item.serverId) ||
           (!!item.serverName && serverIdSet.has(item.serverName))
       );
@@ -602,6 +644,17 @@ export function LoggerView({
         leading={
             /* Source filter + log levels — hide on narrow panels; search + copy/clear stay */
             <div className="hidden items-center gap-1.5 @min-[340px]/logger-toolbar:flex">
+              {browserActivity && browser.warning ? (
+                <span
+                  className="flex items-center gap-1 text-[11px] text-destructive"
+                  title={browser.warning}
+                >
+                  <AlertTriangle className="h-3 w-3" />
+                  {browser.warning.includes("could not be read")
+                    ? "history unavailable"
+                    : "history incomplete"}
+                </span>
+              ) : null}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -653,6 +706,11 @@ export function LoggerView({
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
                     </DropdownMenuRadioItem>
+                    {browserActivity ? (
+                      <DropdownMenuRadioItem value="browser" className="text-xs">
+                        Browser
+                      </DropdownMenuRadioItem>
+                    ) : null}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -898,7 +956,9 @@ export function LoggerView({
                   {"No logs yet"}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-1">
-                  {"Logs will appear here"}
+                  {browserActivity
+                    ? "MCP traffic and browser commands show up here"
+                    : "Logs will appear here"}
                 </div>
               </>
             )}
@@ -906,6 +966,14 @@ export function LoggerView({
         ) : (
           <>
             {filteredItems.map((it) => {
+              if (it.source === "browser") {
+                const entry = it.payload as LocalBrowserTraceEntry;
+                return entry.kind === "gap" ? (
+                  <GapRow key={it.id} entry={entry} />
+                ) : (
+                  <CommandRow key={it.id} row={entry} />
+                );
+              }
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
               const isOAuthTraffic = it.source === "oauth";
