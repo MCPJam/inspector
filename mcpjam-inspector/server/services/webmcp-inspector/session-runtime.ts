@@ -363,6 +363,13 @@ export class WebMcpSessionRuntime {
         // registry does publish.
         if (this.session) this.publishSession();
       },
+      onSessionNotice: (message) => {
+        // NOT `setStatus("error")`: the session is still working, and one
+        // unreachable frame must not present a live browser as failed. It goes
+        // on the timeline because the alternative is a page that silently
+        // looks like it registered nothing.
+        this.pushActivity({ kind: "session_error", message });
+      },
       onCrashed: (message) => {
         this.setStatus("error", message);
         this.pushActivity({ kind: "session_error", message });

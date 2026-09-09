@@ -770,6 +770,31 @@ describe("viewport frames", () => {
     ).toBe(45);
   });
 
+  it("records a frame it could not inspect WITHOUT failing the session", () => {
+    const { runtime, session, events } = makeRuntime();
+    session.emitSessionNotice(
+      "Could not inspect a frame at https://widget.test/: boom.",
+    );
+
+    // On the timeline, because the alternative is a page that silently looks
+    // like it registered no tools — the exact blind spot per-frame sessions
+    // exist to close.
+    const entry = events
+      .filter(
+        (e): e is Extract<WebMcpEvent, { type: "activity" }> =>
+          e.type === "activity",
+      )
+      .map((e) => e.entry)
+      .find((candidate) => candidate.kind === "session_error");
+    expect(entry && "message" in entry ? entry.message : "").toContain(
+      "https://widget.test/",
+    );
+    // ...and the session is STILL READY. One unreachable frame is not a dead
+    // browser, and `onCrashed`'s treatment — status `error`, every pending
+    // invocation rejected — would be a lie about a session that is working.
+    expect(runtime.toPublic().status).not.toBe("error");
+  });
+
   it("does not publish a quality change before a browser is attached", () => {
     const runtime = new WebMcpSessionRuntime("https://example.test/", {
       sessionId: "session-1",

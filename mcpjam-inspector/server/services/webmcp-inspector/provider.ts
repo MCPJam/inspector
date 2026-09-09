@@ -58,6 +58,17 @@ export interface WebMcpSessionCallbacks {
   onActivityObserved(): void;
   onCrashed(message: string): void;
   /**
+   * Something about the session is wrong, but the session is not.
+   *
+   * For the conditions that would otherwise be invisible: a frame we could not
+   * attach a CDP session to still renders, so the page looks like it simply
+   * registered no tools. Distinct from `onCrashed`, which is terminal and fails
+   * everything in flight — this one is a note on a session that is still
+   * working. OPTIONAL, because only a provider that inspects frames one by one
+   * has anything to say here.
+   */
+  onSessionNotice?(message: string): void;
+  /**
    * A painted frame of the page, for the `frame-stream` viewport.
    *
    * Deliberately NOT routed through `onActivityObserved`. A page with a CSS

@@ -33,6 +33,9 @@ import {
 import { readJpegDimensions } from "@/shared/jpeg-dimensions";
 import {
   FIXTURE_INPUT_TARGETS,
+  FIXTURE_SUBMIT_AND_RETURN_TEXT,
+  FIXTURE_TOOLS,
+  FIXTURE_VALIDATION_TEXT,
   startWebMcpFixtureServer,
   type WebMcpFixture,
 } from "./fixture-page";
@@ -109,11 +112,12 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     options: {
       viewportMode?: "window" | "embedded";
       devicePixelRatio?: number;
+      url?: string;
     } = {},
   ) {
     registry = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
     const session = await startWebMcpSession({
-      url: fixture.url,
+      url: options.url ?? fixture.url,
       provider,
       registry,
       headless: true,
@@ -146,10 +150,108 @@ describe.skipIf(!WEBMCP_CDP_AVAILABLE)("WebMCP provider — real browser", () =>
     expect(echo!.registrationKind).toBe("imperative");
     expect(echo!.inputSchema).toMatchObject({ type: "object" });
 
-    // The cross-origin subframe's tool is invisible to this session, as the
-    // spike established. V1 scope is main frame plus same-process frames.
-    expect(tools.map((tool) => tool.name)).not.toContain("sub_tool");
+    // The cross-origin subframe's tool IS listed, under its own origin and
+    // marked as coming from a subframe. It never reaches the page's own CDP
+    // session (the spike pins that, and it is why child sessions exist); the
+    // provider attaches one to the frame's own target and the bridge merges
+    // what it reports into the same catalog.
+    const sub = tools.find((tool) => tool.name === "sub_tool");
+    expect(sub).toBeDefined();
+    expect(sub!.fromSubframe).toBe(true);
+    expect(sub!.origin).toBe(new URL(fixture.subOriginUrl).origin);
+    expect(sub!.origin).not.toBe(echo!.origin);
+    expect(sub!.toolKey).toBe(`${new URL(fixture.subOriginUrl).origin}::sub_tool`);
     await registry.disposeAll();
+  }, 60_000);
+
+  it("invokes a CROSS-ORIGIN subframe's tool, through that frame's own session", async () => {
+    const { runtime } = await open();
+    const subKey = `${new URL(fixture.subOriginUrl).origin}::${FIXTURE_TOOLS.sub}`;
+    await vi.waitFor(() =>
+      expect(
+        runtime.currentTools().map((tool) => tool.toolKey),
+      ).toContain(subKey),
+    );
+
+    // The frame id belongs to another target, so this call can only succeed by
+    // going out on the session attached to THAT frame: sending it on the page's
+    // session is rejected by the browser with "FrameId does not belong to
+    // current target", which is why routing is part of addressing a tool.
+    const { settled } = runtime.invoke(subKey, {}, "manual");
+    const result = await settled;
+    expect(result.output).toMatchObject({
+      content: [{ type: "text", text: "sub" }],
+    });
+  }, 60_000);
+
+  // ---- CROSS-DOCUMENT RESULTS, END TO END ON THIS TRANSPORT ---------------
+  // The spike measures the platform; these measure the PATH between it and the
+  // timeline. What is in question is never Blink — it is whether an answer
+  // delivered against a document that no longer exists survives our provider,
+  // our runtime and our result cap unchanged.
+
+  it("carries a cross-document JSON-LD array through to the timeline, untouched", async () => {
+    const { runtime, activity } = await open({ url: fixture.declarativeUrl });
+    const origin = new URL(fixture.declarativeUrl).origin;
+    const key = `${origin}::${FIXTURE_TOOLS.submitOrder}`;
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().map((tool) => tool.toolKey)).toContain(key),
+    );
+
+    const { invokeId, settled } = runtime.invoke(
+      key,
+      { sku: "S1", qty: 2 },
+      "manual",
+    );
+    const result = await settled;
+    // The array Blink built from the DESTINATION document, passed through as
+    // it arrived: not the first block, not re-wrapped, not reconstructed.
+    expect(result.output).toEqual([
+      {
+        "@context": "https://schema.org",
+        "@type": "OrderConfirmation",
+        orderNumber: "A-1",
+        status: "confirmed",
+      },
+    ]);
+    await vi.waitFor(() => {
+      const done = activity.find(
+        (entry) =>
+          entry.kind === "invocation_settled" && entry.invokeId === invokeId,
+      );
+      expect(done && "state" in done ? done.state : undefined).toBe(
+        "succeeded",
+      );
+    });
+  }, 60_000);
+
+  it("settles submit_and_return with the tool's OWN value, not the destination's", async () => {
+    const { runtime } = await open();
+    const key = `${new URL(fixture.url).origin}::${FIXTURE_TOOLS.submitAndReturn}`;
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().map((tool) => tool.toolKey)).toContain(key),
+    );
+    const { settled } = runtime.invoke(key, {}, "manual");
+    // The platform answers this invocation TWICE — the tool's value, then the
+    // destination document's JSON-LD. Navigation is not evidence of anything,
+    // and the first answer is the one that ran.
+    expect((await settled).output).toEqual({
+      content: [{ type: "text", text: FIXTURE_SUBMIT_AND_RETURN_TEXT }],
+    });
+  }, 60_000);
+
+  it("reports a page tool's own refusal as a success carrying its error result", async () => {
+    const { runtime } = await open();
+    const key = `${new URL(fixture.url).origin}::${FIXTURE_TOOLS.validateFirst}`;
+    await vi.waitFor(() =>
+      expect(runtime.currentTools().map((tool) => tool.toolKey)).toContain(key),
+    );
+    // `isError` is the PAGE's word about its own result, inside a `Completed`
+    // response. The invocation succeeded; what it returned says no.
+    expect((await runtime.invoke(key, {}, "manual").settled).output).toEqual({
+      isError: true,
+      content: [{ type: "text", text: FIXTURE_VALIDATION_TEXT }],
+    });
   }, 60_000);
 
   it("invokes a tool and reports the result on the timeline", async () => {

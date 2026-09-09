@@ -3929,7 +3929,9 @@ var WebMcpBridgeError = class extends Error {
     this.name = "WebMcpBridgeError";
   }
 };
+var MAIN_SESSION_KEY = "\0main";
 var MAX_EARLY_RESPONSES = 16;
+var MAX_SETTLED_IDS = 32;
 var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
 var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
 function originOf(url) {
@@ -3942,6 +3944,12 @@ function originOf(url) {
 var WebMcpBridge = class {
   constructor(cdp, options = {}) {
     this.cdp = cdp;
+    this.sessions.set(MAIN_SESSION_KEY, {
+      key: MAIN_SESSION_KEY,
+      frameId: "",
+      cdp,
+      isMain: true
+    });
     this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
     this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
     this.onChange = options.onChange;
@@ -3960,9 +3968,23 @@ var WebMcpBridge = class {
   nextRegistrationSeq = 1;
   /** frameId → last known URL, for origin labelling. */
   frames = /* @__PURE__ */ new Map();
+  /** Every session this bridge listens on, keyed by its attachment token. */
+  sessions = /* @__PURE__ */ new Map();
+  /**
+   * frameId → the token of the session that owns that frame.
+   *
+   * The routing table for invocation: `WebMCP.invokeTool` rejects a frame id
+   * that belongs to another target ("FrameId does not belong to current
+   * target"), so the session is part of addressing a tool, not an optimisation.
+   */
+  frameSessions = /* @__PURE__ */ new Map();
   pending = /* @__PURE__ */ new Map();
   /** Responses that arrived before their invocation was registered. */
   earlyResponses = /* @__PURE__ */ new Map();
+  /** Invocation ids already settled, so a duplicate response is dropped. */
+  settledIds = /* @__PURE__ */ new Set();
+  /** Next attachment number, so no two attachments ever share a key. */
+  nextSessionSeq = 1;
   mainFrameId = "";
   /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
   outstandingSends = 0;
@@ -4010,6 +4032,7 @@ var WebMcpBridge = class {
    * responsible for the bridge's own bookkeeping.
    */
   announce() {
+    if (this.disposed) return;
     if (!this.onChange && this.subscribers.size === 0) return;
     const tools = this.list();
     for (const listener of [this.onChange, ...this.subscribers]) {
@@ -4052,7 +4075,7 @@ var WebMcpBridge = class {
    * is never the probe.
    */
   async start(probeSupported) {
-    this.wire();
+    this.wireSession(this.mainSession());
     await this.cdp.send("Page.enable").catch(() => {
     });
     let domainEnabled = true;
@@ -4107,38 +4130,74 @@ var WebMcpBridge = class {
       if (generation === this.probeGeneration) this.probing = null;
     });
   }
-  wire() {
-    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+  mainSession() {
+    return this.sessions.get(MAIN_SESSION_KEY);
+  }
+  /**
+   * Whether events from this session still count.
+   *
+   * `CdpLike` has deliberately no `off`, so nothing can UNSUBSCRIBE a session's
+   * handlers — `removeSession` and `dispose` drop the bridge's bookkeeping and
+   * leave the wiring in place. Without this check a `toolsAdded` arriving after
+   * either one would find the frame unowned, claim it, re-populate the map the
+   * teardown just cleared, and publish it: tools resurrected for a session the
+   * provider has already closed.
+   *
+   * Identity, not just presence: a replacement attachment for the same frame is
+   * a DIFFERENT session object under a different key, so a stale one must not
+   * pass by having a live namesake.
+   */
+  live(session) {
+    if (this.disposed) return false;
+    return this.sessions.get(session.key) === session;
+  }
+  /**
+   * Subscribe one session's events. Every handler closes over the session it
+   * belongs to, because almost every one of them has to answer "whose?" —
+   * which frames this session owns, whose tools a removal may delete, and
+   * whether a navigation is the PAGE's or a subframe target's.
+   */
+  wireSession(session) {
+    session.cdp.on("WebMCP.toolsAdded", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
       const registrationSeq = this.nextRegistrationSeq++;
       for (const tool of tools ?? []) {
+        const owner = this.frameSessions.get(tool.frameId);
+        if (owner !== void 0 && owner !== session.key) continue;
         this.tools.set(this.key(tool.frameId, tool.name), {
           tool,
-          registrationSeq
+          registrationSeq,
+          sessionKey: session.key
         });
+        this.frameSessions.set(tool.frameId, session.key);
       }
       this.announce();
     });
-    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+    session.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      if (!this.live(session)) return;
       const { tools } = payload ?? {};
       for (const tool of tools ?? []) {
-        this.tools.delete(this.key(tool.frameId, tool.name));
+        const key = this.key(tool.frameId, tool.name);
+        if (this.tools.get(key)?.sessionKey !== session.key) continue;
+        this.tools.delete(key);
       }
       this.announce();
     });
-    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+    session.cdp.on("WebMCP.toolInvoked", (payload) => {
       const invoked = payload ?? {};
       if (!invoked.invocationId) return;
       if (this.pending.has(invoked.invocationId)) return;
       if (this.outstandingSends > 0) return;
       this.onExternalInvocation?.(invoked.toolName ?? "");
     });
-    this.cdp.on("WebMCP.toolResponded", (payload) => {
+    session.cdp.on("WebMCP.toolResponded", (payload) => {
       const responded = payload ?? {};
       const id = responded.invocationId;
       if (!id) return;
       const waiter = this.pending.get(id);
       if (!waiter) {
+        if (this.settledIds.has(id)) return;
         if (this.earlyResponses.size >= MAX_EARLY_RESPONSES) {
           const oldest = this.earlyResponses.keys().next().value;
           if (oldest !== void 0) this.earlyResponses.delete(oldest);
@@ -4149,38 +4208,162 @@ var WebMcpBridge = class {
       this.settle(id);
       this.deliver(waiter, responded);
     });
-    this.cdp.on("Page.frameNavigated", (payload) => {
+    session.cdp.on("Page.frameNavigated", (payload) => {
+      if (!this.live(session)) return;
       const { frame } = payload ?? {};
       if (!frame) return;
       this.frames.set(frame.id, frame.url);
-      this.dropFrame(frame.id);
-      if (!frame.parentId) {
+      this.dropFrame(frame.id, session.key);
+      if (session.isMain && !frame.parentId) {
         this.mainFrameId = frame.id;
         this.reprobe();
       }
       this.announce();
     });
-    this.cdp.on("Page.frameDetached", (payload) => {
-      const { frameId } = payload ?? {};
+    session.cdp.on("Page.frameDetached", (payload) => {
+      if (!this.live(session)) return;
+      const { frameId, reason } = payload ?? {};
       if (!frameId) return;
+      if (reason === "swap") {
+        this.dropFrame(frameId, session.key);
+        if (this.frameSessions.get(frameId) === session.key) {
+          this.frameSessions.delete(frameId);
+        }
+        this.announce();
+        return;
+      }
       this.frames.delete(frameId);
+      this.frameSessions.delete(frameId);
       this.dropFrame(frameId);
       this.announce();
     });
   }
+  /**
+   * Listen on one more CDP session — a frame that turned out to be its own
+   * Chromium target — and answer with the TOKEN that names this attachment.
+   *
+   * The token is per attachment, not per frame, and that is the whole point.
+   * A frame keeps its id across a cross-origin navigation (measured: an OOPIF
+   * navigated cross-origin reports the same CDP frame id), so a frame id names
+   * the FRAME, never one particular session on it. Teardown quotes the token,
+   * so a removal that arrives after the frame has already been re-attached
+   * names an attachment that is gone and does nothing — instead of emptying a
+   * frame that is working.
+   *
+   * Attaching again for the same frame RETIRES the previous attachment first,
+   * so a replaced frame is never listened to twice.
+   *
+   * The domains are enabled here rather than by the caller so a provider only
+   * has to know how to open a session, and the frame tree is read back so a
+   * frame that finished navigating BEFORE we attached still has an origin —
+   * `Page.frameNavigated` has already been and gone for it.
+   */
+  async addSession(frameId, cdp) {
+    const key = `${frameId}#${this.nextSessionSeq++}`;
+    if (this.disposed) return key;
+    for (const existing of [...this.sessions.values()]) {
+      if (!existing.isMain && existing.frameId === frameId) {
+        this.removeSession(existing.key);
+      }
+    }
+    const session = { key, frameId, cdp, isMain: false };
+    this.sessions.set(key, session);
+    this.frameSessions.set(frameId, key);
+    this.wireSession(session);
+    await cdp.send("Page.enable").catch(() => {
+    });
+    await cdp.send("WebMCP.enable").catch(() => {
+    });
+    await this.seedFrames(cdp).catch(() => {
+    });
+    if (!this.live(session)) return key;
+    this.announce();
+    return key;
+  }
+  /**
+   * Stop listening on one attachment and drop what IT registered.
+   *
+   * Takes the token {@link addSession} answered with, never a frame id: a
+   * removal can arrive after the frame has been re-attached, and anything
+   * scoped to the frame would delete the live session's tools.
+   */
+  removeSession(sessionKey) {
+    if (sessionKey === MAIN_SESSION_KEY) return;
+    if (!this.sessions.delete(sessionKey)) return;
+    for (const [toolKey, entry] of [...this.tools]) {
+      if (entry.sessionKey === sessionKey) this.tools.delete(toolKey);
+    }
+    for (const [frameId, owner] of [...this.frameSessions]) {
+      if (owner === sessionKey) this.frameSessions.delete(frameId);
+    }
+    this.announce();
+  }
+  /** Frame ids with their own attached session. Exists for tests and logging. */
+  attachedFrameIds() {
+    return [...this.sessions.values()].filter((session) => !session.isMain).map((session) => session.frameId);
+  }
+  /** Record a session's frame URLs, for origins we missed by attaching late. */
+  async seedFrames(cdp) {
+    const tree = await cdp.send("Page.getFrameTree");
+    const walk = (node) => {
+      if (!node?.frame) return;
+      if (!this.frames.has(node.frame.id)) {
+        this.frames.set(node.frame.id, node.frame.url ?? "");
+      }
+      for (const child of node.childFrames ?? []) walk(child);
+    };
+    walk(tree?.frameTree);
+  }
+  /**
+   * The session that can run a tool in this frame.
+   *
+   * No fallback to the page's session. `WebMCP.invokeTool` rejects a frame id
+   * belonging to another target ("FrameId does not belong to current target"),
+   * so a plausible-looking default is not a degraded call — it is a call to the
+   * wrong renderer, which for a same-named tool would run something the caller
+   * never named.
+   */
+  sessionForFrame(frameId, toolName) {
+    const key = this.frameSessions.get(frameId);
+    const session = key ? this.sessions.get(key) : void 0;
+    if (!session) {
+      throw new WebMcpBridgeError(
+        "webmcp_tool_gone",
+        `The frame that offered "${toolName}" is no longer attached to this session.`
+      );
+    }
+    return session.cdp;
+  }
   key(frameId, name) {
     return `${frameId} ${name}`;
   }
-  dropFrame(frameId) {
-    for (const key of [...this.tools.keys()]) {
-      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+  /**
+   * Forget a frame's tools. With `sessionKey`, only the ones THAT session
+   * registered — the ordering-safe form, for anything a single session says
+   * about a frame it may no longer own.
+   */
+  dropFrame(frameId, sessionKey) {
+    for (const [key, entry] of [...this.tools]) {
+      if (!key.startsWith(`${frameId} `)) continue;
+      if (sessionKey !== void 0 && entry.sessionKey !== sessionKey) continue;
+      this.tools.delete(key);
     }
   }
+  /**
+   * The ONE terminal transition for an invocation: clear its timers, stop
+   * tracking it, and remember that it is done so a later duplicate response
+   * cannot be mistaken for an early one.
+   */
   settle(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter?.timer) clearTimeout(waiter.timer);
     if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
     this.pending.delete(invocationId);
+    if (this.settledIds.size >= MAX_SETTLED_IDS) {
+      const oldest = this.settledIds.values().next().value;
+      if (oldest !== void 0) this.settledIds.delete(oldest);
+    }
+    this.settledIds.add(invocationId);
   }
   /** Resolve or reject a waiter from the page's response. */
   deliver(waiter, responded) {
@@ -4308,12 +4491,13 @@ var WebMcpBridge = class {
         );
       }
     }
+    const owner = this.sessionForFrame(frameId, args.toolName);
     let invocationId;
     try {
       this.outstandingSends += 1;
       let result;
       try {
-        result = await this.cdp.send("WebMCP.invokeTool", {
+        result = await owner.send("WebMCP.invokeTool", {
           frameId,
           toolName: args.toolName,
           input: args.input
@@ -4344,10 +4528,11 @@ var WebMcpBridge = class {
       throw error;
     }
     const output = await new Promise((resolve, reject) => {
-      const waiter = { resolve, reject };
+      const waiter = { resolve, reject, cdp: owner };
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
+        this.settle(invocationId);
         this.deliver(waiter, early);
         return;
       }
@@ -4359,12 +4544,12 @@ var WebMcpBridge = class {
         waiter.cancelReason = reason;
         if (waiter.timer) clearTimeout(waiter.timer);
         void Promise.resolve(
-          this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+          owner.send("WebMCP.cancelInvocation", { invocationId })
         ).catch(() => {
         });
         waiter.cancelTimer = setTimeout(() => {
           if (!this.pending.has(invocationId)) return;
-          this.pending.delete(invocationId);
+          this.settle(invocationId);
           reject(
             new WebMcpBridgeError(
               "webmcp_cancelled",
@@ -4400,10 +4585,15 @@ var WebMcpBridge = class {
   async cancel(invocationId) {
     const waiter = this.pending.get(invocationId);
     if (waiter) waiter.cancelReason = "cancelled";
-    await Promise.resolve(
-      this.cdp.send("WebMCP.cancelInvocation", { invocationId })
-    ).catch(() => {
-    });
+    const targets = waiter ? [waiter.cdp] : [...this.sessions.values()].map((session) => session.cdp);
+    await Promise.all(
+      targets.map(
+        (cdp) => Promise.resolve(
+          cdp.send("WebMCP.cancelInvocation", { invocationId })
+        ).catch(() => {
+        })
+      )
+    );
     return Boolean(waiter);
   }
   /** Reject every waiter; called when the tab or daemon goes away. */
@@ -4412,6 +4602,11 @@ var WebMcpBridge = class {
     this.disposed = true;
     this.subscribers.clear();
     this.probe = void 0;
+    for (const key of [...this.sessions.keys()]) {
+      if (key !== MAIN_SESSION_KEY) this.sessions.delete(key);
+    }
+    this.frameSessions.clear();
+    this.tools.clear();
     for (const [id, waiter] of this.pending) {
       if (waiter.timer) clearTimeout(waiter.timer);
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
@@ -6904,6 +7099,10 @@ function abortPromise(signal) {
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
 var DIALOG_MESSAGE_BYTES = 2e3;
+function warn(message) {
+  process.stderr.write(`[mcpjam-browserd] ${message}
+`);
+}
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
@@ -7118,7 +7317,7 @@ function wrapPage(page) {
       cdpPromise ??= (async () => {
         const attach = cdpAttachers.get(page);
         if (!attach) return null;
-        return attach().catch(() => null);
+        return attach.page().catch(() => null);
       })();
       return cdpPromise;
     }
@@ -7134,14 +7333,61 @@ async function attachWebMcp(page, session) {
     const bridge = new WebMcpBridge(session);
     bridge.resupport(probe);
     await bridge.start(probe);
+    attachFrameSessions(page, bridge);
     return bridge;
   } catch {
     return null;
   }
 }
+function attachFrameSessions(page, bridge) {
+  const attach = cdpAttachers.get(page)?.frame;
+  if (!attach || !page.frames || !page.mainFrame) return;
+  const tokens = /* @__PURE__ */ new Map();
+  const busy = /* @__PURE__ */ new Set();
+  const attachOne = async (frame) => {
+    if (frame === page.mainFrame?.()) return;
+    if (tokens.has(frame) || busy.has(frame)) return;
+    busy.add(frame);
+    try {
+      const session = await attach(frame);
+      const tree = await session.send("Page.getFrameTree");
+      const frameId = tree?.frameTree?.frame?.id;
+      if (!frameId) return;
+      const token = await bridge.addSession(frameId, session);
+      if (!page.frames?.().includes(frame)) {
+        bridge.removeSession(token);
+        return;
+      }
+      tokens.set(frame, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/does not have a separate CDP session/i.test(message)) return;
+      warn(
+        `could not attach a CDP session to the frame at ${frame.url()}: ${message}`
+      );
+    } finally {
+      busy.delete(frame);
+    }
+  };
+  const sweep = () => {
+    for (const frame of page.frames?.() ?? []) void attachOne(frame);
+  };
+  page.on("frameattached", (frame) => void attachOne(frame));
+  page.on("framenavigated", () => sweep());
+  page.on("framedetached", (frame) => {
+    const token = tokens.get(frame);
+    if (token === void 0) return;
+    tokens.delete(frame);
+    bridge.removeSession(token);
+  });
+  sweep();
+}
 var cdpAttachers = /* @__PURE__ */ new WeakMap();
-function registerCdpAttacher(page, attach) {
-  cdpAttachers.set(page, attach);
+function registerCdpAttacher(page, attach, attachFrame) {
+  cdpAttachers.set(page, {
+    page: attach,
+    ...attachFrame ? { frame: attachFrame } : {}
+  });
 }
 function contextOptionsFor(options) {
   const dpr = options.deviceScaleFactor ?? 1;
@@ -7207,7 +7453,14 @@ function adaptContext(context, options = {}) {
     async newPage() {
       const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
       if (context.newCDPSession) {
-        registerCdpAttacher(page, () => context.newCDPSession(page));
+        registerCdpAttacher(
+          page,
+          () => context.newCDPSession(page),
+          // The same call with a `Frame`: how a cross-origin frame's own
+          // session is opened, so the hosted box sees the tools inside a
+          // third-party widget the way the local inspector does.
+          (frame) => context.newCDPSession(frame)
+        );
       }
       return wrapPage(page);
     },

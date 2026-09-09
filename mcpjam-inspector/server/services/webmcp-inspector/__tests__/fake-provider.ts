@@ -169,6 +169,11 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
     this.callbacks.onStreamQualityChanged?.(quality);
   }
 
+  /** Report a non-terminal session condition, e.g. a frame we could not reach. */
+  emitSessionNotice(message: string): void {
+    this.callbacks.onSessionNotice?.(message);
+  }
+
   async dispose(): Promise<void> {
     if (this.disposeGate) await this.disposeGate.promise;
     this.disposed = true;

@@ -202,12 +202,17 @@ function harness(
       return Promise.resolve();
     };
 
+  // One frame, the main one: the provider's frame sweep must find nothing to
+  // attach here rather than nothing to call.
+  const mainFrame = { url: () => "https://example.test/" };
   const page = {
     on: () => {},
     goto: async () => {},
     url: () => "https://example.test/",
     evaluate: async () => true,
     screenshot: screenshots,
+    mainFrame: () => mainFrame,
+    frames: () => [mainFrame],
     mouse: {
       move: record("move"),
       down: record("down"),
