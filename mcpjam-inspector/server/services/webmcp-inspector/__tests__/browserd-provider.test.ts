@@ -54,7 +54,7 @@ function build(
   const touches: Array<{ computerId: string; sessionId: string }> = [];
   const provider = createBrowserdWebMcpProvider({
     handle: HANDLE,
-    transportFor: () => ({ sendCommand }) as never,
+    transportFor: () => ({ sendCommand } as never),
     toolPollMs: 0, // no background polling in tests
     onCommand: (info) => touches.push(info),
     ...(extras ?? {}),
@@ -85,6 +85,37 @@ const withTools =
   };
 
 describe("browserd WebMCP provider", () => {
+  it("preserves uncertain cancellation from the daemon", async () => {
+    const { provider, callbacks } = build((command) =>
+      command.action.kind === "webmcp_invoke"
+        ? {
+            status: "ok",
+            bootId: "b",
+            result: {
+              ok: false,
+              error:
+                "webmcp_outcome_unknown: Cancellation requested. Page execution may continue.",
+            },
+          }
+        : { status: "ok", bootId: "b", result: { ok: true, output: {} } },
+    );
+    const session = await provider.createSession({
+      url: "https://x.test/",
+      callbacks,
+    });
+    await expect(
+      session.invokeTool({
+        frameId: "f",
+        toolName: "echo",
+        input: {},
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({
+      name: "WebMcpOutcomeUnknownError",
+      message: expect.stringContaining("may continue"),
+    });
+    await session.dispose();
+  });
   it("reports a REMOTE viewport, not a window on the viewer's machine", async () => {
     // The one claim that would be actively wrong: this browser is in a
     // datacenter, and the UI decides what to render from this value.
@@ -293,7 +324,11 @@ describe("browserd WebMCP provider", () => {
     // tool with an ARRAY of every `application/ld+json` block, and this pins
     // that the array is what a hosted caller receives.
     const jsonLd = [
-      { "@context": "https://schema.org", "@type": "OrderConfirmation", orderNumber: "A-1" },
+      {
+        "@context": "https://schema.org",
+        "@type": "OrderConfirmation",
+        orderNumber: "A-1",
+      },
       { "@context": "https://schema.org", "@type": "Receipt", total: "42.00" },
     ];
     const { provider, callbacks } = build((command) => {

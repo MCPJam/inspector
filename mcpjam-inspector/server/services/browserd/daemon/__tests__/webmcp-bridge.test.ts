@@ -288,7 +288,7 @@ describe("WebMcpBridge — invocation", () => {
 
       const pending = bridge.invoke({ toolName: "book_flight", input: {} });
       const assertion = expect(pending).rejects.toMatchObject({
-        failure: "webmcp_cancelled",
+        failure: "webmcp_outcome_unknown",
         cancelReason: "timeout",
       });
       await vi.advanceTimersByTimeAsync(1_001);
@@ -328,7 +328,7 @@ describe("WebMcpBridge — invocation", () => {
         signal: controller.signal,
       });
       const assertion = expect(pending).rejects.toMatchObject({
-        failure: "webmcp_cancelled",
+        failure: "webmcp_outcome_unknown",
       });
       controller.abort();
       await vi.advanceTimersByTimeAsync(101); // the grace timer settles it
@@ -352,7 +352,7 @@ describe("WebMcpBridge — invocation", () => {
 
       const pending = bridge.invoke({ toolName: "book_flight", input: {} });
       const assertion = expect(pending).rejects.toMatchObject({
-        failure: "webmcp_cancelled",
+        failure: "webmcp_outcome_unknown",
       });
       await vi.advanceTimersByTimeAsync(1_001); // timeout fires the cancel
       await vi.advanceTimersByTimeAsync(501); // page never responds
@@ -384,7 +384,7 @@ describe("WebMcpBridge — invocation", () => {
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({
-      failure: "webmcp_cancelled",
+      failure: "webmcp_outcome_unknown",
       cancelReason: "cancelled",
     });
     expect(fake.sent.some((s) => s.method === "WebMCP.cancelInvocation")).toBe(
@@ -417,6 +417,22 @@ describe("WebMcpBridge — invocation", () => {
     await Promise.resolve();
     bridge.dispose();
     await assertion;
+  });
+
+  it("keeps a pre-dispatch abort definite and never calls the page", async () => {
+    const fake = fakeCdp();
+    const bridge = await started(fake);
+    fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      bridge.invoke({
+        toolName: "book_flight",
+        input: {},
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ failure: "webmcp_cancelled" });
+    expect(fake.sent.some((s) => s.method === "WebMCP.invokeTool")).toBe(false);
   });
 
   it("refuses a new invocation after dispose", async () => {
@@ -658,7 +674,7 @@ describe("WebMcpBridge — timeout ownership", () => {
     // Naive adoption reports every caller-side timeout as a user cancellation —
     // the exact bug both docstrings warn about.
     await expect(pending).rejects.toMatchObject({
-      failure: "webmcp_cancelled",
+      failure: "webmcp_outcome_unknown",
       cancelReason: "timeout",
     });
   });
@@ -857,13 +873,21 @@ describe("WebMcpBridge — registration identity", () => {
     const bridge = await started(fake);
     for (const frameId of ["frame-a", "frame-b"]) {
       fake.emit("Page.frameNavigated", {
-        frame: { id: frameId, url: "https://example.com/widget", parentId: "frame-main" },
+        frame: {
+          id: frameId,
+          url: "https://example.com/widget",
+          parentId: "frame-main",
+        },
       });
-      fake.emit("WebMCP.toolsAdded", { tools: [{ ...TOOL, name: "search", frameId }] });
+      fake.emit("WebMCP.toolsAdded", {
+        tools: [{ ...TOOL, name: "search", frameId }],
+      });
     }
     const listed = bridge.list().filter((tool) => tool.name === "search");
     expect(listed).toHaveLength(2);
-    expect(listed.every((tool) => tool.origin === "https://example.com")).toBe(true);
+    expect(listed.every((tool) => tool.origin === "https://example.com")).toBe(
+      true,
+    );
     // Same name, same origin, neither is the main frame — the registration
     // sequence is the only thing that tells them apart.
     expect(listed[0].registrationSeq).not.toBe(listed[1].registrationSeq);
@@ -874,7 +898,9 @@ describe("WebMcpBridge — registration identity", () => {
     const bridge = await started(fake);
     fake.emit("WebMCP.toolsAdded", { tools: [TOOL] });
     fake.emit("Page.frameDetached", { frameId: "frame-main" });
-    expect(bridge.registrationSeqFor("frame-main", "book_flight")).toBeUndefined();
+    expect(
+      bridge.registrationSeqFor("frame-main", "book_flight"),
+    ).toBeUndefined();
   });
 });
 
@@ -924,7 +950,11 @@ describe("WebMcpBridge — support is re-probed per page", () => {
     await bridge.start(probe);
     probe.mockClear();
     fake.emit("Page.frameNavigated", {
-      frame: { id: "frame-ad", url: "https://ads.test/", parentId: "frame-main" },
+      frame: {
+        id: "frame-ad",
+        url: "https://ads.test/",
+        parentId: "frame-main",
+      },
     });
     await bridge.probeSettled();
     // A page with twenty ad iframes would otherwise pay twenty round trips per
@@ -947,8 +977,12 @@ describe("WebMcpBridge — support is re-probed per page", () => {
     await bridge.start(probe);
     holding = true;
 
-    fake.emit("Page.frameNavigated", { frame: { id: "m", url: "https://a.test/" } });
-    fake.emit("Page.frameNavigated", { frame: { id: "m", url: "https://b.test/" } });
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "m", url: "https://a.test/" },
+    });
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "m", url: "https://b.test/" },
+    });
     expect(answers).toHaveLength(2);
     // The page we LEFT answers LAST, and says the opposite. A redirect chain
     // does this routinely; letting the stale answer win would report a.test's
@@ -973,7 +1007,9 @@ describe("WebMcpBridge — support is re-probed per page", () => {
     expect(seen).toEqual([0]);
 
     pageHasWebmcp = true;
-    fake.emit("Page.frameNavigated", { frame: { id: "m", url: "https://webmcp.dev/" } });
+    fake.emit("Page.frameNavigated", {
+      frame: { id: "m", url: "https://webmcp.dev/" },
+    });
     await bridge.probeSettled();
     expect(seen.length).toBeGreaterThan(1);
   });
@@ -1021,7 +1057,10 @@ describe("WebMcpBridge — invoke: onStarted and strict frames", () => {
       },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    fake.emit("WebMCP.toolResponded", { invocationId: "inv-8", status: "Completed" });
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-8",
+      status: "Completed",
+    });
     await expect(pending).resolves.toBeTruthy();
   });
 
@@ -1033,7 +1072,11 @@ describe("WebMcpBridge — invoke: onStarted and strict frames", () => {
     const bridge = await started(fake);
     // The main frame and a subframe both offer `search`.
     fake.emit("Page.frameNavigated", {
-      frame: { id: "frame-sub", url: "https://example.com/w", parentId: "frame-main" },
+      frame: {
+        id: "frame-sub",
+        url: "https://example.com/w",
+        parentId: "frame-main",
+      },
     });
     fake.emit("WebMCP.toolsAdded", {
       tools: [
@@ -1070,7 +1113,10 @@ describe("WebMcpBridge — invoke: onStarted and strict frames", () => {
         params: { frameId: "frame-main", toolName: "search", input: {} },
       },
     ]);
-    fake.emit("WebMCP.toolResponded", { invocationId: "inv-9", status: "Completed" });
+    fake.emit("WebMCP.toolResponded", {
+      invocationId: "inv-9",
+      status: "Completed",
+    });
     await expect(lenient).resolves.toBeTruthy();
   });
 });
@@ -1191,7 +1237,9 @@ describe("WebMcpBridge — more than one CDP session", () => {
       invocationId: "inv-sub",
       status: "Canceled",
     });
-    await expect(call).rejects.toMatchObject({ failure: "webmcp_cancelled" });
+    await expect(call).rejects.toMatchObject({
+      failure: "webmcp_outcome_unknown",
+    });
   });
 
   it("refuses an invocation whose owning session cannot be resolved", async () => {

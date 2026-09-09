@@ -177,6 +177,13 @@ export async function invokePageToolForChat(
         : text,
     );
   }
+  if (result.state === "unknown") {
+    return textResult(
+      result.errorMessage ??
+        `The outcome of "${entry.rawName}" is unknown. Page execution may continue; verify the page state before retrying.`,
+      true,
+    );
+  }
   if (result.state === "cancelled") {
     return textResult(
       `The invocation of "${entry.rawName}" was cancelled before it finished.`,

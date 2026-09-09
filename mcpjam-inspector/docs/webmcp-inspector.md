@@ -475,6 +475,16 @@ caller still work together in either direction.
 
 ## Invocations are idempotent, and can end in `unknown`
 
+Local calls can also end in `unknown` after cancellation or timeout. On Chromium
+151.0.7922.34, CDP can acknowledge `Canceled` while the page callback continues
+and performs side effects: the callback does not receive the draft's abort
+signal. MCPJam therefore reports that cancellation was requested and execution
+may continue, including when the browser never acknowledges the request. Verify
+page state before retrying. Calls cancelled while queued or before dispatch
+remain `cancelled`, because they never reached the page. A browser session ending
+with a pending call likewise leaves its effects unknown. This is consumer-side
+outcome reporting, not a guarantee of browser conformance or a way to undo work.
+
 A hosted request can be dropped mid-flight or retried onto another replica, so
 the client mints the `invokeId` and it flows all the way to the daemon's
 at-most-once queue as its `commandId`. Both ends de-duplicate: the runtime

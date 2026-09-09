@@ -336,8 +336,10 @@ export type WebMcpInvocationState =
   /**
    * It ran, and what it did cannot be established.
    *
-   * Reachable only for a REMOTE browser, and it is the honest answer rather
-   * than a hedge. A hosted invocation is sent to a daemon that executes it
+   * Also used for a running local call after cancellation or timeout: the
+   * browser acknowledging cancellation does not prove that the page callback
+   * stopped or that its side effects were undone. Verify state before retrying.
+   * A hosted invocation is sent to a daemon that executes it
    * synchronously; if our wait for the answer ends first — the request was
    * aborted, the replica went away — the tool keeps running and its outcome
    * lands in the daemon's result cache, addressed by the invocation's id.

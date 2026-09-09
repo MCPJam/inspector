@@ -5131,8 +5131,8 @@ var WebMcpBridge = class {
       const reason = waiter.cancelReason ?? "cancelled";
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+          "webmcp_outcome_unknown",
+          reason === "timeout" ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying." : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
           reason
         )
       );
@@ -5308,8 +5308,8 @@ var WebMcpBridge = class {
           this.settle(invocationId);
           reject(
             new WebMcpBridgeError(
-              "webmcp_cancelled",
-              reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+              "webmcp_outcome_unknown",
+              reason === "timeout" ? "Stopped waiting for the page tool after a timeout. Execution may continue; verify the page state before retrying." : "Cancellation requested. Page execution may continue; verify the page state before retrying.",
               reason
             )
           );
@@ -5368,8 +5368,8 @@ var WebMcpBridge = class {
       if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
       waiter.reject(
         new WebMcpBridgeError(
-          "webmcp_cancelled",
-          "The browser tab was closed.",
+          "webmcp_outcome_unknown",
+          "The browser session ended before the page tool's outcome was known. Verify the page state before retrying.",
           "cancelled"
         )
       );
