@@ -995,6 +995,8 @@ export type EvalSuiteRun = {
     pipelineId?: string;
     jobId?: string;
     runUrl?: string;
+    /** Recorded pull request URL, when supplied by the CI integration. */
+    prUrl?: string;
     branch?: string;
     commitSha?: string;
   };

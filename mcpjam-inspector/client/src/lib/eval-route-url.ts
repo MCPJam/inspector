@@ -56,6 +56,18 @@ export function parseEvalRouteFromUrl(
     return { type: "create" };
   }
 
+  // Evaluate (New) only. The v1 `/evals` tab has no first-run preview.
+  if (
+    prefix === "/evaluate" &&
+    tail[0] === "eval-server" &&
+    tail[1]
+  ) {
+    return {
+      type: "eval-server",
+      serverId: decodePathSegment(tail[1]),
+    };
+  }
+
   if (prefix === "/evals/runs" && tail[0] === "commit" && tail[1]) {
     return {
       type: "commit-detail",
@@ -114,6 +126,7 @@ export function parseEvalRouteFromUrl(
     }
     if (rest.length === 3 && rest[2] === "edit") {
       const openCompare = parseTruthyParam(params.get("compare"));
+      const fromEvalServer = params.get("fromEvalServer") || undefined;
       return {
         type: "test-edit",
         suiteId,
@@ -122,6 +135,7 @@ export function parseEvalRouteFromUrl(
         ...(params.get("iteration")
           ? { iteration: params.get("iteration") || undefined }
           : {}),
+        ...(fromEvalServer ? { fromEvalServer } : {}),
       };
     }
   }

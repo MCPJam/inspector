@@ -160,7 +160,7 @@ export const ElectronWebviewPane = forwardRef<
   }, [settle, onNavigate, onError]);
 
   return (
-    <div className="relative min-h-0 flex-1 border-b bg-muted/20">
+    <div className="relative min-h-0 h-full flex-1 bg-muted/20">
       {/* `webview` is not in React's JSX intrinsics, and the ref types do not
           line up either — it is an Electron element, not a DOM standard one.
           The cast is contained here along with everything else about the tag. */}

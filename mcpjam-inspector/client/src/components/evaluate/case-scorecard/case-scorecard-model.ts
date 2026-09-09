@@ -376,6 +376,21 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   widgetRenderLatencyUnder: "Track the view getting slower",
   widgetNoConsoleErrors: "Catch view console errors",
   turnCountUnder: "Track longer conversations",
+  noEndingQuestion: "Catch an answer that ends by asking",
+  // What the server sent back, and what it cost to read.
+  toolResultContains: "Check what a tool returned",
+  toolResultMatchesSchema: "Check the shape of what a tool returned",
+  toolResultSizeUnder: "Track a tool's payload growing",
+  toolLatencyUnder: "Track a tool getting slower",
+  fullPageHasContinuation: "Catch a full page with no way to ask for more",
+  toolErrorNamesInput: "Catch an error that names none of its inputs",
+  // Which tools were reached, in what order, and how many times.
+  toolCallCountUnder: "Track the number of tool calls",
+  toolCalledBefore: "Require this tool before that one",
+  noRepeatedIdenticalCall: "Catch the same call being made twice over",
+  argumentsMatchToolSchema: "Catch arguments the tool's own schema rejects",
+  noDeprecatedToolCalled: "Catch a tool the server calls deprecated",
+  noDestructiveToolCalled: "Catch a tool the server marks destructive",
 };
 
 const WIDGET_PURPOSE: Record<WidgetAssertion["kind"], string> = {

@@ -36,6 +36,7 @@ export function CaseScorecard({
   availableTools,
   readOnly = false,
   checkPolicy = false,
+  authorableKinds,
   overlay,
   validationAttempted = false,
   addedRowKey,
@@ -58,6 +59,13 @@ export function CaseScorecard({
   availableTools?: string[];
   readOnly?: boolean;
   checkPolicy?: boolean;
+  /**
+   * The kinds this DEPLOYMENT accepts. Offering one it rejects turns "Add
+   * scorer" into a failed save; offering one an older RUNNER cannot evaluate
+   * fails the check closed on every trial. The suite table has always
+   * narrowed by this — the case page reaches the same library and must too.
+   */
+  authorableKinds?: readonly Predicate["type"][];
   overlay?: SimpleCaseOverlay | null;
   validationAttempted?: boolean;
   /** Row to open on mount — the one just added, so its fields are reachable. */
@@ -92,6 +100,7 @@ export function CaseScorecard({
         {readOnly ? null : (
           <SuiteScorerLibraryMenu
             kinds={caseLibraryKinds()}
+            authorableKinds={authorableKinds}
             onAdd={(kind) => onAddScorer(blankPredicate(kind))}
           />
         )}

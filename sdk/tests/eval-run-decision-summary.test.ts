@@ -25,6 +25,11 @@ import {
   EVAL_RUN_MEASUREMENT_UNIT_LABELS,
   EVAL_RUN_MEASUREMENT_UNITS,
   EVAL_VERDICT_DECISION_REASON_LABELS,
+  FRICTION_NOT_MEASURED_REASON_LABELS,
+  FRICTION_SIGNAL_LABELS,
+  SUSPECTED_CONDITION_CONFIDENCES,
+  SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+  SUSPECTED_CONDITION_LABELS,
   evalRunDecisionSummarySchema,
   evalStageCoverageDetailSchema,
   EXCLUDED_TRIAL_DETAIL_LABELS,
@@ -306,10 +311,10 @@ describe("evidence is attached to the claim it supports", () => {
         ...(opts.failSelection
           ? { state: "failed", reason: "missingToolCall" }
           : opts.unmeasureSelection
-            ? { state: "notMeasured", reason: "noEvidenceCaptured" }
-            : opts.selectionNotApplicable
-              ? { state: "notApplicable", reason: "notAuthored" }
-              : { state: "passed", reason: "observed" }),
+          ? { state: "notMeasured", reason: "noEvidenceCaptured" }
+          : opts.selectionNotApplicable
+          ? { state: "notApplicable", reason: "notAuthored" }
+          : { state: "passed", reason: "observed" }),
       },
       { stage: "call", state: "passed", reason: "observed" },
       { stage: "response", state: "passed", reason: "observed" },
@@ -626,6 +631,29 @@ describe("labels are total over the vocabularies they render", () => {
       EVAL_VERDICT_DECISION_REASON_LABELS,
       DECISION_LABEL_VOCABULARIES.verdictDecisionReasons
     );
+    // The friction vocabularies. A kind added to the contract without words
+    // here would render a per-trial line with a wire spelling in it.
+    total(
+      FRICTION_SIGNAL_LABELS,
+      DECISION_LABEL_VOCABULARIES.frictionSignalKinds
+    );
+    total(
+      FRICTION_NOT_MEASURED_REASON_LABELS,
+      DECISION_LABEL_VOCABULARIES.frictionNotMeasuredReasons
+    );
+    // Step 2's taxonomy. A condition the backend judge can name with no words
+    // here would render as a wire spelling in front of a customer.
+    total(
+      SUSPECTED_CONDITION_LABELS,
+      DECISION_LABEL_VOCABULARIES.suspectedConditions
+    );
+    // Against the vocabulary directly: the confidence scale is deliberately
+    // absent from DECISION_LABEL_VOCABULARIES (see the note there), and its
+    // words still have to be total over it.
+    total(
+      SUSPECTED_CONDITION_CONFIDENCE_LABELS,
+      SUSPECTED_CONDITION_CONFIDENCES
+    );
   });
 
   it("covers this contract's own vocabularies", () => {
@@ -746,7 +774,7 @@ describe("the human renderer", () => {
     ).toContain("1/1 case variant passed");
     expect(
       rendered.find((row) => row.name === "legacy-run-trial-counts")!.text
-    ).toContain("4/6 trials passed");
+    ).toContain("4/6 iterations passed");
   });
 
   it("says a partial page is partial", () => {
@@ -785,7 +813,7 @@ describe("the human renderer", () => {
     expect(lines[first]).toContain(STAGE_REASON_LABELS.connectFailed);
     // And the count is what keeps that honest: one of six, and five other
     // stages also broke.
-    expect(lines[first]).toContain("(1 of 6 measured trials");
+    expect(lines[first]).toContain("(1 of 6 measured iterations");
     expect(lines[first]).toContain("earliest of 6 stages that broke");
   });
 
@@ -819,7 +847,7 @@ describe("the human renderer", () => {
       (row) => row.name === "category-without-first-failed-stage"
     )!.text;
     expect(text).toContain(
-      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 2 measured trials)`
+      `  First break: no stage was reached — grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 2 measured iterations)`
     );
   });
 
@@ -847,7 +875,7 @@ describe("the human renderer", () => {
       },
     });
     expect(text).toContain(
-      `grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 3 measured trials; 1 established no category)`
+      `grouped under ${FAILURE_CATEGORY_LABELS.setup}, ${FAILURE_CATEGORY_LABELS.evaluator} (2 of 3 measured iterations; 1 established no category)`
     );
   });
 
@@ -859,7 +887,7 @@ describe("the human renderer", () => {
       (row) => row.name === "unverified-and-version-ahead"
     )!.text;
     expect(text).toContain(
-      "(1 of 1 measured trial; 1 more had no readable chain)"
+      "(1 of 1 measured iteration; 1 more had no readable chain)"
     );
   });
 

@@ -57,6 +57,8 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics",
     "/api/v1/projects/proj_1/eval-runs/run_1/stage-analytics",
     "/api/v1/projects/proj_1/eval-runs/run_1/route-facts",
+    // F2 — the run's server facts, read by the same panel.
+    "/api/v1/projects/proj_1/eval-runs/run_1/server-facts",
     // The per-trial chains: one page of iterations, each carrying its own
     // stage rows. MOVED here from the negative list below — it was correctly
     // pinned as unreachable until a reader needed it, and the entry it now
@@ -96,6 +98,9 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics/overall",
     // The run-scoped suffix is a closed set, not a wildcard.
     "/api/v1/projects/proj_1/eval-runs/run_1/insights",
+    // …including near-misses of the newest member.
+    "/api/v1/projects/proj_1/eval-runs/run_1/server-facts-export",
+    "/api/v1/projects/proj_1/eval-runs/run_1/server-facts/servers",
     // The suite quality-gate report is a CLI/SDK read. The app does not
     // call this route, so allowlisting it would widen the UI bearer for
     // nothing the sheet uses.

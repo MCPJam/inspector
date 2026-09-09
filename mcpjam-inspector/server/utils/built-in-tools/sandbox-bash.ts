@@ -27,6 +27,7 @@
  * attribute a command to, so auditing needs its own scope-aware surface.
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 import { TimeoutError } from "e2b";
 import {
@@ -169,7 +170,12 @@ export function buildSandboxBashTool(
           `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`,
         ),
     }),
-    needsApproval: opts.requireToolApproval === true,
+    // Floor: setting. A disposable box is still a shell, so it follows the
+    // host's switch exactly as the hosted personal one does.
+    needsApproval: needsApprovalFor(
+      "setting",
+      opts.requireToolApproval === true,
+    ),
     execute: async (
       { command, timeoutSeconds },
       { abortSignal },

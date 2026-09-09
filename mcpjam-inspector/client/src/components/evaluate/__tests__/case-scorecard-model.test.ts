@@ -52,8 +52,12 @@ function allRows(input: CaseScorecardInput) {
 
 describe("buildCaseScorecard — shape", () => {
   it("lists stages in chain order and omits the ones with nothing on them", () => {
-    // Connection, Discovery and Tool call have nothing a CASE can author.
-    // Rendering them empty would offer a reader a control that is not there.
+    // Connection and Discovery have nothing a CASE can author. Rendering them
+    // empty would offer a reader a control that is not there.
+    //
+    // `noToolErrors` files at RESPONSE under analyzer 11, not at user value:
+    // a tool error is evidence about the answer coming back, and filing it in
+    // both places counted one defect twice.
     const card = buildCaseScorecard({
       ...base,
       steps: [
@@ -63,6 +67,7 @@ describe("buildCaseScorecard — shape", () => {
     });
     expect(card.groups.map((group) => group.stage)).toEqual([
       "selection",
+      "response",
       "userValue",
     ]);
     const order = card.groups.map((group) => USER_VALUE_STAGES.indexOf(group.stage));

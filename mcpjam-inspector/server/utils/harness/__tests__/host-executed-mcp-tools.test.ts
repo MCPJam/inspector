@@ -759,26 +759,37 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
     });
   });
 
-  it("never sets needsApproval — host-executed approval is the agent's own gate", async () => {
-    // Deliberately absent, not forgotten: `HarnessAgent`'s `toolApproval` map
-    // is what gates a host-executed call, and the AI SDK flag is read by the
-    // EMULATED loop, which never runs on this path. A second, inert approval
-    // declaration would read like enforcement.
+  it("carries needsApproval through — the toolApproval map is derived from it", async () => {
+    // It used to be excluded here as an inert second declaration. It is the
+    // FIRST one now: `runHarnessTurn` reads each projection's `needsApproval`
+    // to decide which names go into `HarnessAgent`'s `toolApproval` map, so a
+    // projection built without it is a tool the harness will not pause on.
     const manager = policyHonoringManager({ srv: { t: { result: {} } } });
     await projectSelectedMcpServersAsHostTools({
       manager,
       selectedServerIds: ["srv"],
       toolOptions: {
+        needsApproval: true,
         modelVisibleMcpToolResults: {
           directContent: { image: true },
         } as never,
       },
     });
-    const passed = manager.getToolsForAiSdk.mock.calls[0]![1];
-    // An options object IS built (the host set a policy) — it just never
-    // carries the approval flag.
-    expect(passed).toBeDefined();
-    expect(passed).not.toHaveProperty("needsApproval");
+    expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toMatchObject({
+      needsApproval: true,
+    });
+  });
+
+  it("still takes the no-options overload for a switch-OFF turn", async () => {
+    // `mcpToolOptionsFor` drops a falsy approval flag, so forwarding the
+    // host's `false` does not push a default turn off the byte-identical path.
+    const manager = policyHonoringManager({ srv: { t: { result: {} } } });
+    await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolOptions: { needsApproval: false },
+    });
+    expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toBeUndefined();
   });
 
   it("takes the NO-OPTIONS overload when no host input applies", async () => {

@@ -385,6 +385,7 @@ export const startSuiteRunWithRecorder = async ({
   replayedFromRunId,
   useCurrentSuiteConfig,
   environmentOverride,
+  githubCheckServerOverride,
   toolSnapshot,
   toolSnapshotDebug,
   iterationOverride,
@@ -428,6 +429,11 @@ export const startSuiteRunWithRecorder = async ({
     // object would silently drop it before Convex).
     computerEnvironmentId?: string;
   };
+  /** Replace only the MCP servers for a GitHub check run. */
+  githubCheckServerOverride?: Array<{
+    serverName: string;
+    projectServerId: string;
+  }>;
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
   /**
@@ -568,7 +574,10 @@ export const startSuiteRunWithRecorder = async ({
         passCriteria,
         replayedFromRunId,
         useCurrentSuiteConfig,
-        environmentOverride,
+        ...(environmentOverride ? { environmentOverride } : {}),
+        ...(githubCheckServerOverride
+          ? { githubCheckServerOverride }
+          : {}),
         toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
         toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
         iterationOverride,

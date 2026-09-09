@@ -141,8 +141,15 @@ export type SuiteCapabilities = {
   /**
    * Scorer-authoring capabilities. Absent on a backend that predates A1 —
    * the Role control then degrades to today's read-only Gate chip.
+   *
+   * `predicateKinds` is the set of check kinds THIS DEPLOYMENT's validator
+   * accepts. The two repos release independently, so a client that offered
+   * every kind it knows would let an author add a check the backend rejects
+   * on save — or worse, one an older RUNNER cannot evaluate, which fails
+   * closed as "unknown predicate type" on every trial. Absent ⇒ offer only
+   * the kinds that predate this field.
    */
-  scorers?: { checkPolicy?: boolean };
+  scorers?: { checkPolicy?: boolean; predicateKinds?: string[] };
   /**
    * Stored quality-gate capabilities. Absent on a backend that predates B2 —
    * the Quality gate rows then disable rather than inventing a write path.

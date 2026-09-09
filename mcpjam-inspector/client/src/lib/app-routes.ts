@@ -490,6 +490,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "project",
   },
   {
+    path: "evaluate/eval-server/:serverId",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
+  {
     path: "evaluate/suite/:suiteId",
     kind: "screen",
     surfaceId: "evaluate",

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
 import { ChevronLeft, Github, Plus, Trash2 } from "lucide-react";
@@ -93,6 +100,43 @@ interface GithubChecksRouteProps {
  * The page-level copy explains where recipes come from in general; when the
  * backend returns provenance per repo, it belongs here.
  */
+/**
+ * A switch with its name under it.
+ *
+ * The caption is `aria-hidden`, and that is the point rather than an
+ * oversight: the switch already carries a per-repository `aria-label`
+ * ("Enable checks for owner/repo"), which is strictly more useful in a list of
+ * repositories than a bare "Checks" repeated on every row. Exposing the
+ * caption too would just read the word twice.
+ *
+ * Callers must keep the caption a substring of that `aria-label` — see the
+ * call sites.
+ */
+function SwitchField({
+  label,
+  muted,
+  children,
+}: {
+  label: string;
+  /** Dim the caption alongside a switch that is disabled. */
+  muted?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      {children}
+      <span
+        aria-hidden
+        className={`text-[11px] leading-none whitespace-nowrap ${
+          muted ? "text-muted-foreground/50" : "text-muted-foreground"
+        }`}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function RepoCheckState({ enabled }: { enabled: boolean }) {
   return (
     <span className="text-xs text-muted-foreground">
@@ -868,28 +912,11 @@ export function GithubChecksRoute({
             Loading…
           </div>
         ) : rows.length === 0 ? (
-          <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
+          <div className="px-4 py-8 text-sm text-muted-foreground">
             <p>
               No repositories connected yet. Connect a GitHub account above,
               then connect one of its repositories below to start running checks
               on its pull requests.
-            </p>
-            <p>
-              A repository can declare its check recipe in a{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                mcpjam.yaml
-              </code>{" "}
-              at the repo root. Without one, MCPJam detects a recipe
-              automatically.{" "}
-              <a
-                className="underline underline-offset-2 hover:text-foreground"
-                href="https://docs.mcpjam.com/github-checks"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Read the docs
-              </a>
-              .
             </p>
           </div>
         ) : (
@@ -988,23 +1015,44 @@ export function GithubChecksRoute({
                   </SelectContent>
                 </Select>
 
-                <Switch
-                  checked={row.enabled}
-                  disabled={pendingToggles.has(row._id) || !canManage}
-                  onCheckedChange={() => void handleToggle(row)}
-                  aria-label={`Enable checks for ${row.repoFullName}`}
-                />
+                {/* Each switch is captioned. Three bare switches in a row
+                    said nothing about which was which, and only a screen
+                    reader could tell them apart.
 
-                <Switch
-                  checked={row.conformanceEnabled === true}
-                  disabled={
-                    pendingConformance.has(row._id) ||
-                    !row.enabled ||
-                    !canManage
-                  }
-                  onCheckedChange={() => void handleConformanceToggle(row)}
-                  aria-label={`Enable conformance check for ${row.repoFullName}`}
-                />
+                    Every caption is a substring of its switch's `aria-label`,
+                    which is WCAG 2.5.3: a visible label that is not part of
+                    the accessible name leaves a speech-input user saying a
+                    word the control does not answer to. That is why the third
+                    reads "Comments" and not "PR comments" — keep it that way
+                    if the wording changes. */}
+                <SwitchField label="Checks">
+                  <Switch
+                    checked={row.enabled}
+                    disabled={pendingToggles.has(row._id) || !canManage}
+                    onCheckedChange={() => void handleToggle(row)}
+                    aria-label={`Enable checks for ${row.repoFullName}`}
+                  />
+                </SwitchField>
+
+                {/* Dimmed with its switch while checks are off, because it is
+                    a SUB-SETTING of them — the switch has always been
+                    disabled in that state, and a caption at full strength
+                    beside a dead control reads as a bug rather than a rule. */}
+                <SwitchField
+                  label="Conformance"
+                  muted={!row.enabled || !canManage}
+                >
+                  <Switch
+                    checked={row.conformanceEnabled === true}
+                    disabled={
+                      pendingConformance.has(row._id) ||
+                      !row.enabled ||
+                      !canManage
+                    }
+                    onCheckedChange={() => void handleConformanceToggle(row)}
+                    aria-label={`Enable conformance check for ${row.repoFullName}`}
+                  />
+                </SwitchField>
 
                 {/* `!== "off"` — ABSENT IS ON. Every row connected before
                     this existed, and every row nobody has touched since, is a
@@ -1012,14 +1060,19 @@ export function GithubChecksRoute({
                     tell an admin the opposite of what is happening on their
                     pull requests. Not gated on `row.enabled` the way
                     conformance is: this is a policy about what MCPJam may
-                    write, and it stays answerable while checks are paused. */}
-                <Switch
-                  checked={row.feedbackComments !== "off"}
-                  disabled={pendingFeedback.has(row._id) || !canManage}
-                  onCheckedChange={() => void handleFeedbackCommentsToggle(row)}
-                  aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
-                  aria-describedby={`feedback-comments-note-${row._id}`}
-                />
+                    write, and it stays answerable while checks are paused —
+                    so its caption is NOT muted with the others. */}
+                <SwitchField label="Comments" muted={!canManage}>
+                  <Switch
+                    checked={row.feedbackComments !== "off"}
+                    disabled={pendingFeedback.has(row._id) || !canManage}
+                    onCheckedChange={() =>
+                      void handleFeedbackCommentsToggle(row)
+                    }
+                    aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
+                    aria-describedby={`feedback-comments-note-${row._id}`}
+                  />
+                </SwitchField>
 
                 <Button
                   variant="ghost"
@@ -1034,6 +1087,23 @@ export function GithubChecksRoute({
             </div>
           ))
         )}
+        <p className="px-4 py-3 text-xs text-muted-foreground">
+          MCPJam detects how to build and start your server automatically. To
+          pin those commands, add{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">
+            mcpjam.yaml
+          </code>{" "}
+          at the repository root.{" "}
+          <a
+            className="underline underline-offset-2 hover:text-foreground"
+            href="https://docs.mcpjam.com/github-checks"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read the recipe docs
+          </a>
+          .
+        </p>
       </SettingsSection>
 
       <SettingsSection title="Connect a repository">

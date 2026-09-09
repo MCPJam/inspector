@@ -24,10 +24,15 @@ import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 
+import { compactModelIdTail } from "@/lib/environment-label";
+import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
+import { useEvalRunServerFacts } from "@/hooks/use-eval-run-server-facts";
+import { ServerFactsCard } from "./server-facts-card";
+import { SERVER_FACTS_FAILURE_COPY } from "./server-facts-model";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
 import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
@@ -58,6 +63,7 @@ import {
 import { FailureGroupsCard } from "./failure-groups-card";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
+import { RunResultsMatrix } from "./run-results-matrix";
 import { RunCaseRows } from "./run-case-rows";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
 import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
@@ -68,8 +74,6 @@ import {
 } from "./route-facts-model";
 import { RunStageStrip } from "./run-stage-strip";
 import { buildStageStrip } from "./run-stage-strip-model";
-import { RunGradingPeek } from "./run-grading-peek";
-import { RunVerdictCaveats } from "./run-verdict-caveats";
 import {
   buildEvaluateImprovePrompt,
   buildStageFixPrompt,
@@ -77,13 +81,33 @@ import {
 import { remedyForDiagnostic } from "./stage-remedy";
 import { RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
+import {
+  buildHeroPairings,
+  previousCompletedRunOf,
+} from "./run-verdict-hero-deltas";
+import { CombinedRunContent } from "./combined-run-content";
+import { launchRuns } from "./run-results-matrix-model";
+
+export function EvaluateRunContent(
+  props: Parameters<typeof SingleRunContent>[0],
+) {
+  const targets = launchRuns(props.run, props.siblingRuns ?? []);
+  return targets.length > 1 ? (
+    <CombinedRunContent {...props} runs={targets} />
+  ) : (
+    <SingleRunContent {...props} />
+  );
+}
+
 import { useEvaluateRunPageHeaderActions } from "./evaluate-run-page";
 
-export function EvaluateRunContent({
+export function SingleRunContent({
   projectId,
   run,
   iterations,
   allIterations,
+  siblingRuns = [],
+  hostNamesById,
   previousRunId,
   decisionSummaryEnabled,
   onOpenIteration,
@@ -95,6 +119,8 @@ export function EvaluateRunContent({
   iterations: readonly EvalIteration[];
   /** Every iteration in the suite, so the previous run's fractions are known. */
   allIterations?: readonly EvalIteration[];
+  siblingRuns?: readonly EvalSuiteRun[];
+  hostNamesById?: ReadonlyMap<string, string | null>;
   previousRunId?: string | null;
   decisionSummaryEnabled: boolean;
   /** Focus one iteration's evidence through the app's own routing. */
@@ -116,9 +142,48 @@ export function EvaluateRunContent({
     revision: evalRunDecisionRevision(run),
   });
 
+  const previousLaunch = useMemo(() => {
+    if (previousRunId) {
+      return siblingRuns.filter((candidate) => candidate._id === previousRunId);
+    }
+    const previous = previousCompletedRunOf(run, siblingRuns);
+    return previous ? [previous] : [];
+  }, [previousRunId, siblingRuns, run]);
+
+  const previousIterations = useMemo(() => {
+    const previousId = previousLaunch[0]?._id;
+    if (!previousId || !allIterations) return null;
+    const rows = allIterations.filter(
+      (iteration) => iteration.suiteRunId === previousId,
+    );
+    return rows.length > 0 ? rows : null;
+  }, [allIterations, previousLaunch]);
+
+  const pairings = useMemo(() => {
+    const names = hostNamesById ?? new Map();
+    const modelId = run.effectiveModelId ?? "Client default";
+    return buildHeroPairings({
+      targets: [
+        {
+          key: run._id,
+          run,
+          client: run.namedHostId
+            ? (names.get(run.namedHostId) ??
+              `Client …${run.namedHostId.slice(-6)}`)
+            : "Suite client",
+          modelId,
+          model: compactModelIdTail(modelId),
+          iterations,
+        },
+      ],
+      previousLaunch: previousLaunch.length > 0 ? previousLaunch : null,
+      previousIterations,
+    });
+  }, [run, iterations, hostNamesById, previousLaunch, previousIterations]);
+
   const view = useMemo(
-    () =>
-      buildRunVerdictHero({
+    () => ({
+      ...buildRunVerdictHero({
         run,
         iterations,
         decision: {
@@ -126,8 +191,21 @@ export function EvaluateRunContent({
           summary: detail.summary,
           diagnostics: detail.diagnostics,
         },
+        previous: previousIterations
+          ? { iterations: previousIterations }
+          : null,
       }),
-    [run, iterations, detail.status, detail.summary, detail.diagnostics],
+      pairings,
+    }),
+    [
+      run,
+      iterations,
+      detail.status,
+      detail.summary,
+      detail.diagnostics,
+      previousIterations,
+      pairings,
+    ],
   );
 
   // Chains for the iterations D9 does not describe. Diagnostics cover the
@@ -236,6 +314,22 @@ export function EvaluateRunContent({
   const routeFactsContractError =
     persistedRouteFacts.status === "error" &&
     persistedRouteFacts.error?.kind === "invalidContract";
+  // Server facts are COMPUTED ON READ, so there is no materializer to wait for
+  // and no page-local fallback: nothing in the browser can reconstruct the
+  // snapshot the run was taken against, and a fabricated stand-in would be a
+  // description of a server nobody observed.
+  //
+  // NOT gated on a terminal run status, unlike every sibling above. Those read
+  // materialized rollups that only exist once a run has finished; this one
+  // describes the SNAPSHOT the run was taken against and what setup observed,
+  // both of which are true from the run's first trial. Waiting for terminal
+  // would hide the server's own facts for exactly as long as somebody is
+  // watching the run that needs them.
+  const serverFacts = useEvalRunServerFacts({
+    projectId,
+    runId: run._id,
+    enabled: decisionSummaryEnabled,
+  });
   const routeLines = useMemo(
     () =>
       routeFactsDoc
@@ -395,7 +489,7 @@ export function EvaluateRunContent({
   const copyImprovePrompt = useCallback(async () => {
     const ok = await copyToClipboard(improvePrompt);
     if (ok) {
-      toast.success("Prompt copied — paste it into your coding agent");
+      toast.success("Prompt copied. Paste it into your coding agent");
     } else {
       toast.error("Copy failed");
     }
@@ -462,68 +556,130 @@ export function EvaluateRunContent({
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-3 px-5 pb-4">
-        {view.sentence.kind === "brokeAt" ? (
-          <RunGradingPeek
-            expected={view.sentence.expected}
-            observed={view.sentence.observed}
+      <div className="border-t border-border/40">
+        <RunResultsMatrix
+          key={run._id}
+          run={run}
+          runs={siblingRuns}
+          diagnostics={detail.diagnostics}
+          chains={chains.chains}
+          iterations={
+            allIterations
+              ? [
+                  ...allIterations.filter(
+                    (item) => item.suiteRunId !== run._id,
+                  ),
+                  ...iterations,
+                ]
+              : iterations
+          }
+          hostNamesById={hostNamesById}
+          onOpenIteration={onOpenIteration}
+        />
+      </div>
+
+      <details
+        className="border-t border-border/40"
+        open={stageFilter !== null || undefined}
+      >
+        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold">
+          Case diagnostics{" "}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            Selected run · stages, grading, and remedies
+          </span>
+        </summary>
+        <div className="border-t border-border/40">
+          <RunStageStrip
+            view={stripView}
+            activeStage={stageFilter}
+            onSelectStage={setStageFilter}
+          />
+        </div>
+
+        {/*
+          Directly under the strip, because it answers the two cells the strip
+          could only say "observed by the runner" about. The card renders on a
+          real document; every OTHER outcome says which one it is, because the
+          alternative — the card's own first version — was a blank space under
+          the strip that read identically for "this deployment does not serve
+          the route yet", "the read failed" and "there is no such run".
+        */}
+        {serverFacts.status === "ready" && serverFacts.document ? (
+          <ServerFactsCard
+            document={serverFacts.document}
+            stageFilter={stageFilter}
           />
         ) : null}
-        <RunVerdictCaveats
-          summary={detail.summary}
-          shownDiagnostics={detail.diagnostics.length}
-          scannedIterations={detail.scannedIterations}
-          serverComplete={detail.serverComplete}
-          walkExhausted={detail.walkExhausted}
-        />
-      </div>
+        {serverFacts.status === "error" && serverFacts.error ? (
+          <div
+            className={cn(
+              "border-t border-border/40 px-5 py-2 text-[12px]",
+              // A contract mismatch is a BUG REPORT — our builder and our
+              // published contract have drifted. The other three are service
+              // states, and painting them red would report a defect nobody
+              // observed.
+              serverFacts.error.kind === "invalidContract"
+                ? "text-destructive"
+                : "text-muted-foreground",
+            )}
+            data-testid="server-facts-error"
+          >
+            <p className="font-medium">
+              {SERVER_FACTS_FAILURE_COPY[serverFacts.error.kind].title}
+            </p>
+            <p>{SERVER_FACTS_FAILURE_COPY[serverFacts.error.kind].detail}</p>
+          </div>
+        ) : null}
+        {serverFacts.status === "absent" ? (
+          <p
+            className="border-t border-border/40 px-5 py-2 text-[12px] text-muted-foreground"
+            data-testid="server-facts-absent"
+          >
+            No server facts for this run — it is not visible here.
+          </p>
+        ) : null}
 
-      <div className="border-t border-border/40">
-        <RunStageStrip
-          view={stripView}
-          activeStage={stageFilter}
-          onSelectStage={setStageFilter}
-        />
-      </div>
+        {routeFactsContractError ? (
+          <p
+            className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
+            data-testid="route-facts-error"
+          >
+            routes not shown. The run&apos;s route facts did not match the
+            contract
+          </p>
+        ) : null}
 
-      {routeFactsContractError ? (
-        <p
-          className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
-          data-testid="route-facts-error"
-        >
-          routes not shown — the run&apos;s route facts did not match the
-          contract
-        </p>
-      ) : null}
-
-      <div className="border-t border-border/40">
-        <RunCaseRows
-          rows={visibleRows}
-          defaultOpenKey={openRowKey}
-          pills={rowPills}
-          {...(routeLines ? { routeLines } : {})}
-          renderBody={(row) => (
-            <RunCaseRowBody
-              row={row}
-              iterations={iterations}
-              {...(routeFactsDoc
-                ? {
-                    routeFacts: routeFactsForRow(
-                      routeFactsDoc,
-                      row,
-                      iterations,
-                    ),
-                    catalogState: routeFactsDoc.catalogState,
-                    ...(routeFactsComputedHere ? { computedHere: true } : {}),
-                  }
-                : {})}
-              {...(onOpenIteration ? { onOpenIteration } : {})}
-              {...(onEditCase ? { onEditCase } : {})}
-              {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
-            />
-          )}
-        />
-      </div>
+        <div className="border-t border-border/40">
+          <RunCaseRows
+            rows={visibleRows}
+            defaultOpenKey={openRowKey}
+            pills={rowPills}
+            {...(routeLines ? { routeLines } : {})}
+            renderBody={(row) => (
+              <RunCaseRowBody
+                row={row}
+                iterations={iterations}
+                {...(routeFactsDoc
+                  ? {
+                      routeFacts: routeFactsForRow(
+                        routeFactsDoc,
+                        row,
+                        iterations,
+                      ),
+                      catalogState: routeFactsDoc.catalogState,
+                      ...(routeFactsComputedHere ? { computedHere: true } : {}),
+                    }
+                  : {})}
+                {...(onOpenIteration ? { onOpenIteration } : {})}
+                {...(onEditCase ? { onEditCase } : {})}
+                {...(proposeProps
+                  ? { descriptionExperiment: proposeProps }
+                  : {})}
+              />
+            )}
+          />
+        </div>
+      </details>
 
       {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
         <RunDescriptionExperimentCard
@@ -549,9 +705,15 @@ export function EvaluateRunContent({
       ) : null}
 
       {fallbackBody ? (
-        <div className="flex min-h-0 flex-1 flex-col border-t border-border/40">
-          {fallbackBody}
-        </div>
+        <details className="border-t border-border/40">
+          <summary className="cursor-pointer px-5 py-4 text-sm font-medium">
+            Full run report{" "}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              Traces, configuration, and advanced metrics
+            </span>
+          </summary>
+          <div className="flex min-h-[480px] flex-col">{fallbackBody}</div>
+        </details>
       ) : null}
     </div>
   );

@@ -25,6 +25,7 @@ export function AfterTheRunSection({
   availableTools,
   readOnly,
   checkPolicy,
+  authorableKinds,
   addedKey,
   onCasePredicateChange,
   onRemoveCasePredicate,
@@ -38,6 +39,8 @@ export function AfterTheRunSection({
   availableTools?: string[];
   readOnly: boolean;
   checkPolicy: boolean;
+  /** The kinds this deployment accepts — see `SuiteScorerLibraryMenu`. */
+  authorableKinds?: readonly Predicate["type"][];
   addedKey: string | null;
   onCasePredicateChange: (index: number, next: Predicate) => void;
   onRemoveCasePredicate: (index: number) => void;
@@ -64,6 +67,7 @@ export function AfterTheRunSection({
         {readOnly ? null : (
           <SuiteScorerLibraryMenu
             kinds={spineLibraryKinds()}
+            authorableKinds={authorableKinds}
             triggerLabel="Add a check on the whole run"
             onAdd={(kind) => onAddScorer(blankPredicate(kind))}
           />
