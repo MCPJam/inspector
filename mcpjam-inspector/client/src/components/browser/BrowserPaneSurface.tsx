@@ -537,10 +537,15 @@ export function BrowserPaneSurface({
           // Paste has no keystrokes to replay. `Ctrl+V` forwarded as a key
           // pair asks the PAGE to paste from a clipboard the sandbox does not
           // share, so nothing arrived at all; the text has to travel itself.
-          if (!holding) return;
           event.preventDefault();
           const text = event.clipboardData?.getData("text");
-          if (text) send([{ type: "text", text }]);
+          if (!text) return;
+          // TAKEOVER TOO, exactly as a keystroke does. Pasting into the page
+          // is somebody using the browser, and returning early here dropped
+          // the paste silently while the agent held the lease — no text, no
+          // takeover, and nothing on screen to say why.
+          if (holding) send([{ type: "text", text }]);
+          else takeover([{ type: "text", text }]);
         }}
         onCompositionStart={() => {
           composingRef.current = true;

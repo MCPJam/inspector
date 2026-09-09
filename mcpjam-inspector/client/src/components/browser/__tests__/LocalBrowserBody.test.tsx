@@ -223,6 +223,32 @@ describe("the agent browser pane", () => {
     ).toBeTruthy();
   });
 
+  it("takes the browser on a paste, and sends the text", async () => {
+    // Pasting into the page is somebody using the browser, exactly as typing
+    // is. Returning early while the agent held the lease dropped the paste
+    // silently — no text, no takeover, and nothing on screen to say why.
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    const image = await deliverFrame();
+    fireEvent.paste(image, {
+      clipboardData: { getData: () => "hello from the clipboard" },
+    });
+    expect(await screen.findByText(/you have it/i)).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        api.inputs
+          .flatMap((call: any) => call.events as any[])
+          .some(
+            (event) =>
+              event?.type === "text" &&
+              event.text === "hello from the clipboard",
+          ),
+      ).toBe(true),
+    );
+  });
+
   it("sends no input until this pane holds the browser", async () => {
     // The server refuses it anyway; not sending is the honest UI of the same
     // rule, and keeps a stray mouse move off the wire entirely.

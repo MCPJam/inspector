@@ -226,6 +226,25 @@ describe("the surface's use of the shield", () => {
     expect(covers).toHaveLength(1);
   });
 
+  it("covers the whole native view, not just the pane's rectangle", () => {
+    // The view's POSITION comes from the pane and its SIZE from the session,
+    // so a session viewport bigger than the pane leaves the view sticking out
+    // past `bounds`. A shield cut to `bounds` covers the middle and leaves the
+    // overhang live — a click there reaches the agent's page while the lease
+    // says nobody may drive it, which is the shield failing in the case that
+    // looks like it is working.
+    const { surface, covers } = surfaceWith();
+    surface.registerTab(view() as never);
+    surface.setViewport({ width: 1400, height: 900 });
+    surface.show({ holder: fakeHolder(), bounds });
+    expect(covers.at(-1)).toEqual({
+      x: bounds.x,
+      y: bounds.y,
+      width: 1400,
+      height: 900,
+    });
+  });
+
   it("uncovers the page the moment this pane holds the browser", () => {
     const { surface, removed } = surfaceWith();
     surface.registerTab(view() as never);

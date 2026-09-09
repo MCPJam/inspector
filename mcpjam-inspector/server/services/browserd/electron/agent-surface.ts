@@ -357,6 +357,28 @@ export function createContextSurface(
    * surface stops being visible, the lease comes back — and a copy that one of
    * them forgot is an invisible rectangle left over an app that has moved on.
    */
+  /**
+   * The rectangle the native view actually occupies.
+   *
+   * THE SHIELD MUST COVER THIS, not the pane's `bounds`. The two are not the
+   * same rectangle: position comes from the pane and size from the session, so
+   * a session viewport larger than the pane — a `fixed` session beside a
+   * narrow panel, or a pane the layout has clipped — leaves the view sticking
+   * out beyond `bounds`. A shield cut to `bounds` covers the middle and leaves
+   * that overhang live, so a click there reaches the agent's page while the
+   * lease says nobody may drive it. That is the shield failing at the one job
+   * it has, in the case that looks like it is working.
+   */
+  const viewRect = (): SurfaceBounds | null =>
+    bounds
+      ? {
+          x: bounds.x,
+          y: bounds.y,
+          width: viewport.width,
+          height: viewport.height,
+        }
+      : null;
+
   const uncover = (): void => {
     if (!shielded) return;
     shield?.remove();
@@ -393,12 +415,7 @@ export function createContextSurface(
     // been clipped changes x and y here and nothing else; the page keeps the
     // coordinate space the model was told about until a resize the session
     // agreed to says otherwise.
-    view.setBounds({
-      x: bounds.x,
-      y: bounds.y,
-      width: viewport.width,
-      height: viewport.height,
-    });
+    view.setBounds(viewRect()!);
     // Deafened as well as shown: the view is on screen while the agent drives,
     // because watching is the safe common case — but a click into it while
     // somebody else holds the browser must not reach the page.
@@ -432,11 +449,12 @@ export function createContextSurface(
           onGesture: () => options.onShieldGesture?.(),
         }) ?? null;
     }
-    if (!shield || !bounds) return;
+    const rect = viewRect();
+    if (!shield || !rect) return;
     // `cover` on every apply, not only on the transition: the pane moves, the
     // window resizes, and a shield left at the old rectangle is a hole over
     // the page and a dead patch over the app beside it.
-    shield.cover(bounds);
+    shield.cover(rect);
     shielded = true;
   };
 
