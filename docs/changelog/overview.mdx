@@ -15,6 +15,10 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 - **Findings tab on User Testing scenario detail** — opening a User Testing scenario now lands on a **Findings** tab instead of Insights. The tab groups sessions by how users came across — Gave up, Frustrated, Neutral, Satisfied, or Uncategorized — and lists the goal clusters each group engaged with, ordered worst-first. Expanding a goal shows the per-goal user-value chain (Connection → Discovery → Selection → Call → Response → Value) once stage data is available. Click any goal's session count to jump to Sessions with the matching transcript pre-selected. Insights and Sessions remain reachable from the tab strip.
 
+- **Client · model chip in the session detail header** — the session detail header in both Swarm and User Testing now shows a `Client · Model` chip beside the session name. The client is the product's brand word ("Claude", "ChatGPT") from the session's pinned host config — never the host row's nickname. The model is resolved to its curated display name (e.g. "GPT-5", not "openai/gpt-5"). The chip renders nothing when the session recorded neither; it shows whichever half is known when only one is available.
+
+- **Labeled "Share this session" button** — the icon-only copy button in the session detail header has been replaced with a labeled **Share this session** button. It copies the same session deep link as before; hovering it shows a tooltip describing what was copied.
+
 #### Changed
 
 - **User Testing scenarios analyze themselves** — opening a User Testing scenario's Findings or Insights tab when sessions exist but no analysis has run now starts the analysis automatically. The "Analyze sessions" button and the "These sessions haven't been analyzed yet" state are gone; the tab shows an analyzing banner instead and fills in once the run completes. The cluster tuning control and the freshness chip still require an explicit action. Swarm and Benchmark scopes are unchanged — Swarm already queues analysis when a run settles, and Benchmark flow analysis remains explicitly requested.
