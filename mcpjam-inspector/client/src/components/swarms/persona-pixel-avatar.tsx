@@ -299,7 +299,10 @@ function generatePixelGolem(
     const rolledArms = rng() < 0.85;
     // A waving golem has to wave: the hero graphic cannot be left to a die.
     if (rolledArms || pose === "wave") {
-      const al = ri(2, 3);
+      // Length is rolled only when the roll granted the arms. A forced wave
+      // takes a fixed one instead, so it draws no rng a `stand` golem of the
+      // same seed would not have drawn either.
+      const al = rolledArms ? ri(2, 3) : 2;
       const armBot = Math.min(bodyTop + 1 + al, bodyBot);
       if (pose === "wave") {
         // Right arm hangs as usual. The left is raised: shoulder, forearm

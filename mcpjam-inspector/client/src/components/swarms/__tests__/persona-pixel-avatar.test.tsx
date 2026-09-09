@@ -114,7 +114,11 @@ describe("PersonaPixelAvatar", () => {
  * testing is not "does the arm move" — it is whether anything ELSE moved.
  */
 describe("PersonaPixelAvatar — wave pose", () => {
-  const sprite = (props: { shapeIndex: number; pose?: "stand" | "wave" }) =>
+  const sprite = (props: {
+    shapeIndex: number;
+    pose?: "stand" | "wave";
+    seed?: string;
+  }) =>
     render(
       <PersonaPixelAvatar
         seed="swarm-hero-lapis"
@@ -129,6 +133,17 @@ describe("PersonaPixelAvatar — wave pose", () => {
       ...Array.from(svg.querySelectorAll(":scope > rect")).map((r) =>
         Number(r.getAttribute("x")),
       ),
+    );
+
+  /**
+   * Head cells, minus the glow sensor — at the default state it is the only
+   * head rect carrying a class. The sensor is placed after every cell has been
+   * coloured, so the extra cells an arm adds move it legitimately; the cells
+   * themselves are laid out before any of that and hold still.
+   */
+  const headCells = (svg: SVGElement) =>
+    Array.from(svg.querySelectorAll("g rect:not([class])")).map(
+      (r) => `${r.getAttribute("x")},${r.getAttribute("y")}`,
     );
 
   it("stands by default, so no existing avatar is touched", () => {
@@ -149,8 +164,52 @@ describe("PersonaPixelAvatar — wave pose", () => {
   });
 
   it("puts the raised hand further out than the standing silhouette", () => {
-    expect(leftmostBodyColumn(sprite({ shapeIndex: 0, pose: "wave" }))).toBeLessThan(
-      leftmostBodyColumn(sprite({ shapeIndex: 0 })),
+    expect(
+      leftmostBodyColumn(sprite({ shapeIndex: 0, pose: "wave" })),
+    ).toBeLessThan(leftmostBodyColumn(sprite({ shapeIndex: 0 })));
+  });
+
+  it("forces the arms without spending rng the standing sprite skips", () => {
+    // A wave has to wave, so on the 15% of seeds whose arm roll comes up empty
+    // it draws arms the roll refused. That forced branch is where a stray draw
+    // hides: rolling for an arm length there would shift every draw after it.
+    // Head cells witness the shift — they are laid out downstream of the arm
+    // block and nowhere near the raised hand, so they move only if the stream
+    // did. Every family reaches the arm roll on the same draw (five size
+    // draws, two chipped corners, one leg offset), so this seed misses it for
+    // all four armed ones: Brute, Runt, Warden, Waif.
+    const seed = "missed-arm-roll";
+    for (const shapeIndex of [0, 2, 4, 5]) {
+      expect(headCells(sprite({ seed, shapeIndex, pose: "wave" }))).toEqual(
+        headCells(sprite({ seed, shapeIndex })),
+      );
+    }
+  });
+
+  it("records what the generator emits for the standing hero", () => {
+    // The anchor. Everything above compares two renders of the same generator,
+    // so a stray draw in the shared path shifts both sides and stays invisible.
+    // These are what it actually produced when the pose landed, and they should
+    // change only alongside a deliberate change to the generator.
+    const rects = Array.from(
+      sprite({ shapeIndex: 0 }).querySelectorAll("rect"),
     );
+    expect(rects).toHaveLength(61);
+
+    const census: Record<string, number> = {};
+    for (const rect of rects) {
+      const fill = rect.getAttribute("fill")!;
+      census[fill] = (census[fill] ?? 0) + 1;
+    }
+    // Lapis dark / mid / light / glow, and the ground shadow. The census moves
+    // on a geometry change and on the per-cell dark↔mid flip alike, which a
+    // bare cell count would miss.
+    expect(census).toEqual({
+      "#1d2740": 16,
+      "#334570": 26,
+      "#54679b": 15,
+      "#9ec1f0": 3,
+      "#000": 1,
+    });
   });
 });

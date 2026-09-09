@@ -58,9 +58,11 @@ type HeroCharacter = {
 };
 
 /**
- * A quarter-cycle apart against the 1.1s loop. Negative so every character is
- * already mid-wave on first paint — a positive delay would show four idle
- * golems for up to a second before anything moved.
+ * The characters are spread across one 1.1s loop — a quarter-cycle apart at
+ * four of them. Negative so every character is already mid-jump on first paint;
+ * a positive delay would show idle golems for up to a second before anything
+ * moved. A lone character works out to `-0.000s` and starts at rest, which is
+ * the right read for one sprite: there is no row for it to be out of step with.
  */
 const JUMP_PERIOD_S = 1.1;
 
