@@ -450,4 +450,91 @@ describe("useChatSession — local computer engine transmission", () => {
       }),
     );
   });
+
+  // The switch is a live control and the response is a stream, so a user can
+  // move it while a turn is in flight. The SERVER decided each tool's
+  // `needsApproval` from the value in that turn's request and cannot be told
+  // otherwise, so the client has to answer the same question the server
+  // answered — the value the turn was SENT with, not the one showing now.
+  // Reading it live breaks in both directions, and each break is silent.
+  describe.each([
+    {
+      name: "OFF at send, flipped ON mid-turn: still runs, no stall",
+      sentWith: false,
+      flippedTo: true,
+      // The server declared it ungated and will never emit a pill. Deferring
+      // on the new value waits for a decision nobody will be asked for.
+      expectRun: true,
+    },
+    {
+      name: "ON at send, flipped OFF mid-turn: still defers, no bypass",
+      sentWith: true,
+      flippedTo: false,
+      // The server declared it gated and its pill is already on the way.
+      // Running on the new value executes a page tool the user was meant to
+      // see first, and then the pill arrives for a call already spent.
+      expectRun: false,
+    },
+  ])("approval flipped mid-turn — $name", ({ sentWith, flippedTo, expectRun }) => {
+    it("honours the value the turn was sent with", async () => {
+      const pageTool = {
+        alias: pageToolAlias("session-1", "https://shop.test::add_to_cart"),
+        sessionId: "session-1",
+        toolKey: "https://shop.test::add_to_cart",
+        rawName: "add_to_cart",
+        origin: "https://shop.test",
+      };
+      useWebmcpInspectorStore.setState({
+        session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+        tools: [
+          {
+            toolKey: pageTool.toolKey,
+            name: pageTool.rawName,
+            origin: pageTool.origin,
+            fromSubframe: false,
+            registrationKind: "imperative",
+          } as never,
+        ],
+        chatEnabled: true,
+      });
+      const invoke = vi.fn(async () => ({
+        state: "succeeded",
+        output: "added",
+      }));
+      const initialStore = useWebmcpInspectorStore.getState();
+      vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+        ...initialStore,
+        session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+        invokeToolForResult: invoke as never,
+      });
+
+      const rendered = await renderWithEngine(undefined, undefined, {
+        usePageTools: true,
+        requireToolApproval: sentWith,
+      });
+      // Sending the turn is what stamps the value; the body closure runs here.
+      const advertised = lastTransport().body.pageTools as Array<{
+        alias: string;
+      }>;
+      setAdvertisedPageTools(advertised as never);
+
+      // The user moves the switch while the response is still streaming.
+      act(() => rendered.result.current.setRequireToolApproval(flippedTo));
+
+      await mockState.chatOnToolCall!({
+        toolCall: {
+          toolName: advertised[0]!.alias,
+          toolCallId: `page-call-flip-${String(sentWith)}`,
+          input: { sku: "ABC-123" },
+        },
+      });
+
+      if (expectRun) {
+        await waitFor(() => expect(invoke).toHaveBeenCalled());
+      } else {
+        expect(invoke).not.toHaveBeenCalled();
+        expect(mockState.addToolOutput).not.toHaveBeenCalled();
+      }
+    });
+  });
 });

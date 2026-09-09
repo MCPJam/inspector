@@ -1177,16 +1177,27 @@ function approvalGuidance(
   _uiTools: UiToolEntry[],
   requireToolApproval: boolean,
 ): string {
-  // Named either way, because "what never pauses" does not change with the
-  // switch and is the half the model most often gets wrong: it is why a read
-  // it expected to be gated simply happened.
+  // Named either way, because neither of these changes with the switch, and
+  // both are halves the model gets wrong in the expensive direction.
+  //
+  // `free` is why a read it expected to be gated simply happened. `alwaysAsks`
+  // is the opposite mistake and the worse one: loading a skill a connected MCP
+  // server provides pauses whatever this setting says (`effective-skill-tools`
+  // binds the digest and asks), so a model told "nothing will stop you" plans
+  // straight past a checkpoint that will stop it. Stated conditionally — "a
+  // skill a connected MCP server provides" — so a turn with no such skill is
+  // not promised a gate it will never meet.
   const free =
     "Read-only lookups of the user's own project, the discovery meta-tools, " +
     "read-only `ui_*` actions and an open app's own `app_*` tools never pause, " +
     "in either setting.";
+  const alwaysAsks =
+    "Loading a skill that a connected MCP server provides always asks for " +
+    "confirmation, in either setting — it brings that server's instructions " +
+    "into this conversation.";
   return requireToolApproval
-    ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} A denial is final — explain what you wanted to do instead of retrying the call.`
-    : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Nothing will stop you, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free}`;
+    ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} ${alwaysAsks} A denial is final — explain what you wanted to do instead of retrying the call.`
+    : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free} ${alwaysAsks}`;
 }
 
 /**

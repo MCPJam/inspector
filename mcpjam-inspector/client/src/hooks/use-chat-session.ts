@@ -1976,6 +1976,16 @@ export function useChatSession(
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  /**
+   * The approval value the IN-FLIGHT turn was sent with.
+   *
+   * Stamped once per send, in the transport's `body` closure, beside
+   * `turnTaskScopeRef`. Everything that has to agree with the SERVER's view of
+   * this turn reads this rather than the live setting: the server declared
+   * every tool's `needsApproval` from the value in that request, and a user is
+   * free to flip the switch while the response streams.
+   */
+  const turnRequireToolApprovalRef = useRef(requireToolApproval);
 
   // Host-level progressive tool discovery toggle. The value comes from the
   // caller — each useChatSession site knows which host config row applies
@@ -3027,6 +3037,14 @@ export function useChatSession(
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
           ? hostedProjectId ?? undefined
           : getTrackedTaskScope();
+        // And the approval value this turn is SENT with, for the same reason.
+        // The server declares each tool's `needsApproval` from the value in
+        // THIS request; a client that later read the live setting would answer
+        // a different question than the one the server answered. Flipping the
+        // switch mid-stream then either runs a page tool the server is about
+        // to request approval for, or defers one nothing will ever ask about
+        // — and that second one stalls the turn.
+        turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -3333,10 +3351,12 @@ export function useChatSession(
         // waits for a decision nobody will make — the turn stalls on a tool
         // that was never gated in the first place.
         //
-        // The SAME predicate the server built the tool from, so the two cannot
-        // drift: a client that guessed differently either strands the turn or
-        // runs something the user was meant to see first.
-        if (!pageToolCallNeedsApproval(requireToolApprovalRef.current)) {
+        // The SAME predicate the server built the tool from, AND the same
+        // value: `turnRequireToolApprovalRef` is what this turn was sent with,
+        // not what the switch says now. A client that guessed differently
+        // either strands the turn or runs something the user was meant to see
+        // first, and flipping the switch mid-stream is enough to cause it.
+        if (!pageToolCallNeedsApproval(turnRequireToolApprovalRef.current)) {
           void fulfillApprovedPageToolCall({
             toolCallId: pageToolCallId,
             alias: toolName,

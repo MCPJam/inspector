@@ -1542,6 +1542,18 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       expect(prompt).toContain("`app_*`");
       expect(prompt).toContain("discovery meta-tools");
     }
+
+    // And so is the ONE thing that still asks whatever the switch says. This
+    // is the opposite mistake and the worse one: a server-origin skill ref
+    // pauses in either setting, so an approval-off prompt that claimed nothing
+    // would stop the model has it plan straight past a real checkpoint.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("skill that a connected MCP server provides");
+      expect(prompt).toContain("always asks");
+    }
+    expect(buildUiToolsSystemPrompt(annotated)).not.toContain(
+      "Nothing will stop you",
+    );
   });
 });
 
