@@ -113,12 +113,40 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
 });
 
 describe("User Testing detail / edit navigation", () => {
-  it("defaults to Insights and opens Sessions for a session deep-link", () => {
-    expect(parseUserTestingDetailTab("")).toBe("insights");
-    expect(parseUserTestingDetailTab("?tab=insights")).toBe("insights");
+  it("defaults to Findings and opens Sessions for a session deep-link", () => {
+    expect(parseUserTestingDetailTab("")).toBe("findings");
+    expect(parseUserTestingDetailTab("?tab=findings")).toBe("findings");
     expect(parseUserTestingDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseUserTestingDetailTab("?session=thread-1")).toBe("sessions");
     expect(parseUserTestingDetailTab("?tab=clusters")).toBe("insights");
+  });
+
+  it("still honours an insights link handed out before Findings landed", () => {
+    // Findings took the landing spot, but `?tab=insights` is a real, explicit
+    // choice. Rehoming those links to the new default would break every URL
+    // anyone has already shared.
+    expect(parseUserTestingDetailTab("?tab=insights")).toBe("insights");
+    expect(
+      buildUserTestingScenarioPath("cb-1", { tab: "insights" })
+    ).toBe("/user-testing/cb-1?tab=insights");
+  });
+
+  it("omits the landing tab from the query and names every other one", () => {
+    // The parser's fallback and the builder's omission have to agree, or a
+    // link carries a redundant tab or silently drops the one it meant.
+    expect(buildUserTestingScenarioPath("cb-1", { tab: "findings" })).toBe(
+      "/user-testing/cb-1"
+    );
+    expect(buildUserTestingScenarioPath("cb-1", { tab: "sessions" })).toBe(
+      "/user-testing/cb-1?tab=sessions"
+    );
+    expect(
+      parseUserTestingDetailTab(
+        new URL(
+          `http://x${buildUserTestingScenarioPath("cb-1", { tab: "sessions" })}`
+        ).search
+      )
+    ).toBe("sessions");
   });
 
   it("builds the edit path and recognizes legacy edit/share/preview tabs", () => {

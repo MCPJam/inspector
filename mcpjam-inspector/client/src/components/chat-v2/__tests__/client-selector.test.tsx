@@ -157,15 +157,17 @@ describe("ClientSelector", () => {
     await user.click(screen.getByTestId("client-selector-trigger"));
     expect(screen.getByText("Global")).toBeInTheDocument();
 
-    await user.click(screen.getByTestId("client-row-host-0"));
+    await user.click(screen.getByTestId("client-row-compare-host-0"));
 
     expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1", "host-3"]);
   });
 
-  // PUR-11: no more "Multiple clients" switch to find and flip — checking a
-  // second row multi-selects immediately, from a single-host line-up and with
-  // no prior "enabled" state anywhere for the selector to consult.
-  it("has no 'Multiple clients' toggle — checking a second row multi-selects by default", async () => {
+  // PUR-11: no more "Multiple clients" switch to find and flip — ticking a
+  // second row's checkbox multi-selects immediately, from a single-host
+  // line-up and with no prior "enabled" state for the selector to consult.
+  // BB-135 moved that gesture off the row body onto the checkbox so the row
+  // body can switch clients; the "no toggle to find" property is unchanged.
+  it("has no 'Multiple clients' toggle — ticking a second checkbox multi-selects by default", async () => {
     const user = userEvent.setup();
     const onSelectedHostIdsChange = vi.fn();
     const onMultiHostEnabledChange = vi.fn();
@@ -190,12 +192,204 @@ describe("ClientSelector", () => {
       screen.queryByLabelText("Compare multiple clients")
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByTestId("client-row-host-1"));
+    await user.click(screen.getByTestId("client-row-compare-host-1"));
 
     expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
     // No manual toggle exists anymore — the component keeps the parent's
     // persisted "comparing" flag in sync with the selection count itself.
     expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
+  });
+
+  // BB-135: switching clients used to mean "tick the one you want, then untick
+  // the one you had" — the row body only ever multi-selected.
+  it("switches the lead client on a row click and leaves compare", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    const onMultiHostEnabledChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={onMultiHostEnabledChange}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-host-1"));
+
+    expect(onHostChange).toHaveBeenCalledWith("host-1");
+    // Clearing the lineup is not cosmetic: `usePersistedHost` preserves the
+    // column COUNT when only the lead changes, so leaving it alone would swap
+    // a compare column instead of leaving compare.
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1"]);
+    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(false);
+    // Switching is a terminal gesture — the list goes away with the choice.
+    expect(screen.queryByTestId("client-row-host-1")).not.toBeInTheDocument();
+  });
+
+  // cmdk's root keydown claims Enter for the highlighted row, so without the
+  // checkbox stopping it, Enter on a focused checkbox switched clients.
+  it("toggles compare when Enter lands on a focused checkbox", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    screen.getByTestId("client-row-compare-host-1").focus();
+    await user.keyboard("{Enter}");
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    expect(onHostChange).not.toHaveBeenCalled();
+  });
+
+  it("adds a compare column from the checkbox without switching the lead", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-compare-host-1"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    expect(onHostChange).not.toHaveBeenCalled();
+    // The popover stays open so the user can keep building the lineup.
+    expect(screen.getByTestId("client-row-host-1")).toBeInTheDocument();
+  });
+
+  // The cap belongs to the comparison, not to the client list: with three
+  // columns already up you can still switch to a fourth client.
+  it("keeps rows switchable when the compare lineup is full", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-2"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(screen.getByTestId("client-row-compare-host-3")).toBeDisabled();
+
+    await user.click(screen.getByTestId("client-row-host-3"));
+
+    expect(onHostChange).toHaveBeenCalledWith("host-3");
+  });
+
+  /**
+   * Two clients can carry the same stored name — `resolveClientDisplayNames`
+   * is what tells them apart, and it does so in `displayName` alone. Naming
+   * the button after the raw name gave both rows "Compare with Claude": one
+   * button announced twice, and unreachable by voice or by role query.
+   */
+  it("names the compare button after the client the row shows", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClientSelector
+        hosts={[
+          // The lead sits elsewhere so BOTH duplicates render the "Compare
+          // with" branch, which is where the collision showed.
+          { hostId: "host-lead", name: "Cursor", displayName: "Cursor" },
+          { hostId: "host-a", name: "Claude", displayName: "Claude" },
+          { hostId: "host-b", name: "Claude", displayName: "Claude #2" },
+        ]}
+        projectId="project-1"
+        currentHostId="host-lead"
+        selectedHostIds={["host-lead"]}
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+
+    expect(
+      screen.getByRole("button", { name: "Compare with Claude #2" })
+    ).toBeInTheDocument();
+    // Exact match, so the raw-name version fails here too: it produced two
+    // buttons with this name and the query cannot resolve them.
+    expect(
+      screen.getByRole("button", { name: "Compare with Claude" })
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The cap tooltip's only hover surface is the disabled checkbox, so the
+   * button drops pointer events and the wrapper takes them. The click has to
+   * stop there: falling through to the row would switch the client out from
+   * under someone who aimed at a checkbox.
+   */
+  it("does not switch the lead when the capped checkbox is clicked", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-2"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    const capped = screen.getByTestId("client-row-compare-host-3");
+    expect(capped).toBeDisabled();
+
+    // The wrapper is what a pointer actually lands on once the button stops
+    // taking events.
+    const wrapper = capped.parentElement;
+    expect(wrapper).not.toBeNull();
+    await user.click(wrapper as HTMLElement);
+
+    expect(onHostChange).not.toHaveBeenCalled();
   });
 
   it("uses app-surface logo variants inside the modal", async () => {
