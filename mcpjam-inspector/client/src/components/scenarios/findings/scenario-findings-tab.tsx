@@ -24,7 +24,11 @@ import {
   EMPTY_USAGE_FILTER,
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
-import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
+import {
+  useGoalOutcomeDrilldown,
+  useUsageInsights,
+} from "@/hooks/useUsageInsights";
+import { useEnsureFirstAnalysis } from "@/hooks/useInsightsFlowController";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import { FindingsSummaryCard } from "@/components/swarms/findings/findings-summary-card";
 import { FindingsPersonaTabs } from "@/components/swarms/findings/findings-persona-tabs";
@@ -60,6 +64,42 @@ export function ScenarioFindingsTab({
     filters,
     limit: GRID_PAGE_SIZE,
   });
+
+  /**
+   * This tab analyzes itself too (BB-196).
+   *
+   * It is the LANDING tab, so it is the surface most people see first — and
+   * the drill-down alone cannot tell "never analyzed" from "analyzed and
+   * empty", which is why the breakdown is read here as well: `latestRun` is
+   * the only honest signal for the former. Same hook and same one-attempt
+   * discipline as the Insights workbench.
+   */
+  const { breakdown, rebuild } = useUsageInsights({
+    scope: { kind: "scenario", scenarioId },
+    filters,
+    threadsEnabled: false,
+    breakdownEnabled: true,
+  });
+  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
+    enabled: true,
+    cohortKey: scenarioId,
+    breakdown,
+    rebuild,
+  });
+  /**
+   * Is an analysis on its way? Same rule the session-flow diagram applies: on
+   * a surface that starts its own, a MISSING run means one is being arranged
+   * rather than waiting to be asked for — until a refusal withdraws that.
+   *
+   * Gated on the breakdown having loaded, so the first subscription cannot
+   * flash "analyzing" at a study that has simply never been analyzed and never
+   * will be.
+   */
+  const latestRun = breakdown?.latestRun ?? null;
+  const analysisInFlight =
+    latestRun?.status === "queued" ||
+    latestRun?.status === "running" ||
+    (!firstAnalysisRefused && Boolean(breakdown) && latestRun === null);
 
   const model = useMemo(
     () =>
@@ -224,9 +264,16 @@ export function ScenarioFindingsTab({
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
         data-testid="scenario-findings-empty"
       >
-        {model.unanalyzedCount > 0
-          ? "No session has been analyzed yet."
-          : "No sessions in this study yet."}
+        {/* An analysis on its way is working, not waiting for a click — the
+            whole of BB-196, and it matters most here because this is the tab
+            people land on. "No session has been analyzed yet" stays for the
+            cases where that is the end of the story: a refused start, or a run
+            that failed. */}
+        {model.unanalyzedCount === 0
+          ? "No sessions in this study yet."
+          : analysisInFlight
+            ? "Analyzing sessions — grouping goals, behaviors, outcomes, and sentiment. This can take a few minutes."
+            : "No session has been analyzed yet."}
       </div>
     );
   }
