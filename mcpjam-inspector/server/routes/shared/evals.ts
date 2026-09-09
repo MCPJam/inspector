@@ -1,4 +1,6 @@
-import { isCredentialFreeGithubExecution } from "../../services/github-checks/credential-policy.js";
+import {
+  githubExecutionPolicy,
+} from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
@@ -2445,8 +2447,8 @@ export async function prepareEvalRun(
       : {}),
   });
   if (
-    isCredentialFreeGithubExecution() &&
-    githubCredentialPolicy !== "no_customer_credentials"
+    githubExecutionPolicy() &&
+    githubCredentialPolicy !== githubExecutionPolicy()
   ) {
     await failRunBeforeExecution(convexClient, recorder, runId, {
       reason: "credential_policy_blocked",
@@ -2708,6 +2710,7 @@ export async function prepareEvalRun(
         });
         resolvedOrgModelConfig = orgConfig;
       } catch (error) {
+        if (githubExecutionPolicy()) throw error;
         logger.warn("[evals] Failed to resolve org model config", {
           projectId: projectIdForOrgConfig,
           error: error instanceof Error ? error.message : String(error),

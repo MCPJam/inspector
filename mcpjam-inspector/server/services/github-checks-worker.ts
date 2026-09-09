@@ -102,7 +102,10 @@ const JUDGE_GRADING_POLL_MS = 15_000;
  * fields on the wire are ignored rather than rejected.
  */
 export type ClaimedGithubCheck = {
-  credentialPolicyVersion: 1;
+  credentialPolicyVersion: 2;
+  githubCredentialPolicy:
+    "no_customer_credentials" | "suite_credentials" | "same_repository";
+  allowedBuiltInToolIds: string[];
   isFork: boolean;
   triggerId: string;
   repoFullName: string;
@@ -191,7 +194,7 @@ async function reportCredentialBlocked(
     {
       triggerId: claimed.triggerId,
       claimedBy,
-      credentialPolicyVersion: 1,
+      credentialPolicyVersion: 2,
     },
   );
   if (status !== 200 && status !== 409)
@@ -208,7 +211,7 @@ async function credentialPreflight(
     {
       triggerId: claimed.triggerId,
       claimedBy,
-      credentialPolicyVersion: 1,
+      credentialPolicyVersion: 2,
       mintExecutionToken,
     },
   );
@@ -223,7 +226,7 @@ async function claimNext(
   claimedBy: string
 ): Promise<ClaimedGithubCheck | null | "disabled"> {
   const { status, body } = await postServiceRoute(`${SERVICE_BASE}/claim`, {
-    credentialPolicyVersion: 1,
+    credentialPolicyVersion: 2,
     claimedBy,
   });
   // 404 = GITHUB_CHECKS_ENABLED is off backend-side. Treat as "nothing to do"
@@ -1405,6 +1408,7 @@ export async function executeClaimedCheck(
       if (error instanceof LeaseLostError) {
         // Definitive. Stop beating and let the next step boundary bail out.
         leaseLost = error;
+        if (sandbox) void deps.killSandbox(sandbox).catch(() => {});
         clearInterval(heartbeat);
         logger.warn("[github-checks] lease lost; abandoning this check", {
           ...logContext,
@@ -1460,8 +1464,14 @@ export async function executeClaimedCheck(
   let session: CheckPlanSession;
   try {
     if (
-      claimed.credentialPolicyVersion !== 1 ||
-      typeof claimed.isFork !== "boolean"
+      claimed.credentialPolicyVersion !== 2 ||
+      typeof claimed.isFork !== "boolean" ||
+      !Array.isArray(claimed.allowedBuiltInToolIds) ||
+      (claimed.isFork
+        ? !["no_customer_credentials", "suite_credentials"].includes(
+            claimed.githubCredentialPolicy,
+          )
+        : claimed.githubCredentialPolicy !== "same_repository")
     ) {
       throw new Error("credential_policy_version_required");
     }
@@ -1677,13 +1687,21 @@ export async function executeClaimedCheck(
     if (!executionBearer)
       throw new Error("credential_policy_execution_token_required");
     const executionServerId = serverId;
+    const executionPolicy = claimed.isFork
+      ? {
+          policy: claimed.githubCredentialPolicy as
+            "no_customer_credentials" | "suite_credentials",
+          allowedBuiltInToolIds: claimed.allowedBuiltInToolIds,
+          checkAccess: () => deps.credentialPreflight(claimed, claimedBy),
+        }
+      : false;
 
     // The last and most valuable boundary: the eval run is the twenty-minute part.
     assertLeaseHeld();
     // Captured because the failure path reads it from inside a closure, and
     // `sandbox` is a reassignable nullable whose narrowing does not survive that.
     const runningBox = sandbox;
-    const run = await withGithubCredentialPolicy(claimed.isFork, () =>
+    const run = await withGithubCredentialPolicy(executionPolicy, () =>
       deps
         .runEvalSuite({
           claimed,
@@ -1743,7 +1761,7 @@ export async function executeClaimedCheck(
     if (afterEvalAction === "run_conformance") {
       try {
         const conformance = await withGithubCredentialPolicy(
-          claimed.isFork,
+          executionPolicy,
           () =>
             deps.runConformance({
               claimed,

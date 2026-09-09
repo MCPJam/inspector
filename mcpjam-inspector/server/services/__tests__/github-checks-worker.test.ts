@@ -1,3 +1,4 @@
+import { githubExecutionPolicy, verifyGithubCredentialAccess } from "../github-checks/credential-policy.js";
 import {
   afterEach,
   beforeEach,
@@ -56,8 +57,10 @@ const CLAIM: ClaimedGithubCheck = {
   createdByExternalId: "user_workos_1",
   suiteId: "suite-1",
   repoPrivate: false,
-  credentialPolicyVersion: 1,
+  credentialPolicyVersion: 2,
   isFork: false,
+  githubCredentialPolicy: "same_repository",
+  allowedBuiltInToolIds: [],
 };
 
 /** The same check, on a repository that needs a credential to clone. */
@@ -1750,7 +1753,7 @@ describe("fork credential isolation", () => {
         expect(args.bearer).toBe("delegated-jwt");
       },
     });
-    await executeClaimedCheck({ ...CLAIM, isFork: true }, "worker", h.deps);
+    await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
     expect(h.completions[0].runId).toBe("fork-run");
   });
 
@@ -1760,7 +1763,7 @@ describe("fork credential isolation", () => {
         throw new Error("credential_policy_blocked");
       },
     });
-    await executeClaimedCheck({ ...CLAIM, isFork: true }, "worker", h.deps);
+    await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
     expect(h.events).toContain("credentialBlocked");
     expect(h.resolveArgs).toEqual([]);
     expect(h.events).not.toContain("runEvalSuite");
@@ -1773,7 +1776,7 @@ describe("fork credential isolation", () => {
         throw new Error("credential_policy_blocked");
       },
     });
-    await executeClaimedCheck({ ...CLAIM, isFork: true }, "worker", h.deps);
+    await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
     expect(h.events).toContain("credentialBlocked");
     expect(h.events).toContain("killSandbox");
     expect(h.completions).toEqual([]);
@@ -1789,4 +1792,19 @@ describe("fork credential isolation", () => {
     expect(h.resolveArgs).toEqual([]);
     expect(h.events).not.toContain("runEvalSuite");
   });
+});
+
+
+it("runs an opted-in fork under the scoped suite policy", async () => {
+  const h = harness({
+    runEvalSuite: async args => {
+      expect(githubExecutionPolicy()).toBe("suite_credentials");
+      await verifyGithubCredentialAccess();
+      await args.onRunStarted?.("opted-in-run");
+      return { runId: "opted-in-run" };
+    },
+  });
+  await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "suite_credentials" }, "worker", h.deps);
+  expect(h.completions[0].runId).toBe("opted-in-run");
+  expect(h.events).toContain("killSandbox");
 });
