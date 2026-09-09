@@ -1676,7 +1676,7 @@ export async function executeClaimedCheck(
     );
     if (!executionBearer)
       throw new Error("credential_policy_execution_token_required");
-    bearer = executionBearer;
+    const executionServerId = serverId;
 
     // The last and most valuable boundary: the eval run is the twenty-minute part.
     assertLeaseHeld();
@@ -1687,8 +1687,8 @@ export async function executeClaimedCheck(
       deps
         .runEvalSuite({
           claimed,
-          bearer,
-          serverId,
+          bearer: executionBearer,
+          serverId: executionServerId,
           serverName,
           // STEP 9 — the attempt that BINDS the run, posted AT LAUNCH.
           onRunStarted: async (runId) => {
@@ -1747,7 +1747,7 @@ export async function executeClaimedCheck(
           () =>
             deps.runConformance({
               claimed,
-              bearer,
+              bearer: executionBearer,
               serverUrl: started.url,
               candidateId: resolved.candidateId,
               onRunStarted: async (boundId) => {
