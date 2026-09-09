@@ -22,6 +22,12 @@ type ChartContextProps = {
 
 const ChartContext = React.createContext<ChartContextProps | null>(null);
 
+// ChartStyle writes these into a <style> block, so a value carrying `;`, `}` or
+// `</style>` would escape its declaration. Config keys are not always literals —
+// the tag aggregation panel builds them from user-supplied eval tag names.
+const CSS_IDENT = /^[A-Za-z0-9_-]+$/;
+const CSS_COLOR = /^[A-Za-z0-9_\-#%.,()\s]+$/;
+
 function useChart() {
   const context = React.useContext(ChartContext);
 
@@ -45,7 +51,8 @@ function ChartContainer({
   >["children"];
 }) {
   const uniqueId = React.useId();
-  const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`;
+  const safeId = id && CSS_IDENT.test(id) ? id : undefined;
+  const chartId = `chart-${safeId || uniqueId.replace(/:/g, "")}`;
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -69,7 +76,7 @@ function ChartContainer({
 
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme || config.color,
+    ([key, config]) => CSS_IDENT.test(key) && (config.theme || config.color),
   );
 
   if (!colorConfig.length) {
@@ -88,7 +95,9 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
+    return color && CSS_COLOR.test(color)
+      ? `  --color-${key}: ${color};`
+      : null;
   })
   .join("\n")}
 }
