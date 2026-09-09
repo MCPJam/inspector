@@ -128,14 +128,105 @@ func TestChildInsidePackRejectsMissingChild(t *testing.T) {
 
 // The pack root itself is not a child, and neither is a directory whose name
 // merely starts with the root's.
+//
+// Written as literals rather than `filepath.Join("C:", ...)`: Go treats a bare
+// `C:` as a drive-RELATIVE root, so joining it yields `C:packs\claude-code` —
+// a path relative to whatever the process's current directory on C: happens to
+// be. The assertions would then be about the wrong shape of path entirely.
 func TestWithinRootRejectsTheRootAndNamePrefixes(t *testing.T) {
-	root := filepath.Join("C:", "packs", "claude-code")
+	root := `C:\packs\claude-code`
 
 	if withinRoot(root, root) {
 		t.Fatal("withinRoot reported the root as being inside itself")
 	}
-	sibling := filepath.Join("C:", "packs", "claude-code-evil", "node.exe")
+	sibling := `C:\packs\claude-code-evil\node.exe`
 	if withinRoot(root, sibling) {
 		t.Fatalf("withinRoot accepted %q, which only shares a name prefix", sibling)
+	}
+}
+
+// A case pair whose two forms are different lengths in UTF-8. Folding case over
+// a byte slice of the prefix's length mismatches here and refuses a child that
+// is genuinely inside the pack.
+func TestWithinRootFoldsCaseAcrossWidthChangingPairs(t *testing.T) {
+	root := `C:\packs\Kelvin`
+	child := `C:\packs\` + "\u212A" + `elvin\bin\node.exe`
+
+	if !withinRoot(root, child) {
+		t.Fatalf("withinRoot rejected %q, which is inside %q", child, root)
+	}
+}
+
+// A launcher outside `<pack>/bin` has no pack root to derive, and deriving one
+// anyway would let whoever copied the binary choose the boundary.
+func TestChildInsidePackRejectsALauncherOutsideBin(t *testing.T) {
+	_, root := packLayout(t)
+	stray := filepath.Join(root, "tools", "mcpjam-job-launcher.exe")
+	if err := os.MkdirAll(filepath.Dir(stray), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(stray, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	node := filepath.Join(root, "bin", "node.exe")
+
+	if _, err := childInsidePack(node, stray); err == nil {
+		t.Fatalf("childInsidePack accepted a launcher at %q, outside any pack's bin", stray)
+	}
+}
+
+// symlinkOrSkip creates a symlink, skipping the test when the runner lacks the
+// privilege Windows requires for one. Skipping rather than failing, because the
+// behaviour under test is the launcher's, not the runner's account rights.
+func symlinkOrSkip(t *testing.T, target string, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create a symlink on this runner: %v", err)
+	}
+}
+
+// `os.Executable` may hand back the symlink that started the process rather
+// than the file behind it. Resolving it first is what makes the derived root
+// the pack the launcher actually lives in.
+func TestChildInsidePackResolvesASymlinkedLauncher(t *testing.T) {
+	_, root := packLayout(t)
+	linkedBin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(linkedBin, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// The launcher as the supervisor would see it: a link in a directory that
+	// is not inside the pack, pointing at the pack's real launcher.
+	link := filepath.Join(linkedBin, "mcpjam-job-launcher.exe")
+	symlinkOrSkip(t, filepath.Join(root, "bin", "mcpjam-job-launcher.exe"), link)
+	node := filepath.Join(root, "bin", "node.exe")
+
+	got, err := childInsidePack(node, link)
+	if err != nil {
+		t.Fatalf("childInsidePack(%q, %q) = error %v, want the resolved path", node, link, err)
+	}
+	if got != node {
+		t.Fatalf("childInsidePack(%q, %q) = %q, want %q", node, link, got, node)
+	}
+}
+
+// The case the doc comment claims collapsing links buys: a link that lives
+// inside the pack, so every prefix comparison passes, but whose target does
+// not. Without EvalSymlinks on the child this is the way past the check.
+func TestChildInsidePackRejectsALinkInsideThePackPointingOut(t *testing.T) {
+	self, root := packLayout(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(TempDir): %v", err)
+	}
+	attacker := filepath.Join(outside, "payload.exe")
+	if err := os.WriteFile(attacker, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	link := filepath.Join(root, "bin", "node-shim.exe")
+	symlinkOrSkip(t, attacker, link)
+
+	if _, err := childInsidePack(link, self); err == nil {
+		t.Fatalf("childInsidePack(%q) accepted a link inside the pack whose target is %q",
+			link, attacker)
 	}
 }

@@ -218,17 +218,29 @@ func run(exe string, args []string) int {
 // childInsidePack resolves the child executable and refuses one that is not
 // inside this launcher's own runtime pack.
 //
-// `self` is this process's own image. In every distribution the launcher ships
-// as `<pack>/bin/mcpjam-job-launcher.exe` and the child it is given is
+// `self` is this process's own image, and it is resolved BEFORE anything is
+// derived from it. `os.Executable` is documented to return either the symlink
+// that started the process or the file that symlink points at, depending on the
+// platform, so deriving the root from the raw value lets a symlinked launcher
+// authorize a child against a pack it does not actually live in: the derived
+// root and the real one differ, and the check then answers the wrong question.
+//
+// In every distribution the launcher ships as
+// `<pack>/bin/mcpjam-job-launcher.exe` and the child it is given is
 // `<pack>/bin/node.exe`, so the pack root is two directories up and the child
 // must be under it. The root rather than the `bin` directory alone, because
 // what the digest covers — and therefore what consent named — is the tree.
 //
+// That `bin` is CHECKED rather than assumed, because the derivation is what
+// defines the boundary: a launcher copied to `<somewhere>\anything\` would
+// silently redefine `<somewhere>` as the pack, and a boundary the copier picks
+// is not a boundary. A launcher outside the shipped layout has no pack to be
+// inside of, so refusing is the only answer that does not widen the invariant
+// this function exists to state.
+//
 // Both sides go through EvalSymlinks: the comparison is then between paths that
 // exist, with `..` segments and links already collapsed, which is what makes it
-// a containment check rather than a string trick. Case is folded because
-// Windows paths are case-insensitive, so `C:\Pack\BIN\node.exe` names the
-// same file as `C:\pack\bin\node.exe`.
+// a containment check rather than a string trick.
 func childInsidePack(exe string, self string) (string, error) {
 	if !filepath.IsAbs(exe) {
 		return "", fmt.Errorf(
@@ -237,10 +249,19 @@ func childInsidePack(exe string, self string) (string, error) {
 				"through a mutable PATH at spawn time", exe,
 		)
 	}
-	root, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(self)))
+	resolvedSelf, err := filepath.EvalSymlinks(self)
 	if err != nil {
-		return "", fmt.Errorf("resolving this launcher's pack root: %w", err)
+		return "", fmt.Errorf("resolving this launcher's own image: %w", err)
 	}
+	bin := filepath.Dir(resolvedSelf)
+	if !strings.EqualFold(filepath.Base(bin), "bin") {
+		return "", fmt.Errorf(
+			"refusing to start %q: this launcher runs from %q, which is not the "+
+				"`bin` directory of a runtime pack, so there is no pack root to "+
+				"check the child against", exe, bin,
+		)
+	}
+	root := filepath.Dir(bin)
 	resolved, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		return "", fmt.Errorf("resolving child %q: %w", exe, err)
@@ -257,13 +278,26 @@ func childInsidePack(exe string, self string) (string, error) {
 // withinRoot reports whether path is strictly below root. Both must already be
 // resolved; equality is not containment, since the root is a directory and the
 // child is a file inside it.
+//
+// `filepath.Rel` rather than a prefix comparison. Windows paths are
+// case-insensitive, so the comparison has to fold case — but folding it over a
+// slice of the prefix's BYTE length is wrong: a case pair whose two forms are
+// different lengths in UTF-8 (`İ`/`i`, `K`/`k`) shifts every byte after it, the
+// slice stops covering the same path elements, and a legitimate child inside
+// the pack is refused. Rel folds case element by element and reports the way
+// out, so `..` or a result starting with `..\` is the answer to "is this
+// outside" with no string arithmetic at all; `.` is the root itself.
 func withinRoot(root string, path string) bool {
-	prefix := filepath.Clean(root)
-	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
-		prefix += string(filepath.Separator)
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		// Different volumes: no relative path exists, so neither does
+		// containment.
+		return false
 	}
-	path = filepath.Clean(path)
-	return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+	if rel == "." || rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // resumeMainThread resumes the single thread of a CREATE_SUSPENDED process.
