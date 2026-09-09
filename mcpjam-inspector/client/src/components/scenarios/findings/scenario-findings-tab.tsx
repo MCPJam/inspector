@@ -20,7 +20,10 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
+import {
+  EMPTY_USAGE_FILTER,
+  type UsageFilterState,
+} from "@/hooks/scenario-usage-filters";
 import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import { FindingsSummaryCard } from "@/components/swarms/findings/findings-summary-card";
@@ -74,12 +77,6 @@ export function ScenarioFindingsTab({
     [drilldown],
   );
 
-  // A User Testing goal is a cluster, and the list must carry the same
-  // hide-synthetic policy as the count that opened it.
-  const sessionScope = useMemo(
-    () => ({ kind: "scenario", scenarioId, filters }) as const,
-    [scenarioId, filters],
-  );
   const summary = useMemo(() => composeScenarioFindingsSummary(model), [model]);
   const footnotes = useMemo(
     () => deriveScenarioFindingsFootnotes(model),
@@ -118,6 +115,34 @@ export function ScenarioFindingsTab({
     Math.max(0, model.personas.length - 1),
   );
   const persona = model.personas[personaIndex];
+
+  /**
+   * A goal's session list, scoped to the SAME population its row counted.
+   *
+   * A goal row lives under a persona and counts only that persona's sessions
+   * on that goal, but a goal cluster spans every persona — "Creative requests"
+   * shows up under two sentiments with a different count each. Paging by
+   * cluster alone returns the union, so a 2-session goal opened a list of four
+   * and the list contradicted the number that opened it.
+   *
+   * Carries the hide-synthetic policy too, for the reason it always did: a
+   * rehearsal must not appear in a list describing real people.
+   */
+  const personaSentiment = model.personaSentiments[personaIndex];
+  const sessionScope = useMemo(() => {
+    if (!personaSentiment) {
+      return { kind: "scenario", scenarioId, filters } as const;
+    }
+    const scoped: UsageFilterState = {
+      preset: "all",
+      chips: [{ kind: "dimension", key: "sentiment", value: personaSentiment }],
+    };
+    return {
+      kind: "scenario",
+      scenarioId,
+      filters: withHideSynthetic(scoped),
+    } as const;
+  }, [scenarioId, filters, personaSentiment]);
 
   const expandedGoalId =
     expandedChoice && expandedChoice.personaName === persona?.name

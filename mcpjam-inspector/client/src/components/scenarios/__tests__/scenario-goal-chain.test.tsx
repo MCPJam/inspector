@@ -377,6 +377,62 @@ describe("the Findings tab, once a goal is open", () => {
     );
   });
 
+  it("scopes the goal's session list to the persona whose row was counted", async () => {
+    // The bug this pins shipped and was caught on a real study: "Creative
+    // requests" appeared under BOTH Neutral and Satisfied with 2 sessions each,
+    // and expanding either one listed all 4 in the cluster. The row said 2 and
+    // the list said 4.
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          ...drilldownFixture().sessions,
+          {
+            _id: "sess-4",
+            sentiment: "satisfied" as const,
+            themeClusterId: "cluster-export",
+            themeClusterLabel: "Export the board",
+            outcome: "completed" as const,
+          },
+          {
+            _id: "sess-5",
+            sentiment: "satisfied" as const,
+            themeClusterId: "cluster-export",
+            themeClusterLabel: "Export the board",
+            outcome: "completed" as const,
+          },
+        ],
+        nextBefore: null,
+        total: 4,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    mockUseQuery.mockReturnValue(null);
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" onOpenSession={vi.fn()} />);
+    // Worst-first ordering puts frustrated/neutral ahead of satisfied, so the
+    // default persona is the two frustrated sessions.
+    await userEvent.click(await screen.findByTestId("findings-goal-row"));
+
+    const listCall = mockUseGoalOutcomeDrilldown.mock.calls
+      .map(([args]) => args as Record<string, unknown>)
+      .findLast((args) => args.clusterId === "cluster-export");
+    expect(listCall).toBeDefined();
+
+    const filters = listCall!.filters as {
+      chips: Array<Record<string, unknown>>;
+    };
+    // Scoped to this persona's sentiment, so the list can only return the
+    // sessions the row counted.
+    expect(filters.chips).toEqual(
+      expect.arrayContaining([
+        { kind: "dimension", key: "sentiment", value: "frustrated" },
+      ]),
+    );
+    // And still hiding rehearsals, which is the policy it already carried.
+    expect(filters.chips.length).toBeGreaterThan(1);
+  });
+
   it("does not ask for a chain before a goal is opened", () => {
     mockUseQuery.mockReturnValue(null);
 

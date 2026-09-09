@@ -18,10 +18,11 @@
  *  - `unclear` is a verdict (the model looked and could not tell) and earns a
  *    persona. An ABSENT sentiment is not a verdict, it is an unanalyzed
  *    session, so it is counted separately and never folded into `unclear`.
- *  - The six-stage chain is not populated here. Per-goal stage data is not
- *    reachable on this surface yet: `getScenarioStageFunnel` takes no cluster
- *    filter and the drilldown projection carries no `stageDerivation`. An empty
- *    stage renders as "no finding", never as a pass.
+ *  - The six-stage chain is not populated here, and not because it is
+ *    unreachable — `getScenarioStageFunnel` narrows to a goal cluster now. It
+ *    is fetched per OPEN goal instead (`scenario-goal-chain.tsx`), because this
+ *    module is pure and the chain is a subscription. Every stage this module
+ *    writes is therefore `none`, which renders as "no finding", never a pass.
  */
 
 import type {
@@ -63,6 +64,18 @@ export interface ScenarioFindingsModel extends SwarmFindingsModel {
    * understate the study.
    */
   unanalyzedCount: number;
+  /**
+   * The raw sentiment each persona was built FROM, index-aligned with
+   * `personas`.
+   *
+   * A persona's `name` is display copy ("Neutral users"); this is the value the
+   * drilldown filters on. It has to be carried, because a goal's row counts
+   * only THIS persona's sessions on that goal while a goal cluster spans every
+   * persona — the same cluster shows up under two sentiments with a different
+   * count each. Without this, expanding a 2-session goal lists all four
+   * sessions in the cluster and the list contradicts the count that opened it.
+   */
+  personaSentiments: readonly SessionSentiment[];
   /**
    * How much of the study the persona × goal grid was actually built from.
    *
@@ -130,7 +143,7 @@ function emptyStages(): Record<JourneyStageId, GoalStageModel> {
  * verdict, so this reads it rather than inventing a feeling for the goal.
  */
 function goalSentiment(
-  outcomes: readonly (SessionOutcome | undefined)[]
+  outcomes: readonly (SessionOutcome | undefined)[],
 ): SentimentPillModel {
   if (outcomes.some((o) => o === "errored" || o === "unresolved")) {
     return { label: "Stalled", tone: "fail" };
@@ -157,7 +170,7 @@ function personaIssue(goals: readonly GoalFindingsModel[]): string {
 }
 
 function buildGoals(
-  sessions: readonly ScenarioFindingsSession[]
+  sessions: readonly ScenarioFindingsSession[],
 ): GoalFindingsModel[] {
   // Sessions clustering has not placed carry no goal. They still count toward
   // the persona's total, so goal counts can sum to less than that total. That
@@ -224,28 +237,35 @@ export function deriveScenarioFindingsModel(args: {
     else bySentiment.set(sentiment, [session]);
   }
 
-  const personas: PersonaFindingsModel[] = SENTIMENT_ORDER.flatMap(
-    (sentiment) => {
-      const group = bySentiment.get(sentiment);
-      // Only render a tab that has sessions. `gave_up` needs the user to say it
-      // in words, so most studies would otherwise carry an empty tab.
-      if (!group || group.length === 0) return [];
-      const goals = buildGoals(group);
-      return [
-        {
+  // Built as PAIRS, so a persona and the sentiment it came from cannot drift
+  // apart. Two lists assembled separately and then trusted to line up by index
+  // is exactly how the tab would end up filtering one persona's sessions with
+  // another persona's value.
+  const built = SENTIMENT_ORDER.flatMap((sentiment) => {
+    const group = bySentiment.get(sentiment);
+    // Only render a tab that has sessions. `gave_up` needs the user to say it
+    // in words, so most studies would otherwise carry an empty tab.
+    if (!group || group.length === 0) return [];
+    const goals = buildGoals(group);
+    return [
+      {
+        sentiment,
+        persona: {
           name: SENTIMENT_TITLE[sentiment],
           avatarSeed: sentiment,
           sessionsAuthored: group.length,
           sentiment: SENTIMENT_PILL[sentiment],
           issue: personaIssue(goals),
           goals,
-        },
-      ];
-    }
-  );
+        } satisfies PersonaFindingsModel,
+      },
+    ];
+  });
+  const personas: PersonaFindingsModel[] = built.map((row) => row.persona);
 
   return {
     personas,
+    personaSentiments: built.map((row) => row.sentiment),
     sessionCount: total,
     // SENTIMENT_ORDER is worst-first, so the first tab is already the one worth
     // reading.
@@ -264,7 +284,7 @@ export function deriveScenarioFindingsModel(args: {
  * have to work out that the other means the same thing.
  */
 export function deriveScenarioFindingsFootnotes(
-  model: ScenarioFindingsModel
+  model: ScenarioFindingsModel,
 ): string[] {
   const notes: string[] = [];
   if (model.coverage.truncated) {
@@ -274,7 +294,7 @@ export function deriveScenarioFindingsFootnotes(
     notes.push(
       `${model.unanalyzedCount} session${
         model.unanalyzedCount === 1 ? "" : "s"
-      } not analyzed yet — in no persona above`
+      } not analyzed yet — in no persona above`,
     );
   }
   return notes;
