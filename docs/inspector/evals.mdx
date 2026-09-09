@@ -487,6 +487,12 @@ rather than as a pass.
 
 ### Run view
 
+The run header shows a **HOLD** or **SHIP** pill for each client/model pairing in the launch. All pairings that share the same decision are grouped into one pill — a single **HOLD** pill lists every client that did not pass, and a **SHIP** pill lists every client that did. Intermediate states (**Running**, **Grading**, **Inconclusive**) each get their own pill. The **Compare runs** and **Run again** buttons are visible directly in the header.
+
+Below the header, the hero section shows a row per client/model pairing with a pass/fail bar and counts. When a previous launch exists, each pairing row also shows a delta — how many more or fewer cases passed compared to the equivalent pairing in the prior launch. The first launch of a suite shows no deltas.
+
+The **Test cases** section (formerly the matrix) lists every test case with a search box and **Status**, **Client**, and **Model** filters on one row. There is no master pass/fail bar or "RUN RESULTS" eyebrow label in this section.
+
 - **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
