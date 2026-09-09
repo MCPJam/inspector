@@ -991,27 +991,18 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onOpenSession={({
-            sessionId,
-            swarmRunGroupId,
-            runLabels,
-            criterionId,
-          }) => {
+          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
             setSwarmRunLabels(runLabels);
             if (swarmRunGroupId) {
               // Live-pane "open this completed session" — the wave's own
-              // page, on the session that produced the finding, showing the
-              // transcript rather than Findings (Findings is `onDone` / Open
-              // findings). It is a real URL, so this leave is reversible — and
-              // the run keeps streaming into that page while the user reads.
-              // The criterion rides along so the page can name the finding
-              // rather than dropping the viewer into an unexplained
-              // transcript.
+              // page, on the session the viewer picked, showing the transcript
+              // rather than Findings (Findings is `onDone` / Open findings). It
+              // is a real URL, so this leave is reversible — and the run keeps
+              // streaming into that page while the user reads.
               navigate(
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
                   session: sessionId,
-                  finding: criterionId,
                 }),
               );
               return;
