@@ -36,6 +36,7 @@ const {
   environmentState,
   namedListState,
   flagState,
+  findingsState,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   locationState: { search: "" },
@@ -57,6 +58,9 @@ const {
   // loading, an array once settled.
   namedListState: { value: [] as unknown },
   flagState: { environmentsEnabled: true },
+  // Lets one test make the landing tab throw the way its Convex query would
+  // against a backend that cannot answer it.
+  findingsState: { throws: false },
 }));
 
 vi.mock("react-router", async (importOriginal) => ({
@@ -194,6 +198,17 @@ vi.mock("@/components/scenarios/ScenarioUsagePanel", () => ({
 // Insights are their own mount now (the shared workbench), not a `section` of
 // the sessions panel. Stubbed for the same reason: these specs are about which
 // tab renders, not what the workbench draws.
+// Findings is the landing tab and reads sessions through Convex. These tests
+// are about the detail shell, so it is stubbed the same way the workbench is.
+vi.mock("@/components/scenarios/findings/scenario-findings-tab", () => ({
+  ScenarioFindingsTab: () => {
+    if (findingsState.throws) {
+      throw new Error("Could not find public function");
+    }
+    return <div data-testid="stub-scenario-findings" />;
+  },
+}));
+
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
@@ -294,22 +309,57 @@ beforeEach(() => {
   environmentState.row = undefined;
   namedListState.value = [];
   flagState.environmentsEnabled = true;
+  findingsState.throws = false;
 });
 
 describe("UserTestingScenarioDetail", () => {
-  it("lands on Insights by default", () => {
+  it("lands on Findings by default, with Insights still reachable", () => {
     renderDetail();
 
-    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
+    expect(screen.getByTestId("stub-scenario-findings")).toBeInTheDocument();
+    expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    // `stub-share-empty` is the Insights empty state and no longer renders
+    // on the landing tab.
+    expect(
+      within(nav).getByRole("button", { name: "Findings" }),
+    ).toBeInTheDocument();
+    expect(
+      within(nav).getByRole("button", { name: "Insights" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId("user-testing-edit-tab"),
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
     const tabNav = screen.getByRole("navigation", { name: "Scenario view" });
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
+  });
+
+  it("keeps the page up when the landing tab's query throws", () => {
+    // Findings reads sessions through Convex, and `useQuery` throws against a
+    // backend that cannot answer. Because Findings is now the DEFAULT tab,
+    // an unguarded throw blanks `/user-testing/:scenarioId` for everyone
+    // arriving without a `?tab=` — not one tab a reader opted into. The tab
+    // strip has to survive it, or there is no way back to Insights.
+    findingsState.throws = true;
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    renderDetail();
+
+    expect(
+      screen.queryByTestId("stub-scenario-findings"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Scenario view" });
+    expect(
+      within(nav).getByRole("button", { name: "Insights" }),
+    ).toBeInTheDocument();
+
+    consoleError.mockRestore();
   });
 
   it("puts share behind one header button, with no strip in the page body", () => {
@@ -351,6 +401,7 @@ describe("UserTestingScenarioDetail", () => {
   });
 
   it("scopes Insights to this scenario's scenario", () => {
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
@@ -377,6 +428,7 @@ describe("UserTestingScenarioDetail", () => {
       );
     });
 
+    locationState.search = "?tab=insights";
     renderDetail();
 
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();

@@ -1,3 +1,4 @@
+import { isCredentialFreeGithubExecution } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
@@ -2388,6 +2389,7 @@ export async function prepareEvalRun(
     recorder,
     deduped: runWasDeduped,
     status: existingRunStatus,
+    githubCredentialPolicy,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
     gradingEngine: runGradingEngine,
@@ -2444,6 +2446,43 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
+  if (
+    isCredentialFreeGithubExecution() &&
+    githubCredentialPolicy !== "no_customer_credentials"
+  ) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: "credential_policy_blocked",
+    });
+    throw new Error("credential_policy_blocked");
+  }
+  // This policy comes from the authenticated backend run snapshot, never
+  // from MCP output or a client-supplied flag. A fork gets only MCP tools.
+  if (githubCredentialPolicy === "no_customer_credentials") {
+    const unsafe = (value: unknown, depth = 0): boolean => {
+      if (!value || typeof value !== "object") return false;
+      const row = value as Record<string, unknown>;
+      if (
+        depth > 20 ||
+        row.harness ||
+        row.computerEnvironmentId ||
+        (Array.isArray(row.builtInToolIds) && row.builtInToolIds.length) ||
+        (Array.isArray(row.pluginVersionIds) && row.pluginVersionIds.length)
+      )
+        return true;
+      return Object.values(row).some((v) => unsafe(v, depth + 1));
+    };
+    if (
+      unsafe(config) ||
+      unsafe(runHostConfigSnapshot) ||
+      modelApiKeys ||
+      orgModelConfig
+    ) {
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: "credential_policy_blocked",
+      });
+      throw new Error("credential_policy_blocked");
+    }
+  }
   const suiteHostConfig =
     runHostConfigSnapshot ??
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
@@ -2645,14 +2684,19 @@ export async function prepareEvalRun(
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
   const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
-  let resolvedOrgModelConfig = orgModelConfig;
+  let resolvedOrgModelConfig =
+    githubCredentialPolicy === "no_customer_credentials"
+      ? { providers: [] }
+      : orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
   // `projectIdForOrgConfig` is resolved ABOVE, before the admission gates —
   // the harness gate needs it to refuse an org-level suite before a box is
   // booted, and resolving it twice could disagree.
-  const orgConfigTarget = projectIdForOrgConfig
-    ? { projectId: projectIdForOrgConfig }
-    : undefined;
+  const orgConfigTarget =
+    githubCredentialPolicy !== "no_customer_credentials" &&
+    projectIdForOrgConfig
+      ? { projectId: projectIdForOrgConfig }
+      : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {

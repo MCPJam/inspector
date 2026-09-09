@@ -1,4 +1,4 @@
-import { TriangleAlert } from "lucide-react";
+import { Check, TriangleAlert } from "lucide-react";
 import { getCatalogHost } from "@mcpjam/sdk/host-compat";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { MCPJAM_WEB_DEPLOYED_AT } from "@/generated/mcpjam-web-deployed-at";
@@ -16,13 +16,18 @@ interface HostVerifiedAtStampProps {
   className?: string;
 }
 
+const stampPillClass =
+  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11.5px] font-medium leading-tight";
+
 /**
  * When we last checked this client profile against the real app, shown beside
  * "Update to latest" — the date is what makes that button worth pressing.
  *
- * Same date, same 30-day staleness wording as the Host Compare matrix (both
- * read `../../verified-at`). Renders nothing for a client whose catalog row we
- * have never verified, rather than printing an empty placeholder.
+ * Reads as a pill so the header carries a verdict, not a footnote: green while
+ * the check still holds, amber once it has aged out. Same date, same 30-day
+ * staleness wording as the Host Compare matrix (both read `../../verified-at`).
+ * Renders nothing for a client whose catalog row we have never verified,
+ * rather than printing an empty placeholder.
  */
 export function HostVerifiedAtStamp({
   hostStyle,
@@ -55,7 +60,8 @@ export function HostVerifiedAtStamp({
         data-testid="host-verified-at-stamp"
         title={`Last checked ${formatted}`}
         className={cn(
-          "inline-flex items-center gap-1 whitespace-nowrap text-[11.5px] leading-tight text-muted-foreground",
+          stampPillClass,
+          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
           className,
         )}
       >
@@ -68,12 +74,15 @@ export function HostVerifiedAtStamp({
   return (
     <span
       data-testid="host-verified-at-stamp"
+      title={`Last checked ${formatted}`}
       className={cn(
-        "whitespace-nowrap text-[11.5px] leading-tight tabular-nums text-muted-foreground",
+        stampPillClass,
+        "tabular-nums border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
         className,
       )}
     >
-      Last checked {formatted}
+      <Check className="size-3.5 shrink-0" aria-hidden />
+      Verified {formatted}
     </span>
   );
 }
