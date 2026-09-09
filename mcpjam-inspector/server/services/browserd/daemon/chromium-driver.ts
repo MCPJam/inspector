@@ -51,6 +51,7 @@ import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
 import { computeStateToken, shortHash } from "./state-token";
 import { SessionBarrier } from "./session-barrier";
+import { readTabMetadata } from "./tab-metadata";
 import {
   advanceViewport,
   INITIAL_SESSION_VIEWPORT,
@@ -525,6 +526,8 @@ export class ChromiumDriver implements BrowserDriver {
    * session render at different sizes while one number was published for both.
    */
   private sessionViewport: SessionViewport;
+  /** Monotonic per boot, so two snapshots in one millisecond still order. */
+  private stateSeq = 0;
   private readonly viewportPolicy: SessionViewportPolicy;
   private readonly onViewportChange:
     | ((viewport: SessionViewport) => void)
@@ -2099,6 +2102,84 @@ export class ChromiumDriver implements BrowserDriver {
    * than asking Chromium — because it runs on every heartbeat of every open
    * stream.
    */
+  /**
+   * The whole truth about this browser, for the pane's shell.
+   *
+   * A SEPARATE READ from `tabsSnapshot`, not a richer version of it, and the
+   * two are kept apart on purpose. `tabsSnapshot` rides the frame heartbeat:
+   * it is synchronous, budgeted to a few kilobytes, and drops tabs from the
+   * end when a session has more than fit — which is exactly right for a
+   * caption over a video and exactly wrong for a tab strip, where the tab that
+   * got dropped is the one somebody is looking for.
+   *
+   * This one is asynchronous (it asks each tab's CDP session for its title,
+   * icon and history), complete, and fetched on its own endpoint. Nothing is
+   * truncated: a browser with thirty tabs has thirty tabs, and a strip that
+   * silently showed sixteen of them would be lying about a thing the person
+   * can count.
+   *
+   * `seq` is a monotonic counter rather than a timestamp: two snapshots taken
+   * inside the same millisecond are ordinary on a fast box, and a reducer that
+   * cannot order them would drop one at random.
+   */
+  async stateSnapshot(): Promise<{
+    seq: number;
+    tabs: Array<{
+      id: string;
+      url: string;
+      title: string;
+      faviconUrl?: string;
+      loading: boolean;
+    }>;
+    activeTabId: string | null;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    viewport: SessionViewport;
+    policy: SessionViewportPolicy;
+  }> {
+    const live = [...this.tabs.entries()].filter(
+      ([, entry]) => !entry.page.isClosed(),
+    );
+    // IN PARALLEL. Serially, a browser with a dozen tabs would spend a dozen
+    // CDP round trips per heartbeat, and the strip would lag the browser by
+    // more than the interval that refreshes it.
+    const read = await Promise.all(
+      live.map(async ([id, entry]) => {
+        const cdp = await entry.page.cdp().catch(() => null);
+        const meta = await readTabMetadata(cdp, safeUrl(entry.page));
+        return { id, meta, entry };
+      }),
+    );
+    const activeTabId =
+      this.activeTabId && read.some(({ id }) => id === this.activeTabId)
+        ? this.activeTabId
+        : (read[0]?.id ?? null);
+    const active = read.find(({ id }) => id === activeTabId);
+    this.stateSeq += 1;
+    return {
+      seq: this.stateSeq,
+      tabs: read.map(({ id, meta }) => ({
+        id,
+        url: meta.url,
+        title: meta.title,
+        ...(meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {}),
+        // The driver has no per-tab loading flag: every verb here awaits its
+        // own settle before answering, so by the time anything can ask, the
+        // navigation this driver started is over. A tab loading because the
+        // PAGE navigated itself is real and is not modelled — reporting a
+        // guess would be worse than reporting nothing, since the strip's
+        // spinner is the one thing on it that must not be permanent.
+        loading: false,
+      })),
+      activeTabId,
+      // The ACTIVE tab's history, which is what the two buttons act on.
+      canGoBack: active?.meta.canGoBack ?? false,
+      canGoForward: active?.meta.canGoForward ?? false,
+      viewport: this.sessionViewport,
+      policy: this.viewportPolicy,
+    };
+  }
+
   tabsSnapshot(): {
     active?: string;
     list: Array<{ id: string; url: string }>;

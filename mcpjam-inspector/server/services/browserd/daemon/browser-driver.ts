@@ -22,7 +22,10 @@ import {
   type HandoffLease,
   type LeaseRefusal,
 } from "./lease";
-import type { SessionViewport } from "../../../../shared/browser-viewport";
+import type {
+  SessionViewport,
+  SessionViewportPolicy,
+} from "../../../../shared/browser-viewport";
 
 export interface DriverHealth {
   ok: boolean;
@@ -119,6 +122,41 @@ export interface BrowserDriver {
    * fake driver in a unit test keeps behaving exactly as it did.
    */
   sessionViewportState?(): SessionViewport;
+  /**
+   * Everything the pane's browser shell draws: tabs with titles and icons,
+   * which one is on screen, whether the history has anywhere to go.
+   *
+   * Optional like the others, and the fallback is a shell that says the
+   * session is unsupported rather than one that draws a plausible-looking
+   * empty strip — a browser with tabs shown as having none is worse than a
+   * browser that admits it cannot say.
+   */
+  stateSnapshot?(): Promise<{
+    seq: number;
+    tabs: Array<{
+      id: string;
+      url: string;
+      title: string;
+      faviconUrl?: string;
+      loading: boolean;
+    }>;
+    activeTabId: string | null;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    viewport: SessionViewport;
+    policy: SessionViewportPolicy;
+  }>;
+  /**
+   * Ask for a new page size, and resolve with the size the session ended at.
+   *
+   * Resolving with the RESULT rather than a boolean is what lets a caller
+   * treat a `fixed` session, a clamped request and a superseded measurement
+   * identically: read the viewport out of the answer and use that.
+   */
+  requestViewport?(size: {
+    width: number;
+    height: number;
+  }): Promise<SessionViewport>;
 }
 
 /**

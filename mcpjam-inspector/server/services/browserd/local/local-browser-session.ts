@@ -44,6 +44,7 @@ import {
 import type { DriverContext } from "../daemon/browser-page.js";
 import { probeSingletonOwner } from "../daemon/profile-lock.js";
 import { launchElectronContext } from "../electron/electron-context.js";
+import type { SessionViewportPolicy } from "../../../../shared/browser-viewport";
 import {
   createContextSurface,
   forgetContextSurface,
@@ -205,6 +206,16 @@ export interface EnsureLocalBrowserArgs {
    * the one place it matters most.
    */
   captureTypedText?: boolean;
+  /**
+   * May this browser change size?
+   *
+   * `fixed` unless the caller says otherwise, which keeps every existing
+   * opener — evals, swarms, journeys, the CLI, an outside agent through the
+   * door — on the 1024x768 session it has always had. Only the interactive
+   * Playground asks for `followPane`, because it is the only surface with a
+   * panel to follow.
+   */
+  viewportPolicy?: SessionViewportPolicy;
 }
 
 interface LocalSession {
@@ -436,7 +447,24 @@ async function startSession(
    */
   const nativeSurface =
     resolveLocalBrowserSurface(deps.env, runtime) === "native";
-  const surface = nativeSurface ? createContextSurface() : undefined;
+  /**
+   * The driver, once it exists, so the surface can ask it to resize.
+   *
+   * A LATE BINDING because the ordering is genuinely circular: the surface has
+   * to exist before the context, since the context registers each tab with it
+   * as the tab is made, and the driver cannot exist before the context. The
+   * alternative — a surface that queues requests until a driver arrives —
+   * would be queueing measurements that are stale by the time anything reads
+   * them, which is the one thing the coalescing barrier is for.
+   */
+  let resizeSession:
+    | ((size: { width: number; height: number }) => void)
+    | undefined;
+  const surface = nativeSurface
+    ? createContextSurface({
+        onViewportRequest: (size) => resizeSession?.(size),
+      })
+    : undefined;
 
   const context =
     runtime === "electron"
@@ -492,7 +520,34 @@ async function startSession(
         }
       : {},
   );
-  const driver = new ChromiumDriver(context, { lease });
+  const driver = new ChromiumDriver(context, {
+    lease,
+    /**
+     * The Playground's browser follows its panel; every other caller does not.
+     *
+     * `followPane` here rather than at the pane, because the policy belongs to
+     * what OPENED the session: an eval driving this same code path opens a
+     * `fixed` one, and a pane that could choose would let a person watching an
+     * eval resize the run they are watching.
+     */
+    viewport: {
+      policy: args.viewportPolicy ?? "fixed",
+      onChange: (viewport) =>
+        surface?.setViewport({
+          width: viewport.width,
+          height: viewport.height,
+        }),
+    },
+  });
+  // Now that both exist, close the loop: a pane measurement reaches the
+  // driver's barrier, and the size the barrier settles on comes back to the
+  // surface through `onChange` above.
+  resizeSession = (size) => {
+    void driver.requestViewport(size).catch(() => {
+      // The barrier reports its own failures and restores the last confirmed
+      // geometry; a rejected measurement must not take the session down.
+    });
+  };
   // A per-boot bearer even in-process. Nothing else can reach this handler, but
   // the token is what makes the in-process client the SAME client as hosted —
   // and a stack whose auth is disabled on one engine is a stack whose auth is

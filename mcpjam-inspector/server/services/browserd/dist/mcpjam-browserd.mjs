@@ -3,7 +3,7 @@
 
 // server/services/browserd/daemon/server.ts
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
@@ -655,6 +655,164 @@ var CommandLedger = class {
 };
 function asRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+}
+
+// server/services/browserd/daemon/pane-command.ts
+import { randomUUID } from "node:crypto";
+
+// shared/browser-pane-command.ts
+var BROWSER_PANE_OPS = [
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "create_tab",
+  "activate_tab",
+  "close_tab"
+];
+function normalizePaneUrl(input) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const schemeless = !hasExplicitScheme(trimmed);
+  let parsed;
+  try {
+    parsed = new URL(schemeless ? `https://${trimmed}` : trimmed);
+  } catch {
+    return null;
+  }
+  if (schemeless && isLoopbackHost(parsed.hostname)) {
+    try {
+      parsed = new URL(`http://${trimmed}`);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (!parsed.hostname) return null;
+  const bare = !parsed.hostname.includes(".");
+  if (bare && !isLoopbackHost(parsed.hostname) && !parsed.port) return null;
+  return parsed.toString();
+}
+function hasExplicitScheme(input) {
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(input)) return false;
+  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:\d+(?:[/?#]|$)/.test(input);
+}
+function isLoopbackHost(hostname2) {
+  return hostname2 === "localhost" || hostname2.endsWith(".localhost") || hostname2 === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname2);
+}
+
+// server/services/browserd/daemon/pane-command.ts
+var PANE_NEW_TAB_URL = "about:blank";
+var PANE_OPS = new Set(BROWSER_PANE_OPS);
+var MAX_TAB_ID_CHARS = 200;
+function parsePaneCommand(raw) {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw;
+  const op = value.op;
+  if (typeof op !== "string" || !PANE_OPS.has(op)) return null;
+  const tabId = typeof value.tabId === "string" && value.tabId.length <= MAX_TAB_ID_CHARS ? value.tabId : void 0;
+  switch (op) {
+    case "navigate": {
+      if (typeof value.url !== "string") return null;
+      const url = normalizePaneUrl(value.url);
+      if (!url) return null;
+      return { op: "navigate", url, ...tabId ? { tabId } : {} };
+    }
+    case "back":
+    case "forward":
+    case "reload":
+      return { op, ...tabId ? { tabId } : {} };
+    case "create_tab": {
+      if (value.url === void 0) return { op: "create_tab" };
+      if (typeof value.url !== "string") return null;
+      const url = normalizePaneUrl(value.url);
+      if (!url) return null;
+      return { op: "create_tab", url };
+    }
+    case "activate_tab":
+    case "close_tab":
+      if (!tabId) return null;
+      return { op, tabId };
+    default:
+      return null;
+  }
+}
+function parseAnchor(raw) {
+  if (typeof raw !== "object" || raw === null) return void 0;
+  const value = raw;
+  if (typeof value.tabId !== "string" || typeof value.url !== "string" || typeof value.navCounter !== "number") {
+    return void 0;
+  }
+  return {
+    tabId: value.tabId,
+    url: value.url,
+    navCounter: value.navCounter
+  };
+}
+function paneCommandToAction(command) {
+  switch (command.op) {
+    case "navigate":
+      return {
+        action: { kind: "navigate", url: command.url, observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "back":
+      return {
+        action: { kind: "back", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "forward":
+      return {
+        action: { kind: "forward", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "reload":
+      return {
+        action: { kind: "reload", observe: "none" },
+        ...command.tabId ? { tabId: command.tabId } : {}
+      };
+    case "create_tab":
+      return {
+        action: {
+          kind: "navigate",
+          url: command.url ?? PANE_NEW_TAB_URL,
+          newTab: true,
+          observe: "none"
+        },
+        tabId: `pane-${randomUUID().slice(0, 8)}`
+      };
+    case "activate_tab":
+      return {
+        action: { kind: "act", verb: "activate_tab", observe: "none" },
+        tabId: command.tabId
+      };
+    case "close_tab":
+      return {
+        action: { kind: "act", verb: "close_tab", observe: "none" },
+        tabId: command.tabId
+      };
+    default: {
+      const exhaustive = command;
+      throw new Error(
+        `pane command ${JSON.stringify(exhaustive)} has no daemon action`
+      );
+    }
+  }
+}
+
+// server/services/browserd/daemon/state-token.ts
+import { createHash } from "node:crypto";
+function shortHash(value) {
+  return createHash("sha1").update(value, "utf8").digest("hex").slice(0, 16);
+}
+function computeStateToken(inputs) {
+  return {
+    tabId: inputs.tabId,
+    navCounter: inputs.navCounter,
+    urlHash: shortHash(inputs.url),
+    domHash: shortHash(inputs.domSignal),
+    ...inputs.viewportRevision !== void 0 ? { viewportRevision: inputs.viewportRevision } : {}
+  };
 }
 
 // server/services/browserd/daemon/auth.ts
@@ -1318,7 +1476,199 @@ var BrowserdRequestHandler = class {
       }
       return this.handleArtifact(req);
     }
+    if (req.path === "/v1/state") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      return this.handleState(req);
+    }
+    if (req.path === "/v1/pane-command") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePaneCommand(req);
+    }
+    if (req.path === "/v1/viewport") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleViewport(req);
+    }
     return { status: 404 };
+  }
+  /**
+   * The browser's whole state, for the pane's shell.
+   *
+   * LEASE-GATED exactly as the frames are, and for exactly the same reason:
+   * the tab titles and URLs of a browser somebody has taken over describe the
+   * page they are signing into. "Reset your password | Acme" is not a
+   * screenshot, but it is not nothing either, and a second pane that could
+   * read it while the frames were withheld would be a hole in a wall that is
+   * otherwise complete.
+   */
+  async handleState(req) {
+    const holder = req.query?.get("holder") ?? void 0;
+    const refusal = this.watcherRefusal(holder);
+    if (refusal) {
+      return { status: 423, body: { error: refusal, bootId: this.bootId } };
+    }
+    if (!this.driver.stateSnapshot) {
+      return {
+        status: 501,
+        body: { error: "state_unsupported", bootId: this.bootId }
+      };
+    }
+    const snapshot = await this.driver.stateSnapshot();
+    const lease = this.lease.state();
+    return {
+      status: 200,
+      body: {
+        bootId: this.bootId,
+        ...snapshot,
+        control: lease.state === "free" ? { kind: "agent" } : {
+          kind: lease.holderKind === "script" ? "script" : "human",
+          holder: lease.holder,
+          ...lease.state === "parked" ? { parked: true } : {}
+        }
+      }
+    };
+  }
+  /**
+   * One human navigation, taking the browser first if it is free.
+   *
+   * The order is the whole design and it is not negotiable: acquire, THEN
+   * re-check the anchor, THEN dispatch. Acquiring is a round trip — to another
+   * continent on the hosted engine — and a page that finished loading during
+   * it is a different page. Dispatching first would race the agent; checking
+   * the anchor first would check a page that could still move.
+   */
+  async handlePaneCommand(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const body = parsed;
+    if (typeof body?.holder !== "string" || !body.holder) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
+    }
+    const command = parsePaneCommand(body.command);
+    if (!command) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    const holder = body.holder;
+    const lease = this.lease.acquire(holder);
+    if (lease.state === "free" || lease.holder !== holder) {
+      return {
+        status: 423,
+        body: {
+          error: "lease_held",
+          holder: lease.state === "free" ? void 0 : {
+            kind: lease.holderKind === "script" ? "script" : "human",
+            id: lease.holder
+          },
+          bootId: this.bootId
+        }
+      };
+    }
+    this.lastActivityAt = Date.now();
+    const anchor = parseAnchor(body.anchor);
+    if (anchor) {
+      const fresh = await this.currentAnchor(anchor.tabId);
+      if (!fresh || // HASHED on this side. The pane sends the URL it saw; the daemon's
+      // token carries a digest of the URL it has. Comparing in the digest's
+      // space keeps the hashing scheme internal — the pane never learns it —
+      // and costs one hash of a string the pane already sent.
+      fresh.urlHash !== shortHash(anchor.url) || fresh.navCounter !== anchor.navCounter) {
+        return {
+          status: 409,
+          body: { error: "page_changed", bootId: this.bootId }
+        };
+      }
+    }
+    const mapped = paneCommandToAction(command);
+    const outcome = await this.queue.submit({
+      // `manual` is the one source `leaseRefusalFor` admits while a lease is
+      // held, which is what lets this run at all now that the pane owns the
+      // browser.
+      source: "manual",
+      commandId: typeof body.commandId === "string" && body.commandId ? body.commandId : `pane-${Math.random().toString(36).slice(2)}-${Date.now()}`,
+      ...mapped.tabId !== void 0 ? { tabId: mapped.tabId } : {},
+      action: mapped.action
+    });
+    const viewport = this.driver.sessionViewportState ? this.driver.sessionViewportState() : void 0;
+    if (outcome.status !== "ok") {
+      return {
+        status: outcome.status === "busy" ? 429 : 409,
+        body: {
+          error: `command_${outcome.status}`,
+          ...viewport ? { viewport } : {},
+          bootId: this.bootId
+        }
+      };
+    }
+    return {
+      status: outcome.result.ok ? 200 : 409,
+      body: {
+        ok: outcome.result.ok,
+        ...outcome.result.ok ? {} : { error: outcome.result.error },
+        ...viewport ? { viewport } : {},
+        bootId: this.bootId
+      }
+    };
+  }
+  /**
+   * The tab's identity as the pane's anchor describes it.
+   *
+   * The DRIVER's token rather than a fresh CDP read: it already carries the
+   * nav counter and the URL, it is the number the staleness guard compares,
+   * and asking twice would let the two disagree.
+   */
+  async currentAnchor(tabId) {
+    if (!this.driver.currentStateToken) return null;
+    const token = await this.driver.currentStateToken(tabId);
+    if (!token) return null;
+    return { urlHash: token.urlHash, navCounter: token.navCounter };
+  }
+  /** The panel measured a size; answer with the size the session is at. */
+  async handleViewport(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    const body = parsed;
+    if (typeof body?.width !== "number" || typeof body?.height !== "number") {
+      return {
+        status: 400,
+        body: { error: "invalid_viewport", bootId: this.bootId }
+      };
+    }
+    if (!this.driver.requestViewport) {
+      return {
+        status: 501,
+        body: { error: "viewport_unsupported", bootId: this.bootId }
+      };
+    }
+    const viewport = await this.driver.requestViewport({
+      width: body.width,
+      height: body.height
+    });
+    return { status: 200, body: { viewport, bootId: this.bootId } };
   }
   handleTrace(req) {
     if (!this.ledger) {
@@ -2719,7 +3069,7 @@ function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }
 function buildBrowserdStack(driver, config) {
-  const bootId = config.bootId ?? randomUUID();
+  const bootId = config.bootId ?? randomUUID2();
   const ledger = new CommandLedger({ bootId });
   const lease = config.lease ?? new HandoffLease();
   const queue = new CommandQueue(
@@ -3476,21 +3826,6 @@ async function resolveObjectId(cdp, backendNodeId) {
   return resolved?.object?.objectId;
 }
 
-// server/services/browserd/daemon/state-token.ts
-import { createHash } from "node:crypto";
-function shortHash(value) {
-  return createHash("sha1").update(value, "utf8").digest("hex").slice(0, 16);
-}
-function computeStateToken(inputs) {
-  return {
-    tabId: inputs.tabId,
-    navCounter: inputs.navCounter,
-    urlHash: shortHash(inputs.url),
-    domHash: shortHash(inputs.domSignal),
-    ...inputs.viewportRevision !== void 0 ? { viewportRevision: inputs.viewportRevision } : {}
-  };
-}
-
 // server/services/browserd/daemon/session-barrier.ts
 var DEFAULT_DEBOUNCE_MS = 150;
 var DEFAULT_MAX_WAIT_MS = 5e3;
@@ -3622,6 +3957,71 @@ var SessionBarrier = class {
     });
   }
 };
+
+// server/services/browserd/daemon/tab-metadata.ts
+async function navigationHistory(cdp) {
+  try {
+    const raw = await cdp.send("Page.getNavigationHistory");
+    if (typeof raw?.currentIndex !== "number" || !Array.isArray(raw?.entries)) {
+      return null;
+    }
+    return { currentIndex: raw.currentIndex, entries: raw.entries };
+  } catch {
+    return null;
+  }
+}
+var FAVICON_EXPRESSION = `(() => {
+  const link = document.querySelector(
+    'link[rel~="icon" i], link[rel="shortcut icon" i], link[rel~="apple-touch-icon" i]'
+  );
+  return link ? link.href : "";
+})()`;
+var MAX_FAVICON_CHARS = 2048;
+var MAX_TITLE_CHARS = 256;
+async function favicon(cdp) {
+  try {
+    const raw = await cdp.send("Runtime.evaluate", {
+      expression: FAVICON_EXPRESSION,
+      returnByValue: true,
+      // A page that has installed a Proxy on `document.querySelector` cannot
+      // make this hang the strip; a page that throws is simply a page with no
+      // icon.
+      timeout: 1e3
+    });
+    const value = raw?.result?.value;
+    if (typeof value !== "string" || !value) return void 0;
+    if (!value.startsWith("https://") && !value.startsWith("http://") && !value.startsWith("data:image/")) {
+      return void 0;
+    }
+    if (value.length > MAX_FAVICON_CHARS) return void 0;
+    return value;
+  } catch {
+    return void 0;
+  }
+}
+async function readTabMetadata(cdp, fallbackUrl, options = {}) {
+  if (!cdp) {
+    return {
+      url: fallbackUrl,
+      title: "",
+      canGoBack: false,
+      canGoForward: false
+    };
+  }
+  const history = await navigationHistory(cdp);
+  const current = history?.entries[history.currentIndex];
+  const icon = options.favicon === false ? void 0 : await favicon(cdp);
+  return {
+    url: current?.url ?? fallbackUrl,
+    title: (current?.title ?? "").slice(0, MAX_TITLE_CHARS),
+    ...icon ? { faviconUrl: icon } : {},
+    // A history of one entry is a tab that has been nowhere. Chromium counts
+    // the current document as an entry, so `currentIndex > 0` — not
+    // `entries.length > 1` — is the question "is there something behind me".
+    canGoBack: !!history && history.currentIndex > 0,
+    canGoForward: !!history && history.currentIndex < history.entries.length - 1
+  };
+}
 
 // shared/browser-viewport.ts
 var DEFAULT_SESSION_VIEWPORT = { width: 1024, height: 768 };
@@ -5250,6 +5650,8 @@ var ChromiumDriver = class {
    * session render at different sizes while one number was published for both.
    */
   sessionViewport;
+  /** Monotonic per boot, so two snapshots in one millisecond still order. */
+  stateSeq = 0;
   viewportPolicy;
   onViewportChange;
   barrier;
@@ -6352,6 +6754,63 @@ var ChromiumDriver = class {
    * than asking Chromium — because it runs on every heartbeat of every open
    * stream.
    */
+  /**
+   * The whole truth about this browser, for the pane's shell.
+   *
+   * A SEPARATE READ from `tabsSnapshot`, not a richer version of it, and the
+   * two are kept apart on purpose. `tabsSnapshot` rides the frame heartbeat:
+   * it is synchronous, budgeted to a few kilobytes, and drops tabs from the
+   * end when a session has more than fit — which is exactly right for a
+   * caption over a video and exactly wrong for a tab strip, where the tab that
+   * got dropped is the one somebody is looking for.
+   *
+   * This one is asynchronous (it asks each tab's CDP session for its title,
+   * icon and history), complete, and fetched on its own endpoint. Nothing is
+   * truncated: a browser with thirty tabs has thirty tabs, and a strip that
+   * silently showed sixteen of them would be lying about a thing the person
+   * can count.
+   *
+   * `seq` is a monotonic counter rather than a timestamp: two snapshots taken
+   * inside the same millisecond are ordinary on a fast box, and a reducer that
+   * cannot order them would drop one at random.
+   */
+  async stateSnapshot() {
+    const live = [...this.tabs.entries()].filter(
+      ([, entry]) => !entry.page.isClosed()
+    );
+    const read = await Promise.all(
+      live.map(async ([id, entry]) => {
+        const cdp = await entry.page.cdp().catch(() => null);
+        const meta = await readTabMetadata(cdp, safeUrl(entry.page));
+        return { id, meta, entry };
+      })
+    );
+    const activeTabId = this.activeTabId && read.some(({ id }) => id === this.activeTabId) ? this.activeTabId : read[0]?.id ?? null;
+    const active = read.find(({ id }) => id === activeTabId);
+    this.stateSeq += 1;
+    return {
+      seq: this.stateSeq,
+      tabs: read.map(({ id, meta }) => ({
+        id,
+        url: meta.url,
+        title: meta.title,
+        ...meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {},
+        // The driver has no per-tab loading flag: every verb here awaits its
+        // own settle before answering, so by the time anything can ask, the
+        // navigation this driver started is over. A tab loading because the
+        // PAGE navigated itself is real and is not modelled — reporting a
+        // guess would be worse than reporting nothing, since the strip's
+        // spinner is the one thing on it that must not be permanent.
+        loading: false
+      })),
+      activeTabId,
+      // The ACTIVE tab's history, which is what the two buttons act on.
+      canGoBack: active?.meta.canGoBack ?? false,
+      canGoForward: active?.meta.canGoForward ?? false,
+      viewport: this.sessionViewport,
+      policy: this.viewportPolicy
+    };
+  }
   tabsSnapshot() {
     const live = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed());
     const activeAt = this.activeTabId ? live.findIndex(([id]) => id === this.activeTabId) : -1;
