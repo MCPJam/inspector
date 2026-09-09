@@ -255,10 +255,12 @@ export async function resolveOrgModelConfig(
     }
 
     const result: ResolvedOrgModelConfig = { providers };
-    resolveCache.set(cacheKey, {
-      result,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
+    if (!githubExecutionPolicy()) {
+      resolveCache.set(cacheKey, {
+        result,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+    }
     return result;
   } finally {
     clearTimeout(timeout);
@@ -657,10 +659,12 @@ export async function resolveOrgProviderRuntimeForTarget(
 
   const writeNow = Date.now();
   pruneRuntimeResolveCache(writeNow);
-  runtimeResolveCache.set(cacheKey, {
-    result,
-    expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
-  });
+  if (!githubExecutionPolicy()) {
+    runtimeResolveCache.set(cacheKey, {
+      result,
+      expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
+    });
+  }
   return result;
 }
 

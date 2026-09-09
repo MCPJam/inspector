@@ -972,7 +972,7 @@ export function GithubChecksRoute({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-3">
                   <Select
                     value={row.suiteId}
                     disabled={!canManage}

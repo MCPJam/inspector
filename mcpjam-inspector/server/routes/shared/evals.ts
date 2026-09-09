@@ -2710,7 +2710,12 @@ export async function prepareEvalRun(
         });
         resolvedOrgModelConfig = orgConfig;
       } catch (error) {
-        if (githubExecutionPolicy()) throw error;
+        if (githubExecutionPolicy()) {
+          await failRunBeforeExecution(convexClient, recorder, runId, {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
         logger.warn("[evals] Failed to resolve org model config", {
           projectId: projectIdForOrgConfig,
           error: error instanceof Error ? error.message : String(error),
