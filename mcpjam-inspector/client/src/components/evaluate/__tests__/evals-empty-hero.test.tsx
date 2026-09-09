@@ -58,7 +58,7 @@ describe("EvalsEmptyHero", () => {
     ).toBeTruthy();
   });
 
-  it("starts the first-run preview from Eval my server, not Create suite", () => {
+  it("starts Create suite from Eval my server with that server, not the blank form", () => {
     const onEvalServer = vi.fn();
     render(
       <EvalsEmptyHero
