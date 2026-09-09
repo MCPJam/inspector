@@ -669,7 +669,8 @@ describe("UserTestingScenarioDetail", () => {
     });
 
     it("persists the description on blur, only when it changed", () => {
-      renderDetail({ description: "Old copy" });
+      // BB-202 moved this field off the header row and into Edit.
+      renderEdit({ description: "Old copy" });
 
       const textarea = screen.getByTestId("user-testing-description");
       // Blur with no edit: no write.
@@ -682,6 +683,153 @@ describe("UserTestingScenarioDetail", () => {
         scenarioId: "cb-1",
         description: "New copy",
       });
+    });
+
+    it("flushes a focused draft when Edit closes without a blur", () => {
+      // Navigating out of Edit unmounts the field, and React fires no blur on
+      // unmount — the typed text would be dropped and the focus guard would
+      // latch, freezing the reseed for the rest of this instance's life.
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Typed then left" } });
+      rerender(detail({ description: "Old copy" }));
+
+      expect(updateScenarioMock).toHaveBeenCalledWith({
+        scenarioId: "cb-1",
+        description: "Typed then left",
+      });
+    });
+
+    it("does not save a merely-focused draft over a collaborator's edit", () => {
+      // Holding focus is not evidence of an edit. The reseed is suppressed
+      // while focus is held, so the draft stays stale — flushing it on the way
+      // out of Edit would overwrite the value that landed meanwhile.
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      fireEvent.focus(screen.getByTestId("user-testing-description"));
+      rerender(detail({ description: "Collab copy" }, { editMode: true }));
+      rerender(detail({ description: "Collab copy" }));
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+    });
+
+    it("does not re-send a save that is still in flight when Edit closes", async () => {
+      // The blur save marks the seed synchronously. Advancing it only after
+      // the write let the exit flush measure dirty against the pre-save seed
+      // and send the same value a second time.
+      let settleSave = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          settleSave = () => resolve();
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "New copy" } });
+      fireEvent.blur(textarea);
+      expect(updateScenarioMock).toHaveBeenCalledTimes(1);
+
+      // Leaving Edit while that write is still unresolved.
+      rerender(detail({ description: "Old copy" }));
+      expect(updateScenarioMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        settleSave();
+      });
+    });
+
+    it("keeps the newer value when an older save fails late", async () => {
+      // Two writes can overlap: blur starts one, retyping and leaving Edit
+      // starts the next. The first one failing last must not resync the field
+      // over the value that superseded it.
+      let failFirst: (err: Error) => void = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, reject) => {
+          failFirst = reject;
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "First" } });
+      fireEvent.blur(textarea);
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Second" } });
+      rerender(detail({ description: "Old copy" }));
+
+      expect(updateScenarioMock).toHaveBeenNthCalledWith(2, {
+        scenarioId: "cb-1",
+        description: "Second",
+      });
+
+      await act(async () => {
+        failFirst(new Error("stale save rejected"));
+      });
+
+      // Back into Edit: the draft still holds what the newer save sent, and
+      // the superseded failure stayed silent.
+      rerender(detail({ description: "Old copy" }, { editMode: true }));
+      expect(screen.getByTestId("user-testing-description")).toHaveValue(
+        "Second",
+      );
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("adopts a collaborator's value when our save fails mid-flight", async () => {
+      // The rollback runs after the await, so reading `scenario` from its
+      // defining render restored a value the collaborator had already replaced.
+      // The reseed effect had consumed the new one, so the field stayed wrong.
+      let failSave: (err: Error) => void = () => {};
+      updateScenarioMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, reject) => {
+          failSave = reject;
+        }),
+      );
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Mine" } });
+      fireEvent.blur(textarea);
+
+      // A collaborator's edit lands while our write is still unresolved.
+      rerender(detail({ description: "Theirs" }, { editMode: true }));
+
+      await act(async () => {
+        failSave(new Error("save rejected"));
+      });
+
+      expect(screen.getByTestId("user-testing-description")).toHaveValue(
+        "Theirs",
+      );
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("keeps the description out of the header, where it crowded the tabs", () => {
+      renderDetail({ description: "Old copy" });
+
+      expect(
+        screen.queryByTestId("user-testing-description"),
+      ).not.toBeInTheDocument();
+      // The tabs the field used to sit beside.
+      expect(screen.getByRole("button", { name: "Insights" })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Sessions" })).toBeVisible();
+    });
+
+    it("lets a long study name shrink instead of pushing the tabs off", () => {
+      renderDetail({ name: "S".repeat(200) });
+
+      // The design-system button ships shrink-0; the header has to override it,
+      // or the name keeps full width and the tab row is what gives.
+      const classes = screen.getByTitle("S".repeat(200)).className.split(/\s+/);
+      expect(classes).toContain("shrink");
+      expect(classes).not.toContain("shrink-0");
+      expect(classes).toContain("min-w-0");
     });
   });
 
