@@ -320,7 +320,7 @@ export function CreateSuiteDialog({
             <Input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Customer support workflows"
+              placeholder="Suite 1"
             />
           </div>
 

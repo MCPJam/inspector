@@ -118,47 +118,64 @@ function OverviewBody({
 
   return (
     <div className="min-w-0" data-testid="evals-suites-overview">
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-1.5">
-        <EvalListFilter
-          label="Client"
-          value={clientFilter}
-          options={clientOptions}
-          onChange={setClientFilter}
-        />
-        <EvalListFilter
-          label="Server"
-          value={serverFilter}
-          options={serverOptions}
-          onChange={setServerFilter}
-        />
-        {isFiltering && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px]"
-            onClick={() => {
-              setClientFilter(ALL_EVAL_FILTER_VALUES);
-              setServerFilter(ALL_EVAL_FILTER_VALUES);
-            }}
-          >
-            Clear filters
-          </Button>
-        )}
-      </div>
       <div
-        className={cn(
-          ROW_PAD,
-          "border-b border-border/40 pb-2 text-xs font-medium text-muted-foreground",
-        )}
+        className={cn(ROW_PAD, "border-b border-border/40 pb-3")}
+        role="row"
       >
         <div className={DATA_COLS}>
-          <span>Suite</span>
-          <span>Client</span>
-          <span>Server</span>
-          <span className="text-right">Pass rate</span>
-          <span className="text-right">Last run</span>
+          <span
+            role="columnheader"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Suite
+          </span>
+          <div role="columnheader" aria-label="Client" className="min-w-0">
+            <EvalListFilter
+              label="Client"
+              variant="header"
+              value={clientFilter}
+              options={clientOptions}
+              onChange={setClientFilter}
+            />
+          </div>
+          <div role="columnheader" aria-label="Server" className="min-w-0">
+            <EvalListFilter
+              label="Server"
+              variant="header"
+              value={serverFilter}
+              options={serverOptions}
+              onChange={setServerFilter}
+            />
+          </div>
+          <span
+            role="columnheader"
+            className="text-right text-xs font-medium text-muted-foreground"
+          >
+            Pass rate
+          </span>
+          <span
+            role="columnheader"
+            className="text-right text-xs font-medium text-muted-foreground"
+          >
+            Last run
+          </span>
         </div>
-        <span className={ACTION_COL} aria-hidden />
+        <div className={ACTION_COL}>
+          {isFiltering ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px]"
+              aria-label="Clear filters"
+              onClick={() => {
+                setClientFilter(ALL_EVAL_FILTER_VALUES);
+                setServerFilter(ALL_EVAL_FILTER_VALUES);
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
       </div>
       <ul className="mt-1">
         {filteredOverview.map((entry) => (

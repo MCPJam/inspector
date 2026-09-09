@@ -19,6 +19,7 @@ import {
 } from "./metric-strip-data";
 import {
   buildSuiteRunHistoryRows,
+  formatRunHistoryDate,
   formatRunHistoryMetric,
   type SuiteRunHistoryRow,
 } from "../evaluate/suite-detail-model";
@@ -46,7 +47,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@mcpjam/design-system/dropdown-menu";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { usePaginatedQuery } from "convex/react";
 import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -202,11 +203,17 @@ export function ProjectRunsTable({
   decisionSummaryEnabled = false,
   embedded = false,
   historyMetricsEnabled = false,
+  emptyState,
 }: {
   projectId: string;
   historyMetricsEnabled?: boolean;
   /** Use the parent page scroll when shown below the suite cards. */
   embedded?: boolean;
+  /**
+   * First-run empty. Evaluate shares the Suites hero here so a project
+   * that has never run does not grow a second empty.
+   */
+  emptyState?: ReactNode;
   onSelectRun: (args: { suiteId: string; runId: string }) => void;
   /**
    * Read D9's canonical verdict and counts for terminal rows, one row at a
@@ -512,9 +519,6 @@ export function ProjectRunsTable({
   ]);
   const isSuiteExpanded = (suiteId: string) =>
     suiteExpansion.get(suiteId) ?? true;
-  const allSuitesExpanded = suiteGroups.every((group) =>
-    isSuiteExpanded(group.suiteId),
-  );
   const renderRun = (row: ProjectRunRow, nested = false) => (
     <ProjectRunTableRow
       key={row._id}
@@ -570,6 +574,9 @@ export function ProjectRunsTable({
   }
 
   if (rows.length === 0 && !isLoadingFirstPage && !isFiltering) {
+    if (emptyState) {
+      return emptyState;
+    }
     return (
       <div className="flex flex-1 items-center justify-center">
         <div className="mx-auto max-w-md p-6 text-center">
@@ -600,36 +607,12 @@ export function ProjectRunsTable({
         aria-label="Project run history"
       >
         <div className={runHistoryToolbarClass}>
-          {historyMetricsEnabled ? (
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground">
-                {suiteGroups.length} suites · roll-ups across matching loaded
-                runs
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-[11px]"
-                onClick={() =>
-                  setSuiteExpansion(
-                    new Map(
-                      suiteGroups.map((group) => [
-                        group.suiteId,
-                        !allSuitesExpanded,
-                      ]),
-                    ),
-                  )
-                }
-              >
-                {allSuitesExpanded ? "Collapse all" : "Expand all"}
-              </Button>
-            </div>
-          ) : embedded ? (
+          {embedded && !historyMetricsEnabled ? (
             <h2 className="text-xs font-semibold text-secondary-foreground">
               Run history
             </h2>
           ) : (
-            <span />
+            <h2 className="text-xs font-semibold text-foreground">All Runs</h2>
           )}
           <div className="flex flex-wrap items-center gap-1.5">
             <DropdownMenu>
@@ -771,13 +754,6 @@ export function ProjectRunsTable({
             className="@container/history-metrics border-b border-border/50"
             aria-label="Filtered run metrics"
           >
-            <p className="px-5 pt-3 text-[10px] text-muted-foreground">
-              {history.loading || isLoadingFirstPage
-                ? "Loading run metrics…"
-                : metricData
-                ? `Latest measured run · trends across ${metricData.series.length} filtered runs`
-                : "No measured iterations in these runs."}
-            </p>
             {history.errorCount > 0 && (
               <p className="px-5 py-2 text-xs text-muted-foreground">
                 Metrics unavailable for {history.errorCount} runs.
@@ -830,9 +806,14 @@ export function ProjectRunsTable({
           <RunHistoryTable aria-label="Project runs">
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-[180px]">
-                  {historyMetricsEnabled ? "Suite / Run / Date" : "Suite / Run"}
-                </TableHead>
+                {historyMetricsEnabled ? (
+                  <>
+                    <TableHead className="min-w-[120px]">Date</TableHead>
+                    <TableHead className="min-w-[140px]">Run</TableHead>
+                  </>
+                ) : (
+                  <TableHead className="min-w-[180px]">Suite / Run</TableHead>
+                )}
                 <TableHead className="min-w-[120px]">
                   {historyMetricsEnabled ? "Client : model" : "Platform"}
                 </TableHead>
@@ -867,7 +848,9 @@ export function ProjectRunsTable({
               {isLoadingFirstPage ? (
                 <TableRow>
                   <TableCell
-                    colSpan={8 + (showGitContext ? 1 : 0)}
+                    colSpan={
+                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 1 : 0)
+                    }
                     className="h-32 text-center text-muted-foreground"
                   >
                     <span role="status">Loading runs…</span>
@@ -877,7 +860,7 @@ export function ProjectRunsTable({
                 <TableRow>
                   <TableCell
                     colSpan={
-                      (historyMetricsEnabled ? 8 : 7) + (showGitContext ? 1 : 0)
+                      (historyMetricsEnabled ? 9 : 7) + (showGitContext ? 1 : 0)
                     }
                     className="h-24 text-center text-sm text-muted-foreground"
                   >
@@ -1078,6 +1061,13 @@ function ProjectRunTableRow({
         : {})}
       className={canOpen ? "cursor-pointer" : undefined}
     >
+      {historyMetricsEnabled ? (
+        <TableCell className="whitespace-nowrap text-muted-foreground">
+          <span title={formatTime(row.createdAt)}>
+            {formatRunHistoryDate(row.createdAt)}
+          </span>
+        </TableCell>
+      ) : null}
       <TableCell className="max-w-[240px] text-xs">
         <div className={grouped ? (nested ? "pl-12" : "pl-5") : undefined}>
           <span className="block truncate font-medium">
@@ -1096,16 +1086,6 @@ function ProjectRunTableRow({
             {grouped
               ? formatRunId(row._id)
               : `#${row.runNumber} · ${formatRunId(row._id)}`}
-            {historyMetricsEnabled && (
-              <span className="block" title={formatTime(row.createdAt)}>
-                {new Date(row.createdAt).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-            )}
           </span>
         </div>
       </TableCell>

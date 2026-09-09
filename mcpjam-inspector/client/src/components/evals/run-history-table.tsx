@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 export const runHistorySurfaceClass =
   "shrink-0 overflow-hidden rounded-xl border border-border bg-card";
 export const runHistoryToolbarClass =
-  "flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/45 px-[18px] py-3";
+  "flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/55 px-4 py-3";
 export const runHistoryFilterClass =
   "h-7 max-w-52 gap-1 rounded-full border-border bg-card px-2.5 text-[11px] font-medium shadow-none";
 export const runHistoryFooterClass =

@@ -6,6 +6,8 @@ import {
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
   filterSuiteRunHistoryRows,
+  formatRunHistoryDate,
+  formatRunHistoryDateRange,
   formatSuiteIdentitySubline,
   resolveRunHistoryVerdict,
   runHistoryFilterOptions,
@@ -529,6 +531,47 @@ describe("suiteRunBlockedReason", () => {
 describe("SUITE_RUN_HISTORY_PAGE_SIZE", () => {
   it("caps the default table", () => {
     expect(SUITE_RUN_HISTORY_PAGE_SIZE).toBe(8);
+  });
+
+  it("formats a run timestamp as a short date and time", () => {
+    expect(formatRunHistoryDate(1_700_000_000_000)).toBe(
+      new Date(1_700_000_000_000).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    );
+  });
+
+  it("collapses a same-day suite range and spans different days", () => {
+    const morning = new Date(2026, 8, 8, 9, 0).getTime();
+    const evening = new Date(2026, 8, 8, 17, 30).getTime();
+    const later = new Date(2026, 8, 10, 12, 0).getTime();
+    const day = {
+      month: "short" as const,
+      day: "numeric" as const,
+    };
+    expect(formatRunHistoryDateRange(evening, morning)).toBe(
+      new Date(morning).toLocaleString(undefined, day),
+    );
+    expect(formatRunHistoryDateRange(morning, later)).toBe(
+      `${new Date(morning).toLocaleString(undefined, day)} – ${new Date(
+        later,
+      ).toLocaleString(undefined, day)}`,
+    );
+  });
+
+  it("treats a missing timestamp as unavailable", () => {
+    const morning = new Date(2026, 8, 8, 9, 0).getTime();
+    expect(formatRunHistoryDate(0)).toBe("-");
+    expect(formatRunHistoryDateRange(0, 0)).toBe("-");
+    expect(formatRunHistoryDateRange(0, morning)).toBe(
+      new Date(morning).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
+    );
   });
 });
 

@@ -48,7 +48,7 @@ import { toast } from "@/lib/toast";
 import { EvalTargetMatrix } from "./eval-target-matrix";
 import type { HostAttachmentDraft } from "../evals/client-attachments-editor";
 import {
-  DEFAULT_CREATE_SUITE_NAME,
+  nextUnusedSuiteName,
   pickServerAttachmentIdForServer,
   seedCreateSuiteName,
 } from "./create-suite-prefill";
@@ -95,6 +95,11 @@ type CreateSuitePageProps = {
    * Name-only prefills (the agent command) leave this unset on purpose.
    */
   initialServerId?: string | null;
+  /**
+   * Suite names already in this project. Used only when `initialName` is
+   * empty, to seed the next unused "Suite N".
+   */
+  existingSuiteNames?: readonly string[];
 };
 
 export function CreateSuitePage({
@@ -104,8 +109,12 @@ export function CreateSuitePage({
   projectId = null,
   initialName = null,
   initialServerId = null,
+  existingSuiteNames = [],
 }: CreateSuitePageProps) {
-  const [name, setName] = useState(() => seedCreateSuiteName(initialName));
+  const seededName = seedCreateSuiteName(initialName, existingSuiteNames);
+  const numberedDefault = nextUnusedSuiteName(existingSuiteNames);
+  const [name, setName] = useState(seededName);
+  const nameEditedRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
@@ -143,12 +152,14 @@ export function CreateSuitePage({
     shouldFetchDefaults ? projectId : null,
   );
 
-  const appliedInitialNameRef = useRef(initialName);
   useEffect(() => {
-    if (!initialName || initialName === appliedInitialNameRef.current) return;
-    appliedInitialNameRef.current = initialName;
-    setName(initialName);
-  }, [initialName]);
+    if (nameEditedRef.current) return;
+    if (initialName?.trim()) {
+      setName(initialName);
+      return;
+    }
+    setName(seededName);
+  }, [initialName, seededName]);
 
   const appliedInitialServerRef = useRef(false);
   useEffect(() => {
@@ -434,8 +445,11 @@ export function CreateSuitePage({
                 data-testid="create-suite-name"
                 aria-required
                 value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder={DEFAULT_CREATE_SUITE_NAME}
+                onChange={(event) => {
+                  nameEditedRef.current = true;
+                  setName(event.target.value);
+                }}
+                placeholder={numberedDefault}
                 disabled={isSaving}
               />
             </div>
