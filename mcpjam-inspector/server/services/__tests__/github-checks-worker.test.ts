@@ -1,3 +1,4 @@
+import { githubExecutionPolicy, verifyGithubCredentialAccess } from "../github-checks/credential-policy.js";
 import {
   afterEach,
   beforeEach,
@@ -56,6 +57,10 @@ const CLAIM: ClaimedGithubCheck = {
   createdByExternalId: "user_workos_1",
   suiteId: "suite-1",
   repoPrivate: false,
+  credentialPolicyVersion: 2,
+  isFork: false,
+  githubCredentialPolicy: "same_repository",
+  allowedBuiltInToolIds: [],
 };
 
 /** The same check, on a repository that needs a credential to clone. */
@@ -206,6 +211,11 @@ function harness(
     killSandbox: async () => {
       events.push("killSandbox");
     },
+    reportCredentialBlocked: async () => {
+      events.push("credentialBlocked");
+    },
+    credentialPreflight: async (_claim, _holder, mint) =>
+      mint ? "bearer" : null,
     getBearer: async () => {
       events.push("getBearer");
       return "delegated-jwt";
@@ -784,15 +794,17 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     expect(h.completions[0].runId).toBe("run-1");
   });
 
-  it("does not fail the check when recording the ephemeral server fails", async () => {
+  it("does not start evaluation when recording the execution binding fails", async () => {
     const h = harness({
       recordServer: async () => {
         throw new Error("route 500");
       },
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    // Recovery loses its cleanup pointer, but the PR still gets its verdict.
-    expect(h.completions[0].runId).toBe("run-1");
+    // An unbound execution cannot receive a scoped bearer.
+    expect(h.completions[0].runId).toBeUndefined();
+    expect(h.events).not.toContain("runEvalSuite");
+    expect(h.events).toContain("killSandbox");
   });
 
   it("never throws, even when completing itself fails", async () => {
@@ -1333,7 +1345,7 @@ describe("verifyRunSnapshot", () => {
   const clientWith = (snapshot: unknown) =>
     ({
       query: async () => ({ configSnapshot: { environment: snapshot } }),
-    } as unknown as Parameters<typeof verifyRunSnapshot>[0]);
+    }) as unknown as Parameters<typeof verifyRunSnapshot>[0];
 
   it("passes a snapshot naming our own check", async () => {
     const snapshot = {
@@ -1725,4 +1737,101 @@ describe("the clone-token wire contract", () => {
     const claimed = await claimNextForTests("worker-1");
     expect(claimed).toMatchObject({ triggerId: "trig-9", repoPrivate: true });
   });
+});
+
+describe("fork credential isolation", () => {
+  it("runs a clean approved fork with only its execution bearer", async () => {
+    let cleanupBearer: string | undefined;
+    const h = harness({
+      credentialPreflight: async (_c, _h, mint) =>
+        mint ? "restricted-bearer" : null,
+      runEvalSuite: async (args) => {
+        expect(args.bearer).toBe("restricted-bearer");
+        await args.onRunStarted?.("fork-run");
+        return { runId: "fork-run" };
+      },
+      deleteEphemeralServer: async (args) => {
+        cleanupBearer = args.bearer;
+      },
+    });
+    await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
+    expect(cleanupBearer).toBe("delegated-jwt");
+    expect(h.completions[0].runId).toBe("fork-run");
+  });
+
+  it("provisions nothing when credentials are required", async () => {
+    const h = harness({
+      credentialPreflight: async () => {
+        throw new Error("credential_policy_blocked");
+      },
+    });
+    await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.resolveArgs).toEqual([]);
+    expect(h.events).not.toContain("runEvalSuite");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("an access refusal during eval remains a policy verdict and always kills the sandbox", async () => {
+    const h = harness({
+      runEvalSuite: async () => {
+        throw new Error("credential_policy_blocked");
+      },
+    });
+    await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "no_customer_credentials" }, "worker", h.deps);
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.events).toContain("killSandbox");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("an access refusal during conformance remains a policy verdict", async () => {
+    const h = harness(
+      {
+        runConformance: async () => {
+          throw new Error("credential_policy_blocked");
+        },
+      },
+      undefined,
+      { evalAction: "run_conformance" }
+    );
+    await executeClaimedCheck(
+      {
+        ...CLAIM,
+        isFork: true,
+        githubCredentialPolicy: "no_customer_credentials",
+        conformanceEnabled: true,
+      },
+      "worker",
+      h.deps
+    );
+    expect(h.events).toContain("credentialBlocked");
+    expect(h.events).toContain("killSandbox");
+    expect(h.completions).toEqual([]);
+  });
+
+  it("a stale claim contract never reaches provisioning", async () => {
+    const h = harness();
+    await executeClaimedCheck(
+      { ...CLAIM, credentialPolicyVersion: undefined } as any,
+      "worker",
+      h.deps,
+    );
+    expect(h.resolveArgs).toEqual([]);
+    expect(h.events).not.toContain("runEvalSuite");
+  });
+});
+
+
+it("runs an opted-in fork under the scoped suite policy", async () => {
+  const h = harness({
+    runEvalSuite: async args => {
+      expect(githubExecutionPolicy()).toBe("suite_credentials");
+      await verifyGithubCredentialAccess();
+      await args.onRunStarted?.("opted-in-run");
+      return { runId: "opted-in-run" };
+    },
+  });
+  await executeClaimedCheck({ ...CLAIM, isFork: true, githubCredentialPolicy: "suite_credentials" }, "worker", h.deps);
+  expect(h.completions[0].runId).toBe("opted-in-run");
+  expect(h.events).toContain("killSandbox");
 });

@@ -1,3 +1,4 @@
+import { isCredentialFreeGithubExecution } from "./github-checks/credential-policy.js";
 import {
   peekPageToolsForChatTurn,
   pageToolsSnapshotFrom,
@@ -2072,6 +2073,7 @@ async function resolveOrgByokEvalRuntime(args: {
     }
   | undefined
 > {
+  if (isCredentialFreeGithubExecution()) return undefined;
   if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
 
   const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);

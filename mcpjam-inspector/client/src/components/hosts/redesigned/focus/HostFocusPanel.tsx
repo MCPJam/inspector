@@ -111,8 +111,10 @@ export function HostFocusPanel({
           logoSrc={logoSrc}
           action={
             // The stamp sits left of the button on purpose: it says how old the
-            // profile is, the button is what fixes that.
-            <div className="flex items-center gap-2">
+            // profile is, the button is what fixes that. No wrapper here —
+            // `HostIdentityRow` lays the action out so it can restyle the group
+            // when it wraps to its own line.
+            <>
               <HostVerifiedAtStamp hostStyle={draft.hostStyle} />
               <UpdateHostToLatestButton
                 hostId={hostId}
@@ -127,7 +129,7 @@ export function HostFocusPanel({
                 hostLoaded={hostLoaded}
                 saveInFlight={saveInFlight}
               />
-            </div>
+            </>
           }
         />
       </div>

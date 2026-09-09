@@ -330,6 +330,86 @@ describe("SessionFlowSankey", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("treats a missing run as work in progress on a self-analyzing surface", () => {
+    // BB-196: User Testing starts its own analysis, so "no run yet" is a run
+    // being arranged. Offering a button here is offering to do the thing that
+    // is already happening.
+    renderSankey({
+      breakdown: breakdown({ latestRun: null }),
+      analysisIsAutomatic: true,
+    });
+
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Analyze sessions/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/haven.t been analyzed yet/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps offering to analyze on a surface that waits to be asked", () => {
+    // The same state WITHOUT the promise. The benchmark diagram is the paid
+    // one and deliberately waits, so the default must not change.
+    renderSankey({ breakdown: breakdown({ latestRun: null }) });
+    expect(
+      screen.getByRole("button", { name: /Analyze sessions/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("reads an empty flow as building rather than as a prompt to build it", () => {
+    renderSankey({
+      breakdown: breakdown({
+        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
+        latestRun: null,
+      }),
+      analysisIsAutomatic: true,
+      onApplyTuning: vi.fn(),
+    });
+
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(screen.queryByText("No session flow yet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+    // The button goes; choosing HOW to cluster is still a thing to ask for.
+    expect(screen.getByTestId("cluster-tuning-trigger")).toBeInTheDocument();
+  });
+
+  it("stops advertising a rebuild while one is already running", () => {
+    // True on every surface, not just the self-analyzing ones: this branch
+    // used to offer "Rebuild clusters" during a rebuild.
+    renderSankey({
+      breakdown: breakdown({
+        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
+        latestRun: run({ status: "running" }),
+      }),
+    });
+
+    expect(screen.getByText(/Analyzing sessions/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Rebuild clusters/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still offers a rebuild on an empty flow a completed analysis produced", async () => {
+    // A finished run that clustered nothing IS a dead end a rebuild can move,
+    // so the affordance has to survive. Removing it as "required" must not
+    // remove it as available.
+    const user = userEvent.setup();
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({
+        sankey: { nodes: [], links: [], foldedGoalCount: 0, foldedByStage: {} },
+        latestRun: run(),
+      }),
+      analysisIsAutomatic: true,
+    });
+
+    expect(screen.getByText("No session flow yet")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Rebuild clusters/ }));
+    expect(onRebuild).toHaveBeenCalledTimes(1);
+  });
+
   it("draws each column header at its own column's x", () => {
     // Guards the misalignment that shipped: headers laid out by CSS across the
     // full panel while the columns lived in a fixed-width SVG.

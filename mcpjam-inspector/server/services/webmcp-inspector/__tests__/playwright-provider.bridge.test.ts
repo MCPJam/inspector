@@ -68,12 +68,19 @@ function harness(options: { onSend?: (method: string) => unknown } = {}) {
     onFrame: () => {},
   };
 
+  // A fake page with exactly one frame. The provider sweeps `page.frames()`
+  // to find frames that have their own CDP target; a page whose only frame is
+  // the main one is the ordinary case, and the sweep must find nothing to
+  // attach rather than nothing to call.
+  const mainFrame = { url: () => "https://example.test/book" };
   const page = {
     on: () => {},
     goto: async () => {},
     url: () => "https://example.test/book",
     evaluate: async () => true,
     screenshot: async () => Buffer.from("s"),
+    mainFrame: () => mainFrame,
+    frames: () => [mainFrame],
   } as unknown as Page;
 
   const session = new PlaywrightWebMcpSession(
@@ -182,6 +189,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
         return {};
       },
     });
+    const onlyFrame = { url: () => "https://example.test/book" };
     Reflect.set(h.session as unknown as { page: unknown }, "page", {
       on: () => {},
       goto: async (url: string) => {
@@ -190,6 +198,11 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
       url: () => "https://example.test/book",
       evaluate: async () => true,
       screenshot: async () => Buffer.from("s"),
+      // ONE object, returned by both: the provider skips the main frame by
+      // IDENTITY, so a fake that minted a fresh one per call would send it down
+      // the attach path instead.
+      mainFrame: () => onlyFrame,
+      frames: () => [onlyFrame],
     });
 
     await expect(h.session.start("https://example.test/book")).rejects.toThrow(
@@ -338,6 +351,7 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
 
   it("fails a session on a browser with no WebMCP page API", async () => {
     const h = harness();
+    const onlyFrame = { url: () => "u" };
     Reflect.set(
       h.session as unknown as { page: { evaluate: unknown } },
       "page",
@@ -346,6 +360,8 @@ describe("PlaywrightWebMcpSession — bridge adaptation", () => {
         goto: async () => {},
         url: () => "u",
         evaluate: async () => false,
+        mainFrame: () => onlyFrame,
+        frames: () => [onlyFrame],
       },
     );
     // Detected at start(), so creating a session fails fast with an explanation

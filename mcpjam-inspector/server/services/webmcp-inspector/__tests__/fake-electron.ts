@@ -28,6 +28,15 @@ import type { ElectronModuleLike } from "../electron-webview-provider";
 export interface CdpCall {
   method: string;
   params?: Record<string, unknown>;
+  /**
+   * The auto-attached session it was addressed to, if any.
+   *
+   * Electron's debugger carries `sessionId` on both `sendCommand` and the
+   * `message` event, which is the whole mechanism by which an out-of-process
+   * frame is reachable through ONE debugger. A fake that dropped it could not
+   * tell a command sent to a frame from one sent to the page.
+   */
+  sessionId?: string;
 }
 
 export class FakeDebugger extends EventEmitter {
@@ -54,14 +63,29 @@ export class FakeDebugger extends EventEmitter {
   async sendCommand(
     method: string,
     params?: Record<string, unknown>,
+    sessionId?: string,
   ): Promise<unknown> {
-    this.calls.push({ method, ...(params ? { params } : {}) });
-    return this.replies.get(method) ?? {};
+    this.calls.push({
+      method,
+      ...(params ? { params } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    });
+    // Session-scoped replies first, so a test can answer `Page.getFrameTree`
+    // differently for a frame than for the page it is in.
+    return (
+      this.replies.get(sessionId ? `${sessionId}:${method}` : method) ??
+      this.replies.get(method) ??
+      {}
+    );
   }
 
-  /** Play a protocol event back in Electron's own `(event, method, params)` shape. */
-  emitCdp(method: string, params: unknown): void {
-    this.emit("message", { preventDefault() {} }, method, params);
+  /**
+   * Play a protocol event back in Electron's own
+   * `(event, method, params, sessionId)` shape. Omitting `sessionId` is the
+   * page's own target, which is every event until something auto-attaches.
+   */
+  emitCdp(method: string, params: unknown, sessionId?: string): void {
+    this.emit("message", { preventDefault() {} }, method, params, sessionId);
   }
 
   methods(): string[] {

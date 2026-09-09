@@ -863,6 +863,10 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    githubCredentialPolicy: response?.githubCredentialPolicy as
+      | "no_customer_credentials"
+      | "suite_credentials"
+      | undefined,
     /**
      * This start was a REPLAY of an existing run (idempotency key hit, or the
      * keyless fingerprint window), not a launch.

@@ -20,21 +20,39 @@
  * Tool annotations, mirroring the CDP `WebMCP.Annotation` type exactly.
  *
  * TRUST BOUNDARY: these are claims made by the inspected page, which is
- * third-party content. They are safe to DISPLAY and must never decide whether
- * a model-triggered invocation needs approval. Beyond the usual "annotations
- * are hints" caveat, Chromium 151 does not even plumb the values through for
- * imperative registrations — a tool registered with `readOnly: true` is
- * reported here as `false` (asserted in `webmcp-cdp.spike.test.ts`). So an
- * absent or false `readOnly` says nothing at all about the tool.
+ * third-party content. They are safe to DISPLAY and must never decide whether a
+ * model-triggered invocation needs approval. A page that wants its tool run
+ * without a prompt has every incentive to say `readOnly: true`, and nothing
+ * checks it — so the rule is about WHO is speaking, not about how reliably we
+ * hear them.
+ *
+ * WHAT IS ACTUALLY REPORTED, per field, measured against Chromium 151.0.7922.34
+ * and asserted field by field in `webmcp-cdp.spike.test.ts`:
+ *
+ *   - `readOnly` and `untrustedContent` are carried through with the page's
+ *     values, from the `readOnlyHint` / `untrustedContentHint` keys the page API
+ *     reads. A tool that declared the BARE names instead is reported `false`,
+ *     because those are not the keys Blink looks at.
+ *   - `consequential` is not written at all by that build, even when the page
+ *     declares `consequentialHint`. Current Chromium does copy it, so this is a
+ *     fact about a version, and the spike fails when it changes.
+ *   - `autosubmit` can only come from markup (`<form toolautosubmit>`); an
+ *     imperative registration never carries it.
  */
 export interface WebMcpToolAnnotations {
-  /** "The tool does not modify any state." Advisory only — see above. */
+  /** "The tool does not modify any state." A page's claim — see above. */
   readOnly?: boolean;
   /** "Output may contain untrusted content, ex: UGC, 3rd party data." */
   untrustedContent?: boolean;
-  /** The page claims this tool may cause a consequential side effect. */
+  /**
+   * The page claims this tool may cause a consequential side effect.
+   *
+   * Never populated by the pinned Chromium, which does not copy
+   * `consequentialHint` — so absence here is "this build does not report it",
+   * not "the page said no".
+   */
   consequential?: boolean;
-  /** Set when a DECLARATIVE tool carried the autosubmit attribute. */
+  /** Set when a DECLARATIVE tool carried the `toolautosubmit` attribute. */
   autosubmit?: boolean;
 }
 
@@ -51,7 +69,16 @@ export interface WebMcpToolRef {
   name: string;
   /** Origin of the frame that registered it, at registration time. */
   origin: string;
-  /** True when the registering frame is not the main frame. */
+  /**
+   * True when the registering frame is not the main frame.
+   *
+   * Means what it says. It used to be able to describe only a SAME-ORIGIN
+   * subframe, because a cross-origin frame is a separate Chromium target whose
+   * tools never reach the page's CDP session — so a page whose tools lived in a
+   * third-party widget inspected as having none. The provider now attaches a
+   * session per such frame, so both kinds of subframe are listed, each under
+   * its own `origin`.
+   */
   fromSubframe: boolean;
 }
 
