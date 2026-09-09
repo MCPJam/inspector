@@ -36,63 +36,8 @@ import {
   type FailureCategory,
   type StageReason,
 } from "@mcpjam/sdk/contract";
-import type { StageAnalyticsFailureKind } from "@/lib/apis/eval-stage-analytics-api";
 
 // ── panel state ──────────────────────────────────────────────────────────────
-/**
- * What the panel is showing, as five mutually exclusive facts.
- *
- * `unsupported` and `unmeasuredLegacy` are deliberately NOT `empty`. "The
- * backend could not answer", "these runs finished before we measured this" and
- * "this suite has no runs" are three different things to know, and the one
- * thing none of them may look like is a funnel of zeros.
- */
-export type StageAnalyticsPanelState =
-  /** The read did not complete, or this deployment does not serve the route. */
-  | { kind: "unsupported"; message: string }
-  /** The route answered badly, or answered about something else. */
-  | { kind: "error"; message: string }
-  /** No runs at all yet — there is nothing to have measured. */
-  | { kind: "empty" }
-  /** The suite HAS runs, and none of them carries a document. Not a zero. */
-  | { kind: "unmeasuredLegacy"; runCount: number }
-  | { kind: "loading" }
-  | { kind: "ready"; rows: EvalStageAnalyticsV1[] };
-
-export function deriveStageAnalyticsPanelState(input: {
-  status: "idle" | "loading" | "ready" | "error";
-  rows: EvalStageAnalyticsV1[];
-  error: { message: string; kind: StageAnalyticsFailureKind } | null;
-  /** Whether the suite has runs at all — the legacy/empty distinction. */
-  runCount: number;
-  runsLoading: boolean;
-}): StageAnalyticsPanelState {
-  if (input.status === "error" && input.error) {
-    // A service failure and a contract failure are both visible states, and
-    // neither is an empty chart. They are split because only one of them is
-    // actionable by the reader: "try again later" versus "this is a bug".
-    if (
-      input.error.kind === "routeUnavailable" ||
-      input.error.kind === "requestFailed"
-    ) {
-      return { kind: "unsupported", message: input.error.message };
-    }
-    return { kind: "error", message: input.error.message };
-  }
-  if (input.status === "idle" || input.status === "loading") {
-    return { kind: "loading" };
-  }
-  if (input.rows.length > 0) return { kind: "ready", rows: input.rows };
-  // Zero rows is ambiguous on its own, and the run list is what disambiguates
-  // it. Hold the loading frame rather than guessing while runs are still
-  // arriving — guessing here would flash "no runs yet" at a suite that has
-  // hundreds.
-  if (input.runsLoading) return { kind: "loading" };
-  if (input.runCount > 0) {
-    return { kind: "unmeasuredLegacy", runCount: input.runCount };
-  }
-  return { kind: "empty" };
-}
 
 // ── rate formatting ──────────────────────────────────────────────────────────
 /** The words a zero denominator renders as. Never a percentage. */
@@ -402,7 +347,7 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
     // A truncated slice array that looked complete would read as "these are
     // all the models" — the false comparison the cap record exists to prevent.
     disclosures.push(
-      `Showing ${truncation.retained} of ${truncation.distinctValues} ${truncation.dimension} values — this is not the complete set.`,
+      `Showing ${truncation.retained} of ${truncation.distinctValues} ${truncation.dimension} values. This is not the complete set.`,
     );
   }
   const excluded = describeExclusions(row.excludedTrials);
@@ -414,11 +359,11 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
     runId: row.runId,
     provisional,
     materializationLabel: provisional
-      ? "provisional — a judge pass is still landing, so these numbers may change"
+      ? "provisional. A judge pass is still landing, so these numbers may change"
       : "final",
     includedTrials: row.includedTrials,
     totalTrials: row.totalTrials,
-    populationLabel: `${row.includedTrials} of ${row.totalTrials} trials in this run`,
+    populationLabel: `${row.includedTrials} of ${row.totalTrials} iterations in this run`,
     completedAt: row.runCompletedAt ?? null,
     disclosures,
     excludedDetail: describeExcludedTrialDetail(row.excludedTrialDetail),
@@ -435,5 +380,5 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
  */
 export function excludedDetailSummary(header: RunHeaderView): string {
   const excluded = header.totalTrials - header.includedTrials;
-  return `${excluded} of ${header.totalTrials} trials excluded — why`;
+  return `${excluded} of ${header.totalTrials} iterations excluded. Why`;
 }

@@ -210,3 +210,124 @@ export function parseHarnessToolName(
 export function serializeHarnessMcpJson(json: HarnessMcpJson): string {
   return JSON.stringify(json, null, 2);
 }
+
+/* ── ACP (Cursor CLI) shape ────────────────────────────────────────────────
+ *
+ * The Cursor harness takes its MCP servers as a CONSTRUCTOR setting
+ * (`createCursor({ mcpServers })`) which the adapter forwards into the ACP
+ * `session/new` request, rather than as a file MCPJam writes into the box. Same
+ * DELIVERY MODE as Claude Code (the runtime's own MCP client dials MCPJam's
+ * signed proxy, so every `tools/call` is observable there); different
+ * mechanism, and a different wire shape for the headers.
+ */
+
+/** One ACP MCP HTTP header. ACP spells headers as an ARRAY of name/value pairs,
+ *  not the object `.mcp.json` uses. */
+export interface AcpMcpHeader {
+  name: string;
+  value: string;
+}
+
+/** One ACP `session/new` MCP server entry (http transport). */
+export interface AcpMcpHttpServer {
+  type: "http";
+  url: string;
+  /**
+   * REQUIRED, and an empty array when there is nothing to send.
+   *
+   * Not optional-with-a-default: omitting the key entirely makes cursor-agent
+   * fail `session/new` with an opaque JSON-RPC `-32603` internal error that
+   * names neither the field nor the server. Verified against cursor-agent
+   * 2026.08.31 during the harness spike — always emit the key.
+   */
+  headers: AcpMcpHeader[];
+}
+
+/**
+ * The MCP server name ACP reserves for `HarnessAgent`'s own host-executed tool
+ * channel. `createACPV1` throws outright if a supplied server uses it.
+ */
+const ACP_RESERVED_MCP_SERVER_NAME = "ai-sdk-harness-tools";
+
+/**
+ * Convert the shared `.mcp.json` object into ACP's `mcpServers` map.
+ *
+ * The KEYS are preserved exactly, which is what keeps tool attribution working:
+ * `harnessServerKeyToName` is built from the same `assignServerKeys` pass, so a
+ * rename here would silently orphan every tool call from that server. That is
+ * also why a collision with ACP's reserved name throws instead of being
+ * re-keyed — losing attribution is worse than failing the turn, and the turn
+ * would fail in the adapter anyway, just with a message that names neither
+ * MCPJam nor the server.
+ */
+export function toAcpMcpServers(
+  json: HarnessMcpJson,
+): Record<string, AcpMcpHttpServer> {
+  const out: Record<string, AcpMcpHttpServer> = {};
+  for (const [key, entry] of Object.entries(json.mcpServers)) {
+    if (key === ACP_RESERVED_MCP_SERVER_NAME) {
+      throw new Error(
+        `MCP server key "${key}" is reserved by the ACP harness runtime for its own tool channel; ` +
+          "rename the server so it does not sanitize to that key.",
+      );
+    }
+    out[key] = {
+      type: "http",
+      url: entry.url,
+      // Always an array — see AcpMcpHttpServer.headers.
+      headers: Object.entries(entry.headers ?? {}).map(([name, value]) => ({
+        name,
+        value,
+      })),
+    };
+  }
+  return out;
+}
+
+/**
+ * Attribute a Cursor/ACP tool call to MCPJam tool identity.
+ *
+ * Cursor does NOT namespace MCP tools the way Claude Code does. Every MCP call
+ * arrives under an opaque, per-session `acp_tool_<id>` stream name, and the
+ * real identity rides in the call's INPUT:
+ *
+ *   { providerIdentifier: "<mcp server key>", toolName: "<tool>", args: {…} }
+ *
+ * So the raw name is useless here and the input is the only source. When the
+ * input carries no provider identity the call is one of Cursor's own built-ins
+ * (bash, read, edit, …) and passes through under the raw name — the same
+ * "don't fabricate an attribution" rule `parseHarnessToolName` follows.
+ *
+ * When the input DOES name a tool but its provider key is unresolvable, the
+ * tool name still comes back (it is firsthand from the input) with no
+ * `serverId`. That is the same rule, not an exception to it: the unknown part
+ * is the server mapping, and only that part is withheld. Returning the opaque
+ * `acp_tool_…` id instead would discard a fact we actually have.
+ *
+ * THE `user-` PREFIX. Cursor prefixes user-configured MCP providers with
+ * `user-` in `providerIdentifier` (`user-<key>`), but not universally — it
+ * depends on how the server was registered. So the exact key is tried FIRST and
+ * the stripped form only as a fallback; stripping unconditionally would
+ * mis-attribute a server whose own key legitimately begins with `user-`.
+ */
+export function attributeCursorToolCall(args: {
+  rawToolName: string;
+  input: unknown;
+  keyToServerId: Record<string, string>;
+}): { serverId?: string; toolName: string } {
+  const { rawToolName, input, keyToServerId } = args;
+  const record =
+    input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const provider = record.providerIdentifier;
+  const inner = record.toolName;
+  if (typeof provider !== "string" || typeof inner !== "string" || !inner) {
+    return { toolName: rawToolName };
+  }
+  // Exact key first, THEN the `user-`-stripped form. Never the other way round.
+  const serverId =
+    keyToServerId[provider] ??
+    (provider.startsWith("user-")
+      ? keyToServerId[provider.slice("user-".length)]
+      : undefined);
+  return serverId ? { serverId, toolName: inner } : { toolName: inner };
+}

@@ -7,7 +7,10 @@ import {
   executionEngineLabel,
   harnessOfHostConfig,
   hasSelectedMcpServersForAdmission,
+  resolveEvalCaseModelDefinition,
 } from "../harness-admission";
+import { harnessModelEligibleForRuntime } from "../../../utils/harness/harness-availability";
+import { getHarnessAdapter } from "../../../utils/harness/registry";
 
 /**
  * The gate that stops a harness-hosted eval run from silently executing on the
@@ -602,5 +605,116 @@ describe("checkEvalExecutionAdmission", () => {
     expect(verdict.reason).toContain("bash");
     expect(verdict.reason).not.toContain("web_search");
     expect(verdict.reason.match(/bash/g)).toHaveLength(2); // named twice in one sentence pair
+  });
+});
+
+/**
+ * ADMISSION AND EXECUTION HAVE TO AGREE, and on an external-account host they
+ * did not: admission reads the HOST's id (a per-case model cannot answer
+ * "does this host carry the runtime's sentinel?"), then execution carried the
+ * CASE's model to the dispatch, whose eligibility check saw a non-sentinel on
+ * an external-account harness and refused a run it had already admitted.
+ *
+ * A per-case model is normal and legitimate in evals — a suite names one per
+ * case and is then pointed at a host — so that refusal hit ordinary Cursor
+ * suites. The seam is closed by making the host's model authoritative in eval
+ * execution too, the way it already is on the chat rails.
+ */
+describe("external-account hosts: the host's model is what an eval case runs", () => {
+  const cursorHost = { harness: "cursor", modelId: "cursor/auto" };
+  const caseModel = {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Haiku",
+    provider: "anthropic" as const,
+  };
+
+  it("promotes the host's sentinel over the case's own model", () => {
+    const resolved = resolveEvalCaseModelDefinition({
+      hostConfig: cursorHost,
+      caseModel,
+    });
+
+    expect(resolved.id).toBe("cursor/auto");
+    // Carries the curated label and the registered provider, not a re-derived
+    // guess — the same definition the swarm runner builds for a pinned target.
+    expect(resolved.name).toBe("Cursor Auto");
+    expect(resolved.provider).toBe("cursor");
+  });
+
+  it("admits that case AND leaves it dispatchable — the two ends now agree", () => {
+    // The end this test exists for. Admission accepting while the dispatch
+    // refuses is the disagreement; asserting only the first half is what let it
+    // through.
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig: cursorHost,
+        serverIds: ["s1"],
+        cases: [
+          {
+            title: "a",
+            model: caseModel.id,
+            provider: caseModel.provider,
+          },
+        ],
+      })
+    ).toEqual({ ok: true, harness: "cursor" });
+
+    const resolved = resolveEvalCaseModelDefinition({
+      hostConfig: cursorHost,
+      caseModel,
+    });
+    expect(
+      harnessModelEligibleForRuntime({
+        adapter: getHarnessAdapter("cursor"),
+        modelId: String(resolved.id),
+        provider: resolved.provider,
+      })
+    ).toBe(true);
+  });
+
+  it("leaves a BROKERED harness host's case model alone", () => {
+    // The promotion is keyed on `modelAccess`, not on "the host runs a CLI". A
+    // Claude Code suite's per-case model is the model that actually runs.
+    expect(
+      resolveEvalCaseModelDefinition({
+        hostConfig: { harness: "claude-code", modelId: "openai/gpt-5-mini" },
+        caseModel,
+      }).id
+    ).toBe(caseModel.id);
+  });
+
+  it("leaves a non-harness host's case model alone", () => {
+    expect(
+      resolveEvalCaseModelDefinition({
+        hostConfig: { hostStyle: "mcpjam", modelId: "openai/gpt-5-mini" },
+        caseModel,
+      }).id
+    ).toBe(caseModel.id);
+    expect(
+      resolveEvalCaseModelDefinition({ hostConfig: null, caseModel }).id
+    ).toBe(caseModel.id);
+  });
+
+  it("does NOT promote a mis-configured external-account host's ordinary id", () => {
+    // Promoting it would launder a broken configuration into the run record.
+    // Admission refuses this host on its own id instead.
+    const misconfigured = {
+      harness: "cursor",
+      modelId: "anthropic/claude-sonnet-4.5",
+    };
+    expect(
+      resolveEvalCaseModelDefinition({ hostConfig: misconfigured, caseModel })
+        .id
+    ).toBe(caseModel.id);
+
+    const verdict = checkEvalHarnessAdmission({
+      hostConfig: misconfigured,
+      serverIds: ["s1"],
+      cases: [{ title: "a", model: caseModel.id, provider: caseModel.provider }],
+    });
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) {
+      expect(verdict.reason).toContain("anthropic/claude-sonnet-4.5");
+    }
   });
 });

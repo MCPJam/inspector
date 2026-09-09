@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { Loader2, Upload, FolderOpen, File, X } from "lucide-react";
+import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { track } from "@/lib/analytics";
 
 interface SkillUploadDialogProps {
@@ -59,17 +61,105 @@ export function SkillUploadDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  // Cloud-only: share the new skill with every project member (else personal).
-  const [shareWithProject, setShareWithProject] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isCloud = source?.kind === "cloud";
+
+  /**
+   * Which tier this member can actually write to.
+   *
+   * "Add to library" is ONE button, not a choice: an admin's skill goes to the
+   * project library, everyone else's lands personal because the backend
+   * (`projectSkills:createSkill`) refuses `sharing: 'project'` from a
+   * non-admin. Asking the user to tick a box for a permission they may not
+   * hold turns a plumbing detail into a decision, and refuses it after they
+   * have committed the upload.
+   *
+   * `canManageMembers` is the SAME backend authority as the skill gate — both
+   * resolve to `canManageProjectMembers` — and it fails closed to `false`, so
+   * a still-loading query uploads a personal skill rather than one the server
+   * will reject.
+   *
+   * Gated on `open` as well as on the cloud source: this dialog is mounted
+   * (closed) by every chat input, and an ungated query would hold a standing
+   * Convex subscription per mounted composer.
+   */
+  const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
+  const { canManageMembers: canManageShared, isLoading: roleLoading } =
+    useProjectMembers({
+      isAuthenticated: isAuthenticated && open && isCloud,
+      projectId: source?.kind === "cloud" ? source.projectId : null,
+    });
+  /**
+   * The role hasn't come back yet, so the tier is not yet knowable.
+   *
+   * `canManageShared` is `false` in this window, and merely failing closed is
+   * not good enough HERE: an admin who drops a folder and submits fast enough
+   * would silently land a personal skill, contradicting the rule the dialog
+   * itself states. Uploading is held for the moment it takes to answer, and
+   * the hint says so rather than showing the non-admin copy as if it were
+   * settled.
+   *
+   * `authLoading` is half of this, and the half that is easy to miss. While
+   * Convex auth hydrates, `isAuthenticated` reads FALSE — so the members query
+   * is not enabled, so `roleLoading` is false too, and the role looks settled
+   * at "not an admin" when nothing has been asked yet. Waiting on
+   * `roleLoading` alone would leave exactly the bug this guard exists to
+   * close, one layer up.
+   *
+   * False whenever the question does not arise (local mode, dialog closed),
+   * so nothing is ever held on something that was never asked.
+   */
+  const rolePending = isCloud && (authLoading || roleLoading);
+  /**
+   * The last DECIDED role for this project, so a reconnect doesn't re-ask.
+   *
+   * The members list does not load only once: the Convex client throws its
+   * whole remote query set away on every websocket reconnect, so `useQuery`
+   * goes back to `undefined` until the first transition lands. Without a latch
+   * a reconnect while the dialog is OPEN — role long since resolved, files
+   * already picked — would re-disable the button and flip the hint back to
+   * "Checking your role…", freezing a submit mid-flow over a question that was
+   * answered minutes ago. Same reasoning, and the same shape, as
+   * `useViewerProjectRole`.
+   *
+   * Written only while the query is genuinely ENABLED. A decision recorded
+   * while the dialog was closed would be `false` by default — the query is
+   * skipped then — and reusing it on open would restore exactly the bug the
+   * guard exists to close.
+   *
+   * Scoped to ONE open session, and dropped on close. Carrying it further
+   * would answer the next session's question with the last session's answer:
+   * an admin who is demoted between opening the dialog twice would reopen to
+   * an enabled button that uploads `sharing: 'project'` before the new query
+   * lands, and the server would refuse it. A reconnect is a re-load of a
+   * question already asked; a reopen is a new question.
+   *
+   * Keyed on the project, and every later resolution overwrites it, so a
+   * revoked role takes effect as soon as the list says so.
+   */
+  const roleQueryActive = isAuthenticated && open && isCloud;
+  const roleKey = source?.kind === "cloud" ? source.projectId : "";
+  const decidedRoleRef = useRef<{ key: string; canManage: boolean } | null>(
+    null,
+  );
+  if (!open) {
+    decidedRoleRef.current = null;
+  } else if (roleQueryActive && !rolePending) {
+    decidedRoleRef.current = { key: roleKey, canManage: canManageShared };
+  }
+  const decidedRole = decidedRoleRef.current;
+  const usingDecidedRole = rolePending && decidedRole?.key === roleKey;
+  const roleResolving = rolePending && !usingDecidedRole;
+  /** What the dialog acts on: the live answer, or the latched one mid-reconnect. */
+  const resolvedCanManage = usingDecidedRole
+    ? decidedRole!.canManage
+    : canManageShared;
 
   const resetForm = () => {
     setFiles([]);
     setSkillInfo(null);
     setError(null);
     setIsDragOver(false);
-    setShareWithProject(false);
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -209,7 +299,8 @@ export function SkillUploadDialog({
     setIsLoading(true);
 
     try {
-      const sharing = isCloud && shareWithProject ? "project" : "user";
+      // Resolved from the member's role, never from a form control.
+      const sharing = isCloud && resolvedCanManage ? "project" : "user";
       const skill = await uploadSkillFolder(
         files,
         skillInfo.name,
@@ -222,7 +313,20 @@ export function SkillUploadDialog({
         file_count: files.length,
         sharing,
       });
-      onSkillCreated?.(skill);
+      // Stamped with the source it was WRITTEN to — ALWAYS, local included.
+      //
+      // An absent `source` is not "no source": `uploadSkillFolder` reads it the
+      // way the rest of this API does, so undefined means the local filesystem
+      // route (`/api/mcp/skills/upload-folder`). Recording that as
+      // `{kind:'local'}` describes where the bytes went; it is what the picker
+      // already stamps on local rows, not an invention.
+      //
+      // It matters for the same reason it does there: `SkillResultCard` falls
+      // back to the composer's ambient source for an unstamped result, and
+      // that source now follows the active project. A skill uploaded before a
+      // project synced, and expanded after, would otherwise have its
+      // supporting files read out of Convex.
+      onSkillCreated?.({ ...skill, source: source ?? { kind: "local" } });
       handleOpenChange(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -242,8 +346,8 @@ export function SkillUploadDialog({
   };
 
   const isSubmitDisabled = useMemo(() => {
-    return files.length === 0 || !skillInfo || isLoading;
-  }, [files.length, skillInfo, isLoading]);
+    return files.length === 0 || !skillInfo || isLoading || roleResolving;
+  }, [files.length, skillInfo, isLoading, roleResolving]);
 
   // Get folder name from paths (for display)
   const folderName = useMemo(() => {
@@ -257,7 +361,9 @@ export function SkillUploadDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload Skill</DialogTitle>
+          <DialogTitle>
+            {isCloud ? "Add to library" : "Upload Skill"}
+          </DialogTitle>
           <DialogDescription>
             {source?.kind === "cloud" ? (
               <>
@@ -401,24 +507,15 @@ export function SkillUploadDialog({
             </div>
           )}
 
-          {/* Cloud-only: share with the whole project (else personal). */}
+          {/* Where it lands — stated, not asked. See `canManageShared`. */}
           {isCloud && (
-            <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={shareWithProject}
-                onChange={(e) => setShareWithProject(e.target.checked)}
-                disabled={isLoading}
-                className="mt-0.5"
-              />
-              <span>
-                Share with the project
-                <span className="block text-xs text-muted-foreground">
-                  Every member can see and use it. Otherwise it stays personal
-                  (only you). Publishing to a project requires admin.
-                </span>
-              </span>
-            </label>
+            <p className="text-xs text-muted-foreground">
+              {roleResolving
+                ? "Checking your role in this project…"
+                : resolvedCanManage
+                  ? "This skill will be added to the project library. Every member can see and use it."
+                  : "This will be added as a personal skill — only you can use it. A project admin can publish it to the project library."}
+            </p>
           )}
 
           {/* Error message */}
@@ -453,7 +550,7 @@ export function SkillUploadDialog({
               ) : (
                 <>
                   <Upload className="h-4 w-4 mr-2" />
-                  Upload Skill
+                  {isCloud ? "Add to library" : "Upload Skill"}
                 </>
               )}
             </Button>

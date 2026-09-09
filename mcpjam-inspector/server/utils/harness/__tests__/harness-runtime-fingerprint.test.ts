@@ -17,6 +17,50 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  // The consented PROFILE is part of the lane. A user who narrows their grant
+  // from workspace-edits to read-only must not resume the session that was
+  // created under the wider terms — the resumed bridge already exists and keeps
+  // whatever it was started with.
+  it("changes when the consented permission profile changes", () => {
+    const local = {
+      ...base,
+      permissionMode: "allow-edits",
+      localTarget: {
+        runtimeId: "rt_1",
+        workspaceGrantId: "ws_1",
+        policyVersion: "v1",
+        permissionProfile: "workspace-edits",
+      },
+    };
+    const narrowed = {
+      ...local,
+      // Both move together in production — the mode is DERIVED from the
+      // profile — but they are asserted separately so neither alone is load
+      // bearing.
+      permissionMode: "allow-reads",
+      localTarget: { ...local.localTarget, permissionProfile: "read-only" },
+    };
+    expect(harnessRuntimeFingerprint(local)).not.toBe(
+      harnessRuntimeFingerprint(narrowed),
+    );
+    // …and the profile alone forks it, even if a future mapping gave two
+    // profiles the same mode.
+    expect(harnessRuntimeFingerprint(local)).not.toBe(
+      harnessRuntimeFingerprint({
+        ...local,
+        localTarget: { ...local.localTarget, permissionProfile: "read-only" },
+      }),
+    );
+  });
+
+  it("keeps a hosted turn hashing exactly as it did before local targets existed", () => {
+    // `localTarget` is appended only when present, so every existing hosted
+    // session keeps resuming across this deploy.
+    expect(harnessRuntimeFingerprint(base)).toBe(
+      harnessRuntimeFingerprint({ ...base, localTarget: undefined }),
+    );
+  });
+
   it("changes when the harness id changes — a Codex turn must NOT resume a Claude Code lane", () => {
     // Identical model/servers/permission, different runtime ⇒ different lane.
     expect(harnessRuntimeFingerprint(base)).not.toBe(

@@ -3,7 +3,6 @@ import {
   formatDurationMs,
   formatCompactNumber,
 } from "../evals/metric-strip-data";
-import { computeIterationResult } from "../evals/pass-criteria";
 import {
   getEffectiveSuiteServers,
   iterationLatencyP50,
@@ -13,17 +12,15 @@ import {
 } from "../evals/helpers";
 import { computeRunEffectiveStats } from "../evals/suite-runs-list";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import { RUN_ORIGIN_META, resolveRunOrigin } from "@/lib/evals/run-origin";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../evals/types";
 
 export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
-
-const SOURCE_LABEL: Record<NonNullable<EvalSuiteRun["source"]>, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  api: "API",
-  schedule: "Scheduled",
-  github_check: "GitHub",
-};
 
 export type SuiteIdentityCounts = {
   caseCount: number;
@@ -69,6 +66,7 @@ export type RunHistoryVerdict =
 
 export type SuiteRunHistoryRow = {
   runId: string;
+  runLabel?: string;
   date: number;
   dateLabel: string;
   /**
@@ -93,7 +91,6 @@ export type SuiteRunHistoryRow = {
   verdict: RunHistoryVerdict;
   verdictLabel: string;
   passRate: number | null;
-  topFailureSignature: string | null;
   platform: string;
   source: NonNullable<EvalSuiteRun["source"]>;
   client: string | null;
@@ -124,12 +121,18 @@ export type SuiteRunHistoryFilterOptions = {
   models: string[];
 };
 
-function runTimestamp(run: EvalSuiteRun): number {
-  return run.completedAt ?? run.createdAt ?? run._creationTime ?? 0;
+/**
+ * When a run happened, for ordering and display. `createdAt` is typed as
+ * required, but rows from older deployments have reached this through
+ * `_creationTime` alone, so every reader goes through this fallback chain
+ * rather than subtracting a possibly-absent field.
+ */
+export function runTimestamp(run: EvalSuiteRun): number {
+  return run.createdAt ?? run._creationTime ?? run.completedAt ?? 0;
 }
 
 export function formatSuiteRunDate(timestamp: number): string {
-  if (!timestamp) return "—";
+  if (!timestamp) return "-";
   const date = new Date(timestamp);
   const now = new Date();
   return date.toLocaleDateString(undefined, {
@@ -161,6 +164,12 @@ export function resolveRunHistoryVerdict(
   if (run.status === "pending") {
     return { verdict: "pending", label: "Pending" };
   }
+  // Held for its judge: execution is over, the verdict is not. The pass rate
+  // below is pre-judge, so reading Ship or Hold off it would publish a
+  // decision the judge may still reverse.
+  if (run.status === "grading") {
+    return { verdict: "running", label: "Grading" };
+  }
   if (run.status === "cancelled" || run.result === "cancelled") {
     return { verdict: "cancelled", label: "Cancelled" };
   }
@@ -184,44 +193,14 @@ export function resolveRunHistoryVerdict(
 }
 
 export function runPlatformLabel(run: EvalSuiteRun): string {
-  const source = run.source ?? "ui";
-  const sourceLabel = SOURCE_LABEL[source] ?? SOURCE_LABEL.ui;
+  // The same resolution and the same table the badge and the filter chips use.
+  // This was a fourth hand-copied label list, and it could only ever say `API`
+  // for a CLI run, a GitHub Actions job or an MCP agent — the three things
+  // `source` cannot tell apart.
+  const origin = resolveRunOrigin(run);
+  const meta = RUN_ORIGIN_META[origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
   const ciId = run.ciMetadata?.pipelineId ?? run.ciMetadata?.jobId;
-  return ciId ? `${sourceLabel} #${ciId}` : sourceLabel;
-}
-
-function mostCommon(values: string[]): string | null {
-  if (values.length === 0) return null;
-  const counts = new Map<string, number>();
-  for (const value of values) {
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  }
-  let best = values[0];
-  let bestCount = 0;
-  for (const [value, count] of counts) {
-    if (count > bestCount) {
-      best = value;
-      bestCount = count;
-    }
-  }
-  return best;
-}
-
-export function topFailureSignature(
-  iterations: readonly EvalIteration[],
-): string | null {
-  const failed = iterations.filter(
-    (iteration) => computeIterationResult(iteration) === "failed",
-  );
-  if (failed.length === 0) return null;
-  const errors = failed
-    .map((iteration) => iteration.error?.trim())
-    .filter((error): error is string => Boolean(error));
-  if (errors.length > 0) return mostCommon(errors);
-  const titles = failed
-    .map((iteration) => iteration.testCaseSnapshot?.title?.trim())
-    .filter((title): title is string => Boolean(title));
-  return mostCommon(titles);
+  return ciId ? `${meta.label} #${ciId}` : meta.label;
 }
 
 function runClientLabel(
@@ -274,7 +253,11 @@ export function buildSuiteRunHistoryRows(
   }
 
   return [...runs]
-    .sort((a, b) => runTimestamp(b) - runTimestamp(a))
+    .sort(
+      (a, b) =>
+        runTimestamp(b) - runTimestamp(a) ||
+        (b.runNumber ?? 0) - (a.runNumber ?? 0),
+    )
     .map((run) => {
       const iterations = iterationsByRun.get(run._id) ?? [];
       const stats = computeRunEffectiveStats(run, iterations);
@@ -289,6 +272,7 @@ export function buildSuiteRunHistoryRows(
       const toolCalls = sumToolCalls(iterations);
       return {
         runId: run._id,
+        runLabel: run.runNumber ? `#${run.runNumber}` : run._id.slice(0, 8),
         date,
         dateLabel: formatSuiteRunDate(date),
         status: run.status,
@@ -296,11 +280,12 @@ export function buildSuiteRunHistoryRows(
         verdict,
         verdictLabel: label,
         passRate: stats.passRate,
-        topFailureSignature: topFailureSignature(iterations),
         platform: runPlatformLabel(run),
         source: run.source ?? "ui",
         client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
-        models: runModels(iterations),
+        models: run.effectiveModelId
+          ? [run.effectiveModelId]
+          : runModels(iterations),
         latencyMs: iterationLatencyP50(iterations),
         tokens: tokens > 0 ? tokens : null,
         toolCalls: toolCalls > 0 ? toolCalls : null,
@@ -325,7 +310,8 @@ export function buildSuiteRunHistoryAggregates(
     totalTokens: totalTokens > 0 ? totalTokens : null,
     latencyP50: iterationLatencyP50(iterations),
     latencyP95: iterationLatencyP95(iterations),
-    tokensPerRun: runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
+    tokensPerRun:
+      runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
     toolCallsPerRun:
       runCount > 0 && totalToolCalls > 0 ? totalToolCalls / runCount : null,
   };
@@ -342,9 +328,9 @@ export function runHistoryFilterOptions(
         .filter((client): client is string => Boolean(client)),
     ),
   ].sort((a, b) => a.localeCompare(b));
-  const models = [
-    ...new Set(rows.flatMap((row) => row.models)),
-  ].sort((a, b) => a.localeCompare(b));
+  const models = [...new Set(rows.flatMap((row) => row.models))].sort((a, b) =>
+    a.localeCompare(b),
+  );
   return { verdicts, clients, models };
 }
 
@@ -370,9 +356,43 @@ export function formatRunHistoryMetric(
   value: number | null,
   kind: "number" | "duration",
 ): string {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (kind === "duration") return formatDurationMs(value);
   return formatCompactNumber(value);
+}
+
+const RUN_HISTORY_DAY: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+};
+
+export function formatRunHistoryDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
+  return new Date(timestamp).toLocaleString(undefined, {
+    ...RUN_HISTORY_DAY,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Earliest → latest calendar day for a suite group. Same day collapses to one date. */
+export function formatRunHistoryDateRange(
+  earliest: number,
+  latest: number,
+): string {
+  const timestamps = [earliest, latest].filter(
+    (timestamp) => Number.isFinite(timestamp) && timestamp > 0,
+  );
+  if (timestamps.length === 0) return "-";
+  const start = new Date(Math.min(...timestamps));
+  const end = new Date(Math.max(...timestamps));
+  const startLabel = start.toLocaleString(undefined, RUN_HISTORY_DAY);
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  if (sameDay) return startLabel;
+  return `${startLabel} – ${end.toLocaleString(undefined, RUN_HISTORY_DAY)}`;
 }
 
 export type SuiteTestCaseRow = {
@@ -428,6 +448,7 @@ export function buildSuiteTestCaseRows(
 
 export function suiteRunBlockedReason({
   caseCount,
+  draftCount = 0,
   hasServersConfigured,
   isEnvironmentSuite,
   isRerunning,
@@ -436,6 +457,7 @@ export function suiteRunBlockedReason({
   evalRunsDisabledReason,
 }: {
   caseCount: number;
+  draftCount?: number;
   hasServersConfigured: boolean;
   isEnvironmentSuite: boolean;
   isRerunning: boolean;
@@ -447,7 +469,13 @@ export function suiteRunBlockedReason({
   if (!isEnvironmentSuite && !hasServersConfigured) {
     return "Configure suite servers before running the full suite.";
   }
-  if (caseCount === 0) return "Add a test case first.";
+  if (caseCount === 0) {
+    return draftCount > 0
+      ? `${draftCount} generated ${
+          draftCount === 1 ? "draft is" : "drafts are"
+        } waiting to be added. Use “Add all to suite” on the suite page before running.`
+      : "Add a test case first.";
+  }
   if (isRerunning || isReplaying) {
     return "A suite or replay is already in progress.";
   }

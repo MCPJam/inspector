@@ -180,6 +180,20 @@ export function wrapTransportForLogging(
       return (this.inner as any).sessionId;
     }
 
+    /**
+     * Forwarded, not defaulted. The protocol layer reads this to pick the
+     * era-correct cancellation signal: on 2026-07-28 a transport that owns a
+     * per-request stream is cancelled by ABORTING that stream, and only a
+     * transport without one falls back to POSTing `notifications/cancelled`.
+     * A wrapper that swallows the flag silently downgrades every modern
+     * connection to the legacy signal — which the 2026 spec says a server
+     * neither requires nor expects, and which never reaches the in-flight
+     * request on stateless HTTP.
+     */
+    get hasPerRequestStream(): boolean | undefined {
+      return (this.inner as any).hasPerRequestStream;
+    }
+
     setProtocolVersion?(version: string): void {
       if (typeof this.inner.setProtocolVersion === "function") {
         this.inner.setProtocolVersion(version);
@@ -397,6 +411,20 @@ export function wrapTransportForDroppedListChanged(
       return (this.inner as any).sessionId;
     }
 
+    /**
+     * Forwarded, not defaulted. The protocol layer reads this to pick the
+     * era-correct cancellation signal: on 2026-07-28 a transport that owns a
+     * per-request stream is cancelled by ABORTING that stream, and only a
+     * transport without one falls back to POSTing `notifications/cancelled`.
+     * A wrapper that swallows the flag silently downgrades every modern
+     * connection to the legacy signal — which the 2026 spec says a server
+     * neither requires nor expects, and which never reaches the in-flight
+     * request on stateless HTTP.
+     */
+    get hasPerRequestStream(): boolean | undefined {
+      return (this.inner as any).hasPerRequestStream;
+    }
+
     setProtocolVersion?(version: string): void {
       if (typeof this.inner.setProtocolVersion === "function") {
         this.inner.setProtocolVersion(version);
@@ -490,6 +518,20 @@ export function wrapTransportForTaskResults(transport: Transport): Transport {
 
     get sessionId(): string | undefined {
       return (this.inner as any).sessionId;
+    }
+
+    /**
+     * Forwarded, not defaulted. The protocol layer reads this to pick the
+     * era-correct cancellation signal: on 2026-07-28 a transport that owns a
+     * per-request stream is cancelled by ABORTING that stream, and only a
+     * transport without one falls back to POSTing `notifications/cancelled`.
+     * A wrapper that swallows the flag silently downgrades every modern
+     * connection to the legacy signal — which the 2026 spec says a server
+     * neither requires nor expects, and which never reaches the in-flight
+     * request on stateless HTTP.
+     */
+    get hasPerRequestStream(): boolean | undefined {
+      return (this.inner as any).hasPerRequestStream;
     }
 
     setProtocolVersion?(version: string): void {
@@ -675,6 +717,20 @@ export function wrapTransportForFirstPageOnly(transport: Transport): Transport {
 
     get sessionId(): string | undefined {
       return (this.inner as any).sessionId;
+    }
+
+    /**
+     * Forwarded, not defaulted. The protocol layer reads this to pick the
+     * era-correct cancellation signal: on 2026-07-28 a transport that owns a
+     * per-request stream is cancelled by ABORTING that stream, and only a
+     * transport without one falls back to POSTing `notifications/cancelled`.
+     * A wrapper that swallows the flag silently downgrades every modern
+     * connection to the legacy signal — which the 2026 spec says a server
+     * neither requires nor expects, and which never reaches the in-flight
+     * request on stateless HTTP.
+     */
+    get hasPerRequestStream(): boolean | undefined {
+      return (this.inner as any).hasPerRequestStream;
     }
 
     setProtocolVersion?(version: string): void {

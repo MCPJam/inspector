@@ -22,6 +22,46 @@ interface ElectronAPI {
     showMessageBox: (options: any) => Promise<any>;
   };
 
+  /**
+   * Local harness. `pickWorkspace` opens the OS directory dialog in the MAIN
+   * process and registers what the user chose, returning an opaque grant id and
+   * a tilde-shortened display root. The renderer never sees or sends a path —
+   * if it could name one, anything that can drive the renderer could name `/`.
+   */
+  localHarness: {
+    pickWorkspace: () => Promise<{
+      workspaceGrantId: string;
+      displayRoot: string;
+    } | null>;
+    keystoreAvailable: () => Promise<boolean>;
+  };
+
+  /**
+   * The agent's browser as a REAL view, not a picture of one.
+   *
+   * On the desktop app the browser is a `WebContentsView` in this process, so
+   * the pane asks the MAIN process to parent it into the app's own window at
+   * the rail's bounds instead of watching a JPEG screencast of it. The
+   * renderer names a boot id and a rectangle and nothing else — it cannot name
+   * a window, a `webContents` or a partition — and `setViewport` answers with
+   * what actually happened, because the DAEMON's lease decides whether the
+   * view is shown and whether it takes input.
+   */
+  agentBrowser: {
+    /** Can this build show a native view at all? Asked before any browser. */
+    capability: () => Promise<{ available: boolean }>;
+    setViewport: (request: {
+      bootId: string;
+      holder?: string;
+      visible: boolean;
+      bounds?: { x: number; y: number; width: number; height: number };
+    }) => Promise<{
+      shown: boolean;
+      inputAllowed: boolean;
+      reason?: "unknown" | "no_window" | "bad_bounds" | "lease";
+    }>;
+  };
+
   // Window operations
   window: {
     minimize: () => void;
@@ -69,6 +109,18 @@ const electronAPI: ElectronAPI = {
     openDialog: (options) => ipcRenderer.invoke("dialog:open", options),
     saveDialog: (data) => ipcRenderer.invoke("dialog:save", data),
     showMessageBox: (options) => ipcRenderer.invoke("dialog:message", options),
+  },
+
+  localHarness: {
+    pickWorkspace: () => ipcRenderer.invoke("local-harness:pick-workspace"),
+    keystoreAvailable: () =>
+      ipcRenderer.invoke("local-harness:keystore-available"),
+  },
+
+  agentBrowser: {
+    capability: () => ipcRenderer.invoke("agent-browser:capability"),
+    setViewport: (request) =>
+      ipcRenderer.invoke("agent-browser:set-viewport", request),
   },
 
   window: {

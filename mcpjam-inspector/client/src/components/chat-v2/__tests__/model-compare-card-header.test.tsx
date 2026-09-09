@@ -183,7 +183,7 @@ describe("ModelCompareCardHeader", () => {
     );
   });
 
-  it("uses the sidebar-selected styling for full-width trace tabs", () => {
+  it("uses segment styling for full-width trace tabs", () => {
     render(
       <ModelCompareCardHeader
         model={model}
@@ -196,9 +196,11 @@ describe("ModelCompareCardHeader", () => {
       />,
     );
 
+    // The full-width header bar now renders the same segment chrome as the
+    // inline preview tabs above, so both surfaces read as one control.
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-accent",
-      "text-accent-foreground",
+      "bg-background",
+      "ring-inset",
     );
   });
 
@@ -628,5 +630,41 @@ describe("ModelCompareCardHeader", () => {
 
     expect(screen.getByTitle("Trace")).toBeInTheDocument();
     expect(screen.queryByText("Results")).not.toBeInTheDocument();
+  });
+});
+
+describe("ModelCompareCardHeader — the Scorecard tab", () => {
+  const props = {
+    model,
+    summary: idleSummary,
+    allSummaries: [],
+    mode: "chat" as const,
+    showTraceTabs: true,
+    showComparisonChrome: false,
+    // What RunColumn passes; the tabs row only renders inline.
+    tabsInline: true,
+  };
+
+  it("stays absent unless the surface offers one", () => {
+    render(<ModelCompareCardHeader {...props} onModeChange={vi.fn()} />);
+    expect(
+      screen.queryByTestId("trace-viewer-scorecard-tab"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("appears and reports its own selection", () => {
+    const onSelectScorecard = vi.fn();
+    render(
+      <ModelCompareCardHeader
+        {...props}
+        onModeChange={vi.fn()}
+        showScorecardTab
+        onSelectScorecard={onSelectScorecard}
+      />,
+    );
+    const tab = screen.getByTestId("trace-viewer-scorecard-tab");
+    expect(tab).toBeInTheDocument();
+    tab.click();
+    expect(onSelectScorecard).toHaveBeenCalled();
   });
 });

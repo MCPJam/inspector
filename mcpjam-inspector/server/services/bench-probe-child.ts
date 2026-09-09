@@ -322,6 +322,12 @@ export async function runBenchmarkAuthProbe(
     {
       serverUrl: args.serverUrl,
       ...(args.allowLoopback ? { allowLoopback: true } : {}),
+      // Explicitly strict whatever the deployment: the preflight's local
+      // default permits private targets, and a scorecard about a server
+      // nobody else can reach is still not evidence. Note this stays `false`
+      // even when `allowLoopback` is set — that opt-in is for loopback, and
+      // deriving this from it would quietly widen it to the whole LAN.
+      allowPrivateNetwork: false,
       ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
     },
     dependencies,

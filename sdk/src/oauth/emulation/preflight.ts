@@ -121,6 +121,12 @@ export interface EmulatedOAuthPreflightConfig {
   requestExecutor?: OAuthRequestExecutor;
   allowLoopbackMetadataFetch?: boolean;
   /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local).
+   * The LOCAL inspector's default; hosted surfaces leave it unset. Link-local
+   * and cloud-metadata destinations stay refused either way.
+   */
+  allowPrivateMetadataFetch?: boolean;
+  /**
    * Defaults to "warn": emulation is an observational surface, and rejecting
    * an odd resource indicator would hide the very server behavior the run
    * exists to expose.
@@ -190,7 +196,10 @@ export interface EmulatedOAuthPreflightResult {
  * The hardened default executor. Runs every OAuth and MCP request through the
  * SSRF-hardened proxy path rather than a bare `fetch`.
  */
-function createHardenedExecutor(timeoutMs: number): OAuthRequestExecutor {
+function createHardenedExecutor(
+  timeoutMs: number,
+  allowPrivateNetwork: boolean
+): OAuthRequestExecutor {
   return async (request: OAuthHttpRequest): Promise<OAuthRequestResult> => {
     const response = await executeOAuthProxy({
       url: request.url,
@@ -199,6 +208,7 @@ function createHardenedExecutor(timeoutMs: number): OAuthRequestExecutor {
       headers: request.headers,
       redirect: request.redirect,
       timeoutMs,
+      allowPrivateNetwork,
     });
     return {
       status: response.status,
@@ -357,11 +367,13 @@ export async function runEmulatedOAuthPreflight(
     maxSteps = DEFAULT_MAX_STEPS,
     completeAuthorization,
     allowLoopbackMetadataFetch,
+    allowPrivateMetadataFetch,
     resourceIndicatorEnforcement = "warn",
   } = config;
 
   const executor =
-    config.requestExecutor ?? createHardenedExecutor(timeoutMs);
+    config.requestExecutor ??
+    createHardenedExecutor(timeoutMs, allowPrivateMetadataFetch ?? false);
   const protocolVersion = derived.protocolVersion;
   const divergences: OAuthEmulationDivergence[] = [...derived.divergences];
   const attempts: EmulatedAuthAttemptResult[] = [];
@@ -387,6 +399,7 @@ export async function runEmulatedOAuthPreflight(
   ): Promise<OAuthRequestResult> => {
     assertOutboundOAuthUrlAllowed(serverUrl, {
       allowLoopback: allowLoopbackMetadataFetch ?? false,
+      allowPrivateNetwork: allowPrivateMetadataFetch ?? false,
     });
     const mcpVersion = resolveEmulatedMcpVersion(
       derived.emulation,
@@ -527,6 +540,7 @@ export async function runEmulatedOAuthPreflight(
           customHeaders,
           resourceIndicatorEnforcement,
           allowLoopbackMetadataFetch,
+          allowPrivateMetadataFetch,
           maxSteps,
           loadPreregisteredCredentials: preregistered
             ? () => ({

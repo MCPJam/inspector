@@ -2,9 +2,8 @@
  * Shared chrome for detail pages (Swarm run, User Testing scenario, …).
  *
  * Layout:
- *   Row: [back] | [title]                         [actions]
+ *   Row: [back] | [title]  [tabs]                 [actions]
  *   Optional body (children)
- *   Tabs flush to the bottom border
  *
  * Surfaces keep different title/body content; spacing, back-link style, and
  * tab placement live here so a chrome tweak applies everywhere.
@@ -17,7 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const TAB_CLASSNAME =
-  "-ml-3 justify-start overflow-x-visible md:w-auto [&_button]:min-h-9 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-sm sm:[&_button]:min-h-9 sm:[&_button]:px-3.5 sm:[&_button]:text-sm md:[&_button]:min-h-9 lg:[&_button]:px-4";
+  "w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 export function DetailBackLink({
   label,
@@ -71,8 +70,7 @@ export function DetailPageHeader<T extends string>({
   return (
     <div
       className={cn(
-        "relative shrink-0 border-b border-border/40 px-8 pt-2.5",
-        tabs ? "pb-0" : "pb-3",
+        "relative shrink-0 border-b border-border/40 px-8 pt-2.5 pb-2.5",
         className,
       )}
       data-testid={testId}
@@ -89,6 +87,22 @@ export function DetailPageHeader<T extends string>({
             aria-hidden="true"
           />
           <div className="min-w-0">{title}</div>
+          {tabs ? (
+            <>
+              <div
+                className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
+                aria-hidden="true"
+              />
+              <ViewModeSelector
+                value={tabs.value}
+                options={tabs.options}
+                onChange={tabs.onChange}
+                ariaLabel={tabs.ariaLabel}
+                indicatorId={tabs.indicatorId}
+                className={TAB_CLASSNAME}
+              />
+            </>
+          ) : null}
         </div>
         {actions ? (
           <div className="flex shrink-0 items-center gap-2">{actions}</div>
@@ -96,17 +110,6 @@ export function DetailPageHeader<T extends string>({
       </div>
 
       {children ? <div className="mt-3 min-w-0">{children}</div> : null}
-
-      {tabs ? (
-        <ViewModeSelector
-          value={tabs.value}
-          options={tabs.options}
-          onChange={tabs.onChange}
-          ariaLabel={tabs.ariaLabel}
-          indicatorId={tabs.indicatorId}
-          className={TAB_CLASSNAME}
-        />
-      ) : null}
     </div>
   );
 }

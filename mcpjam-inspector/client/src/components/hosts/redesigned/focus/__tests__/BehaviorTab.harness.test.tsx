@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { BehaviorTab } from "../BehaviorTab";
@@ -9,11 +9,33 @@ import { BehaviorTab } from "../BehaviorTab";
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
+// The approval switch now asks the server which transport a harness runs,
+// because that answer is no longer a property of the harness name. Default the
+// stub to "no answer" so every existing case still exercises the STATIC map;
+// the two cases at the bottom override it.
+const capabilitiesAnswer = vi.hoisted(() => ({
+  current: undefined as { supportsNativeToolApproval: boolean } | undefined,
+}));
+vi.mock("@/hooks/useHarnessCapabilities", () => ({
+  useHarnessCapabilities: () => ({
+    capabilities: capabilitiesAnswer.current,
+    loading: false,
+  }),
+}));
 vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
-  ModelSelector: () => <div data-testid="model-selector" />,
+  // Carries `disabled` through: it is the prop the harness gating decides, and
+  // a stub that swallowed it would let the model selector silently un-gate.
+  ModelSelector: ({ disabled }: { disabled?: boolean }) => (
+    <div
+      data-testid="model-selector"
+      data-disabled={disabled ? "true" : undefined}
+    />
+  ),
 }));
 
-function renderBehaviorTab(partial?: Parameters<typeof emptyHostConfigInputV2>[0]) {
+function renderBehaviorTab(
+  partial?: Parameters<typeof emptyHostConfigInputV2>[0],
+) {
   const draft = emptyHostConfigInputV2(partial);
   return render(
     <BehaviorTab draft={draft} onDraftChange={vi.fn()} attention={[]} />,
@@ -40,8 +62,11 @@ describe("BehaviorTab harness gray-out", () => {
     ).toBeInTheDocument();
 
     // Model + system prompt DO cross into the harness, so they stay editable
-    // (no blanket isHarnessHost disable).
-    expect(screen.getByTestId("model-selector")).toBeInTheDocument();
+    // (no blanket isHarnessHost disable). Claude Code's model credentials are
+    // brokered by MCPJam, so the selection is what the runtime launches with.
+    expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
+      "data-disabled",
+    );
     expect(
       screen.getByPlaceholderText(/helpful assistant/i),
     ).not.toHaveAttribute("readonly");
@@ -120,9 +145,42 @@ describe("BehaviorTab harness gray-out", () => {
     ).toBeInTheDocument();
   });
 
+  it("disables the MODEL selector for a cursor harness host, and says who chooses", () => {
+    // The one harness whose model is not MCPJam's to choose: it authenticates
+    // with the customer's own Cursor account and that account picks the model.
+    // Left enabled, a selection persists onto the host and reaches nothing —
+    // the host then displays a model that never ran.
+    const { container } = renderBehaviorTab({ harness: "cursor" });
+
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-disabled",
+      "true",
+    );
+    expect(
+      screen.getByText(/Cursor account, which chooses the model itself/i),
+    ).toBeInTheDocument();
+
+    // Temperature goes with it, for the same reason.
+    expect(sliderRoot(container)).toHaveAttribute("data-disabled");
+
+    // NOT a blanket harness disable: the ACP bridge really does pause on its
+    // native tools, so approval stays editable and carries no stale note.
+    expect(
+      screen.getByRole("switch", { name: /require tool approval/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/refused rather than run unapproved/i),
+    ).not.toBeInTheDocument();
+  });
+
   it("leaves every control enabled for an emulated (no-harness) host", () => {
     const { container } = renderBehaviorTab();
 
+    // Includes the emulated `cursor` host style — the IDE chat panel carries no
+    // harness and picks its model normally. Only the CLI runtime is gated.
+    expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
+      "data-disabled",
+    );
     expect(sliderRoot(container)).not.toHaveAttribute("data-disabled");
     expect(
       screen.getByRole("switch", { name: /require tool approval/i }),
@@ -133,5 +191,37 @@ describe("BehaviorTab harness gray-out", () => {
     expect(
       screen.queryByText(/runs its own loop and ignores temperature/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("approval follows the server's answer about the runtime", () => {
+  afterEach(() => {
+    capabilitiesAnswer.current = undefined;
+  });
+
+  it("stays disabled for codex when the server reports no approval support", () => {
+    // The exec transport: its bridge hardcodes `approvalPolicy: "never"`, so
+    // the pre-flight refuses an approval host outright and the switch would be
+    // a lie.
+    capabilitiesAnswer.current = { supportsNativeToolApproval: false };
+    renderBehaviorTab({ harness: "codex" });
+    expect(screen.getByLabelText(/require tool approval/i)).toBeDisabled();
+  });
+
+  it("enables approval for codex when the server reports the app-server transport", () => {
+    // The capability this whole change exists to make reachable. Without the
+    // server answer the static map keeps the switch greyed out and a user can
+    // never turn approvals on for Codex, however the deployment is configured.
+    capabilitiesAnswer.current = { supportsNativeToolApproval: true };
+    renderBehaviorTab({ harness: "codex" });
+    expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
+  });
+
+  it("never lets the server TAKE AWAY a control the static map allowed", () => {
+    // The override is one-directional on purpose: a stale or wrong server
+    // answer must not be able to disable a switch that works.
+    capabilitiesAnswer.current = { supportsNativeToolApproval: false };
+    renderBehaviorTab({ harness: "claude-code" });
+    expect(screen.getByLabelText(/require tool approval/i)).not.toBeDisabled();
   });
 });

@@ -13,6 +13,7 @@
  */
 import { useMemo, useState } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -39,7 +40,9 @@ export function ModelsPill({
   inModal = false,
   budget,
   clientDefaultLabel,
+  variant = "pill",
 }: {
+  variant?: "pill" | "table";
   projectId: string;
   value: ModelSelection;
   onChange: (next: ModelSelection) => void;
@@ -58,13 +61,26 @@ export function ModelsPill({
   const explicit = value.explicitModelIds;
   const catalogIds = useMemo(
     () => new Set(availableModels.map((model) => String(model.id))),
-    [availableModels]
+    [availableModels],
   );
   const staleExplicit = explicit.filter((id) => !catalogIds.has(id));
   const includeDefaults = value.includeClientDefaults;
+  const catalogNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const model of availableModels) {
+      const id = String(model.id);
+      byId.set(id, compactModelLabel(model.name) || id);
+    }
+    return byId;
+  }, [availableModels]);
   const triggerLabel = useMemo(
-    () => modelsPillTriggerLabel(value),
-    [value]
+    () =>
+      modelsPillTriggerLabel(value, {
+        clientDefaultLabel,
+        modelName: (id) =>
+          catalogNameById.get(id) || compactModelLabel(id) || id,
+      }),
+    [value, clientDefaultLabel, catalogNameById],
   );
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
@@ -128,26 +144,54 @@ export function ModelsPill({
       }}
     >
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          data-testid={testId}
-          aria-label="Models"
-          className={cn(
-            "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
-            "outline-none transition-colors",
-            includeDefaults || explicit.length > 0
-              ? "border-border/60 bg-muted/40 hover:bg-muted/60"
-              : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
-            disabled && "cursor-not-allowed opacity-60"
-          )}
-        >
-          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
-            {triggerLabel}
-          </span>
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-        </button>
+        {variant === "table" ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            data-testid={testId}
+            aria-label="Models"
+            className="h-auto min-h-8 w-full justify-start gap-2 px-2 text-left font-normal whitespace-normal"
+          >
+            <span className="min-w-0 flex-1 break-words">
+              {[
+                ...(includeDefaults
+                  ? [
+                      clientDefaultLabel
+                        ? compactModelLabel(clientDefaultLabel)
+                        : "Client default",
+                    ]
+                  : []),
+                ...explicit.map(
+                  (id) => catalogNameById.get(id) || compactModelLabel(id),
+                ),
+              ].join(", ") || "Select models"}
+            </span>
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          </Button>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled}
+            data-testid={testId}
+            aria-label="Models"
+            className={cn(
+              "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+              "outline-none transition-colors",
+              includeDefaults || explicit.length > 0
+                ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+                : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+              disabled && "cursor-not-allowed opacity-60",
+            )}
+          >
+            <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+              {triggerLabel}
+            </span>
+            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          </button>
+        )}
       </PopoverTrigger>
       <PopoverContent
         className="w-72 p-1"
@@ -156,14 +200,14 @@ export function ModelsPill({
         portalled={!inModal}
       >
         <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {mode === "single" ? "Model" : "Models · fan-out"}
+          {mode === "single" ? "Model" : "Models"}
         </div>
         <div className="max-h-64 space-y-0.5 overflow-y-auto">
           <Label
             className={cn(
               "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
               (defaultsCapBlocked || disabled) &&
-                "cursor-not-allowed opacity-60 hover:bg-transparent"
+                "cursor-not-allowed opacity-60 hover:bg-transparent",
             )}
           >
             <Checkbox
@@ -174,7 +218,9 @@ export function ModelsPill({
               data-testid={testId ? `${testId}-client-defaults` : undefined}
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-normal">Client defaults</span>
+              <span className="block truncate font-normal">
+                Client defaults
+              </span>
               {clientDefaultLabel ? (
                 <span className="block truncate text-[10px] text-muted-foreground">
                   {clientDefaultLabel}
@@ -187,7 +233,7 @@ export function ModelsPill({
               {targetProductCapReason(
                 budget.hostCount,
                 budget.choiceCount + 1,
-                budget.maxTargets
+                budget.maxTargets,
               )}
             </p>
           ) : null}
@@ -197,64 +243,64 @@ export function ModelsPill({
             </p>
           ) : (
             <>
-            {availableModels.map((model) => {
-              const id = String(model.id);
-              const checked = explicit.includes(id);
-              const locked = model.disabled === true;
-              const capBlocked = modelCapBlocked(checked);
-              // A persisted locked model must stay checkable so the user
-              // can remove it. Lock and cap only block adding a new pick.
-              const optionDisabled =
-                disabled || (!checked && (locked || capBlocked));
-              return (
-                <Label
-                  key={id}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
-                    optionDisabled &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
-                  )}
-                  title={
-                    locked
-                      ? model.disabledReason
-                      : capBlocked && budget
+              {availableModels.map((model) => {
+                const id = String(model.id);
+                const checked = explicit.includes(id);
+                const locked = model.disabled === true;
+                const capBlocked = modelCapBlocked(checked);
+                // A persisted locked model must stay checkable so the user
+                // can remove it. Lock and cap only block adding a new pick.
+                const optionDisabled =
+                  disabled || (!checked && (locked || capBlocked));
+                return (
+                  <Label
+                    key={id}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
+                      optionDisabled &&
+                        "cursor-not-allowed opacity-60 hover:bg-transparent",
+                    )}
+                    title={
+                      locked
+                        ? model.disabledReason
+                        : capBlocked && budget
                         ? targetProductCapReason(
                             budget.hostCount,
                             budget.choiceCount + 1,
-                            budget.maxTargets
+                            budget.maxTargets,
                           )
                         : undefined
-                  }
+                    }
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(next) => toggleModel(id, next === true)}
+                      disabled={optionDisabled}
+                      aria-label={compactModelLabel(model.name) || id}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-normal">
+                      {compactModelLabel(model.name) || id}
+                    </span>
+                  </Label>
+                );
+              })}
+              {staleExplicit.map((id) => (
+                <Label
+                  key={id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30"
+                  title="No longer in the catalog"
                 >
                   <Checkbox
-                    checked={checked}
+                    checked
                     onCheckedChange={(next) => toggleModel(id, next === true)}
-                    disabled={optionDisabled}
-                    aria-label={compactModelLabel(model.name) || id}
+                    disabled={disabled}
+                    aria-label={id}
                   />
-                  <span className="min-w-0 flex-1 truncate font-normal">
-                    {compactModelLabel(model.name) || id}
+                  <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
+                    {id}
                   </span>
                 </Label>
-              );
-            })}
-            {staleExplicit.map((id) => (
-              <Label
-                key={id}
-                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30"
-                title="No longer in the catalog"
-              >
-                <Checkbox
-                  checked
-                  onCheckedChange={(next) => toggleModel(id, next === true)}
-                  disabled={disabled}
-                  aria-label={id}
-                />
-                <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
-                  {id}
-                </span>
-              </Label>
-            ))}
+              ))}
             </>
           )}
         </div>
@@ -263,18 +309,35 @@ export function ModelsPill({
   );
 }
 
-export function modelsPillTriggerLabel(value: ModelSelection): string {
+export function modelsPillTriggerLabel(
+  value: ModelSelection,
+  options?: {
+    /** Inherited model id or display name when Client defaults is the only pick. */
+    clientDefaultLabel?: string | null;
+    /** Resolve a catalog id (or already-display string) to a compact label. */
+    modelName?: (id: string) => string;
+  },
+): string {
   const n = value.explicitModelIds.length;
-  if (value.includeClientDefaults && n === 0) return "Client defaults";
-  if (value.includeClientDefaults && n > 0) return `Client defaults +${n}`;
-  if (n === 1) return "1 model";
+  const inheritedRaw = options?.clientDefaultLabel?.trim() ?? "";
+  const inherited = inheritedRaw
+    ? options?.modelName?.(inheritedRaw) || inheritedRaw
+    : "";
+  if (value.includeClientDefaults && n === 0) return inherited || "models";
+  if (value.includeClientDefaults && n > 0) {
+    return inherited ? `${inherited} +${n}` : `models +${n}`;
+  }
+  if (n === 1) {
+    const id = value.explicitModelIds[0];
+    return options?.modelName?.(id) || "1 model";
+  }
   if (n > 1) return `${n} models`;
   return "No models · pick some";
 }
 
 function wouldExceedBudget(
   budget: TargetBudgetContext | undefined,
-  delta: { extraChoices: number }
+  delta: { extraChoices: number },
 ): boolean {
   if (!budget) return false;
   const nextChoices = budget.choiceCount + delta.extraChoices;
@@ -290,7 +353,7 @@ function wouldExceedBudget(
  * alternative.
  */
 function canReplaceSoleChoice(
-  budget: TargetBudgetContext | undefined
+  budget: TargetBudgetContext | undefined,
 ): boolean {
   if (!budget) return false;
   return (

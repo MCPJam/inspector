@@ -106,6 +106,7 @@ export function fileCaseToCreateBody(
     id: testCase.id,
     title: testCase.title,
     ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
+    ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,
@@ -140,6 +141,7 @@ export function fileCaseToUpdateBody(
     // A file re-sync is authoritative: unlike an ordinary PATCH, a missing
     // label must clear the old one rather than preserve stale attribution.
     intent: testCase.intent ?? null,
+    kind: testCase.kind ?? null,
     steps: testCase.steps,
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,
@@ -461,6 +463,17 @@ export async function syncFileOwnedCases(
      * `enabledCaseIds`.
      */
     declaredCaseIds: ReadonlySet<string>;
+    /**
+     * The suite file's own `suite.id`.
+     *
+     * A suite with a declared id is CI-owned, and the platform refuses case
+     * writes to it — which is the point: a case added from the app survived
+     * until this sync deleted it, with nothing recording why. The sync itself
+     * is the exception, and this is how it says so. Naming the suite's own id
+     * is the only thing that authorizes these writes; naming any other refuses
+     * exactly as loudly as naming none.
+     */
+    declaredSuiteId: string;
     signal?: AbortSignal;
   }
 ): Promise<{
@@ -522,7 +535,10 @@ export async function syncFileOwnedCases(
         {
           projectId: params.projectId,
           suiteId: params.suiteId,
-          body: { cases: chunk.map(fileCaseToCreateBody) },
+          body: {
+            cases: chunk.map(fileCaseToCreateBody),
+            declaredSuiteId: params.declaredSuiteId,
+          },
         },
         { signal: params.signal }
       );
@@ -561,7 +577,10 @@ export async function syncFileOwnedCases(
           projectId: params.projectId,
           suiteId: params.suiteId,
           caseId: row.id,
-          body: fileCaseToUpdateBody(file),
+          body: {
+            ...fileCaseToUpdateBody(file),
+            declaredSuiteId: params.declaredSuiteId,
+          },
         },
         { signal: params.signal }
       );
@@ -598,6 +617,8 @@ export async function syncFileOwnedCases(
           projectId: params.projectId,
           suiteId: params.suiteId,
           caseId: row.id,
+          // A query param on this one — the route reads no body.
+          declaredSuiteId: params.declaredSuiteId,
         },
         { signal: params.signal }
       );
@@ -1058,6 +1079,9 @@ export async function executeEvalRunFromFile(
     suiteId: synced.suite.id,
     cases: outgoingCases,
     declaredCaseIds: new Set(outgoingCases.map((testCase) => testCase.id)),
+    // The suite is CI-owned by virtue of this very id, so every write below
+    // has to name it. See `syncFileOwnedCases`.
+    declaredSuiteId: authored.suite.id,
     signal: context.signal,
   });
 
@@ -1081,6 +1105,7 @@ export async function executeEvalRunFromFile(
       {
         project: project.id,
         suite: synced.suite.id,
+        declaredSuiteId: authored.suite.id,
         hosts: authored.target.hosts.map((host) => ({
           host: host.id ?? host.name,
           ...(host.servers
@@ -1098,6 +1123,7 @@ export async function executeEvalRunFromFile(
       {
         project: project.id,
         suite: synced.suite.id,
+        declaredSuiteId: authored.suite.id,
         environments: [fileEnvironment],
       },
       { client: context.client, signal: context.signal }

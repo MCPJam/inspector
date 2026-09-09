@@ -27,8 +27,25 @@ import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
 import {
   fetchEvalRunStageAnalytics,
   isEvalStageAnalyticsError,
+  type StageAnalyticsFailureKind,
 } from "@/lib/apis/eval-stage-analytics-api";
-import type { StageAnalyticsErrorInfo } from "@/hooks/use-eval-suite-stage-analytics";
+
+export interface StageAnalyticsErrorInfo {
+  message: string;
+  /**
+   * WHICH failure, kept apart rather than collapsed into "error".
+   *
+   * `routeUnavailable` and `requestFailed` are SERVICE states ("we could not
+   * measure this"), while `invalidContract` is a bug report and `notFound` is
+   * a fact about the run. None of them is an empty chart.
+   *
+   * Declared here since the suite-scoped reader was removed: this hook is the
+   * only consumer left, and a type outliving the module it was defined in is
+   * how an import survives the thing it belonged to.
+   */
+  kind: StageAnalyticsFailureKind;
+  status?: number;
+}
 
 /**
  * `absent` is its own state, beside `ready` and `error`.

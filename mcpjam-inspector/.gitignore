@@ -85,3 +85,6 @@ sdk/mcp-client-manager/dist/
 
 # local-only dev artifacts
 .local/
+
+# Bridge runtime state written by a local harness session (pid/port/state).
+.harness-bridge/

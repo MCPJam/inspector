@@ -23,6 +23,8 @@
  *   - Throwing/propagating errors; the caller is expected to catch and run
  *     its own OAuth-error enrichment if applicable.
  */
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
@@ -44,6 +46,7 @@ import type {
 } from "@mcpjam/sdk/host-config/internal";
 import {
   handleMCPJamFreeChatModel,
+  type MCPJamHandlerOptions,
   warnIfChatAbortSignalMissing,
 } from "./mcpjam-stream-handler.js";
 import type { ExecutionScope } from "./execution-scope.js";
@@ -61,8 +64,10 @@ import { type ModelDefinition } from "@/shared/types";
 import { isHostedCatalogModel } from "../services/hosted-model-catalog.js";
 import {
   buildWidgetModelContextSystemPrompt,
+  guardPageToolRefresh,
   prepareChatV2,
   type AppToolEntry,
+  type PageToolEntry,
   type UiToolEntry,
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
@@ -81,17 +86,13 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import { harnessUsesExternalAccount } from "./harness/registry.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
-import {
-  classifyUiToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import {
@@ -274,6 +275,12 @@ export interface WebChatTurnPersistContext {
    * it needs to do that.
    *
    * Absent ⇒ this turn has no grant, which is a normal state, not a failure.
+   *
+   * ALSO the direct-chat resume pin: written into
+   * `resumeConfig.environmentId` so a reopened Playground conversation can be
+   * restored onto the target it actually ran on rather than the viewer's
+   * current selection. See the persist site below for why sending it on every
+   * turn is safe.
    */
   environmentId?: string;
   /**
@@ -312,6 +319,20 @@ export interface WebChatTurnPersistContext {
    * written down. Delivery is byte-identical whether this is present or not.
    */
   turnProvenance?: TurnSkillProvenance;
+  /**
+   * The page tools this turn advertised, for the turn trace.
+   *
+   * Like `turnProvenance`: it decides only what gets WRITTEN DOWN, never what
+   * reaches the model. Delivery is byte-identical whether it is present or not.
+   *
+   * A THUNK, read when the turn is persisted rather than when these options are
+   * built. A page tool set is the one thing here that changes DURING the turn —
+   * the model navigates and the refresher mints a new set — and an array
+   * captured at options-build time would always record the tools the turn
+   * opened with, which on any turn that navigated is precisely not the set its
+   * last steps used.
+   */
+  pageToolsAtTurn?: () => MintedPageToolRecord[] | undefined;
 }
 
 /**
@@ -331,6 +352,13 @@ export interface WebChatTurnPrepareInputs {
    */
   excludeMcpToolNames?: readonly string[];
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * The host's tool-cancellation setting, resolved for this turn from the
+   * server-side host config. Forwarded per turn because the connection's copy
+   * is captured at connect time; an empty record means "cancels normally" and
+   * must still be sent so it overrides the connection's stale value.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   customProviders?: CustomProviderConfig[];
   /** UI messages from the inbound request, converted to ModelMessages by helper. */
   uiMessages: UIMessage[] | unknown[];
@@ -347,17 +375,35 @@ export interface WebChatTurnPrepareInputs {
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
+  /**
+   * The tools of the web page an open WebMCP Inspector session is driving,
+   * client-fulfilled like `appTools` — the client invokes them through the
+   * session it already owns, hosted or local, and posts the result back.
+   *
+   * The CALLER validates and gates them (`webmcpInspectorReachable`), because
+   * a turn must never advertise a page tool on a deployment where no session
+   * can exist: the model would call it and the turn would strand.
+   */
+  pageTools?: PageToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   /**
-   * Approval classification for the `browser_*` tools this turn advertises,
-   * produced by `resolveHostTools`. Merged with the `ui_*` classification
-   * below: the engines have ONE `uiToolApprovals` slot, and whichever
-   * namespace filled it alone left the other falling through to the
-   * `requireToolApproval` default (off by default) — which strands a turn
-   * whose gated call never gets its approval request.
+   * Re-read the page's tools between model steps, when this turn built page
+   * tools on an engine that can grow its set.
+   *
+   * Threaded rather than derived: only the browser capability knows how to ask,
+   * and only the hosted loop can use the answer.
    */
-  browserToolApprovals?: UiToolApprovalClassification;
+  refreshTools?: MCPJamHandlerOptions["refreshTools"];
+  /**
+   * Handed the names a mid-turn page tool may not take, once `prepareChatV2`
+   * has decided them.
+   *
+   * The caller cannot compute this — the decision needs the assembled MCP, app,
+   * UI and skill sets — and needs it only to keep its PERSISTED record honest;
+   * the model's own set is filtered in here, at the refresh.
+   */
+  onPageToolNamesReserved?: (reserved: ReadonlySet<string>) => void;
   /** Host-configured computer working directory (COMP-16); roots the harness
    *  Shell under the same dir the bash tool runs in. */
   computerWorkdir?: string;
@@ -578,27 +624,6 @@ export function stripUiContextModelParts(
 }
 
 /**
- * Per-tool approval policy for this turn's `ui_*` tools, from the VALIDATED
- * snapshot's MCP annotations — never from the raw name, which a third-party
- * server could spoof. Must be fed prepareChatV2's `effectiveUiTools` (the
- * post-collision set), not the raw snapshot: a server-executed `ui_*` tool
- * that won its name collision follows ordinary approval semantics. Consumed
- * by the MCPJam loop's approval gate (see `toolCallNeedsApproval` in
- * mcpjam-stream-handler); the BYOK `streamText` path gets the same policy
- * baked into each tool's `needsApproval` by `buildUiTools`.
- */
-function uiToolApprovalsFrom(
-  uiTools: UiToolEntry[] | undefined,
-  requireToolApproval: boolean | undefined,
-  browserToolApprovals?: UiToolApprovalClassification,
-): UiToolApprovalClassification {
-  return mergeUiToolApprovalClassifications(
-    classifyUiToolApprovals(uiTools, requireToolApproval === true),
-    browserToolApprovals,
-  );
-}
-
-/**
  * Run a single web-chat streaming turn.
  *
  * Returns the streaming Response. Throws WebRouteError / runtime errors;
@@ -653,6 +678,9 @@ export async function streamWebChatTurn(
         ? { excludeMcpToolNames: prepare.excludeMcpToolNames }
         : {}),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      ...(prepare.toolCallCancellation !== undefined
+        ? { toolCallCancellation: prepare.toolCallCancellation }
+        : {}),
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
@@ -662,7 +690,11 @@ export async function streamWebChatTurn(
         : {}),
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
+      pageTools: prepare.pageTools,
       builtInTools: prepare.builtInTools,
+      // The prompt section that explains `webmcp_*` tools has to be there
+      // BEFORE a navigation adds them; the refresher's presence is the fact.
+      pageToolsMayGrow: Boolean(prepare.refreshTools),
 
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
@@ -700,8 +732,47 @@ export async function streamWebChatTurn(
     scrubMessages,
     progressivePlan,
     discoveryState,
-    effectiveUiTools,
+    reservedAgainstPageTools,
   } = prepared;
+
+  // THE SAME COLLISION POLICY, APPLIED TO THE SET THE TURN GROWS INTO.
+  //
+  // `prepareChatV2` decides "a page tool loses every collision" for the tools a
+  // turn starts with; a turn that navigates gets a second set, minted by the
+  // browser capability from a page this function has not seen. Wrapping here is
+  // what makes the two the same rule rather than two rules that happen to
+  // agree — the refresher itself only reserves the browser's own verbs, and
+  // knows nothing of the MCP, app, UI and skill names beside them.
+  prepare.onPageToolNamesReserved?.(reservedAgainstPageTools);
+
+  /**
+   * The tool set an engine that RE-ADVERTISES gets: without the generic
+   * `browser_webmcp_invoke`.
+   *
+   * Decided here rather than in the route, because only here is the engine
+   * known. Which engine runs depends on `resolveOrgRuntime`, a Convex-backed
+   * lookup that happens below — so a caller assembling browser tools cannot
+   * say whether this turn's loop will consume `refreshTools`, and a flag it
+   * guessed retired the verb for local BYOK too, which does not refresh. The
+   * model then had no way to reach a page it navigated to.
+   *
+   * Applied ONLY on the two paths that pass `refreshTools` below. Everywhere
+   * else the verb stays, which is the safe direction: an extra tool costs a
+   * line in the list, and a missing one costs the page.
+   */
+  const refreshingEngineTools = (): ToolSet =>
+    refreshTools
+      ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+      : (allTools as ToolSet);
+  const refreshTools: MCPJamHandlerOptions["refreshTools"] | undefined =
+    prepare.refreshTools
+      ? async (ctx) => {
+          const refresh = await prepare.refreshTools!(ctx);
+          return refresh
+            ? guardPageToolRefresh(refresh, reservedAgainstPageTools)
+            : refresh;
+        }
+      : undefined;
 
   // The raw per-turn stream writer, captured at `onStreamWriterReady` below.
   // Present for EVERY turn that produces a stream, independent of the
@@ -933,6 +1004,23 @@ export async function streamWebChatTurn(
       String(prepare.modelDefinition.id),
       prepare.modelDefinition.provider,
     );
+  // …OR an EXTERNAL-ACCOUNT harness, whose host carries a sentinel model
+  // (`cursor/auto`) that is deliberately not MCPJam-hosted.
+  //
+  // Without this the branch below sends a Cursor turn down the org-BYOK path,
+  // which never reaches `runHarnessTurn` at all: the harness pre-flight would
+  // approve the turn and the turn would then run on a completely different
+  // engine, reported as Cursor. `deriveOrgProviderKeyResult` would also reject
+  // `cursor/auto` outright, so the visible symptom is a 400 on a host the
+  // product just told the user was ready.
+  //
+  // Not folded into `isMCPJam` itself: that name means "MCPJam pays for this
+  // model", and an external-account turn is exactly the case where it does not.
+  // The two reasons to take the non-BYOK branch are different facts, so they
+  // stay separate values.
+  const isExternalAccountHarnessTurn =
+    !!persist.harness && harnessUsesExternalAccount(persist.harness);
+  const usesMcpjamFreePath = isMCPJam || isExternalAccountHarnessTurn;
 
   // Resolve the host config now that `resolvedTemperature` is known.
   // Legacy chat-v2 fed `resolvedTemperature` into `buildDirectHostConfig`;
@@ -947,7 +1035,7 @@ export async function streamWebChatTurn(
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok",
+    modelSource: "mcpjam" | "byok" | "local_byok" | "external-account",
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
@@ -1037,6 +1125,38 @@ export async function streamWebChatTurn(
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
                 selectedServers: resumableServers(persist),
+                // WHAT THIS CONVERSATION RAN ON — the missing half of resume.
+                //
+                // Every other field here restores how the turn was configured;
+                // none of them said WHERE it executed. So a browser Playground
+                // conversation reopened later had no recorded execution target
+                // at all, and the client fell back to whatever the VIEWER had
+                // selected in localStorage — a conversation that ran on a
+                // Cursor harness in a Project Environment reopened showing an
+                // unrelated host and model, and a follow-up typed there ran on
+                // that unrelated target without ever saying so.
+                //
+                // Only `origin: "api"` sessions wrote this before (see
+                // `routes/v1/chat-session-turn.ts`), which is why the browser
+                // half was blind.
+                //
+                // Sent on EVERY turn, not just the first, and that is correct:
+                // `preserveAgentResumePins` makes the four
+                // `AGENT_RESUME_PIN_KEYS` — this among them — first-write-wins
+                // at the ingest boundary, so a continuation cannot repin a
+                // conversation onto a different environment, while a session
+                // that started before this field existed still gets filled in
+                // on its next turn instead of staying unpinned forever.
+                //
+                // Absent ⇒ this turn had no environment (a plain host-mode or
+                // untargeted turn). Nothing is written rather than a
+                // placeholder: an empty pin would read as "recorded, and it
+                // was nothing", which is exactly the false certainty the
+                // client's "as-run configuration unavailable" disclosure
+                // exists to avoid.
+                ...(persist.environmentId
+                  ? { environmentId: persist.environmentId }
+                  : {}),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
@@ -1046,9 +1166,19 @@ export async function streamWebChatTurn(
         // Testing's most environment-driven surface with no record of what it
         // ran. Distinct from `resumeConfig`, which is gated because it is the
         // restorable-resume surface; this is provenance and restores nothing.
-        turnTrace: persist.turnProvenance
-          ? { ...turnTrace, ...persist.turnProvenance }
-          : turnTrace,
+        turnTrace: (() => {
+          // Read HERE, at persist time, so a turn that navigated records the
+          // set its last steps had rather than the one it opened with.
+          const pageToolsAtTurn = persist.pageToolsAtTurn?.();
+          return {
+          ...turnTrace,
+          ...(persist.turnProvenance ?? {}),
+          // An EMPTY array is meaningful and is written: "this turn advertised
+          // no page tools" is a different fact from "we do not know", and the
+          // pane says something different about each.
+          ...(pageToolsAtTurn ? { pageToolsAtTurn } : {}),
+          };
+        })(),
         ...(persist.expectedVersion !== undefined
           ? { expectedVersion: persist.expectedVersion }
           : {}),
@@ -1060,7 +1190,7 @@ export async function streamWebChatTurn(
     };
   };
 
-  if (!isMCPJam) {
+  if (!usesMcpjamFreePath) {
     const providerKeyResult = deriveOrgProviderKeyResult(
       prepare.modelDefinition,
     );
@@ -1151,7 +1281,7 @@ export async function streamWebChatTurn(
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
-      tools: allTools as ToolSet,
+      tools: refreshingEngineTools(),
       progressivePlan,
       discoveryState,
       authHeader: runtime.authHeader,
@@ -1162,12 +1292,10 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
-      uiToolApprovals: uiToolApprovalsFrom(
-        effectiveUiTools,
-        persist.requireToolApproval,
-        prepare.browserToolApprovals,
-      ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+      // The hosted loop is the ONE engine that can grow its tool set between
+      // steps, so it is the one that gets this.
+      ...(refreshTools ? { refreshTools } : {}),
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
@@ -1189,9 +1317,19 @@ export async function streamWebChatTurn(
 
   // MCPJam-free path.
   const mcpjamModelId = String(prepare.modelDefinition.id);
+  // …except when the HARNESS pays for its own model. An external-account
+  // runtime (Cursor) reaches its provider on the customer's account with the
+  // runtime vendor, so MCPJam is not charged for the turn and must not record
+  // it as though it were — `'mcpjam'` is what makes a turn consume the org's
+  // MCPJam spend limit.
+  //
+  // `'external-account'` rather than `'byok'`, though both mean "not charged to
+  // MCPJam": byok additionally asserts a configured model PROVIDER and its key,
+  // which this turn does not have. See `chatModelSourceValidator` in the
+  // backend for the two surfaces that read it that way.
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam",
+    isExternalAccountHarnessTurn ? "external-account" : "mcpjam",
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -1225,7 +1363,7 @@ export async function streamWebChatTurn(
     sourceType: persist.sourceType,
     systemPrompt: effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
-    tools: allTools as ToolSet,
+    tools: refreshingEngineTools(),
     progressivePlan,
     discoveryState,
     authHeader: runtime.authHeader,
@@ -1241,12 +1379,8 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
-    uiToolApprovals: uiToolApprovalsFrom(
-      effectiveUiTools,
-      persist.requireToolApproval,
-      prepare.browserToolApprovals,
-    ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+    ...(refreshTools ? { refreshTools } : {}),
     // Harness engine only: it builds its own MCP tool set (host-executed
     // delivery) rather than consuming `allTools`, so the host's
     // tool-construction policies have to reach it separately. Inert on the

@@ -7,22 +7,23 @@
  * consulted, because it is writable by everything the user runs and would make
  * the launcher a different binary from the one consent named.
  *
- * Two supported shapes:
+ * There is exactly one supported shape, and it is the runtime pack's own
+ * `bin/node`:
  *
- *  - a plain Node process (`npx @mcpjam/inspector`): `process.execPath` IS
- *    node, so it is used directly;
- *  - an Electron main process: `process.execPath` is the app binary, which
- *    behaves as Node only with `ELECTRON_RUN_AS_NODE=1`. That invocation is
- *    explicit here rather than implied somewhere in a spawn call, because it
- *    is a conformance-tested property of the launch, not a detail.
+ *  - Electron cannot be the launcher. `forge.config.ts` sets the `RunAsNode`
+ *    fuse to false, so `ELECTRON_RUN_AS_NODE=1` is inert in every packaged
+ *    build. The branch that relied on it was dead code that would have failed
+ *    at spawn time in exactly the distribution it was written for.
+ *  - The npx server's own `process.execPath` is a Node the user installed,
+ *    outside the pack, and therefore outside the digest consent named. Using
+ *    it would mean the verified runtime is verified except for the binary that
+ *    interprets it.
  *
- * A packaged build shipping its own signed Node runtime alongside the managed
- * bundle is the preferred shape once the bundle build lands. It is deliberately
- * NOT an option here yet: an "absolute path the caller promises is the right
- * Node" is a trust path with no verification behind it, and adding the option
- * before there is a digest to check it against would be exactly that. It
- * arrives with the bundle build, and with the same digest verification the rest
- * of the runtime gets.
+ * So both distributions run the same `bin/node` shipped inside the pack, which
+ * `computeTreeDigest` covers along with `launcher.mjs` and `bridge.mjs`. The
+ * caller passes the path it resolved from the VERIFIED runtime; this module
+ * refuses anything that is not absolute, and refuses to fall back to a Node it
+ * cannot name a digest for.
  */
 import { isAbsolute } from "node:path";
 
@@ -32,29 +33,29 @@ export interface NodeLauncher {
   /** Environment entries this launcher REQUIRES, merged by the provider after
    *  the allowlisted base environment is built. */
   requiredEnv: Readonly<Record<string, string>>;
-  kind: "node" | "electron-as-node";
+  kind: "bundled";
 }
 
 export class NodeLauncherError extends Error {}
 
-export function resolveNodeLauncher(opts?: {
-  execPath?: string;
-  isElectron?: boolean;
+/**
+ * Resolve the launcher from a verified runtime's bundled Node.
+ *
+ * `bundledNodePath` comes from `ResolvedRuntime.nodePath`, which is inside the
+ * tree the digest just covered. There is deliberately no `execPath` fallback:
+ * an unverified "absolute path the caller promises is Node" is a trust path
+ * with nothing behind it, and the whole point of the pack is that there is
+ * something behind it.
+ */
+export function resolveNodeLauncher(opts: {
+  bundledNodePath: string;
 }): NodeLauncher {
-  const execPath = opts?.execPath ?? process.execPath;
-  if (!execPath || !isAbsolute(execPath)) {
+  const executable = opts.bundledNodePath;
+  if (!executable || !isAbsolute(executable)) {
     throw new NodeLauncherError(
-      "could not determine an absolute Node executable for the harness bridge",
+      "the harness bridge launcher must be an absolute path to the Node " +
+        "binary inside the verified runtime pack",
     );
   }
-  const isElectron =
-    opts?.isElectron ?? typeof process.versions.electron === "string";
-
-  return isElectron
-    ? {
-        executable: execPath,
-        requiredEnv: { ELECTRON_RUN_AS_NODE: "1" },
-        kind: "electron-as-node",
-      }
-    : { executable: execPath, requiredEnv: {}, kind: "node" };
+  return { executable, requiredEnv: {}, kind: "bundled" };
 }

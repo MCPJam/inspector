@@ -20,7 +20,6 @@
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import test, { describe } from "node:test";
 import {
@@ -33,7 +32,6 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
 import {
   fractionToPercent,
@@ -49,6 +47,7 @@ import {
   sha256HexOfBuffer,
 } from "../src/lib/eval-run-file.js";
 import { main } from "../src/index.js";
+import { runCli } from "./support/task-cli-harness.js";
 
 const telemetryDisabled = {
   env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
@@ -845,30 +844,12 @@ describe("eval validate", () => {
     // process cannot repoint its own fd 0 from JavaScript — so the only honest
     // way to exercise the branch the docs advertise is to be a parent with a
     // pipe.
-    const cli = fileURLToPath(new URL("../src/index.ts", import.meta.url));
-    const tsx = fileURLToPath(
-      new URL("../../node_modules/.bin/tsx", import.meta.url)
+    const run = await runCli(
+      ["cloud", "eval", "validate", "--file", "-", "--format", "json"],
+      VALID_SUITE_FILE
     );
 
-    const run = await new Promise<{ code: number; stdout: string }>(
-      (resolve, reject) => {
-        const child = spawn(
-          tsx,
-          [cli, "cloud", "eval", "validate", "--file", "-", "--format", "json"],
-          {
-            env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
-            stdio: ["pipe", "pipe", "pipe"],
-          }
-        );
-        let stdout = "";
-        child.stdout.on("data", (chunk) => (stdout += chunk));
-        child.on("error", reject);
-        child.on("close", (code) => resolve({ code: code ?? -1, stdout }));
-        child.stdin.end(VALID_SUITE_FILE);
-      }
-    );
-
-    assert.equal(run.code, 0, run.stdout);
+    assert.equal(run.exitCode, 0, run.stdout);
     const payload = JSON.parse(run.stdout);
     assert.equal(payload.valid, true);
     assert.equal(payload.file, "<stdin>");
@@ -1654,18 +1635,30 @@ async function startFileRunFixture(options?: {
   authHeaders: string[];
   fromFileBodies: unknown[];
   batchBodies: unknown[];
+  /**
+   * The QUERY STRING of each file-sync write. `declaredSuiteId` rides here,
+   * never the body: these `/v1` bodies are strict on every Inspector that
+   * predates the CI-owned lock, so a body field is a 400 against one that has
+   * not been upgraded in lockstep with the CLI.
+   */
+  batchQueries: Record<string, string>[];
   updateBodies: unknown[];
+  updateQueries: Record<string, string>[];
   deletedCaseIds: string[];
   suitePatches: unknown[];
+  suitePatchQueries: Record<string, string>[];
   runBodies: unknown[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
   const fromFileBodies: unknown[] = [];
   const batchBodies: unknown[] = [];
+  const batchQueries: Record<string, string>[] = [];
   const updateBodies: unknown[] = [];
+  const updateQueries: Record<string, string>[] = [];
   const deletedCaseIds: string[] = [];
   const suitePatches: unknown[] = [];
+  const suitePatchQueries: Record<string, string>[] = [];
   const runBodies: unknown[] = [];
   let environmentIds: string[] = [];
   let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
@@ -1780,6 +1773,7 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       batchBodies.push(body);
+      batchQueries.push(Object.fromEntries(url.searchParams));
       const created: Array<{
         index: number;
         id: string;
@@ -1833,6 +1827,7 @@ async function startFileRunFixture(options?: {
       method === "PATCH"
     ) {
       updateBodies.push(raw ? JSON.parse(raw) : {});
+      updateQueries.push(Object.fromEntries(url.searchParams));
       if (options?.failUpdates) {
         res.statusCode = 500;
         res.end(
@@ -1936,6 +1931,7 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       suitePatches.push(body);
+      suitePatchQueries.push(Object.fromEntries(url.searchParams));
       if (Array.isArray(body.environmentIds)) {
         environmentIds = body.environmentIds;
       }
@@ -2010,9 +2006,12 @@ async function startFileRunFixture(options?: {
     authHeaders,
     fromFileBodies,
     batchBodies,
+    batchQueries,
     updateBodies,
+    updateQueries,
     deletedCaseIds,
     suitePatches,
+    suitePatchQueries,
     runBodies,
     close: () =>
       new Promise<void>((resolve, reject) =>
@@ -2028,6 +2027,118 @@ async function startFileRunFixture(options?: {
  * before: the fixture recorded bodies without grading them, so every
  * suite-file test passed against a payload the route rejected outright.
  */
+describe("eval export — which policy owns the threshold", () => {
+  // A suite upgraded to verdict policy 2 keeps its legacy `defaultPassCriteria`
+  // percent in storage: the platform's `updateTestSuite` types that argument
+  // `v.optional(passCriteriaValidator)`, so the upgrade has no null to send and
+  // cannot clear it. Nothing reads it once the suite is v2 — but export read it
+  // and wrote it into the file as `defaults.passThreshold`, so a v2 suite whose
+  // real threshold is 0.9 exported a file claiming 0.8.
+  //
+  // The API now reports `minimumAccuracy: null` on a v2 suite. Export reads the
+  // v2 fraction directly, which is both the fix and the reason this does not
+  // simply start refusing every v2 suite.
+  const V2_SETTINGS = {
+    minimumAccuracy: null,
+    matchOptions: null,
+    checks: [],
+    judge: { enabled: false, model: null },
+    policy: "v2",
+    verdictPolicyVersion: 2,
+    verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.9 },
+  };
+
+  test("writes a v2 suite's own passThreshold, not a converted percent", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        { detail: { settings: V2_SETTINGS } },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.9);
+    });
+  });
+
+  test("ignores a stale legacy percent left on a v2 suite", async () => {
+    // The state an upgraded suite is actually in, if the API still reported the
+    // dead column: 80 is the value export used to write, 0.9 is the live one.
+    await withTempDir(async () => {
+      const run = await runExport(
+        { detail: { settings: { ...V2_SETTINGS, minimumAccuracy: 80 } } },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.9);
+      assert.notEqual(reloaded.authored.defaults.passThreshold, 0.8);
+    });
+  });
+
+  // A v2 suite whose own threshold is unreadable has NO threshold to export.
+  // Falling back to `minimumAccuracy` there would write exactly the file this
+  // change exists to prevent, so the v2 branch is fail-closed.
+  const UNREADABLE_V2_THRESHOLDS: Array<[string, Record<string, unknown>]> = [
+    ["missing", {}],
+    ["not a number", { repetitions: 5, passThreshold: "0.9" }],
+    ["outside [0,1]", { repetitions: 5, passThreshold: 90 }],
+  ];
+
+  for (const [label, defaults] of UNREADABLE_V2_THRESHOLDS) {
+    test(`refuses a v2 suite whose passThreshold is ${label}, rather than exporting the legacy percent`, async () => {
+      await withTempDir(async (dir) => {
+        const run = await runExport(
+          {
+            detail: {
+              settings: {
+                ...V2_SETTINGS,
+                // Present, and still not a stand-in: the platform stopped
+                // reading it at upgrade.
+                minimumAccuracy: 80,
+                verdictPolicyDefaults: defaults,
+              },
+            },
+          },
+          "--suite",
+          "Billing smoke"
+        );
+
+        assert.notEqual(run.exitCode, 0);
+        assert.match(run.stderr + run.stdout, /passThreshold/);
+        // Nothing written: a partial file plus a non-zero exit would pass a
+        // weaker check.
+        assert.deepEqual(
+          await readdir(path.join(dir, ".mcpjam", "evals")).catch(() => []),
+          []
+        );
+      });
+    });
+  }
+
+  test("a legacy suite still converts its percent", async () => {
+    await withTempDir(async () => {
+      const run = await runExport({}, "--suite", "Billing smoke");
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.equal(reloaded.authored.defaults.passThreshold, 0.8);
+    });
+  });
+});
+
 describe("the upload contract guard", () => {
   test("rejects the resolved validity shape the loader produces", () => {
     // The actual regression: `coverage` is emitted unconditionally by
@@ -2159,8 +2270,24 @@ describe("eval run --file", () => {
         assert.equal(fixture.batchBodies.length, 1);
         const batch = fixture.batchBodies[0] as {
           cases: Array<{ id: string }>;
+          declaredSuiteId?: string;
         };
         assert.equal(batch.cases[0].id, "c_refund");
+        // A suite with a declared id is CI-owned and refuses case writes; the
+        // sync is the exception, and this marker is how it says so. Without it
+        // the platform refuses and nothing this file declares ever lands.
+        //
+        // On the QUERY STRING, never the body: these bodies are strict on every
+        // Inspector that predates the lock, so a body field would be a 400
+        // against one older than this CLI — and the CLI is a published package
+        // upgraded on its own schedule.
+        assert.equal(fixture.batchQueries[0]?.declaredSuiteId, "s_billing");
+        assert.equal(batch.declaredSuiteId, undefined);
+        // One marker for the batch, never one per case.
+        assert.equal(
+          (batch.cases[0] as Record<string, unknown>).declaredSuiteId,
+          undefined
+        );
         assert.equal(fixture.runBodies.length, 1);
         const launched = fixture.runBodies[0] as Record<string, unknown>;
         assert.equal(launched.suiteId, "suite-file-1");
@@ -2203,6 +2330,13 @@ describe("eval run --file", () => {
           modelId: "anthropic/claude-sonnet-4-6",
           systemPrompt: "Be terse.",
           temperature: 0.2,
+        });
+        // The suite is CI-owned by virtue of its declared id, so the file's own
+        // write has to name that id or the platform refuses it — on the QUERY
+        // STRING, because these bodies are strict on every Inspector older than
+        // the lock and a body field would be a 400 there.
+        assert.deepEqual(fixture.suitePatchQueries[0], {
+          declaredSuiteId: "s_billing",
         });
         assert.deepEqual(fixture.suitePatches, [
           {
@@ -2300,6 +2434,10 @@ describe("eval run --file", () => {
         assert.equal(updated.title, "Refunds a duplicate charge");
         assert.equal(updated.isNegative, false);
         assert.equal(updated.checks, null);
+        // The update door needs the same marker the create door does, in the
+        // same place: the query string.
+        assert.equal(fixture.updateQueries[0]?.declaredSuiteId, "s_billing");
+        assert.equal(updated.declaredSuiteId, undefined);
       });
     } finally {
       await fixture.close();
@@ -3061,6 +3199,16 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(fileCaseToCreateBody(labelled).intent, "refund");
     assert.equal(fileCaseToUpdateBody(labelled).intent, "refund");
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).intent, null);
+  });
+
+  test("case bodies preserve an authored kind and clear a removed one", () => {
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const labelled = { ...loaded.resolved.cases[0], kind: "regression" as const };
+    assert.equal(fileCaseToCreateBody(labelled).kind, "regression");
+    assert.equal(fileCaseToUpdateBody(labelled).kind, "regression");
+    assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).kind, null);
   });
 
   test("derived idempotency keys differ when run knobs differ", () => {

@@ -25,7 +25,7 @@ import { ProjectEnvironmentSkillsPicker } from "../ProjectEnvironmentSkillsPicke
 const REFUNDS = {
   name: "refunds",
   description: "Handle refunds",
-  path: "Shared",
+  path: "Library",
   skillId: "skill-refunds",
   sharing: "project" as const,
   isOwner: false,
@@ -179,7 +179,7 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
     expect(screen.getByText("Latest (v4)")).toBeInTheDocument();
   });
 
-  it("renders the empty state when the project has no shared skills", async () => {
+  it("renders the empty state when the project library is empty", async () => {
     mockListSkills.mockResolvedValue([]);
     render(
       <ProjectEnvironmentSkillsPicker
@@ -189,7 +189,7 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
       />,
     );
     expect(
-      await screen.findByText(/No shared skills in this project yet/i),
+      await screen.findByText(/No skills in the project library yet/i),
     ).toBeInTheDocument();
   });
 

@@ -2,6 +2,7 @@ import {
   readOpenAiCompatOverride,
   compatPresetForHostStyle,
   resolveOpenAiCompatForHostConfig,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
 } from "../src/host-config/internal";
 import { Host } from "../src/host-config/host";
 
@@ -196,5 +197,68 @@ describe("HostJson shape (public API) compatibility", () => {
         { style: "chatgpt" }
       )
     ).toBe(true);
+  });
+});
+
+describe("resolveOpenAiCompatCapabilitiesForHostConfig", () => {
+  const withOverrides = (openaiAppsOverrides: Record<string, unknown>) => ({
+    mcpProfile: {
+      apps: { compatRuntime: { openaiApps: true, openaiAppsOverrides } },
+    },
+  });
+
+  it("returns undefined when no host declares overrides", () => {
+    // Not `{}`. The injector omits the field entirely for undefined, which is
+    // what keeps the serialized runtime config byte-identical for the hosts
+    // that declare nothing — i.e. almost all of them.
+    expect(
+      resolveOpenAiCompatCapabilitiesForHostConfig(undefined)
+    ).toBeUndefined();
+    expect(resolveOpenAiCompatCapabilitiesForHostConfig({})).toBeUndefined();
+    expect(
+      resolveOpenAiCompatCapabilitiesForHostConfig({
+        mcpProfile: { apps: { compatRuntime: { openaiApps: true } } },
+      })
+    ).toBeUndefined();
+  });
+
+  it("reads the sparse turn-off set a host declares", () => {
+    // ChatGPT's shape as of the 2026-09-02 probe: the method is gone from the
+    // real `window.openai`, so the emulated one must not expose it either.
+    expect(
+      resolveOpenAiCompatCapabilitiesForHostConfig(
+        withOverrides({ notifyIntrinsicHeight: false })
+      )
+    ).toEqual({ notifyIntrinsicHeight: false });
+  });
+
+  it("accepts the public `mcp` shape as well as canonical `mcpProfile`", () => {
+    expect(
+      resolveOpenAiCompatCapabilitiesForHostConfig({
+        mcp: {
+          apps: {
+            compatRuntime: { openaiAppsOverrides: { requestModal: false } },
+          },
+        },
+      })
+    ).toEqual({ requestModal: false });
+  });
+
+  it("merges an override onto the base per key", () => {
+    expect(
+      resolveOpenAiCompatCapabilitiesForHostConfig(
+        withOverrides({ notifyIntrinsicHeight: false, uploadFile: false }),
+        withOverrides({ uploadFile: true })
+      )
+    ).toEqual({ notifyIntrinsicHeight: false, uploadFile: true });
+  });
+
+  it("keeps a base-only set when the override declares none", () => {
+    expect(
+      resolveOpenAiCompatCapabilitiesForHostConfig(
+        withOverrides({ requestDisplayMode: "fullscreen-only" }),
+        { hostStyle: "copilot" }
+      )
+    ).toEqual({ requestDisplayMode: "fullscreen-only" });
   });
 });

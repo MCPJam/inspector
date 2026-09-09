@@ -34,17 +34,24 @@ vi.mock("../skills/ServerSkillsSection", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// The tab resolves the publish permission from Convex; these suites are about
+// the tab's chrome, not about that resolution (see SkillsTab.promote-gate).
+vi.mock("convex/react", () => ({ useConvexAuth: () => ({ isAuthenticated: false }) }));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ canManageMembers: false, isLoading: false }),
+}));
+
 import { SkillsTab } from "../SkillsTab";
 
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("SkillsTab — the Local/Cloud browse toggle", () => {
+describe("SkillsTab — the Local/Library browse toggle", () => {
   it("is offered when the project store is released to this user", () => {
     render(<SkillsTab projectId="project-1" cloudSkillsEnabled />);
 
-    expect(screen.getByText("Cloud")).toBeInTheDocument();
+    expect(screen.getByText("Library")).toBeInTheDocument();
     expect(screen.getByText("Local")).toBeInTheDocument();
   });
 
@@ -53,13 +60,13 @@ describe("SkillsTab — the Local/Cloud browse toggle", () => {
     // than not offering it: the failure arrives after the user has committed.
     render(<SkillsTab projectId="project-1" cloudSkillsEnabled={false} />);
 
-    expect(screen.queryByText("Cloud")).not.toBeInTheDocument();
+    expect(screen.queryByText("Library")).not.toBeInTheDocument();
   });
 
   it("is withheld with no project to address, however the flags read", () => {
     render(<SkillsTab cloudSkillsEnabled />);
 
-    expect(screen.queryByText("Cloud")).not.toBeInTheDocument();
+    expect(screen.queryByText("Library")).not.toBeInTheDocument();
   });
 
   it("treats an empty project id as no project, not as one named \"\"", () => {
@@ -68,6 +75,6 @@ describe("SkillsTab — the Local/Cloud browse toggle", () => {
     // nothing the backend would accept.
     render(<SkillsTab projectId="" cloudSkillsEnabled />);
 
-    expect(screen.queryByText("Cloud")).not.toBeInTheDocument();
+    expect(screen.queryByText("Library")).not.toBeInTheDocument();
   });
 });

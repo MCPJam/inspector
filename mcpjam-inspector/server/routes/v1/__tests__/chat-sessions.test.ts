@@ -512,6 +512,23 @@ describe("assertUnambiguousModelId", () => {
       expect(() => assertUnambiguousModelId(id)).toThrow();
     }
   });
+
+  it("rejects a runtime-chosen sentinel, which is unambiguous and still unrunnable here", () => {
+    // `cursor/auto` has an explicit provider prefix, so the ambiguity rule
+    // above waves it through. It still names no model this route can run —
+    // there is no harness on this surface — and asking the org-provider config
+    // about it answered `provider_not_configured: cursor`, i.e. "configure a
+    // key" for a provider that has no keys.
+    //
+    // Rejecting HERE and not later is load-bearing: everything downstream runs
+    // after `claimTurnLease`, which CREATES the session row before the model is
+    // resolved. A turn that dies after the claim leaves a row whose `modelId`
+    // was never written — a session that reads as having run on nothing.
+    expect(() => assertUnambiguousModelId("cursor/auto")).toThrow(
+      /Cursor Auto/,
+    );
+    expect(() => assertUnambiguousModelId("  cursor/auto  ")).toThrow();
+  });
 });
 
 // ── Tool policy ─────────────────────────────────────────────────────────────

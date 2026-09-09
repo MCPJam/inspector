@@ -52,6 +52,39 @@ export const SANDBOX_ORIGIN: string | null = (() => {
 })();
 
 /**
+ * How the sandbox proxy mounts an MCP App view.
+ *
+ * `"write"` (the default) writes the widget HTML into a blank same-origin
+ * iframe, so the view runs at the proxy's URL and a third party that keys on
+ * the page URL — a referrer-restricted API key, an OAuth redirect URI — sees a
+ * real origin. `"srcdoc"` restores the legacy `iframe.srcdoc` mount, where the
+ * view's URL is `about:srcdoc` and no such allowlist can match.
+ *
+ * Set via `VITE_MCPJAM_VIEW_MOUNT` at build time. It exists to exercise the
+ * srcdoc branch (the e2e fallback case); being a build-time constant it is not
+ * an incident switch, since flipping it costs the same redeploy as a revert.
+ */
+export const VIEW_MOUNT_MODE: "write" | "srcdoc" =
+  import.meta.env.VITE_MCPJAM_VIEW_MOUNT === "srcdoc" ? "srcdoc" : "write";
+
+/**
+ * Whether each MCP server's views get their own origin
+ * (`<label>.sandbox.mcpjam.com`) instead of sharing the sandbox origin.
+ *
+ * What it buys: cookie and storage isolation BETWEEN apps, and a stable
+ * per-server origin for an OAuth redirect URI or a third-party API-key
+ * allowlist — the same shape Claude and ChatGPT use.
+ *
+ * Off by default because it is an infrastructure commitment, not a code one:
+ * it needs wildcard DNS and a certificate covering `*.sandbox.mcpjam.com`,
+ * and with those absent every widget would fail to load rather than degrade.
+ * Set via `VITE_MCPJAM_VIEW_SUBDOMAINS` at build time (see the Dockerfile ARG
+ * — a service variable alone never reaches the bundle).
+ */
+export const VIEW_SUBDOMAINS_ENABLED =
+  import.meta.env.VITE_MCPJAM_VIEW_SUBDOMAINS === "true";
+
+/**
  * The Discord application the agent bot runs as, used to build the "add to
  * server" URL on the Integrations page.
  *

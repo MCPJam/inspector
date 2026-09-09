@@ -1,3 +1,8 @@
+import {
+  openEvalChat,
+  useEvalAgentScopes,
+} from "@/lib/mcpjam-agent/eval-scope";
+import { currentEvalPageScope } from "@/lib/mcpjam-agent/eval-workspace";
 /**
  * Header sparkle button that toggles the MCPJam Agent side panel.
  */
@@ -14,7 +19,8 @@ import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
 
 const SHORTCUT_LABEL =
-  typeof navigator !== "undefined" && /Mac|iP(hone|od|ad)/.test(navigator.platform)
+  typeof navigator !== "undefined" &&
+  /Mac|iP(hone|od|ad)/.test(navigator.platform)
     ? "⌘\\"
     : "Ctrl+\\";
 
@@ -25,6 +31,8 @@ export function AgentSidePanelTrigger() {
 
   const onClick = useCallback(() => {
     const next = !isOpen;
+    const context =
+      next && activeTab === "evaluate" ? currentEvalPageScope() : undefined;
     if (next) {
       track("mcpjam_agent_panel_opened", {
         location: "agent_side_panel",
@@ -32,7 +40,19 @@ export function AgentSidePanelTrigger() {
         tab: activeTab,
       });
     }
-    toggle();
+    if (context) openEvalChat(context);
+    else {
+      const sessionId = useAgentPanelStore.getState().activeSessionId;
+      if (
+        next &&
+        sessionId &&
+        (sessionId.startsWith("eval-") ||
+          useEvalAgentScopes.getState().scopes[sessionId])
+      ) {
+        useAgentPanelStore.getState().setActiveSession(null, null);
+      }
+      toggle();
+    }
   }, [activeTab, isOpen, toggle]);
 
   return (
@@ -40,7 +60,9 @@ export function AgentSidePanelTrigger() {
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
+          // A chrome control, not a ghost: on the linen ground a fill-less
+          // button had nothing to separate it from the bar.
+          variant="secondary"
           size="sm"
           aria-label="Ask MCPJam"
           aria-pressed={isOpen}

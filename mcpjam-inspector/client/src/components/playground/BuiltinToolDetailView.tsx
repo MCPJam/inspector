@@ -6,16 +6,10 @@
  * the header + schema + parameter form.
  */
 import { useEffect, useState } from "react";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@mcpjam/design-system/accordion";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import type { FormField } from "@/lib/tool-form";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 
@@ -53,7 +47,13 @@ export function BuiltinToolDetailView({
         toolName={tool.name}
         onExpand={onExpand}
         {...(switchNames && onSwitch
-          ? { toolSwitchList: { names: switchNames, onSelect: onSwitch } }
+          ? {
+              toolSwitchList: {
+                items: switchNames.map((name) => ({ id: name, label: name })),
+                selectedId: tool.name,
+                onSelect: onSwitch,
+              },
+            }
           : {})}
       />
       <p className="px-3 pt-2 text-[10px] leading-snug text-muted-foreground">
@@ -62,49 +62,21 @@ export function BuiltinToolDetailView({
         direct execution.
       </p>
       <ScrollArea className="flex-1 min-h-0">
-        <Accordion
-          type="multiple"
-          value={openSections}
-          onValueChange={setOpenSections}
-          className="px-3"
-        >
-          {tool.description && (
-            <AccordionItem value="description">
-              <AccordionTrigger className="text-xs">
-                Description
-              </AccordionTrigger>
-              <AccordionContent>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {tool.description}
-                </p>
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {tool.inputSchema && (
-            <AccordionItem value="input-schema">
-              <AccordionTrigger className="text-xs">
-                Input Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={tool.inputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {hasParameters && (
-            <AccordionItem value="parameters">
-              <AccordionTrigger className="text-xs">
-                Parameters
-              </AccordionTrigger>
-              <AccordionContent>
-                <ParametersForm
-                  fields={fields}
-                  onFieldChange={onFieldChange}
-                  onToggleField={onToggleField}
-                />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-        </Accordion>
+        <ToolDetailsAccordion
+          description={tool.description}
+          inputSchema={tool.inputSchema}
+          openSections={openSections}
+          onOpenSectionsChange={setOpenSections}
+          parameters={
+            hasParameters ? (
+              <ParametersForm
+                fields={fields}
+                onFieldChange={onFieldChange}
+                onToggleField={onToggleField}
+              />
+            ) : undefined
+          }
+        />
       </ScrollArea>
     </div>
   );

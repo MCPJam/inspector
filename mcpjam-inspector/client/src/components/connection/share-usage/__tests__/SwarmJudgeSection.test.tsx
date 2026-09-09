@@ -1,12 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The session viewer's judge section (TL must-have: on-demand UX). States:
- * absent → Run judge; completed → shared verdict card + Re-judge; failed →
- * "Judge unavailable" + Retry (failed judgments are recoverable, never
- * hidden); running → judging placeholder. Controls invoke
+ * The session viewer's judge section. Auto-runs when no verdict exists;
+ * completed → shared verdict card + Re-judge; failed → "Judge unavailable" +
+ * Retry; running/pending → judging placeholder. Invokes
  * `swarmJudge:requestSwarmSessionJudge` with ONLY the session id.
  */
 const { requestJudgeMock, toastMock } = vi.hoisted(() => ({
@@ -44,7 +43,10 @@ vi.mock("@/components/scenarios/session-readiness", () => ({
   SessionInsightBar: () => null,
 }));
 
-import { SwarmJudgeSection } from "../ShareUsageThreadDetail";
+import {
+  isNotGradeableSwarmSessionError,
+  SwarmJudgeSection,
+} from "../ShareUsageThreadDetail";
 
 describe("SwarmJudgeSection", () => {
   afterEach(() => {
@@ -53,13 +55,62 @@ describe("SwarmJudgeSection", () => {
     toastMock.error.mockClear();
   });
 
-  it("absent → first-run affordance invoking the action", async () => {
-    const user = userEvent.setup();
+  it("absent → auto-invokes the judge action on mount", async () => {
+    let resolveJudge: ((value: unknown) => void) | undefined;
+    requestJudgeMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveJudge = resolve;
+        })
+    );
     render(<SwarmJudgeSection threadId="session-1" />);
 
-    await user.click(screen.getByRole("button", { name: /run judge/i }));
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    });
+    expect(
+      screen.getByText(/Judging against the journey goal/)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /run judge/i })).not.toBeInTheDocument();
+    resolveJudge?.(null);
+  });
 
-    expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+  it("a null skip is not a failure — quiet copy, no toast, no stuck spinner", async () => {
+    requestJudgeMock.mockResolvedValueOnce(null);
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Not ready to judge/)
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/Judging against the journey goal/)
+    ).not.toBeInTheDocument();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("the legacy ConvexError skip is quiet too", async () => {
+    requestJudgeMock.mockRejectedValueOnce(
+      new Error("This session is not a gradeable swarm session")
+    );
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Not ready to judge/)).toBeInTheDocument();
+    });
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("an unexpected auto-run error stays off the toast (silent) but is retryable", async () => {
+    requestJudgeMock.mockRejectedValueOnce(new Error("OPENROUTER_API_KEY"));
+    render(<SwarmJudgeSection threadId="session-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Judge unavailable")).toBeInTheDocument();
+    });
+    expect(screen.getByText("OPENROUTER_API_KEY")).toBeInTheDocument();
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("completed → verdict card with score/reason + a Re-judge affordance", async () => {
@@ -123,6 +174,95 @@ describe("SwarmJudgeSection", () => {
       screen.getByText(/Judging against the journey goal/)
     ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("ignores a judge request that resolves after the reader switched sessions", async () => {
+    let rejectFirst: ((reason: unknown) => void) | undefined;
+    requestJudgeMock.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        })
+    );
+    const { rerender } = render(<SwarmJudgeSection threadId="session-1" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    });
+
+    // Move to another session, then let the FIRST request fail.
+    requestJudgeMock.mockResolvedValueOnce(null);
+    rerender(<SwarmJudgeSection threadId="session-2" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-2" });
+    });
+    rejectFirst?.(new Error("stale judge failure"));
+
+    // The new session's state stands — no error banner from the old request.
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/stale judge failure/)
+      ).not.toBeInTheDocument();
+    });
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("ignores a superseded request for the session the reader came back to", async () => {
+    // Leaving session-1 and returning starts a SECOND request for the SAME id.
+    // Matching on the session id alone cannot tell the two apart, so the
+    // abandoned first request would land on the second one's state.
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    requestJudgeMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+    const { rerender } = render(<SwarmJudgeSection threadId="session-1" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-1" });
+    });
+
+    // Away…
+    requestJudgeMock.mockResolvedValueOnce(null);
+    rerender(<SwarmJudgeSection threadId="session-2" />);
+    await waitFor(() => {
+      expect(requestJudgeMock).toHaveBeenCalledWith({ sessionId: "session-2" });
+    });
+
+    // …and back. This request never settles, so the section stays judging.
+    requestJudgeMock.mockImplementationOnce(() => new Promise(() => {}));
+    rerender(<SwarmJudgeSection threadId="session-1" />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Judging against the journey goal/)
+      ).toBeInTheDocument();
+    });
+
+    // The abandoned first request reports "not gradeable" — it must not
+    // replace the live request's placeholder.
+    await act(async () => {
+      resolveFirst?.(null);
+    });
+    expect(screen.queryByText(/Not ready to judge/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Judging against the journey goal/)
+    ).toBeInTheDocument();
+  });
+
+  it("isNotGradeableSwarmSessionError matches the Convex payload and the message", () => {
+    expect(
+      isNotGradeableSwarmSessionError(
+        new Error("This session is not a gradeable swarm session")
+      )
+    ).toBe(true);
+    expect(
+      isNotGradeableSwarmSessionError({
+        data: "This session is not a gradeable swarm session",
+      })
+    ).toBe(true);
+    expect(isNotGradeableSwarmSessionError(new Error("OPENROUTER"))).toBe(
+      false
+    );
   });
 
   it("a rerun failure surfaces a toast instead of throwing", async () => {

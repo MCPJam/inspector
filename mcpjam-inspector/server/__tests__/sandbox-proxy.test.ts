@@ -1,105 +1,68 @@
 /**
- * Sandbox Proxy CSP Tests
+ * Sandbox proxy response headers, against the REAL router.
  *
- * Tests for the MCP Apps sandbox-proxy endpoint (SEP-1865).
- * Verifies that CSP headers are correctly configured to allow
- * cross-origin framing in the double-iframe architecture.
+ * This file previously re-declared a look-alike route inline, so it asserted
+ * the shape of its own fixture and would have stayed green through any change
+ * to what the app actually serves. It now mounts the real router behind the
+ * real security middleware, which is the only arrangement that can catch the
+ * two failures that matter: `frame-ancestors` drifting away from the origins
+ * the proxy pins against, and the global `X-Frame-Options: SAMEORIGIN`
+ * surviving to override it (the header does not support multiple origins, so
+ * leaving it on would break the cross-origin sandbox everywhere at once).
  */
-
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
+import mcpAppsRoutes from "../routes/apps/mcp-apps/index.js";
 import { securityHeadersMiddleware } from "../middleware/security-headers.js";
+import {
+  SANDBOX_PROXY_LOCALHOST_PATTERNS,
+  sandboxProxyHostOriginPatterns,
+} from "../routes/apps/mcp-apps/sandbox-proxy-html.js";
 
-// Mock fs to avoid file system dependency
-vi.mock("fs", () => ({
-  default: {
-    readFileSync: vi.fn(() => "<html><body>Sandbox Proxy</body></html>"),
-  },
-}));
+const PROXY_PATH = "/api/apps/mcp-apps/sandbox-proxy";
 
-/**
- * Creates a test app that mimics the sandbox-proxy route setup.
- * Includes the security middleware to verify header override behavior.
- */
-function createSandboxProxyTestApp(): Hono {
+function createApp(): Hono {
   const app = new Hono();
-
-  // Apply security middleware (sets X-Frame-Options: SAMEORIGIN)
   app.use("*", securityHeadersMiddleware);
-
-  // Sandbox proxy route (mirrors server/routes/mcp/index.ts)
-  app.get("/api/apps/mcp-apps/sandbox-proxy", (c) => {
-    c.header("Content-Type", "text/html; charset=utf-8");
-    c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-    // Allow cross-origin framing between localhost and 127.0.0.1 for double-iframe architecture
-    c.header(
-      "Content-Security-Policy",
-      "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
-    );
-    // Remove X-Frame-Options as it doesn't support multiple origins (CSP frame-ancestors takes precedence)
-    c.res.headers.delete("X-Frame-Options");
-    return c.body("<html><body>Sandbox Proxy</body></html>");
-  });
-
-  // Regular route for comparison (should keep X-Frame-Options)
+  app.route("/api/apps/mcp-apps", mcpAppsRoutes);
   app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));
-
   return app;
 }
 
-describe("Sandbox Proxy CSP Headers", () => {
-  let app: Hono;
-
-  beforeEach(() => {
-    app = createSandboxProxyTestApp();
+describe("sandbox proxy response headers", () => {
+  it("serves HTML that must not be cached", async () => {
+    const res = await createApp().request(PROXY_PATH);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    // The document carries the host-origin allowlist for THIS deploy, so a
+    // cached copy could outlive the configuration it was templated from.
+    expect(res.headers.get("Cache-Control")).toBe(
+      "no-cache, no-store, must-revalidate",
+    );
   });
 
-  describe("GET /api/apps/mcp-apps/sandbox-proxy", () => {
-    it("sets Content-Security-Policy with frame-ancestors for localhost origins", async () => {
-      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
-
-      const csp = res.headers.get("Content-Security-Policy");
-      expect(csp).toBe(
-        "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
-      );
-    });
-
-    it("removes X-Frame-Options header to avoid conflict with CSP", async () => {
-      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
-
-      // X-Frame-Options should be removed (CSP frame-ancestors takes precedence)
-      expect(res.headers.get("X-Frame-Options")).toBeNull();
-    });
-
-    it("sets correct Content-Type for HTML", async () => {
-      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
-
-      expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
-    });
-
-    it("sets Cache-Control to prevent caching", async () => {
-      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
-
-      expect(res.headers.get("Cache-Control")).toBe(
-        "no-cache, no-store, must-revalidate",
-      );
-    });
-
-    it("returns HTML content", async () => {
-      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
-
-      expect(res.status).toBe(200);
-      const body = await res.text();
-      expect(body).toContain("<html>");
-    });
+  it("allows the app origins to frame it, and drops X-Frame-Options", async () => {
+    const res = await createApp().request(PROXY_PATH);
+    const csp = res.headers.get("Content-Security-Policy") ?? "";
+    expect(csp).toContain("frame-ancestors 'self'");
+    for (const pattern of SANDBOX_PROXY_LOCALHOST_PATTERNS) {
+      expect(csp).toContain(pattern);
+    }
+    expect(res.headers.get("X-Frame-Options")).toBeNull();
   });
 
-  describe("other routes retain X-Frame-Options", () => {
-    it("health endpoint keeps X-Frame-Options from middleware", async () => {
-      const res = await app.request("/api/mcp/health");
+  it("frames-ancestors matches the origins the proxy pins against", async () => {
+    // One source of truth: an origin allowed to frame the proxy but not to
+    // talk to it renders a widget that then silently does nothing.
+    const res = await createApp().request(PROXY_PATH);
+    const csp = res.headers.get("Content-Security-Policy") ?? "";
+    for (const pattern of sandboxProxyHostOriginPatterns()) {
+      expect(csp).toContain(pattern);
+    }
+  });
 
-      // Regular routes should still have X-Frame-Options set by middleware
-      expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
-    });
+  it("leaves X-Frame-Options in place on ordinary routes", async () => {
+    const res = await createApp().request("/api/mcp/health");
+    expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
   });
 });

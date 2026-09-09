@@ -18,7 +18,9 @@ import {
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
-import { parseAriaSnapshot } from "./aria-snapshot";
+import { PAGE_TEXT_FN } from "./page-text";
+import type { PendingDialog } from "./dialogs";
+import { NetworkRing } from "./network";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -96,18 +98,7 @@ export type AnyPage = {
     value: string,
     options?: unknown,
   ): Promise<unknown>;
-  ariaSnapshot(options?: unknown): Promise<string>;
-  locator(selector: string): AnyLocator;
   on(event: string, handler: (payload: any) => void): void;
-};
-
-/**
- * The sliver of Playwright's `Locator` the daemon uses: narrow a selector to
- * its first match and take that element's aria snapshot.
- */
-export type AnyLocator = {
-  first(): AnyLocator;
-  ariaSnapshot(options?: unknown): Promise<string>;
 };
 
 /**
@@ -118,16 +109,41 @@ export type AnyLocator = {
 const CONSOLE_RING_SIZE = 200;
 /** Per-entry cap at CAPTURE time; the observe budget caps again for output. */
 const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
+/**
+ * Per-dialog message cap at capture time.
+ *
+ * A dialog's text is page-authored and reaches the model, so it is bounded
+ * here for the same reason console entries are — and generously, because the
+ * whole value of the message is that a person or a model can recognise which
+ * dialog it is.
+ */
+const DIALOG_MESSAGE_BYTES = 2_000;
+
+/** The shapes Playwright's `Request`/`Response` give us. Structural, like `AnyPage`. */
+interface PlaywrightRequest {
+  url?(): string;
+  method?(): string;
+  resourceType?(): string;
+  failure?(): { errorText?: string } | null;
+}
+interface PlaywrightResponse {
+  status?(): number;
+  statusText?(): string;
+  headers?(): Record<string, string>;
+  request?(): PlaywrightRequest;
+}
+
+/** The shape Playwright's `Dialog` gives us. Structural, like `AnyPage`. */
+interface PlaywrightDialog {
+  type?(): string;
+  message?(): string;
+  defaultValue?(): string | undefined;
+  accept(promptText?: string): Promise<void>;
+  dismiss(): Promise<void>;
+}
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
-
-/**
- * Accessibility capture timeout. Shorter than an act: an observation that
- * cannot be taken promptly is better answered as "unavailable" than held
- * open, because the caller has a screenshot and a DOM outline to fall back on.
- */
-const A11Y_TIMEOUT_MS = 5_000;
 
 /**
  * JPEG quality for model-facing captures. High enough that text stays legible
@@ -140,6 +156,13 @@ export function wrapPage(page: AnyPage): DriverPage {
   // The console ring. Attached once per wrapped page; entries are captured
   // eagerly because a console message is gone the moment it is emitted.
   const consoleRing: ConsoleEntry[] = [];
+  // Monotonic totals, never decremented when the ring evicts or a handoff
+  // purges. They are CURSORS: a ledger row records where they stood after a
+  // command, and two rows bracket the output that command produced. Counting
+  // only what is still readable would make a lost window indistinguishable
+  // from a quiet one.
+  let consoleTotal = 0;
+  let errorsTotal = 0;
   page.on("console", (message: { type?: () => string; text?: () => string }) => {
     try {
       const text = message.text?.() ?? "";
@@ -148,9 +171,102 @@ export function wrapPage(page: AnyPage): DriverPage {
         text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
         at: Date.now(),
       });
+      consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
       // A console listener must never take the page down.
+    }
+  });
+  // THE NETWORK RING. Playwright hands back objects rather than CDP ids, so
+  // the ring's own id is minted here and remembered against the Request — the
+  // same object the response reports, which is what folds the two events into
+  // one row. A WeakMap so a page that runs for hours does not accumulate ids
+  // for requests nobody will ask about again.
+  const network = new NetworkRing();
+  const requestIds = new WeakMap<object, string>();
+  let nextRequestId = 0;
+  const idFor = (request: object): string => {
+    const known = requestIds.get(request);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request, minted);
+    return minted;
+  };
+  page.on("request", (request: PlaywrightRequest) => {
+    try {
+      network.started({
+        requestId: idFor(request as unknown as object),
+        method: request.method?.() ?? "GET",
+        url: request.url?.() ?? "",
+        ...(request.resourceType?.()
+          ? { resourceType: request.resourceType() }
+          : {}),
+      });
+    } catch {
+      // A network listener must never take the page down.
+    }
+  });
+  page.on("response", (response: PlaywrightResponse) => {
+    try {
+      const request = response.request?.();
+      if (!request) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        ...(response.status ? { status: response.status() } : {}),
+        ...(response.statusText?.()
+          ? { statusText: response.statusText() }
+          : {}),
+        ...(Number.isFinite(length) ? { bytes: length } : {}),
+        ...(headers ? { headers } : {}),
+      });
+    } catch {
+      // As above.
+    }
+  });
+  page.on("requestfailed", (request: PlaywrightRequest) => {
+    try {
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        failure: request.failure?.()?.errorText ?? "request failed",
+      });
+    } catch {
+      // As above.
+    }
+  });
+
+  // DIALOGS ARE CAPTURED, NOT ANSWERED HERE.
+  //
+  // Registering any `dialog` listener turns OFF Playwright's own auto-dismiss,
+  // which is what makes this possible at all: the dialog stays open, and the
+  // driver decides. That decision needs the lease — a dialog raised while a
+  // person is driving is theirs to answer, and dismissing it out from under
+  // them is exactly the surprise the handoff exists to prevent — and the lease
+  // is not something a page wrapper can see.
+  let pending: { dialog: PendingDialog; handle: PlaywrightDialog } | null =
+    null;
+  page.on("dialog", (dialog: PlaywrightDialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: (dialog.type?.() ?? "alert") as PendingDialog["kind"],
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...(dialog.defaultValue?.()
+            ? {
+                defaultPrompt: capText(
+                  dialog.defaultValue()!,
+                  DIALOG_MESSAGE_BYTES,
+                ),
+              }
+            : {}),
+          at: Date.now(),
+        },
+      };
+    } catch {
+      // A dialog listener must never take the page down.
     }
   });
   page.on("pageerror", (error: unknown) => {
@@ -162,14 +278,35 @@ export function wrapPage(page: AnyPage): DriverPage {
       ),
       at: Date.now(),
     });
+    // Counted in BOTH: a page error is a console entry (the ring holds one) and
+    // it is also the thing `errors` names. A reader asking "did this command
+    // throw" wants the second number, and deriving it from the first would mean
+    // scanning entries the ring may already have dropped.
+    consoleTotal += 1;
+    errorsTotal += 1;
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
 
-  // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
-  // page tool should not pay for a CDP session.
+  // The WebMCP bridge is attached ONCE and memoized here. It USED to be
+  // attached lazily, on the first `webmcp_*` action, on the reasoning that a
+  // tab which never calls a page tool should not pay for a CDP session. The
+  // driver now attaches it eagerly on tab creation instead (see
+  // `ChromiumDriver.getOrCreateTab`), because the tool set became something
+  // READ between model steps: a bridge that attaches on first use knows
+  // nothing about what the page registered before it existed, so a tool
+  // registered during page load would be invisible until something else
+  // happened to touch WebMCP. It still reuses the memoized session below
+  // rather than attaching its own — a page serving both a tool call and the
+  // pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
+  // The CDP session itself is memoized separately and shared: the WebMCP
+  // bridge and the viewport both want one, and attaching twice to the same
+  // page gives two sessions whose events interleave unpredictably.
+  let cdpPromise: Promise<CdpLike | null> | null = null;
 
-  return {
+  // Named rather than returned inline so `webmcp()` can reach `cdp()` — one
+  // attach, two consumers.
+  const adapted: DriverPage = {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
@@ -210,6 +347,16 @@ export function wrapPage(page: AnyPage): DriverPage {
       const buffer = await page.screenshot({
         type: "jpeg",
         quality: SCREENSHOT_JPEG_QUALITY,
+        // CSS PIXELS, always — the model's coordinate space (L5). Without
+        // this, Playwright captures at the device scale factor, so raising the
+        // display's sharpness would silently hand the model a 1536×1152 or
+        // 2048×1536 picture while `isPointInViewport` went on refusing
+        // anything past 1023×767. Every click the model computed from that
+        // screenshot would land at a fraction of where it aimed.
+        //
+        // At DPR 1 this produces byte-identical output to the call it
+        // replaces, which is what makes it safe to land before any DPR change.
+        scale: "css",
       });
       return buffer.toString("base64");
     },
@@ -248,25 +395,41 @@ export function wrapPage(page: AnyPage): DriverPage {
     },
 
     // --- observation --------------------------------------------------------
-    async a11ySnapshot(rootSelector?: string) {
-      // `page.accessibility` NO LONGER EXISTS in the pinned Playwright (1.62.1
-      // removed it), so the tree-shaped API this used to call resolved
-      // `undefined` for every page. `ariaSnapshot` is its successor: it answers
-      // YAML, which `parseAriaSnapshot` rebuilds into the tree the L9 budget
-      // needs, and it takes a selector root — which is what makes the omission
-      // marker's `rootSelector` retrieval verb real.
-      const target = rootSelector ? page.locator(rootSelector).first() : page;
+    async pageText() {
+      // Degrades rather than throwing, like every other read on this page: a
+      // navigation mid-read destroys the execution context and rejects, and a
+      // whole failed observation teaches the model less than an empty one it
+      // can retry.
       try {
-        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
-        return parseAriaSnapshot(yaml);
+        const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
       } catch {
-        // A selector that matches nothing, a detached element, or a page too
-        // busy to answer. `null` is the honest result; the driver turns an
-        // unmatched ROOT selector into an error rather than an empty tree.
-        return null;
+        return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since: number) => network.dropSince(since),
+    networkCursor: () => network.count(),
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept: boolean, promptText?: string) {
+      const open = pending;
+      // CLEARED BEFORE THE ANSWER IS SENT, not after. `accept()` resolves once
+      // the renderer has taken the answer and started running again, and any
+      // command that arrives in that window must see an unblocked page rather
+      // than refuse against a dialog that is already on its way out.
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+        // Already gone — the page closed it, or the tab navigated. Answered
+        // either way, as far as the caller is concerned.
+      }
+      return true;
+    },
     consoleEntries: () => consoleRing,
+    consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
     dropConsoleSince: (since: number) => {
       // Walk from the end: the ring is chronological, so the tail is the
       // window to drop.
@@ -275,34 +438,57 @@ export function wrapPage(page: AnyPage): DriverPage {
       consoleRing.length = keep;
     },
     webmcp() {
-      webmcpPromise ??= attachWebMcp(page);
+      webmcpPromise ??= (async () => {
+        // Through the memoized session, so the bridge and the viewport share
+        // ONE attach. Two sessions on a page is two of everything the CDP
+        // domains keep per session, for one page's worth of truth.
+        const session = await adapted.cdp();
+        return session ? attachWebMcp(page, session) : null;
+      })();
       return webmcpPromise;
     },
+    cdp() {
+      cdpPromise ??= (async () => {
+        const attach = cdpAttachers.get(page);
+        if (!attach) return null;
+        return attach().catch(() => null);
+      })();
+      return cdpPromise;
+    },
   };
+  return adapted;
 }
 
 /**
- * Attach a WebMCP bridge to a page over its own CDP session. Returns null when
- * this browser cannot speak the domain at all — a page with no WebMCP tools is
- * the normal case, not a failure, so nothing here throws.
+ * Attach a WebMCP bridge to a page over the session its adapter already holds.
+ * Returns null when this browser cannot speak the domain at all — a page with
+ * no WebMCP tools is the normal case, not a failure, so nothing here throws.
  *
- * The CDP session comes from the page's context; `attachCdp` is set by
- * `adaptContext` so this file stays the only one that knows about CDP.
+ * The session is passed IN rather than attached here: the page adapter
+ * memoizes one, and a bridge that opened its own would give a page serving
+ * both a tool call and the pane two sessions.
  */
-async function attachWebMcp(page: AnyPage): Promise<WebMcpBridge | null> {
-  const attach = cdpAttachers.get(page);
-  if (!attach) return null;
+async function attachWebMcp(
+  page: AnyPage,
+  session: CdpLike,
+): Promise<WebMcpBridge | null> {
   try {
-    const session = await attach();
-    const bridge = new WebMcpBridge(session);
-    await bridge.start(async () => {
+    // ONE probe closure, used for the initial `start()` AND re-run on every
+    // main-frame navigation. `document.modelContext` is a property of the
+    // DOCUMENT, not of the session: a bridge that probed once reported "this
+    // browser has no WebMCP" forever after opening on a page that had none,
+    // including on the WebMCP page the model navigated to next.
+    const probe = async () => {
       // `WebMCP.enable` resolves even where the feature is off — the page API
       // is the only honest probe (same reasoning as the local inspector's).
       const supported = await page
         .evaluate<boolean>(`(() => ${PAGE_API_PROBE})()`)
         .catch(() => false);
       return supported === true;
-    });
+    };
+    const bridge = new WebMcpBridge(session);
+    bridge.resupport(probe);
+    await bridge.start(probe);
     return bridge;
   } catch {
     return null;
@@ -338,6 +524,36 @@ export interface LaunchBrowserdContextOptions {
    * inherit the previous one's cookies.
    */
   contextMode?: "persistent" | "ephemeral";
+  /**
+   * Device pixels per CSS pixel, from the box's own configuration.
+   *
+   * Honoured only in `persistent` mode — see `contextOptionsFor`. The CSS
+   * viewport is unchanged either way: the model's coordinate space is 1024×768
+   * whatever the display rasterises at.
+   */
+  deviceScaleFactor?: number;
+  /**
+   * Which Chromium build to launch.
+   *
+   * Unset means Playwright's own default, which is what the hosted desktop
+   * wants (headed under Xfce, from the template's install). The local engine
+   * passes `"chromium"` deliberately: without a channel, `headless: true`
+   * resolves to the `chromium-headless-shell` binary — the OLD headless, a
+   * different executable with a different compositor path and a fingerprint
+   * public sites recognise. "No window" must not mean "a browser sites
+   * refuse", so the local engine runs the same full build a headed launch
+   * would and merely declines to show it.
+   */
+  channel?: string;
+  /**
+   * An explicit Chromium binary.
+   *
+   * For environments that ship one at a path Playwright's resolver does not
+   * know (a prebuilt CI image). Production never sets it — a user's machine
+   * has the browser Playwright installed, and pinning a path here would make
+   * the engine depend on a filesystem layout we do not control.
+   */
+  executablePath?: string;
 }
 
 /**
@@ -346,12 +562,37 @@ export interface LaunchBrowserdContextOptions {
  * instance (L8). Chromium cannot start its renderer sandbox as uid 0 (the image
  * builds as root), so the sandbox is disabled only in that case.
  */
+/**
+ * The context options, with the display's scale factor folded in.
+ *
+ * PERSISTENT ONLY. An ephemeral context is an eval or a swarm iteration, where
+ * the whole point of the pinned options is that a screenshot on one host
+ * matches a screenshot on another (L5) — so its scale factor stays 1 whatever
+ * the box is configured for, and hosted and local eval captures stay identical.
+ */
+export function contextOptionsFor(options: {
+  contextMode: "persistent" | "ephemeral";
+  deviceScaleFactor?: number;
+}): Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor"> & {
+  deviceScaleFactor: number;
+} {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (options.contextMode !== "persistent" || dpr === 1) {
+    return BROWSERD_CONTEXT_OPTIONS;
+  }
+  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+}
+
 export async function launchBrowserdContext(
   options: LaunchBrowserdContextOptions,
 ): Promise<DriverContext> {
   const { chromium } = await import("playwright");
   const launchArgs = {
     headless: options.headless ?? false,
+    ...(options.channel ? { channel: options.channel } : {}),
+    ...(options.executablePath
+      ? { executablePath: options.executablePath }
+      : {}),
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
@@ -369,7 +610,9 @@ export async function launchBrowserdContext(
       context = await browser.newContext({
         acceptDownloads: false,
         permissions: [],
-        ...BROWSERD_CONTEXT_OPTIONS,
+        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+        // whatever the box says, so eval captures match across hosts.
+        ...contextOptionsFor({ contextMode: "ephemeral" }),
       });
     } catch (error) {
       // Ownership of the browser transfers to `adaptContext` below. If we
@@ -385,12 +628,27 @@ export async function launchBrowserdContext(
     });
   }
 
-  await clearStaleSingletonLock(options.userDataDir);
+  const cleared = await clearStaleSingletonLock(options.userDataDir);
+  if (cleared.heldBy) {
+    // Somebody took the profile between the session layer's check and this
+    // launch. Refusing here beats Chromium's own message, and beats removing a
+    // live owner's lock to make room for ourselves.
+    throw new Error(
+      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}` +
+        `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
+        "this profile; close it and try again",
+    );
+  }
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     ...launchArgs,
     acceptDownloads: false,
     permissions: [],
-    ...BROWSERD_CONTEXT_OPTIONS,
+    ...contextOptionsFor({
+      contextMode: "persistent",
+      ...(options.deviceScaleFactor !== undefined
+        ? { deviceScaleFactor: options.deviceScaleFactor }
+        : {}),
+    }),
   });
   return adaptContext(context as unknown as AnyContext);
 }

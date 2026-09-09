@@ -57,6 +57,7 @@ export type HostedServerValidateContext = {
   supportsMrtr?: false;
   suppressListenChannel?: true;
   dropToolListChanged?: true;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
 };
 
 export interface HostedServerValidateResponse {
@@ -154,6 +155,9 @@ export async function validateHostedServer(
           : {}),
         ...(hostedContext.dropToolListChanged === true
           ? { dropToolListChanged: true }
+          : {}),
+        ...(hostedContext.toolCallCancellation
+          ? { toolCallCancellation: hostedContext.toolCallCancellation }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

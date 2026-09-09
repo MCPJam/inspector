@@ -13,9 +13,11 @@ import {
   runOperationWithPermalinks,
   withPermalinkEnvelope,
   type PlatformPermalink,
+  type PlatformResourceParentRef,
   type PlatformResourceRef,
   type PlatformResourceType,
 } from "../permalinks.js";
+import { evalIterationRef } from "../operations.js";
 
 const ORIGIN = DEFAULT_MCPJAM_APP_ORIGIN;
 const PROJECT = "v977phvmg9dttdemo";
@@ -25,6 +27,31 @@ function build(
   appOrigin = ORIGIN
 ): PlatformPermalink {
   return buildAppPermalink(resource, { appOrigin });
+}
+
+/**
+ * The parent chain a type's route declares, read off the table the same way
+ * the builder reads it, with one placeholder id per level (`p-1`, `p-2`, …).
+ */
+function parentChainFor(
+  type: PlatformResourceType
+): PlatformResourceParentRef | undefined {
+  const chain: PlatformResourceType[] = [];
+  let current = (PLATFORM_PERMALINK_ROUTES[type] as { parent?: string })
+    .parent as PlatformResourceType | undefined;
+  while (current) {
+    chain.push(current);
+    current = (PLATFORM_PERMALINK_ROUTES[current] as { parent?: string })
+      .parent as PlatformResourceType | undefined;
+  }
+  return chain.reduceRight<PlatformResourceParentRef | undefined>(
+    (parent, ancestorType, index) => ({
+      type: ancestorType,
+      id: `p-${index + 1}`,
+      ...(parent ? { parent } : {}),
+    }),
+    undefined
+  );
 }
 
 describe("route mappings", () => {
@@ -66,6 +93,48 @@ describe("route mappings", () => {
     ).toBe(`/evals/suite/s_1/runs/run_1?project=${PROJECT}`);
   });
 
+  it("selects an iteration on its run's page, two levels under the suite", () => {
+    // An iteration has no page of its own: the run detail reads
+    // `?iteration=` off the query string. So the link is the RUN's path
+    // exactly, plus the selector, plus the project — in that order.
+    const permalink = build({
+      type: "eval_iteration",
+      id: "it_1",
+      parent: {
+        type: "eval_run",
+        id: "run_1",
+        parent: { type: "eval_suite", id: "s_1" },
+      },
+      projectId: PROJECT,
+    });
+    expect(permalink.path).toBe(
+      `/evals/suite/s_1/runs/run_1?iteration=it_1&project=${PROJECT}`
+    );
+    expect(permalink.label).toBe("View iteration");
+    expect(permalink.resource).toEqual({ type: "eval_iteration", id: "it_1" });
+    expect(permalink.projectId).toBe(PROJECT);
+
+    const run = build({
+      type: "eval_run",
+      id: "run_1",
+      parent: { type: "eval_suite", id: "s_1" },
+      projectId: PROJECT,
+    });
+    expect(new URL(permalink.url).pathname).toBe(new URL(run.url).pathname);
+  });
+
+  it("the ref builder composes the same chain by hand", () => {
+    expect(build(evalIterationRef("it_1", "run_1", "s_1", PROJECT)).path).toBe(
+      `/evals/suite/s_1/runs/run_1?iteration=it_1&project=${PROJECT}`
+    );
+    // Without a project the ref carries none, and the builder refuses it the
+    // way it refuses every other project-scoped type.
+    expect(evalIterationRef("it_1", "run_1", "s_1").projectId).toBeUndefined();
+    expect(() => build(evalIterationRef("it_1", "run_1", "s_1"))).toThrow(
+      /needs a project id/
+    );
+  });
+
   it("sends a grouped launch to the suite's runs lens, not one member run", () => {
     // The non-obvious one: a group has an id of its own but no page of its
     // own, and linking to one member would hide a sibling's failure.
@@ -95,6 +164,10 @@ describe("route mappings", () => {
     // meaning.
     expect(isPlatformResourceType("swarm")).toBe(false);
     expect(isPlatformResourceType("journey_run")).toBe(true);
+  });
+
+  it("has a route for an eval iteration, reached through its run", () => {
+    expect(isPlatformResourceType("eval_iteration")).toBe(true);
   });
 
   it("has no route for a readiness run, which nothing can address", () => {
@@ -148,9 +221,18 @@ describe("query merging", () => {
   });
 
   it("coexists with a route's own id selector", () => {
-    for (const [type, key] of [["chat_session", "session"]] as const) {
-      const params = new URL(build({ type, id: "x", projectId: PROJECT }).url)
-        .searchParams;
+    for (const [type, key] of [
+      ["chat_session", "session"],
+      ["eval_iteration", "iteration"],
+    ] as const) {
+      const params = new URL(
+        build({
+          type,
+          id: "x",
+          ...(parentChainFor(type) ? { parent: parentChainFor(type) } : {}),
+          projectId: PROJECT,
+        }).url
+      ).searchParams;
       expect(params.get(key)).toBe("x");
       expect(params.get(PROJECT_DEEP_LINK_PARAM)).toBe(PROJECT);
       expect([...params.keys()].sort()).toEqual([key, "project"].sort());
@@ -229,6 +311,68 @@ describe("required scope and parents", () => {
     ).toThrow(/nests under eval_suite, not chat_session/);
   });
 
+  it("refuses an iteration whose chain is short, or wrong at either level", () => {
+    // Run given, suite missing: the second level is checked, not just the
+    // first — otherwise the URL would be `/evals/suite/undefined/…`.
+    expect(() =>
+      build({
+        type: "eval_iteration",
+        id: "it_1",
+        parent: { type: "eval_run", id: "run_1" },
+        projectId: PROJECT,
+      })
+    ).toThrow(/needs its eval_suite parent \(through eval_run\)/);
+    expect(() =>
+      build({ type: "eval_iteration", id: "it_1", projectId: PROJECT })
+    ).toThrow(/needs its eval_run parent;/);
+    expect(() =>
+      build({
+        type: "eval_iteration",
+        id: "it_1",
+        parent: { type: "eval_suite", id: "s_1" },
+        projectId: PROJECT,
+      })
+    ).toThrow(/nests under eval_run, not eval_suite/);
+    expect(() =>
+      build({
+        type: "eval_iteration",
+        id: "it_1",
+        parent: {
+          type: "eval_run",
+          id: "run_1",
+          parent: { type: "chat_session", id: "cs_1" },
+        },
+        projectId: PROJECT,
+      })
+    ).toThrow(/eval_run permalink nests under eval_suite, not chat_session/);
+    expect(() =>
+      build({
+        type: "eval_iteration",
+        id: "it_1",
+        parent: {
+          type: "eval_run",
+          id: "run_1",
+          parent: { type: "eval_suite", id: " " },
+        },
+        projectId: PROJECT,
+      })
+    ).toThrow(/non-empty eval_suite id/);
+  });
+
+  it("refuses a project-scoped iteration with no project, like every other type", () => {
+    expect(() =>
+      build({
+        type: "eval_iteration",
+        id: "it_1",
+        parent: {
+          type: "eval_run",
+          id: "run_1",
+          parent: { type: "eval_suite", id: "s_1" },
+        },
+      })
+    ).toThrow(/needs a project id/);
+  });
+
   it("refuses an empty id", () => {
     expect(() =>
       build({ type: "project_server", id: "  ", projectId: PROJECT })
@@ -268,14 +412,11 @@ describe("the route registry is the type list", () => {
         parent?: string;
         projectScoped?: boolean;
       };
+      const parent = parentChainFor(type);
       const permalink = build({
         type,
         id: "id-1",
-        ...(route.parent
-          ? {
-              parent: { type: route.parent as PlatformResourceType, id: "p-1" },
-            }
-          : {}),
+        ...(parent ? { parent } : {}),
         projectId: PROJECT,
       });
       const params = new URL(permalink.url).searchParams;
@@ -284,6 +425,69 @@ describe("the route registry is the type list", () => {
       );
       expect(permalink.label.length, type).toBeGreaterThan(0);
     }
+  });
+
+  it("every ancestor segment is backed by a declared parent at that depth", () => {
+    // `:grandparent` in a route whose parent has no parent would encode
+    // `undefined` into the path. Caught in the table, not by a recipient.
+    const depthOf = { ":parent": 1, ":grandparent": 2 } as const;
+    for (const type of Object.keys(
+      PLATFORM_PERMALINK_ROUTES
+    ) as PlatformResourceType[]) {
+      const route = PLATFORM_PERMALINK_ROUTES[type] as {
+        segments: readonly string[];
+      };
+      let depth = 0;
+      for (let p = parentChainFor(type); p; p = p.parent) depth += 1;
+      for (const segment of route.segments) {
+        const needed = depthOf[segment as keyof typeof depthOf];
+        if (needed === undefined) continue;
+        expect(depth, `${type} uses ${segment}`).toBeGreaterThanOrEqual(needed);
+      }
+    }
+  });
+
+  it("builds every pre-existing type's URL exactly as before the chain", () => {
+    // The chain walk replaced the single-parent branch. Pin the URL each
+    // pre-existing type minted under the old code, so a regression in parent
+    // handling shows up as a changed string, not as a subtly different path.
+    const expected: Record<
+      Exclude<PlatformResourceType, "eval_iteration">,
+      string
+    > = {
+      project: `/servers?project=${PROJECT}`,
+      project_server: `/servers/id-1?project=${PROJECT}`,
+      project_environment: `/environments/id-1?project=${PROJECT}`,
+      project_plugin: `/servers/plugins/id-1?project=${PROJECT}`,
+      host: `/hosts/id-1?project=${PROJECT}`,
+      eval_suite: `/evals/suite/id-1?project=${PROJECT}`,
+      eval_case: `/evals/suite/p-1/test/id-1?project=${PROJECT}`,
+      eval_run: `/evals/suite/p-1/runs/id-1?project=${PROJECT}`,
+      eval_run_group: `/evals/suite/p-1?view=runs&project=${PROJECT}`,
+      chat_session: `/sessions?session=id-1&project=${PROJECT}`,
+      conformance_run: `/conformance/runs/id-1?project=${PROJECT}`,
+      journey_run: `/swarms/id-1?project=${PROJECT}`,
+      user_testing_scenario: `/user-testing/id-1?project=${PROJECT}`,
+      organization: "/organizations/id-1",
+    };
+    for (const [type, path] of Object.entries(expected) as Array<
+      [PlatformResourceType, string]
+    >) {
+      const parent = parentChainFor(type);
+      expect(
+        build({
+          type,
+          id: "id-1",
+          ...(parent ? { parent } : {}),
+          projectId: PROJECT,
+        }).path,
+        type
+      ).toBe(path);
+    }
+    // And the table gained exactly the one type this pins nothing for.
+    expect(
+      Object.keys(PLATFORM_PERMALINK_ROUTES).filter((t) => !(t in expected))
+    ).toEqual(["eval_iteration"]);
   });
 });
 

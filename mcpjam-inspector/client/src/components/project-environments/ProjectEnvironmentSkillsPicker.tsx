@@ -2,11 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2, SquareSlash } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import {
   listSkills,
@@ -20,13 +15,67 @@ import type { ProjectEnvironmentSkillSelection } from "@/hooks/useProjectEnviron
 export const MAX_ENVIRONMENT_SKILLS = 20;
 
 /**
- * Shared-skill multi-select for a project environment's `skillSelection`.
+ * Why a listed skill can't be pinned, in the reader's words.
  *
- * Only SHARED (`sharing === 'project'`) skills are selectable — the backend
- * rejects personal skills. Rows the backend flags as non-pinnable (P0.3
- * `pinnability` metadata: plugin_component skills, supporting files, extra
- * frontmatter) render disabled with the backend-aligned reason, so users
- * never pick a skill only to discover the restriction at save time.
+ * The backend `reason` is an enum meant for callers (`not_shared`,
+ * `plugin_component`), and it used to be rendered raw. That was survivable
+ * while only exotic rows were ineligible; now that every personal skill is
+ * listed, the most common disabled row in the picker would read "not_shared".
+ *
+ * Unknown reasons fall through to the generic line rather than leaking an
+ * identifier: this list grows on the backend, and a picker on an older client
+ * should say something true rather than something internal.
+ */
+/**
+ * Why this skill can't be pinned, or `null` if it can.
+ *
+ * `pinnability` is OPTIONAL on the wire — absent on a backend older than P0.3
+ * — so it cannot be the only thing consulted. That was harmless while personal
+ * skills were filtered out client-side and every remaining row was already
+ * eligible; now that they are listed, a row with no metadata would render as
+ * selectable, and the save would be the first the user heard of it.
+ *
+ * Shared-only is the one rule this picker can evaluate for itself, from a
+ * field that is not optional, so it is checked independently. The backend's
+ * own verdict still wins when it is present — it knows about restrictions
+ * (plugin components) this client cannot see.
+ */
+function pinRejection(skill: SkillListItem): string | null {
+  if (skill.pinnability && !skill.pinnability.ok)
+    return skill.pinnability.reason;
+  if (skill.sharing !== "project") return "not_shared";
+  return null;
+}
+
+function ineligibleReason(reason: string | undefined): string {
+  switch (reason) {
+    case "not_shared":
+      return "Personal skill — only skills in the project library can run in environments. An admin can publish it.";
+    case "plugin_component":
+      return "Delivered by its plugin, not pinned on its own. Pin the plugin version instead.";
+    default:
+      return "This skill can't be pinned to an environment.";
+  }
+}
+
+/**
+ * Library-skill multi-select for a project environment's `skillSelection`.
+ *
+ * Only skills in the project LIBRARY (`sharing === 'project'`) can be pinned —
+ * the backend rejects personal ones, because an environment a teammate runs
+ * must resolve to the same skills for them as for you.
+ *
+ * Personal skills are nonetheless LISTED, disabled, with the reason on the row.
+ * Filtering them out client-side made the picker lie by omission: a user who
+ * had just uploaded a skill and came here to pin it found no trace of it and
+ * no way to tell whether it had failed to upload, been named something else,
+ * or simply wasn't eligible. The backend already says which of those it is —
+ * every listed row carries P0.3 `pinnability` metadata — so the picker shows
+ * the row and quotes the reason.
+ *
+ * The same machinery covers every other ineligible row (plugin_component
+ * skills), so users never pick a skill only to discover the restriction at
+ * save time.
  *
  * Each selected skill also gets a VERSION control, defaulting to "Latest" —
  * the skill's current revision, resolved when the run starts, which is what an
@@ -62,7 +111,16 @@ export function ProjectEnvironmentSkillsPicker({
       try {
         const list = await listSkills({ kind: "cloud", projectId });
         if (!active) return;
-        setSkills(list.filter((s) => s.sharing === "project" && s.skillId));
+        // `skillId` is the only hard requirement — it is what a pin addresses.
+        // Library skills sort first: they are the ones that can be picked, and
+        // a picker that opens on a wall of disabled rows reads as broken.
+        const pinnable = list.filter((s) => s.skillId);
+        pinnable.sort((a, b) => {
+          const aLib = a.sharing === "project" ? 0 : 1;
+          const bLib = b.sharing === "project" ? 0 : 1;
+          return aLib - bLib;
+        });
+        setSkills(pinnable);
       } catch (err) {
         if (!active) return;
         setLoadError(
@@ -156,8 +214,8 @@ export function ProjectEnvironmentSkillsPicker({
   if (skills.length === 0 && orphanSelectedIds.length === 0) {
     return (
       <p className="py-1 text-xs italic text-muted-foreground">
-        No shared skills in this project yet. Share a skill with the project to
-        pin it here.
+        No skills in the project library yet. Add a skill to the library to pin
+        it here.
       </p>
     );
   }
@@ -172,8 +230,8 @@ export function ProjectEnvironmentSkillsPicker({
         {skills.map((skill) => {
           const skillId = skill.skillId!;
           const checked = selectedIds.has(skillId);
-          const ineligible =
-            skill.pinnability !== undefined && skill.pinnability.ok === false;
+          const rejection = pinRejection(skill);
+          const ineligible = rejection !== null;
           const capBlocked = !checked && atCap;
           // Ineligibility (and the cap) block NEW selections only — a skill that
           // was pinned and later became ineligible must stay uncheckable so the
@@ -198,7 +256,18 @@ export function ProjectEnvironmentSkillsPicker({
               <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
                 <span className="truncate font-normal">{skill.name}</span>
-                {skill.description ? (
+                {/* An ineligible row shows WHY, in place of its description.
+                    The reason used to live only in a tooltip, and a tooltip is
+                    not reachable here: the trigger wraps a row whose only
+                    focusable control is a DISABLED checkbox, so a keyboard or
+                    screen-reader user met a greyed-out row with no stated
+                    cause. It is also the more useful line — a reader scanning
+                    a disabled row wants the restriction, not the blurb. */}
+                {ineligible ? (
+                  <span className="text-[11px] leading-snug text-muted-foreground">
+                    {ineligibleReason(rejection ?? undefined)}
+                  </span>
+                ) : skill.description ? (
                   <span className="truncate text-[11px] text-muted-foreground">
                     {skill.description}
                   </span>
@@ -220,22 +289,7 @@ export function ProjectEnvironmentSkillsPicker({
               ) : null}
             </Label>
           );
-          if (!ineligible) return row;
-          return (
-            <Tooltip key={skillId}>
-              <TooltipTrigger asChild>
-                {/* span keeps the tooltip alive over the disabled row */}
-                <span>{row}</span>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="max-w-[260px]">
-                <p className="text-xs leading-snug">
-                  {skill.pinnability && !skill.pinnability.ok
-                    ? skill.pinnability.reason
-                    : "This skill can't be pinned to an environment."}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          );
+          return row;
         })}
         {orphanSelectedIds.map((skillId) => (
           <Label
@@ -263,7 +317,7 @@ export function ProjectEnvironmentSkillsPicker({
                 </span>
               </span>
               <span className="truncate text-[11px] text-muted-foreground">
-                No longer shared with this project — remove it to save.
+                No longer in the project library — remove it to save.
               </span>
             </span>
           </Label>
@@ -274,7 +328,7 @@ export function ProjectEnvironmentSkillsPicker({
         {pinnedVersionBySkillId.size > 0
           ? ` (${pinnedVersionBySkillId.size} pinned to a version)`
           : ""}
-        {atCap ? " — cap reached" : ""}. Shared skills only.
+        {atCap ? " — cap reached" : ""}. Library skills only.
       </p>
     </div>
   );

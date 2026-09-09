@@ -72,7 +72,7 @@ describe("transcriptToUIMessages", () => {
     expect((merged[1] as { role?: string }).role).toBe("assistant");
     const assistantContent = (merged[1] as { content: unknown[] }).content;
     const toolCallPart = assistantContent.find(
-      (p) => (p as { type?: string }).type === "tool-call"
+      (p) => (p as { type?: string }).type === "tool-call",
     ) as { result?: unknown };
     expect(toolCallPart.result).toEqual({ results: [] });
 
@@ -85,7 +85,7 @@ describe("transcriptToUIMessages", () => {
     ]);
 
     const toolPart = messages[1].parts.find(
-      (p) => p.type === "dynamic-tool"
+      (p) => p.type === "dynamic-tool",
     ) as
       | { type: "dynamic-tool"; toolCallId: string; output: unknown }
       | undefined;
@@ -125,7 +125,7 @@ describe("transcriptToUIMessages", () => {
 
     const messages = transcriptToUIMessages(transcript);
     const invocations = messages[1].parts.filter(
-      (p) => p.type === "dynamic-tool"
+      (p) => p.type === "dynamic-tool",
     ) as Array<{
       toolCallId: string;
       output: unknown;
@@ -359,8 +359,8 @@ describe("transcriptToUIMessages", () => {
       (message) =>
         message.role === "tool" &&
         (message.content as any[]).some(
-          (part) => part?.toolCallId === "call-suspended-1"
-        )
+          (part) => part?.toolCallId === "call-suspended-1",
+        ),
     );
     expect(hasToolResult).toBe(false);
     const assistantToolCall = modelMessages
@@ -445,7 +445,7 @@ describe("transcriptToUIMessages", () => {
     });
 
     const toolMessage = modelMessages.find(
-      (message) => message.role === "tool"
+      (message) => message.role === "tool",
     ) as any;
     expect(toolMessage.content[0].providerOptions).toEqual({
       mcpjam: { serverId: "srv-1" },
@@ -478,7 +478,7 @@ describe("transcriptToUIMessages", () => {
     const second = transcriptToUIMessages(transcript);
 
     expect(first.map((message) => message.id)).toEqual(
-      second.map((message) => message.id)
+      second.map((message) => message.id),
     );
     expect(first[1].parts[0]).toMatchObject(second[1].parts[0]);
   });
@@ -495,10 +495,12 @@ describe("transcriptToUIMessages", () => {
         id: "live-user-start-game",
         role: "user",
         parts: [{ type: "text", text: "Execute `start_game`" }],
+        metadata: { timestampMs: 100 },
       },
       {
         id: "live-assistant-start-game",
         role: "assistant",
+        metadata: { timestampMs: 200 },
         parts: [
           { type: "text", text: "Invoked `start_game`" },
           {
@@ -534,11 +536,13 @@ describe("transcriptToUIMessages", () => {
 
     const stabilized = preserveHydratedMessageIds(
       currentMessages,
-      hydratedMessages
+      hydratedMessages,
     );
 
     expect(stabilized[0].id).toBe("live-user-start-game");
     expect(stabilized[1].id).toBe("live-assistant-start-game");
+    expect(stabilized[0].metadata).toMatchObject({ timestampMs: 100 });
+    expect(stabilized[1].metadata).toMatchObject({ timestampMs: 200 });
     expect((stabilized[1].parts[1] as any).output).toEqual({
       board: ["_", "X", "_", "_", "_", "_", "_", "_", "_"],
     });

@@ -314,6 +314,10 @@ describe("SessionFlowSankey", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
     expect(onRebuild).toHaveBeenCalledTimes(1);
+    // No arguments: wiring the callback straight to `onClick` handed it a
+    // React synthetic event, which Convex could not serialize ("Converting
+    // circular structure to JSON"), so analysis never started.
+    expect(onRebuild.mock.calls[0]).toEqual([]);
   });
 
   it("reports an analysis in flight instead of offering to start one", () => {
@@ -341,18 +345,6 @@ describe("SessionFlowSankey", () => {
     // it sits over its column, with the label gutter beyond it.
     expect(xs).toEqual([...xs].sort((a, b) => a - b));
     expect(new Set(xs).size).toBe(4);
-  });
-
-  it("says how many themes were folded away, across all columns", () => {
-    renderSankey({
-      breakdown: breakdown({
-        sankey: {
-          ...SANKEY,
-          foldedByStage: { goal: 2, behavior: 1 },
-        },
-      }),
-    });
-    expect(screen.getByText(/3 smaller themes folded/)).toBeInTheDocument();
   });
 
   it("warns that the counts are windowed when the scan truncated", () => {

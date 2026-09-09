@@ -40,7 +40,7 @@ for your org.
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model (BYOK fails closed; the CLI maps it to its native alias). |
 | System prompt | Honored (passed to the runtime). |
-| Require tool approval | **Can't be switched on from the Behavior tab** — the toggle is disabled for harness hosts (`client/src/lib/harness-capabilities.ts` marks it not enforced), though it keeps the host's stored value. A host that already carries approval (e.g. set before the host was switched to the harness) does get it honored for **native and host-executed** tools (WS3): the adapter runs the CLI in its `allow-edits` permission mode, so side-effecting built-ins pause the turn and resume with your decision; reads stay free. The runtime can't pause for **MCP-server** tools, so approval combined with selected MCP servers is rejected pre-flight (`supportsMcpToolApproval: false`). |
+| Require tool approval | **Switchable from the Behavior tab** (`client/src/lib/harness-capabilities.ts` marks it enforced for `claude-code`). Approval is honored on all three surfaces — **native, host-executed and MCP-server** tools. The adapter runs the CLI in its `allow-reads` permission mode, which is what makes the MCP case work: every call passes the bridge's `canUseTool` before the CLI may run it, and an external `mcp__<server>__<tool>` name falls into that table's `edit` default, which `allow-reads` gates. Reads stay free. (This row previously said MCP tools could not pause and that approval plus selected servers was rejected pre-flight; `claudeCodeAdapter.supportsMcpToolApproval` has been `true` since that was measured against the vendored bridge.) |
 | Selected MCP servers | Honored — delivered via `.mcp.json` through MCPJam's proxy. |
 | Skills | Honored (runtime skills are materialized into the sandbox). |
 | Temperature / other sampling knobs | **Not honored** — the CLI owns its sampling. Grayed out in the UI. |
@@ -74,6 +74,34 @@ shutoff, never a bypass.
   into `llmUsageRecord` against your org — the same accounting as chat — and
   spend caps and empty-wallet rejections apply before the stream starts.
 
+## Codex transports
+
+Codex runs over one of two transports, selected by
+`MCPJAM_CODEX_APPSERVER_TRANSPORT` (off by default). It is one host either way —
+same harness id, same model rules, same host-executed MCP delivery — but NOT
+one resumable session lane (see the fingerprint note below), and the difference
+is what the runtime can be asked to do.
+
+| | `codex exec` (default) | `codex app-server` |
+|---|---|---|
+| Adapter | `@ai-sdk/harness-codex` | `server/utils/harness/codex-appserver/` (ours) |
+| Tool approval | Impossible. The bridge hardcodes `approvalPolicy: "never"` and `doStart` rejects any permission mode but `allow-all`, so no `tool-approval-request` is ever emitted and an approval host is refused pre-flight. | Supported on native and host-executed surfaces. `allow-reads` maps to Codex's `untrusted` policy; a declined command reports `declined` and does not run. |
+| Attributable actions | `shell`, `web_search`. | `exec_command`, `apply_patch`, `web_search`, each with the real command and Codex's own read/list/search classification. |
+| Usage | Totals. | Per turn, with cache-read, cache-write and reasoning components. |
+| Interrupt / manual compaction | Neither. | `turn/interrupt` yes; manual compaction no (the shared bridge protocol has no command for it, so `doCompact` throws rather than silently doing nothing). |
+
+Flipping the flag forks the session lane — the runtime fingerprint folds the
+transport in — because a conversation started on one transport has no thread the
+other can resume. Flipping back lands on the original lane.
+
+MCP delivery stays host-executed on both. The app-server protocol has no
+approval request for an individual MCP `tools/call`, so native delivery would
+leave a Strict-mode host unable to gate one; that is the blocker for native
+delivery, not the transport.
+
+Protocol facts here were measured against the pinned binary rather than assumed
+— see `.spike-codex-appserver/RESULTS.md`, which is rerunnable.
+
 ## Failure modes you may see
 
 None of these fall back to the emulated engine — a turn that says it ran the
@@ -83,7 +111,7 @@ real runtime did. All fail closed; a failed start spends nothing.
 |---|---|
 | Broker delivery kill-switched (`MCPJAM_HARNESS_BROKER_DELIVERY=false`) | Pre-flight error naming the kill switch — harness runs are unavailable on that server. |
 | Enterprise-managed authorization policy on the host | Pre-flight error — the harness MCP proxy can't carry the policy, so the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers | Pre-flight error — the runtime can't pause for approval of MCP-server tools; turn approval off or remove the servers. |
+| Require tool approval + selected MCP servers | Claude Code: honored. Codex on the default `exec` transport: pre-flight error — the runtime cannot pause at all; turn approval off or switch transports. Codex on `app-server`: honored, with MCPJam gating the host-executed tools. |
 | Computers data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade CTA. |

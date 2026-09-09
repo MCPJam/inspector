@@ -36,7 +36,11 @@ import {
 } from "@/test/eval-decision-summary-fixtures";
 import { EvalRunDecisionSummaryError } from "@/lib/apis/eval-run-decision-summary-api";
 import { isDiagnosticTraceable } from "../run-decision-summary-presentation";
-import type { EvalRunDecisionSummary } from "@mcpjam/sdk/contract";
+import {
+  USER_VALUE_STAGE_LABELS,
+  USER_VALUE_STAGE_OUTCOMES,
+  type EvalRunDecisionSummary,
+} from "@mcpjam/sdk/contract";
 
 afterEach(cleanup);
 
@@ -107,7 +111,7 @@ describe("RunDecisionSummaryCard over the golden corpus", () => {
           `${summary.counts.passed} passed · ${summary.counts.failed} failed · ${summary.counts.inconclusive} inconclusive of ${summary.counts.total} case variant`,
         );
       } else {
-        expect(counts.textContent).toMatch(/trial/);
+        expect(counts.textContent).toMatch(/iteration/);
       }
     },
   );
@@ -211,7 +215,7 @@ describe("stage and category copy", () => {
 
     const card = screen.getByTestId("run-decision-summary");
     expect(card).toHaveTextContent(
-      "First failed stage: none was established — the run never reached the server's stages",
+      "First failed stage: none was established. The run never reached the server's stages",
     );
     // Both stage-less categories still name the bucket the run is grouped
     // under; only the STAGE is withheld.
@@ -225,7 +229,7 @@ describe("stage and category copy", () => {
 
     const card = screen.getByTestId("run-decision-summary");
     expect(card).toHaveTextContent(
-      "First failed stage: not established — the recorded stage chain did not validate",
+      "First failed stage: not established. The recorded stage chain did not validate",
     );
     expect(card).toHaveTextContent("Failure category: not reported");
     expect(card).toHaveTextContent(
@@ -256,7 +260,27 @@ describe("stage and category copy", () => {
     );
   });
 
-  it("renders every stage row's state once a trial is expanded", () => {
+  /**
+   * The first diagnostic's expandable body.
+   *
+   * `hidden={!expanded}` leaves every trial's body in the DOM, so a query over
+   * the whole card sees six cards per trial and picks whichever came first in
+   * document order. Scoping to one body is what makes an assertion about "this
+   * trial's chain" mean that.
+   */
+  function diagnosticBodies(card: HTMLElement): HTMLElement[] {
+    return Array.from(
+      card.querySelectorAll<HTMLElement>('[id^="run-decision-diagnostic-"]'),
+    );
+  }
+
+  function firstDiagnostic(card: HTMLElement): HTMLElement {
+    const body = diagnosticBodies(card)[0];
+    if (!body) throw new Error("no diagnostic body rendered");
+    return body;
+  }
+
+  it("renders every stage row as a card once a trial is expanded", () => {
     const summary = readDecisionSummaryFixture(
       "measured-failure-at-every-stage",
     );
@@ -272,20 +296,91 @@ describe("stage and category copy", () => {
     // The three non-verdicts stay three different sentences: "we did not
     // check", "it does not apply" and "it never ran" are different facts.
     expect(card).toHaveTextContent("never ran (an earlier stage failed)");
-    expect(card).toHaveTextContent("Connection: passed");
+    // The rows are cards now, not "Connection: passed" text. Scoped to ONE
+    // diagnostic each time: the expandable body stays in the DOM behind
+    // `hidden`, so a document-wide query would span every trial in the run.
+    //
+    // This fixture walks the break across all six stages, so the first trial
+    // broke AT connection and the last one got all the way to user value.
+    const bodies = diagnosticBodies(card);
+    const brokeAtConnection = within(bodies[0]!).getByTestId(
+      "stage-chain-card-connection",
+    );
+    expect(brokeAtConnection).toHaveTextContent(
+      USER_VALUE_STAGE_LABELS.connection,
+    );
+    expect(brokeAtConnection).toHaveAttribute("data-chip", "failed");
+
+    // …and where connection held, it wears its OUTCOME phrase rather than the
+    // word "passed", so the row reads as the delivery story.
+    const connectionHeld = within(bodies[bodies.length - 1]!).getByTestId(
+      "stage-chain-card-connection",
+    );
+    expect(connectionHeld).toHaveTextContent(
+      USER_VALUE_STAGE_OUTCOMES.connection,
+    );
+    expect(connectionHeld).toHaveAttribute("data-chip", "passed");
+  });
+
+  it("opens on the first failed stage, and lets a reader close it", () => {
+    const summary = readDecisionSummaryFixture(
+      "measured-failure-at-every-stage",
+    );
+    renderSummary(summary);
+    const card = screen.getByTestId("run-decision-summary");
+    fireEvent.click(
+      within(card).getAllByRole("button", { expanded: false })[0]!,
+    );
+    const body = firstDiagnostic(card);
+
+    // The contract named the stage; the card row opened on it rather than on
+    // a stage this component picked for itself.
+    const opened = within(body)
+      .getByTestId("trial-stage-detail-card")
+      .getAttribute("data-stage");
+    expect(opened).toBeTruthy();
+    const openedCard = within(body).getByTestId(`stage-chain-card-${opened}`);
+    expect(openedCard).toHaveAttribute("aria-pressed", "true");
+
+    // A second click on the open card closes it — the `null` path, distinct
+    // from "not chosen yet".
+    fireEvent.click(openedCard);
+    expect(within(body).queryByTestId("trial-stage-detail-card")).toBeNull();
+  });
+
+  it("shows no card row for a chain that was withheld", () => {
+    // `unverified` withheld its rows deliberately. It must not render as an
+    // empty six-card chain that reads as measured.
+    const summary = readDecisionSummaryFixture("unverified-and-version-ahead");
+    renderSummary(summary);
+    const card = screen.getByTestId("run-decision-summary");
+    for (const trigger of within(card).getAllByRole("button", {
+      expanded: false,
+    })) {
+      fireEvent.click(trigger);
+    }
+
+    // This fixture pairs a withheld chain with a verified one, which is the
+    // point: the withheld trial shows no cards while its neighbour still does,
+    // so "no cards" is a statement about THAT trial rather than about the run.
+    expect(
+      within(firstDiagnostic(card)).queryByTestId("stage-chain-cards"),
+    ).toBeNull();
+    expect(card).toHaveTextContent("did not validate");
+    expect(within(card).getAllByTestId("stage-chain-cards")).toHaveLength(1);
   });
 });
 
 describe("counts and their unit", () => {
-  it("calls a legacy run's numbers trials, and says the run is legacy", () => {
+  it("calls a legacy run's numbers iterations, and says the run is legacy", () => {
     const summary = readDecisionSummaryFixture("legacy-run-trial-counts");
     renderSummary(summary);
 
     const card = screen.getByTestId("run-decision-summary");
     expect(screen.getByTestId("run-decision-counts")).toHaveTextContent(
-      "trial",
+      "iteration",
     );
-    expect(card).toHaveTextContent("these are trials, not cases");
+    expect(card).toHaveTextContent("these are iterations, not cases");
     expect(screen.getByTestId("run-decision-verdict-source")).toHaveTextContent(
       "legacy percent-threshold run",
     );
@@ -315,7 +410,7 @@ describe("counts and their unit", () => {
     );
     expect(summary.diagnostics.items.length).toBeGreaterThan(0);
     expect(screen.getByTestId("run-decision-diagnostics-scope")).toHaveTextContent(
-      `${summary.diagnostics.items.length} non-passing of ${summary.diagnostics.scannedIterations} trials examined`,
+      `${summary.diagnostics.items.length} non-passing of ${summary.diagnostics.scannedIterations} iterations examined`,
     );
   });
 
@@ -341,7 +436,7 @@ describe("completeness", () => {
 
     expect(
       screen.getByTestId("run-decision-diagnostics-scope"),
-    ).toHaveTextContent("this is the run's whole non-passing set");
+    ).toHaveTextContent("This is the run's whole non-passing set");
     expect(screen.queryByTestId("run-decision-load-more")).toBeNull();
   });
 
@@ -351,7 +446,7 @@ describe("completeness", () => {
 
     expect(
       screen.getByTestId("run-decision-diagnostics-scope"),
-    ).toHaveTextContent("partial: more trials have not been examined");
+    ).toHaveTextContent("Partial: more iterations have not been examined");
     expect(screen.getByTestId("run-decision-load-more")).toBeInTheDocument();
   });
 
@@ -361,7 +456,7 @@ describe("completeness", () => {
 
     const scope = screen.getByTestId("run-decision-diagnostics-scope");
     expect(scope).toHaveTextContent(
-      "every page offered has been loaded, but the run did not report the set as complete",
+      "Every page offered has been loaded, but the run did not report the set as complete",
     );
     expect(scope.textContent).not.toMatch(/whole non-passing set/);
   });

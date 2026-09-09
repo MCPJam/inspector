@@ -511,6 +511,7 @@ export {
   isPrivateHost,
   isDisallowedIpAddress,
   isLoopbackOAuthUrl,
+  isNeverDialableHost,
   OAuthOutboundUrlBlockedError,
 } from "./oauth/ssrf-guard.js";
 // RFC 9207 authorization-response `iss` validation. The comparison itself is
@@ -834,6 +835,7 @@ export type {
 } from "./sandbox-policy.js";
 // MCP protocol-version constants + predicates. Browser-safe by
 // construction (pure data + pure functions, no Node deps).
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,

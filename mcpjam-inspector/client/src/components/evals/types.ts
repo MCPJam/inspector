@@ -1,4 +1,7 @@
-import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
+import type {
+  EvalSuiteFileCaseImport,
+  SuiteGatePolicyV1,
+} from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type {
@@ -22,6 +25,24 @@ import type {
   GoalJudgeRunOverride as EvalJudgeRunOverride,
 } from "@/components/shared/session-quality/judge-config";
 export type { EvalJudgeConfig, EvalJudgeConfigOverride, EvalJudgeRunOverride };
+
+/**
+ * One criterion the suite's judge is asked to apply to every case.
+ *
+ * `weight` and `scale` are deliberately absent rather than optional-and-
+ * ignored: the judge returns one score per case plus the criteria it hit, so
+ * there is nothing for a per-criterion weight to weigh. Adding the field
+ * without the machinery would let an author express a preference the grader
+ * silently discards.
+ */
+export type EvalJudgeRubricCriterion = {
+  id: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+};
+
+export type EvalJudgeRubric = { criteria: EvalJudgeRubricCriterion[] };
 
 /**
  * Host identity an eval run executed against. Hand-mirrored from the Convex
@@ -223,8 +244,20 @@ export type EvalSuite = {
   latestRunId?: string;
   source?: "ui" | "sdk";
   /**
+   * The suite's DECLARED identity — the `suite.id` an author committed in a
+   * versioned suite file. Present IS ownership: a suite with one is managed by
+   * that file and refuses configuration edits from the app.
+   *
+   * Absent on every UI-authored suite, and absent from what an older backend
+   * sends — so read it through `isCiOwnedSuite`, never on its own.
+   */
+  declaredSuiteId?: string;
+  /**
    * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
    * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
+   *
+   * NOT an ownership signal. A UI-authored suite that CI merely reports into
+   * has this set and stays fully editable; see `isCiOwnedSuite`.
    */
   lastSdkRunAt?: number;
   runCounter?: number;
@@ -257,6 +290,52 @@ export type EvalSuite = {
    * Convex `v.object` (no codegen for backend → inspector types).
    */
   judgeConfig?: EvalJudgeConfig;
+  /**
+   * B10a — the suite's own grading criteria, handed to the judge as one block
+   * alongside each case's own expectation.
+   *
+   * DISTINCT from `rubric`: that one is deterministic predicates the journeys
+   * surface evaluates itself, this one is prose the judge reads. A criterion
+   * here has no predicate and never gates on its own; it changes what the
+   * judge was ASKED, which is why editing it retires the suite's calibration.
+   */
+  judgeRubric?: EvalJudgeRubric;
+  /**
+   * G6 — the suite configuration's revision number, newest first in
+   * `listSuiteRevisions`. Absent on a backend that predates suite history, so
+   * every reader must treat absence as "this deployment has no history" rather
+   * than "this suite has none".
+   */
+  revisionNumber?: number;
+  /**
+   * B9a — the verdict policy this suite's runs are decided under.
+   *
+   * `2` is the fraction-and-validity policy; ABSENT is legacy, decided by
+   * `defaultPassCriteria.minimumPassRate` (a PERCENT) over
+   * `max(case.iterations, minIterations)`. The two are not convertible, which
+   * is why absence is read rather than defaulted — reading a historical
+   * percent as a fraction silently moves every bar by a factor of a hundred.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * The v2 defaults a case inherits. FRACTIONS in [0,1], never percents;
+   * a percent exists only in front of a reader.
+   */
+  verdictPolicyDefaults?: {
+    repetitions: number;
+    passThreshold: number;
+    validity?: {
+      minEligibleTrials?: number;
+      minCompletionRate?: number;
+      maxEvaluatorErrorRate?: number;
+    };
+  };
+  /**
+   * Live stored quality-gate policy. Excluded from execution config
+   * revision; a change or clear is a suite revision with a required reason.
+   * Absent on a backend that predates B2.
+   */
+  gatePolicy?: SuiteGatePolicyV1;
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {
@@ -297,12 +376,24 @@ export type EvalSuite = {
    * run start; the client never derives servers from these ids.
    */
   environmentIds?: string[];
+  /**
+   * Epoch ms of the schedule's next due firing, or absent when nothing is due.
+   * Denormalized on the suite by the scheduler; never computed client-side.
+   */
+  scheduleNextDueAt?: number;
   /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
   schedule?: {
     intervalMinutes: number;
     enabled: boolean;
     state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
     consecutiveFailures?: number;
+    /**
+     * The user a scheduled run executes AS. Its runs spend this person's
+     * access, and the schedule pauses itself (`paused_auth`) when they lose
+     * it — which is why the settings row names them rather than reporting a
+     * boolean.
+     */
+    createdByUserId?: string;
     /**
      * Multi-environment suites pin the schedule to ONE member environment
      * (required by `setSuiteSchedule`); single-env suites may omit it and
@@ -339,6 +430,8 @@ export type EvalCase = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  /** Authored case kind; absent means the editor derives it from matchOptions. */
+  kind?: "capability" | "regression";
   /**
    * Unified authored test steps — the source of truth for execution and the
    * "is this a render check?" detection (`isModelFree(steps)`). Replaces the
@@ -383,6 +476,38 @@ export type EvalCase = {
   _creationTime?: number; // Convex auto field
 };
 
+/**
+ * Why a stored `estimatedCostUsd` is absent, or what produced it.
+ * Hand-mirrored from `convex/lib/tokenUsage.ts`.
+ */
+export type EvalIterationCostBasis = {
+  status: "not_reported" | "provider_reported" | "estimated";
+  /**
+   * `gateway_pricing` is MCPJam pricing MCPJam's own token counts.
+   * `sdk_runner` is a figure a customer's runner supplied, which MCPJam
+   * neither computed nor verified — surfaces badge it rather than presenting
+   * it as MCPJam's own.
+   */
+  source?: "gateway_pricing" | "sdk_runner";
+  modelId?: string;
+  inputUsdPerToken?: number;
+  outputUsdPerToken?: number;
+  cachedInputUsdPerToken?: number;
+  pricingRefreshedAt?: number;
+  reason?: "no_pricing" | "no_tokens" | "harness_mixed_models";
+};
+
+export type EvalIterationUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  /** Absent means NO COST WAS OBSERVED. Never render it as $0. */
+  estimatedCostUsd?: number;
+  cacheHit?: boolean;
+  costBasis?: EvalIterationCostBasis;
+};
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
@@ -477,6 +602,18 @@ export type EvalIteration = {
     arguments: Record<string, any>;
   }>;
   tokensUsed: number;
+  /**
+   * Structured token usage plus the COST the backend stamped from it.
+   *
+   * Hand-mirrored from `convex/lib/tokenUsage.ts` (`EvalIterationUsage`);
+   * nothing checks this at build time, so keep the two in step by hand.
+   *
+   * `estimatedCostUsd` absent is never "$0" — it is "no cost was observed",
+   * and `costBasis.reason` says which kind. The backend deliberately omits
+   * the number rather than writing a zero, so every reader here must render
+   * an em dash rather than a currency amount.
+   */
+  usage?: EvalIterationUsage;
   error?: string;
   errorDetails?: string;
   resultSource?: "reported" | "derived";
@@ -501,6 +638,7 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
+  | "scorecard"
   | "timeline"
   | "chat"
   | "raw"
@@ -588,6 +726,25 @@ export type CompareRunRecord = {
    * step-card "ticking" during a quick run.
    */
   streamingStepStatus?: Record<string, EvalStepStatusEntry>;
+  /**
+   * Evaluate workspace: minted per launch, never reused on retry. The compare
+   * session id is reused across retries so it cannot identify an attempt.
+   */
+  attemptId?: string;
+  /**
+   * Evaluate workspace: authored case + run settings captured from the save
+   * payload at launch. Overlay matching reads this for a live attempt.
+   */
+  launchSnapshot?: {
+    isNegativeTest?: boolean;
+    steps?: TestStep[];
+    predicates?: CasePredicates | Predicate[];
+    matchOptions?: EvalMatchOptions;
+    expectedOutput?: string;
+    runs?: number;
+    namedHostId?: string;
+    modelValue?: string;
+  };
 };
 
 /**
@@ -714,10 +871,41 @@ export type EvalSuiteRun = {
      * silently re-render in-flight scoring with new values.
      */
     judgeConfig?: EvalJudgeConfig;
+    /**
+     * Which engine executed the run: `"emulated"` or `"harness:<id>"`.
+     * Absent on pre-attribution rows — treat as unknown, not as emulated.
+     */
+    executionEngine?: string;
+    /**
+     * This run is the REWRITE arm of a description experiment. The catalog
+     * snapshot stays the original; this marker is the only record of the
+     * rewrite the model actually saw.
+     */
+    toolDescriptionOverride?: {
+      toolName: string;
+      serverId?: string;
+      description: string;
+      proposalHash: string;
+      experimentId: string;
+      /** Absent on rows written before the hash was recorded. */
+      originalDescriptionHash?: string;
+    };
   };
+  /**
+   * Which engine executed the run. Sibling of `configSnapshot.executionEngine`
+   * for API-projected rows that lift the field to the top level.
+   */
+  executionEngine?: string;
   status:
     | "pending"
     | "running"
+    /**
+     * Every trial finished; the run is HELD for its gating judge, up to 30
+     * minutes. NOT terminal, and `result` is still `"pending"` — only the
+     * backend's `finalizeAfterJudge` moves it on. Anything that treats this as
+     * done reports a run with no verdict as though it had one.
+     */
+    | "grading"
     | "completed"
     | "failed"
     | "cancelled"
@@ -766,11 +954,36 @@ export type EvalSuiteRun = {
   verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
-    | "user_cancelled"
-    | "run_timeout"
-    | "iteration_timeout"
-    | "stale_worker";
+    "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
+  /**
+   * Run origin, STAMPED by the backend. Every launch that arrives over `/v1` —
+   * the CLI, a GitHub Actions job, an MCP agent — is `"api"`, because from the
+   * server's side all three are API calls. Read `launcher` for which of them
+   * it actually was; `resolveRunOrigin` composes the two.
+   */
   source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
+  /**
+   * The run's DECLARED launcher: what the launching process said it was.
+   *
+   * Optional in the wire sense as well as the type sense — a backend that
+   * predates run provenance never sends it, so every reader has to work with
+   * it absent. Absence means "no declared launcher", never "the app did it".
+   */
+  launcher?: {
+    kind: "cli" | "mcp" | "github_action";
+    client?: string;
+    version?: string;
+  };
+  /**
+   * VERIFIED attribution, minted by the backend from the credential the run
+   * authenticated with. `apiKeyId` is what lets the Runs table say "via API
+   * key ····last4" as a fact rather than a guess. Narrowed by the backend
+   * projection to these two fields.
+   */
+  attribution?: {
+    surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+    apiKeyId?: string | null;
+  };
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;
@@ -782,6 +995,8 @@ export type EvalSuiteRun = {
     pipelineId?: string;
     jobId?: string;
     runUrl?: string;
+    /** Recorded pull request URL, when supplied by the CI integration. */
+    prUrl?: string;
     branch?: string;
     commitSha?: string;
   };
@@ -798,6 +1013,15 @@ export type EvalSuiteRun = {
    * "host matrix" view.
    */
   namedHostId?: string;
+  /**
+   * Inline catalog captured at run start. Present on live run docs from the
+   * browser list/detail queries even though older TypeScript omitted it;
+   * archived runs keep only `toolSnapshotHash`. Route facts treat absence as
+   * `catalogState: notLoaded` — no client fetch of snapshots.
+   */
+  toolSnapshot?: unknown;
+  /** Digest of {@link toolSnapshot}. Sibling of the inline catalog, not inside `runInsights`. */
+  toolSnapshotHash?: string;
   /**
    * Client-generated UUID shared by every per-host run from the same
    * multi-host eval launch. The UI groups runs by this id; runs without
@@ -826,11 +1050,7 @@ export type EvalSuiteRun = {
       testCaseId?: string;
       title: string;
       status:
-        | "new_failure"
-        | "still_failing"
-        | "fixed"
-        | "new_case"
-        | "removed_case";
+        "new_failure" | "still_failing" | "fixed" | "new_case" | "removed_case";
       summary: string;
     }>;
   };
@@ -857,10 +1077,7 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        | "server_design"
-        | "agent_behavior"
-        | "test_design"
-        | "unknown";
+        "server_design" | "agent_behavior" | "test_design" | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -876,10 +1093,7 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        | "server_design"
-        | "agent_behavior"
-        | "test_design"
-        | "unknown";
+        "server_design" | "agent_behavior" | "test_design" | "unknown";
     }>;
   };
   // Goal-completion judge (advisory LLM-as-judge): grades each case's final
@@ -896,12 +1110,31 @@ export type EvalSuiteRun = {
     threshold: number;
     cases: Array<{
       caseKey: string;
+      /**
+       * The case AND ITS REPETITION — `${caseKey}#${iterationNumber}` — which
+       * is the only key that identifies one trial under verdict policy v2. A
+       * join on `caseKey` alone is ambiguous the moment a case runs more than
+       * once, and it silently attributes one trial's verdict to another.
+       * Absent on runs judged before the key existed.
+       */
+      gradingKey?: string;
+      /** The trial this verdict graded, when the backend resolved one. */
+      iterationId?: string;
       /** How fully the final answer satisfied expectedOutput, in [0,1]. */
       score: number;
       /** Advisory pass = score >= threshold. Does NOT gate the run. */
       passed: boolean;
       reason: string;
       rubricHits: string[];
+      /**
+       * Whether the judge actually ANSWERED. An `error` or `skipped` case
+       * carries a score the judge did not produce from evidence, so it is a
+       * non-answer rather than a low grade.
+       */
+      status?: "scored" | "error" | "skipped";
+      /** The rubric this verdict was graded against. */
+      rubricHash?: string;
+      rubricSource?: "expected_output" | "assertions" | "suite_criteria";
     }>;
   };
   // Groundedness judge (second named advisory judge): grades whether each
@@ -977,10 +1210,7 @@ export type EvalRunDiffSide = {
 
 /** Delivery channel a pinned skill reached the run through. */
 export type EvalRunSkillChannel =
-  | "host"
-  | "environment"
-  | "plugin"
-  | "mcp-server";
+  "host" | "environment" | "plugin" | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export type EvalRunSkillSide = {

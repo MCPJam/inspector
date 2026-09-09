@@ -33,7 +33,7 @@
  * domain and evaluating `PAGE_API_PROBE` in the page — never by enumerating
  * domains.
  */
-import type { Debugger, Session, WebContents } from "electron";
+import type { Session, WebContents } from "electron";
 import {
   WEBMCP_WEBVIEW_PARTITION,
   type WebMcpInputEvent,
@@ -41,7 +41,12 @@ import {
 } from "@/shared/webmcp-inspector-protocol";
 import { logger } from "../../utils/logger.js";
 import { PAGE_API_PROBE } from "./launch-args";
-import { WebMcpBridge, type CdpLike } from "../browserd/daemon/webmcp-bridge";
+import { WebMcpBridge } from "../browserd/daemon/webmcp-bridge";
+// Moved to `browserd/electron/` so the Electron BROWSER ENGINE can use the
+// same adapter; this provider is now one of two callers rather than its owner.
+// It went there rather than staying here because the dependency has to point
+// that way: `browserd/` must not import from `webmcp-inspector/`.
+import { DebuggerCdpAdapter } from "../browserd/electron/debugger-cdp.js";
 import {
   SCREENSHOT_MAX_BYTES,
   SCREENSHOT_WIDTH,
@@ -110,74 +115,6 @@ function originOf(url: string): string {
     return new URL(url).origin;
   } catch {
     return "about:blank";
-  }
-}
-
-/**
- * `webContents.debugger` as the bridge's `CdpLike`.
- *
- * Two shapes to reconcile. The debugger delivers EVERY protocol event through
- * one `"message"` listener carrying `(event, method, params)`; `CdpLike` wants
- * per-method subscription. So one listener fans out to a handler map.
- *
- * `CdpLike` has no `off`, which decides how teardown works: a bridge listener
- * cannot be individually removed, so `dispose()` flips `alive` and every one of
- * them becomes a no-op. Underneath, only the single `"message"` listener this
- * adapter installed is removed — by identity, not `removeAllListeners`, which
- * would be wrong on an emitter we do not exclusively own.
- */
-class DebuggerCdpAdapter implements CdpLike {
-  private readonly handlers = new Map<
-    string,
-    Array<(payload: unknown) => void>
-  >();
-  private alive = true;
-  private readonly onMessage: (
-    event: unknown,
-    method: string,
-    params: unknown,
-  ) => void;
-
-  constructor(private readonly dbg: Debugger) {
-    this.onMessage = (_event, method, params) => {
-      if (!this.alive) return;
-      for (const handler of this.handlers.get(method) ?? []) {
-        try {
-          handler(params);
-        } catch (error) {
-          // A throwing subscriber is the consumer's own reaction to a browser
-          // event; letting it escape would take down the listener that is also
-          // responsible for the bridge's bookkeeping.
-          logger.debug("[webmcp] a CDP event handler threw", {
-            method,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    };
-    this.dbg.on("message", this.onMessage);
-  }
-
-  send(method: string, params?: Record<string, unknown>): Promise<unknown> {
-    if (!this.alive) {
-      return Promise.reject(new Error("The debugger has been detached."));
-    }
-    return this.dbg.sendCommand(method, params ?? {});
-  }
-
-  on(event: string, handler: (payload: unknown) => void): void {
-    const list = this.handlers.get(event) ?? [];
-    list.push(handler);
-    this.handlers.set(event, list);
-  }
-
-  dispose(): void {
-    if (!this.alive) return;
-    this.alive = false;
-    this.handlers.clear();
-    // By identity: `removeAllListeners("message")` would also take out anything
-    // else that ever subscribed to this debugger, which is not ours to decide.
-    this.dbg.removeListener("message", this.onMessage);
   }
 }
 

@@ -19,6 +19,10 @@ on:
       - "mcpjam-inspector/forge.config.ts"
       - "mcpjam-inspector/src/main.ts"
       - "mcpjam-inspector/src/preload.ts"
+      # The local-harness IPC runs in the MAIN process and opens a native
+      # dialog, so a change to it is a change to what the packaged app does at
+      # startup — exactly what this smoke test exists to catch.
+      - "mcpjam-inspector/src/ipc/local-harness/**"
       - "mcpjam-inspector/vite.main.config.ts"
       - "mcpjam-inspector/vite.preload.config.ts"
       - "mcpjam-inspector/vite.renderer.config.mts"

@@ -6,6 +6,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   buildEvalsRunsPath,
   buildEvalsPath,
+  buildEvaluatePath,
   navigateApp,
 } from "@/lib/app-navigation";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
@@ -23,12 +24,8 @@ import {
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
-import {
-  disambiguateLabels,
-  environmentLabel,
-} from "@/lib/environment-label";
+import { disambiguateLabels, environmentLabel } from "@/lib/environment-label";
 import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
@@ -58,9 +55,27 @@ import {
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
-function navigateEvalRoute(route: EvalRoute, context: "evals" | "ci-evals") {
+/**
+ * What a suite launch produced. `runIds` are the run documents that were
+ * actually created (one per client/model target); `failedCount` is how many
+ * targets the platform refused, so a caller can tell "started" from "some
+ * of it started".
+ */
+export type EvalRerunLaunch = {
+  status: "started" | "partially_started";
+  runIds: string[];
+  failedCount: number;
+};
+
+type EvalsNavigationContext = "evals" | "ci-evals" | "evaluate";
+
+function navigateEvalRoute(route: EvalRoute, context: EvalsNavigationContext) {
   navigateApp(
-    context === "ci-evals" ? buildEvalsRunsPath(route) : buildEvalsPath(route)
+    context === "ci-evals"
+      ? buildEvalsRunsPath(route)
+      : context === "evaluate"
+      ? buildEvaluatePath(route)
+      : buildEvalsPath(route),
   );
 }
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -71,12 +86,12 @@ import {
 } from "@/lib/mcp-server-display-name";
 
 function getConfiguredTestCaseModelValues(
-  testCase: Pick<EvalCase, "models">
+  testCase: Pick<EvalCase, "models">,
 ): string[] {
   // Derived from the shared helper so the run path and the credit estimates
   // can never disagree about which models are runnable.
   return getRunnableCaseModels(testCase).map(
-    (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`
+    (modelConfig) => `${modelConfig.provider}/${modelConfig.model}`,
   );
 }
 
@@ -92,7 +107,7 @@ export function hasUnavailableServers(result: EnsureServersReadyResult) {
 export function formatEnsureServersReadyError(
   result: EnsureServersReadyResult,
   actionLabel: string,
-  projectServers: RemoteServer[] | undefined
+  projectServers: RemoteServer[] | undefined,
 ) {
   if (result.missingServerNames.length > 0) {
     // Never list server names/ids in this toast: refs may be legacy Convex
@@ -120,7 +135,7 @@ export function formatEnsureServersReadyError(
     }
     return `Re-authenticate with ${formatMcpServerRefsForError(
       names,
-      opts
+      opts,
     )} to ${actionLabel}.`;
   }
 
@@ -135,7 +150,7 @@ export function formatEnsureServersReadyError(
     }
     return `We couldn't connect to ${formatMcpServerRefsForError(
       names,
-      opts
+      opts,
     )}. Try again to ${actionLabel}.`;
   }
 
@@ -143,12 +158,12 @@ export function formatEnsureServersReadyError(
 }
 
 export function normalizeSuiteServerRefs(
-  serverNamesOrIds: readonly string[] | undefined
+  serverNamesOrIds: readonly string[] | undefined,
 ): string[] {
   const rawServerRefs = (serverNamesOrIds ?? []).flatMap((serverRef) =>
     typeof serverRef === "string" && serverRef.trim().length > 0
       ? [serverRef.trim()]
-      : []
+      : [],
   );
 
   if (rawServerRefs.length === 0) {
@@ -168,6 +183,10 @@ export function normalizeSuiteServerRefs(
 
 /** Options for {@link useEvalHandlers} `handleGenerateTests` (playground: connect, generate, run). */
 export type HandleGenerateEvalTestsOptions = {
+  /** Review-first authoring: receive validated cases without persisting them. */
+  stageCase?: (
+    input: import("@/lib/evals/generate-and-persist-tests").CreateEvalTestCaseInput,
+  ) => Promise<unknown>;
   /** Required when `runNewCasesAfterGenerate` is true (same object passed to `handleRunTestCase`). */
   suite?: EvalSuite;
   /**
@@ -219,14 +238,15 @@ interface UseEvalHandlersProps {
   organizationId?: string | null;
   connectedServerNames?: Set<string>;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * When `ci-evals`, navigation after test-case mutations stays on Runs
-   * mode (`/evals/runs/...`). Defaults to Suites mode (`/evals/...`).
+   * Prefix for handler-driven navigation (create case, duplicate, post-run
+   * landing). `ci-evals` stays on Runs (`/evals/runs/...`); `evaluate` stays
+   * on Evaluate (New) (`/evaluate/...`). Defaults to Suites (`/evals/...`).
    */
-  evalsNavigationContext?: "evals" | "ci-evals";
+  evalsNavigationContext?: EvalsNavigationContext;
   /** For user-facing server labels (names instead of raw Convex ids). */
   projectServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
@@ -281,29 +301,29 @@ export function useEvalHandlers({
       });
       return true;
     },
-    [organizationId]
+    [organizationId],
   );
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
   // Environment names for env-suite fan-out toasts/labels only — env plans
   // never derive servers from this list (the server resolves them at launch).
-  // Queried only when the feature flag is on; a flag-off env suite still
-  // fans out correctly with ids as display fallbacks.
-  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  // Not flag-gated: a suite composed from the strip attaches nameless ad-hoc
+  // cells on any deployment that accepts them, and a run labeled by a bare id
+  // is not a label. Fan-out width never depended on this list.
   const projectEnvironments = useProjectEnvironments(
-    projectEnvironmentsEnabled ? projectId : null,
+    projectId,
     // Ad-hoc rows included: a suite composed from the header bar attaches
     // nameless ones, and a run labeled by a bare id is not a label.
-    { includeAdhoc: true }
+    { includeAdhoc: true },
   );
   // Labels for the run-plan fan-out. Ad-hoc rows have no name, so they are
   // labeled by their client and then disambiguated — two setups on one client
   // would otherwise render as the same string, which is exactly the case the
   // composer makes common.
   const environmentLabelContext = useEnvironmentLabelContext(
-    projectEnvironmentsEnabled ? projectId : null,
-    projectEnvironments
+    projectId,
+    projectEnvironments,
   );
   const labeledProjectEnvironments = useMemo(() => {
     if (!projectEnvironments) return undefined;
@@ -311,26 +331,26 @@ export function useEvalHandlers({
       projectEnvironments.map((environment) => ({
         environmentId: environment.environmentId,
         label: environmentLabel(environment, environmentLabelContext),
-      }))
+      })),
     ).map(({ environmentId, label }) => ({ environmentId, name: label }));
   }, [environmentLabelContext, projectEnvironments]);
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
   const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(
-    null
+    null,
   );
   const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
   const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
-    null
+    null,
   );
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
-    null
+    null,
   );
   const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<
     string | null
@@ -350,11 +370,11 @@ export function useEvalHandlers({
             type: "suite-overview";
             suiteId: string;
             view?: SuiteOverviewView;
-          }
+          },
     ) => {
       navigateEvalRoute(route as EvalRoute, evalsNavigationContext);
     },
-    [evalsNavigationContext]
+    [evalsNavigationContext],
   );
 
   // Query to get test cases for a suite
@@ -363,7 +383,7 @@ export function useEvalHandlers({
       try {
         const testCases = await convex.query(
           "testSuites:listTestCases" as any,
-          { suiteId }
+          { suiteId },
         );
         return testCases;
       } catch (error) {
@@ -371,7 +391,7 @@ export function useEvalHandlers({
         return [];
       }
     },
-    [convex]
+    [convex],
   );
 
   const getSuiteExecutionContext = useCallback(
@@ -393,7 +413,7 @@ export function useEvalHandlers({
             (m) =>
               String(m.id) === suite.defaultConfig!.modelId &&
               (!suite.defaultConfig!.provider ||
-                m.provider === suite.defaultConfig!.provider)
+                m.provider === suite.defaultConfig!.provider),
           )
         : undefined;
       // Distinguish "no default set" from "default set but unresolvable"
@@ -420,7 +440,7 @@ export function useEvalHandlers({
         const caseSteps = Array.isArray(testCase.steps)
           ? testCase.steps
           : promptTurnsToSteps(
-              Array.isArray(testCase.promptTurns) ? testCase.promptTurns : []
+              Array.isArray(testCase.promptTurns) ? testCase.promptTurns : [],
             );
         if (isModelFree(caseSteps)) {
           if (caseSteps.length === 0) {
@@ -484,13 +504,13 @@ export function useEvalHandlers({
             ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
             : suite.defaultConfig?.modelId;
           toast.error(
-            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`
+            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`,
           );
         } else if (probesSkippedMissingConfig > 0) {
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
           toast.error(
-            "No tests to run. The suite's render checks are missing their configuration."
+            "No tests to run. The suite's render checks are missing their configuration.",
           );
         } else {
           toast.error("No tests to run. Please add models to your test cases.");
@@ -517,20 +537,20 @@ export function useEvalHandlers({
         providersNeeded,
       };
     },
-    [getTestCasesForRerun, availableModels]
+    [getTestCasesForRerun, availableModels],
   );
 
   const handleReplayRun = useCallback(
     async (
       suite: EvalSuite,
       run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
-      options?: { minimumPassRate?: number }
+      options?: { minimumPassRate?: number },
     ) => {
       if (rerunningSuiteId || replayingRunId) return;
 
       if (!run.hasServerReplayConfig) {
         toast.error(
-          "This CI run can't be replayed because it doesn't have stored replay config."
+          "This CI run can't be replayed because it doesn't have stored replay config.",
         );
         return;
       }
@@ -612,7 +632,7 @@ export function useEvalHandlers({
               runId: result.runId,
               insightsFocus: true,
             },
-            "ci-evals"
+            "ci-evals",
           );
         }
 
@@ -629,7 +649,7 @@ export function useEvalHandlers({
             getBillingErrorMessage(error, "Failed to replay eval run"),
             {
               id: replayToastId,
-            }
+            },
           );
         }
       } finally {
@@ -643,7 +663,7 @@ export function useEvalHandlers({
       getSuiteExecutionContext,
       getAccessToken,
       openEvalIterationWall,
-    ]
+    ],
   );
 
   // Rerun handler
@@ -651,12 +671,18 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       options?: {
+        /** Agent authoring keeps the editor visible while the suite runs. */
+        stayOnPage?: boolean;
+        /** Stable key used by the prepared first-run flow across retries. */
+        idempotencyKey?: string;
         /**
          * Transient per-run override applied uniformly to every test in this
          * suite run. Does NOT mutate the persisted `EvalCase.runs` default.
          * Capped server-side at 10 per test.
          */
         iterationOverride?: number;
+        /** Launch temporary project environments without changing suite membership. */
+        ephemeralEnvironment?: boolean;
         /**
          * One-off match-options override for this run only. Applied to every
          * test in the run. Does NOT mutate persisted suite/case records.
@@ -669,9 +695,30 @@ export function useEvalHandlers({
          * existing suites.
          */
         refreshSnapshot?: boolean;
-      }
+        /**
+         * Run only these cases. Used by "Run test" on the case page, which
+         * needs a SUITE run (not a quick run) because the judge is keyed by
+         * `suiteRunId`. The plans, cap payload and snapshot handling are
+         * otherwise identical to a full rerun.
+         *
+         * A case-scoped launch also STAYS ON THE PAGE and never takes the
+         * replay fallback. Both matter. The Evaluate tab tracks the returned
+         * run IDs to request judging after completion. Staying on the case
+         * keeps its result visible. And a replay sends the old run
+         * id alone — it would silently re-run the whole historical suite
+         * instead of the one case that was asked for, spending on tests the
+         * author did not launch.
+         */
+        caseIds?: string[];
+        /** The selected case explicitly opts out of launch-triggered judging. */
+        skipJudge?: boolean;
+      },
     ) => {
-      if (rerunningSuiteId) return;
+      if (rerunningSuiteId) {
+        if (options?.stayOnPage)
+          throw new Error("Another suite run is already starting.");
+        return;
+      }
 
       // Environment suites launch through the server's authoritative
       // resolution (P0.1): the browser never knows the environment's closed
@@ -685,13 +732,16 @@ export function useEvalHandlers({
       // the "no servers configured" gate even though the runner can derive
       // servers from each attachment's snapshot at fan-out time.
       const suiteServers = normalizeSuiteServerRefs(
-        getEffectiveSuiteServers(suite)
+        getEffectiveSuiteServers(suite),
       );
       const latestRun =
         latestRunBySuiteId?.get(suite._id) ??
         (selectedSuiteEntry?.suite._id === suite._id
           ? selectedSuiteEntry.latestRun
           : null);
+      // A launch scoped to specific cases must not degrade into a replay of
+      // the whole suite: the replay path carries only the old run id.
+      const caseScoped = Boolean(options?.caseIds?.length);
       const rerunEligibility = getSuiteReplayEligibility({
         suiteServers,
         connectedServerNames,
@@ -699,10 +749,16 @@ export function useEvalHandlers({
       });
 
       if (!isEnvironmentSuite && suiteServers.length === 0) {
-        if (rerunEligibility.replayableLatestRun?._id) {
+        if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
+          if (options?.stayOnPage)
+            throw new Error(
+              "Live suite servers are unavailable. Connect them before running from eval chat.",
+            );
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
+        if (options?.stayOnPage)
+          throw new Error("Attach a client to this suite before running it.");
         toast.error("Attach a client to this suite before running it.");
         return;
       }
@@ -712,25 +768,44 @@ export function useEvalHandlers({
           const readiness = await ensureServersReady(suiteServers);
           if (!hasUnavailableServers(readiness)) {
             // Continue with the live rerun now that the servers are ready.
-          } else if (rerunEligibility.replayableLatestRun?._id) {
+          } else if (rerunEligibility.replayableLatestRun?._id && !caseScoped) {
+            if (options?.stayOnPage)
+              throw new Error(
+                "Live suite servers are unavailable. Connect them before running from eval chat.",
+              );
             await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
             return;
           } else {
+            if (options?.stayOnPage)
+              throw new Error(
+                formatEnsureServersReadyError(
+                  readiness,
+                  "run this suite",
+                  projectServers,
+                ),
+              );
             toast.error(
               formatEnsureServersReadyError(
                 readiness,
                 "run this suite",
-                projectServers
-              )
+                projectServers,
+              ),
             );
             return;
           }
         } else {
+          if (options?.stayOnPage)
+            throw new Error(
+              formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
+                remoteServers: projectServers,
+                kind: "suite",
+              }),
+            );
           toast.error(
             formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
               remoteServers: projectServers,
               kind: "suite",
-            })
+            }),
           );
           return;
         }
@@ -738,6 +813,10 @@ export function useEvalHandlers({
 
       const executionContext = await getSuiteExecutionContext(suite);
       if (!executionContext) {
+        if (options?.stayOnPage)
+          throw new Error(
+            "The suite is not ready to run. Check its cases and client configuration.",
+          );
         return;
       }
 
@@ -755,7 +834,7 @@ export function useEvalHandlers({
         // module out of the label vocabulary; an id it cannot find still
         // degrades to the raw id exactly as before.
         labeledProjectEnvironments,
-        executionContext.suiteServers
+        executionContext.suiteServers,
       );
 
       // Generate a shared group id ONLY when the rerun fans out to more
@@ -772,7 +851,7 @@ export function useEvalHandlers({
           ? `Starting ${runPlans.length} runs across ${
               isEnvironmentSuite ? "environments" : "hosts"
             }…`
-          : "Run started successfully! Results will appear shortly."
+          : "Run started successfully! Results will appear shortly.",
       );
 
       const suiteRunStartedAt = Date.now();
@@ -814,9 +893,28 @@ export function useEvalHandlers({
           testCaseId: (test as { testCaseId?: string }).testCaseId,
         }));
 
+        // Narrow to the requested cases before anything launches. The server
+        // filters its own snapshot by `caseIds` too; sending the whole list
+        // would make the run's own payload disagree with what it executes.
+        const wantedCaseIds = options?.caseIds;
+        const narrowedTests = wantedCaseIds?.length
+          ? testsPayload.filter(
+              (test) =>
+                test.testCaseId && wantedCaseIds.includes(test.testCaseId),
+            )
+          : testsPayload;
+        if (wantedCaseIds?.length && narrowedTests.length === 0) {
+          setRerunningSuiteId(null);
+          toast.error("That case is not in this suite.");
+          return;
+        }
+
         // Partial-failure tolerant: a failure on one host shouldn't cancel
         // runs already started against other hosts. We collect failures
         // and toast a summary at the end.
+        // Open live results as soon as any target accepts the launch. Other
+        // targets keep starting independently and join the shared run group.
+        let openedRun = false;
         const settled = await Promise.allSettled(
           runPlans.map((plan) =>
             runEvals({
@@ -824,7 +922,7 @@ export function useEvalHandlers({
               suiteId: suite._id,
               suiteName: suite.name,
               suiteDescription: suite.description,
-              tests: testsPayload,
+              tests: narrowedTests,
               serverIds: plan.serverIds,
               modelApiKeys:
                 Object.keys(executionContext.modelApiKeys).length > 0
@@ -834,6 +932,14 @@ export function useEvalHandlers({
               passCriteria: { minimumPassRate },
               notes: criteriaNote,
               suiteRerun: true,
+              ...(options?.idempotencyKey
+                ? {
+                    idempotencyKey: `${options.idempotencyKey}:${
+                      plan.namedHostId ?? plan.environmentId ?? "default"
+                    }`,
+                  }
+                : {}),
+              ...(wantedCaseIds?.length ? { caseIds: wantedCaseIds } : {}),
               iterationOverride: options?.iterationOverride,
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
@@ -841,24 +947,45 @@ export function useEvalHandlers({
               // Always sent explicitly on env plans — even single-env
               // suites — so the server's authoritative resolution runs.
               ...(plan.environmentId
-                ? { environmentId: plan.environmentId }
+                ? {
+                    environmentId: plan.environmentId,
+                    ...(options?.ephemeralEnvironment
+                      ? { ephemeralEnvironment: true }
+                      : {}),
+                  }
                 : {}),
               ...(runGroupId ? { runGroupId } : {}),
-            })
-          )
+            }).then((response) => {
+              const runId = response?.runId;
+              if (
+                !options?.stayOnPage &&
+                !caseScoped &&
+                !openedRun &&
+                typeof runId === "string" &&
+                runId.length > 0
+              ) {
+                openedRun = true;
+                navigateEvalRoute(
+                  { type: "run-detail", suiteId: suite._id, runId },
+                  evalsNavigationContext,
+                );
+              }
+              return response;
+            }),
+          ),
         );
 
         const failures = settled
           .map((result, index) =>
             result.status === "rejected"
               ? { plan: runPlans[index], reason: result.reason }
-              : null
+              : null,
           )
           .filter(
             (
-              entry
+              entry,
             ): entry is { plan: (typeof runPlans)[number]; reason: unknown } =>
-              entry !== null
+              entry !== null,
           );
 
         // Track suite run started (once per fan-out batch; per-target
@@ -906,36 +1033,8 @@ export function useEvalHandlers({
           toast.success(
             runPlans.length > 1
               ? `All ${runPlans.length} ${targetNoun} runs started.`
-              : "Eval run started!"
+              : "Eval run started!",
           );
-
-          // Drop the user on the new run's detail page so they can see
-          // results without hunting through the runs list. Multi-host
-          // fan-outs land on the suite's runs view instead, since there
-          // are multiple sibling runs to pick from.
-          if (runPlans.length === 1) {
-            const firstSettled = settled[0];
-            const newRunId =
-              firstSettled?.status === "fulfilled"
-                ? (firstSettled.value as { runId?: unknown } | null | undefined)
-                    ?.runId
-                : undefined;
-            if (typeof newRunId === "string" && newRunId.length > 0) {
-              navigateEvalRoute(
-                {
-                  type: "run-detail",
-                  suiteId: suite._id,
-                  runId: newRunId,
-                },
-                evalsNavigationContext
-              );
-            }
-          } else {
-            navigateEvalRoute(
-              { type: "suite-overview", suiteId: suite._id, view: "runs" },
-              evalsNavigationContext
-            );
-          }
         } else if (failures.length < runPlans.length) {
           // A cap can reject one target while others launch. This branch never
           // throws, so the outer catch — and the wall with it — would never
@@ -943,7 +1042,7 @@ export function useEvalHandlers({
           if (
             openEvalIterationWall(
               failures.find((failure) => isEvalIterationCap(failure.reason))
-                ?.reason
+                ?.reason,
             )
           ) {
             // "Starting N runs…" fired before any of them were accepted, so it
@@ -957,7 +1056,7 @@ export function useEvalHandlers({
               (failure) =>
                 failure.plan.environmentName ??
                 failure.plan.hostName ??
-                "(unnamed client)"
+                "(unnamed client)",
             )
             .join(", ");
           // An environment-drift 409 is retry-able and has a specific cause;
@@ -968,7 +1067,7 @@ export function useEvalHandlers({
           toast.error(
             conflict
               ? `${failures.length} of ${runPlans.length} ${targetNoun} runs failed (${failedHostNames}): ${conflict}`
-              : `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`
+              : `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`,
           );
         } else {
           // All failed — surface one error for actionable detail. Prefer an
@@ -981,10 +1080,10 @@ export function useEvalHandlers({
           // Without this it could sit at index 2 behind a generic error and
           // never reach the wall.
           const capFailure = failures.find((failure) =>
-            isEvalIterationCap(failure.reason)
+            isEvalIterationCap(failure.reason),
           );
           const conflictFailure = failures.find(
-            (failure) => getEnvironmentConflictMessage(failure.reason) !== null
+            (failure) => getEnvironmentConflictMessage(failure.reason) !== null,
           );
           const firstError = (capFailure ?? conflictFailure ?? failures[0])
             ?.reason;
@@ -992,6 +1091,22 @@ export function useEvalHandlers({
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
+        // ONE shape for every launch. The prepared first-run flow reads
+        // `failedCount`; the case-scoped "Run test" path reads `runIds` to
+        // request judging once the run lands. Returning a bare id list on one
+        // path and this record on the other made every caller narrow a union.
+        const launch: EvalRerunLaunch = {
+          status: failures.length ? "partially_started" : "started",
+          runIds: settled.flatMap((result) => {
+            const runId =
+              result.status === "fulfilled"
+                ? (result.value as { runId?: unknown } | null)?.runId
+                : undefined;
+            return typeof runId === "string" && runId.length > 0 ? [runId] : [];
+          }),
+          failedCount: failures.length,
+        };
+        return launch;
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         if (openEvalIterationWall(error)) {
@@ -1000,11 +1115,19 @@ export function useEvalHandlers({
           // the run is on its way.
           toast.dismiss(runStartedToastId);
         } else {
+          if (options?.stayOnPage)
+            throw new Error(
+              formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
+                remoteServers: projectServers,
+                kind: "suite",
+              }),
+            );
           toast.error(
             getEnvironmentConflictMessage(error) ??
-              getBillingErrorMessage(error, "Failed to start eval run")
+              getBillingErrorMessage(error, "Failed to start eval run"),
           );
         }
+        if (options?.stayOnPage) throw error;
       } finally {
         setRerunningSuiteId(null);
       }
@@ -1023,7 +1146,7 @@ export function useEvalHandlers({
       handleReplayRun,
       evalsNavigationContext,
       openEvalIterationWall,
-    ]
+    ],
   );
 
   const handleRunTestCase = useCallback(
@@ -1042,7 +1165,7 @@ export function useEvalHandlers({
          */
         iterationOverride?: number;
         namedHostId?: string;
-      }
+      },
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
         return null;
@@ -1055,7 +1178,7 @@ export function useEvalHandlers({
       // to Run all instead of silently running against the wrong servers.
       if ((suite.environmentIds?.length ?? 0) > 0) {
         toast.info(
-          "Run environment suites with Run all — single-case quick-run doesn't resolve environments yet."
+          "Run environment suites with Run all — single-case quick-run doesn't resolve environments yet.",
         );
         return null;
       }
@@ -1085,7 +1208,7 @@ export function useEvalHandlers({
       const runPlan = getSelectedSuiteHostRunPlan(suite, options?.namedHostId);
       const suiteServers = normalizeSuiteServerRefs(runPlan.serverIds);
       const disconnectedSuiteServers = suiteServers.filter(
-        (serverName) => !connectedServerNames?.has(serverName)
+        (serverName) => !connectedServerNames?.has(serverName),
       );
 
       if (suiteServers.length === 0) {
@@ -1101,8 +1224,8 @@ export function useEvalHandlers({
               formatEnsureServersReadyError(
                 readiness,
                 "run this test case",
-                projectServers
-              )
+                projectServers,
+              ),
             );
             return null;
           }
@@ -1111,7 +1234,7 @@ export function useEvalHandlers({
             formatMcpConnectServerPrompt(disconnectedSuiteServers, {
               remoteServers: projectServers,
               kind: "test-case",
-            })
+            }),
           );
           return null;
         }
@@ -1138,11 +1261,11 @@ export function useEvalHandlers({
                 options?.iterationOverride !== undefined
                   ? { runs: options.iterationOverride }
                   : undefined,
-            })
-          )
+            }),
+          ),
         );
         const preparedRuns = preparedResults.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : []
+          result.status === "fulfilled" ? [result.value] : [],
         );
         const preparationFailures = preparedResults.flatMap((result, index) =>
           result.status === "rejected"
@@ -1152,13 +1275,13 @@ export function useEvalHandlers({
                   error: result.reason,
                 },
               ]
-            : []
+            : [],
         );
 
         for (const failure of preparationFailures) {
           console.error(
             `Failed to prepare test case for model ${failure.modelValue}:`,
-            failure.error
+            failure.error,
           );
         }
 
@@ -1166,8 +1289,8 @@ export function useEvalHandlers({
           toast.error(
             getBillingErrorMessage(
               preparationFailures[0]?.error,
-              "Failed to run test case"
-            )
+              "Failed to run test case",
+            ),
           );
           return null;
         }
@@ -1214,7 +1337,7 @@ export function useEvalHandlers({
             } catch (error) {
               console.error(
                 `Failed to run test case for model ${preparedRun.modelValue}:`,
-                error
+                error,
               );
               return {
                 ok: false as const,
@@ -1222,26 +1345,26 @@ export function useEvalHandlers({
                 error,
               };
             }
-          })
+          }),
         );
 
         const successfulRuns = runResults.filter(
           (
-            result
+            result,
           ): result is {
             ok: true;
             modelValue: string;
             data: any;
-          } => result.ok
+          } => result.ok,
         );
         const failedRuns = runResults.filter(
           (
-            result
+            result,
           ): result is {
             ok: false;
             modelValue: string;
             error: unknown;
-          } => !result.ok
+          } => !result.ok,
         );
         const totalModelsRequested = modelValuesToRun.length;
         const totalFailedRuns = [
@@ -1258,7 +1381,7 @@ export function useEvalHandlers({
         // Give it the same wall the suite rerun gets; `some` stops at the
         // first failure the wall takes.
         const evalIterationWallOpened = totalFailedRuns.some((failure) =>
-          openEvalIterationWall(failure.error)
+          openEvalIterationWall(failure.error),
         );
 
         if (!options?.suppressCompletionToasts) {
@@ -1266,7 +1389,7 @@ export function useEvalHandlers({
             toast.success(
               isMultiModelRun
                 ? `Test completed across ${totalModelsRequested} models!`
-                : "Test completed successfully!"
+                : "Test completed successfully!",
             );
           } else if (successfulRuns.length > 0) {
             // Kept even when the wall opened: it reports how many models did
@@ -1274,22 +1397,22 @@ export function useEvalHandlers({
             toast.error(
               `${successfulRuns.length}/${totalModelsRequested} model${
                 totalModelsRequested === 1 ? "" : "s"
-              } completed successfully.`
+              } completed successfully.`,
             );
           } else if (!evalIterationWallOpened) {
             toast.error(
               getBillingErrorMessage(
                 totalFailedRuns[0]?.error,
-                "Failed to run test case"
-              )
+                "Failed to run test case",
+              ),
             );
           }
         } else if (successfulRuns.length === 0 && !evalIterationWallOpened) {
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,
-              "Failed to run test case"
-            )
+              "Failed to run test case",
+            ),
           );
         }
 
@@ -1327,7 +1450,7 @@ export function useEvalHandlers({
       projectServers,
       isDirectGuest,
       openEvalIterationWall,
-    ]
+    ],
   );
 
   // Delete handler - opens confirmation modal
@@ -1336,7 +1459,7 @@ export function useEvalHandlers({
       if (deletingSuiteId) return;
       setSuiteToDelete(suite);
     },
-    [deletingSuiteId]
+    [deletingSuiteId],
   );
 
   // Confirm deletion - actually performs the deletion
@@ -1401,19 +1524,19 @@ export function useEvalHandlers({
               type: "suite-overview",
               suiteId: newSuite._id,
             },
-            "evals"
+            "evals",
           );
         }
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to duplicate test suite")
+          getBillingErrorMessage(error, "Failed to duplicate test suite"),
         );
       } finally {
         setDuplicatingSuiteId(null);
       }
     },
-    [duplicatingSuiteId, mutations.duplicateSuiteMutation]
+    [duplicatingSuiteId, mutations.duplicateSuiteMutation],
   );
 
   // Cancel handler
@@ -1433,7 +1556,7 @@ export function useEvalHandlers({
         setCancellingRunId(null);
       }
     },
-    [cancellingRunId, mutations.cancelRunMutation]
+    [cancellingRunId, mutations.cancelRunMutation],
   );
 
   // Delete run handler - opens confirmation modal (for single run from detail view)
@@ -1442,7 +1565,7 @@ export function useEvalHandlers({
       if (deletingRunId) return;
       setRunToDelete(runId);
     },
-    [deletingRunId]
+    [deletingRunId],
   );
 
   // Direct delete function - actually performs the deletion (for batch delete)
@@ -1455,7 +1578,7 @@ export function useEvalHandlers({
         throw error;
       }
     },
-    [mutations.deleteRunMutation]
+    [mutations.deleteRunMutation],
   );
 
   // Confirm run deletion - actually performs the deletion
@@ -1489,7 +1612,32 @@ export function useEvalHandlers({
         testId: draftTestCaseId("prompt"),
       });
     },
-    [navigateAfterTestCaseMutation]
+    [navigateAfterTestCaseMutation],
+  );
+
+  const handleDescribeTestCase = useCallback(
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("describe"),
+      });
+    },
+    [navigateAfterTestCaseMutation],
+  );
+
+  // Record = run-once-then-adopt, not the widget recorder. Same unsaved
+  // draft path as Write; the editor focuses the prompt and surfaces adopt
+  // after the first Quick Run.
+  const handleRecordTestCase = useCallback(
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("record"),
+      });
+    },
+    [navigateAfterTestCaseMutation],
   );
 
   // Handle delete test case - opens confirmation modal
@@ -1498,7 +1646,7 @@ export function useEvalHandlers({
       if (deletingTestCaseId) return;
       setTestCaseToDelete({ id: testCaseId, title: testCaseTitle });
     },
-    [deletingTestCaseId]
+    [deletingTestCaseId],
   );
 
   /** Perform deletion only (no modal). Used for playground batch delete. */
@@ -1511,7 +1659,7 @@ export function useEvalHandlers({
         test_case_id: testCaseId,
       });
     },
-    [mutations.deleteTestCaseMutation, selectedSuiteId]
+    [mutations.deleteTestCaseMutation, selectedSuiteId],
   );
 
   // Confirm test case deletion
@@ -1543,7 +1691,7 @@ export function useEvalHandlers({
             : {
                 type: "suite-overview",
                 suiteId: selectedSuiteId,
-              }
+              },
         );
       }
 
@@ -1600,7 +1748,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate test case:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to duplicate test case")
+          getBillingErrorMessage(error, "Failed to duplicate test case"),
         );
         return null;
       } finally {
@@ -1611,7 +1759,7 @@ export function useEvalHandlers({
       duplicatingTestCaseId,
       mutations.duplicateTestCaseMutation,
       navigateAfterTestCaseMutation,
-    ]
+    ],
   );
 
   // Generate tests handler - calls API and creates test cases
@@ -1619,14 +1767,22 @@ export function useEvalHandlers({
     async (
       suiteId: string,
       serverIds: string[],
-      postOptions?: HandleGenerateEvalTestsOptions
+      postOptions?: HandleGenerateEvalTestsOptions,
     ) => {
-      if (isGeneratingTests) return;
+      if (isGeneratingTests) {
+        if (postOptions?.stageCase)
+          throw new Error("Generation is already running.");
+        return;
+      }
 
       const suiteServers = normalizeSuiteServerRefs(serverIds);
       if (suiteServers.length === 0) {
+        if (postOptions?.stageCase)
+          throw new Error(
+            "Attach servers to this suite before generating cases.",
+          );
         toast.error(
-          "Add at least one server to this suite before generating cases."
+          "Add at least one server to this suite before generating cases.",
         );
         return;
       }
@@ -1635,27 +1791,39 @@ export function useEvalHandlers({
 
       try {
         const disconnected = suiteServers.filter(
-          (name) => !connectedServerNames?.has(name)
+          (name) => !connectedServerNames?.has(name),
         );
         if (disconnected.length > 0) {
           if (ensureServersReady != null) {
             const readiness = await ensureServersReady(suiteServers);
             if (hasUnavailableServers(readiness)) {
+              if (postOptions?.stageCase)
+                throw new Error(
+                  formatEnsureServersReadyError(
+                    readiness,
+                    "generate test cases",
+                    projectServers,
+                  ),
+                );
               toast.error(
                 formatEnsureServersReadyError(
                   readiness,
                   "generate test cases",
-                  projectServers
-                )
+                  projectServers,
+                ),
               );
               return;
             }
           } else {
+            if (postOptions?.stageCase)
+              throw new Error(
+                "Connect the suite servers before generating cases.",
+              );
             toast.error(
               formatMcpConnectServerPrompt(disconnected, {
                 remoteServers: projectServers,
                 kind: "suite",
-              })
+              }),
             );
             return;
           }
@@ -1667,8 +1835,9 @@ export function useEvalHandlers({
           projectId,
           suiteId,
           serverIds,
-          createTestCase: mutations.createTestCaseMutation as (
-            input: any
+          createTestCase: (postOptions?.stageCase ??
+            mutations.createTestCaseMutation) as (
+            input: any,
           ) => Promise<unknown>,
           skipIfExistingCases: false,
           isDirectGuest,
@@ -1683,6 +1852,14 @@ export function useEvalHandlers({
             ? { generationOptions: postOptions.generationOptions }
             : {}),
         });
+
+        if (postOptions?.stageCase) {
+          if (outcome.createdCount !== outcome.apiReturnedTests)
+            throw new Error(
+              "Some generated drafts could not be staged. Review the available drafts before trying again.",
+            );
+          return;
+        }
 
         if (outcome.apiReturnedTests === 0) {
           track("eval_generate_tests_completed", {
@@ -1706,7 +1883,7 @@ export function useEvalHandlers({
             suite_id: suiteId,
             generated_count: outcome.createdCount,
             auto_ran: Boolean(
-              shouldAutoRun && outcome.createdTestCaseIds.length > 0
+              shouldAutoRun && outcome.createdTestCaseIds.length > 0,
             ),
           });
         }
@@ -1717,7 +1894,7 @@ export function useEvalHandlers({
           generated_count: outcome.createdCount,
           api_returned_tests: outcome.apiReturnedTests,
           auto_ran: Boolean(
-            shouldAutoRun && outcome.createdTestCaseIds.length > 0
+            shouldAutoRun && outcome.createdTestCaseIds.length > 0,
           ),
           success: true,
         });
@@ -1730,7 +1907,7 @@ export function useEvalHandlers({
           const suite = postOptions!.suite!;
           const allCases = (await getTestCasesForRerun(suiteId)) as EvalCase[];
           const byId = new Map<string, EvalCase>(
-            allCases.map((c) => [c._id, c])
+            allCases.map((c) => [c._id, c]),
           );
           const toRun: EvalCase[] = [];
           for (const id of outcome.createdTestCaseIds) {
@@ -1749,7 +1926,7 @@ export function useEvalHandlers({
             toast.success(
               `Generated ${outcome.createdCount} test case${
                 outcome.createdCount > 1 ? "s" : ""
-              }. Open the list to run them when they appear.`
+              }. Open the list to run them when they appear.`,
             );
           } else if (toRun.length === 1) {
             toast.success("Generated 1 new case and ran it.");
@@ -1760,10 +1937,11 @@ export function useEvalHandlers({
           toast.success(
             `Generated ${outcome.createdCount} test case${
               outcome.createdCount > 1 ? "s" : ""
-            }`
+            }`,
           );
         }
       } catch (error) {
+        if (postOptions?.stageCase) throw error;
         console.error("Failed to generate tests:", error);
         // Cap the raw message at 200 chars so PostHog event cardinality stays
         // bounded when backend errors include user input or random ids.
@@ -1778,7 +1956,7 @@ export function useEvalHandlers({
           error_message: rawMessage.slice(0, 200),
         });
         toast.error(
-          getBillingErrorMessage(error, "Failed to generate test cases")
+          getBillingErrorMessage(error, "Failed to generate test cases"),
         );
       } finally {
         setIsGeneratingTests(false);
@@ -1796,7 +1974,7 @@ export function useEvalHandlers({
       isDirectGuest,
       getTestCasesForRerun,
       handleRunTestCase,
-    ]
+    ],
   );
 
   return {
@@ -1812,6 +1990,8 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
+    handleDescribeTestCase,
+    handleRecordTestCase,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,

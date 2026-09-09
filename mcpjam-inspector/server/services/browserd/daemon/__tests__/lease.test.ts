@@ -30,6 +30,7 @@ describe("HandoffLease", () => {
     expect(state).toEqual({
       state: "held",
       holder: "panel-a",
+      holderKind: "human",
       expiresAt: 31_000,
     });
     expect(lease.isBlocking()).toBe(true);
@@ -57,11 +58,19 @@ describe("HandoffLease", () => {
     advance(29_999);
     expect(lease.state().state).toBe("held");
     advance(1);
-    expect(lease.state()).toEqual({ state: "parked", holder: "panel-a" });
+    expect(lease.state()).toEqual({
+      state: "parked",
+      holder: "panel-a",
+      holderKind: "human",
+    });
     expect(lease.isBlocking()).toBe(true);
     // …and it stays parked no matter how much later anyone looks.
     advance(10 * 60 * 1000);
-    expect(lease.state()).toEqual({ state: "parked", holder: "panel-a" });
+    expect(lease.state()).toEqual({
+      state: "parked",
+      holder: "panel-a",
+      holderKind: "human",
+    });
   });
 
   it("refuses to hand a held browser to a second person", () => {
@@ -82,6 +91,7 @@ describe("HandoffLease", () => {
     expect(lease.acquire("panel-b")).toEqual({
       state: "parked",
       holder: "panel-a",
+      holderKind: "human",
     });
   });
 
@@ -117,6 +127,7 @@ describe("HandoffLease", () => {
     expect(lease.heartbeat("panel-a", 30_000)).toEqual({
       state: "parked",
       holder: "panel-a",
+      holderKind: "human",
     });
   });
 

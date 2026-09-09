@@ -37,7 +37,13 @@ import { logger } from "../../utils/logger";
 import {
   reconcileTurnEvidence,
   selectGradedToolCalls,
+  type TurnEvidenceResult,
 } from "./harness-evidence-turn.js";
+import {
+  evidenceToolCallId,
+  type CanonicalMcpCall,
+} from "./harness-evidence-merge.js";
+import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
@@ -166,6 +172,27 @@ export interface DriveHostedEvalTurnParams {
    *  resolved billing target; absent for org-level evals (no project/computer,
    *  so a harness turn there fails fast with a clear projectId error). */
   projectId?: string;
+  /**
+   * The Project Environment this run launched from — the GRANT BOUNDARY for its
+   * project secrets, and the same id `resolveGrantForSandbox` derives for this
+   * iteration's box from the run's `configSnapshot.environmentRef`.
+   *
+   * Forwarded (harness turns only) so an EXTERNAL-ACCOUNT credential delivered
+   * by a BROKERED secret is checked against what THIS environment selects. A
+   * project-wide check would report a bound-but-unselected secret available and
+   * start an iteration whose box carries no egress transform — it would
+   * provision, then fail vendor auth against a placeholder.
+   *
+   * Absent for a legacy (non-environment) suite run, which grants no secrets.
+   */
+  environmentId?: string;
+  /**
+   * Why `environmentId` is absent on a run that HAS an environment — set by the
+   * REPLAY path, which inherits the source run's `environmentRef` on the
+   * backend but cannot read it back out. Copy only; see the option's docblock
+   * on `MCPJamHandlerOptions`.
+   */
+  environmentUnresolvedReason?: string;
   /**
    * THIS iteration's disposable box, handed to the harness.
    *
@@ -318,10 +345,79 @@ export interface DriveHostedEvalTurnParams {
      */
     traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
+    /**
+     * Wire results, keyed by the `toolCallId` the GRADED call array uses:
+     * a matched call under its narrated id, a wire-only call under
+     * `evidence:<requestId>`. Carries the per-call timing, which is the only
+     * thing that can establish availability on a harness run — the graded
+     * array appends wire-only calls, so a later POSITION proves nothing.
+     *
+     * Optional: a caller that does not collect them simply has none, and the
+     * friction deriver then falls back to the transcript.
+     */
+    evidenceResults?: Map<string, FrictionResultEntry>;
+    /**
+     * Whether ANY turn's evidence came back incomplete.
+     *
+     * A box rather than a boolean because the accumulator is shared and
+     * mutated in place. One incomplete turn taints the whole iteration's
+     * identifier claims: "no later call used this identifier" cannot be
+     * answered from a set we know has a hole in it.
+     */
+    evidenceHadHole?: { value: boolean };
     accumulatedUsage: UsageTotals;
     toolsCalledByPrompt: ToolCall[][];
   };
   buildSinks?: (ctx: HostedEvalTurnSinkContext) => HostedEvalTurnSinks;
+}
+
+/**
+ * Fold one turn's wire results into the iteration accumulator.
+ *
+ * Keyed the way the GRADED array keys its calls, because that is the array a
+ * friction signal's `callIndex` points into: a matched call keeps its narrated
+ * `toolCallId`, and a wire-only call is appended under
+ * `evidence:<requestId>`. Every entry carries the row's own
+ * `startedAtMs`/`settledAtMs` — the identifier rules refuse to claim
+ * availability from array position on a harness run, so without the timing
+ * they would report `orderingUnknown` and measure nothing.
+ *
+ * A turn whose evidence is INCOMPLETE contributes no results and sets the
+ * hole flag instead: half a wire record answers "nobody used this identifier"
+ * from calls we know are missing.
+ */
+export function collectEvidenceResults(
+  acc: {
+    evidenceResults?: Map<string, FrictionResultEntry>;
+    evidenceHadHole?: { value: boolean };
+  },
+  evidence: TurnEvidenceResult,
+): void {
+  const merge = evidence.merge;
+  if (!merge) return;
+  if (merge.completeness.status !== "complete") {
+    if (acc.evidenceHadHole) acc.evidenceHadHole.value = true;
+    return;
+  }
+  const results = acc.evidenceResults;
+  if (!results) return;
+  // `outcomeKind` travels with the result, because it is the ONLY place the
+  // failure of a JSON-RPC call is recorded: that response is the error
+  // envelope (`{code, message}`) and carries no `isError` anywhere, so a
+  // reader looking at the payload alone would take it for a success and mine
+  // it for identifiers.
+  const entry = (call: CanonicalMcpCall): FrictionResultEntry => ({
+    raw: call.response,
+    ...(call.outcomeKind !== "success" ? { isError: true } : {}),
+    startedAtMs: call.startedAtMs,
+    settledAtMs: call.settledAtMs,
+  });
+  for (const [toolCallId, call] of merge.matchedByToolCallId) {
+    results.set(toolCallId, entry(call));
+  }
+  for (const call of merge.wireOnlyCalls) {
+    results.set(evidenceToolCallId(call.requestId), entry(call));
+  }
 }
 
 const truncateError = (message: string): string =>
@@ -605,6 +701,17 @@ export async function driveHostedEvalTurn(
             // (authHeader already rides authContext.token). Harness-gated so
             // emulated evals stay byte-identical.
             ...(params.projectId ? { projectId: params.projectId } : {}),
+            // The run's environment — the grant boundary the brokered
+            // external-account credential check is scoped to.
+            ...(params.environmentId
+              ? { environmentId: params.environmentId }
+              : {}),
+            ...(!params.environmentId && params.environmentUnresolvedReason
+              ? {
+                  environmentUnresolvedReason:
+                    params.environmentUnresolvedReason,
+                }
+              : {}),
             // THIS iteration's box, so the harness runs on it instead of
             // reserving the acting member's personal computer.
             ...(params.harnessSandboxBinding
@@ -757,6 +864,7 @@ export async function driveHostedEvalTurn(
       : {}),
   });
   acc.capturedSpans.push(...evidence.spans);
+  collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink
   // rolls `accumulatedUsage` per step for live snapshots; this final

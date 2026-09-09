@@ -47,8 +47,26 @@ import {
  * moves the runtime and the editor's claim about it in one edit.
  */
 
+/**
+ * Human-facing runtime name per harness — the client's copy of the server
+ * registry's `displayName`.
+ *
+ * Keyed by `HostConfigHarnessV2`, so adding a harness without naming it is a
+ * COMPILE error. That is the point: the copy this feeds used to hardcode
+ * "Claude Code", which was already wrong for a Codex host and would have been
+ * wrong for two harnesses out of three.
+ */
+export const HARNESS_DISPLAY_NAME: Record<HostConfigHarnessV2, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  // "Cursor CLI", not "Cursor": the emulated `cursor` host style is the IDE's
+  // chat panel, and a user reading this needs to know which one they attached.
+  cursor: "Cursor CLI",
+};
+
 /** Behavior-tab controls whose value may not cross into a harness runtime. */
 export type HarnessGatedControl =
+  | "modelId"
   | "temperature"
   | "requireToolApproval"
   | "respectToolVisibility"
@@ -58,7 +76,11 @@ export type HarnessControlState =
   | { enforced: true }
   | { enforced: false; note: string };
 
-const ENFORCED: HarnessControlState = { enforced: true };
+/** "This control reaches the runtime." Exported so a caller that learns the
+ *  same thing from the server (see `useHarnessCapabilities`) can return the
+ *  identical value rather than constructing a look-alike. */
+export const ENFORCED_CONTROL: HarnessControlState = { enforced: true };
+const ENFORCED = ENFORCED_CONTROL;
 
 /** Controls owned by the harness's own agent loop — no MCPJam-side mediation
  *  can change these answers, so they are declared per harness. */
@@ -71,6 +93,9 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
   Record<HarnessLoopControl, HarnessControlState>
 > = {
   "claude-code": {
+    // MCPJam brokers this harness's model credentials, so the selected model is
+    // the model the runtime is launched with.
+    modelId: ENFORCED,
     // Permanent: the Claude Code CLI exposes no temperature knob.
     temperature: {
       enforced: false,
@@ -93,6 +118,8 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
     },
   },
   codex: {
+    // Brokered, same as Claude Code — the selection reaches the runtime.
+    modelId: ENFORCED,
     // Permanent: the Codex CLI exposes no temperature knob to the host.
     temperature: {
       enforced: false,
@@ -110,6 +137,40 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
     progressiveToolDiscovery: {
       enforced: false,
       note: "Codex does its own tool discovery.",
+    },
+  },
+  cursor: {
+    // The one harness whose MODEL is not MCPJam's to choose. It authenticates
+    // with the customer's own Cursor account and that account picks the model
+    // (Cursor Auto), so a selection here would persist onto the host, show in
+    // the editor, and reach nothing — a saved setting that silently lies about
+    // what ran. The host carries the `cursor/auto` sentinel instead, which is
+    // what the runtime actually resolves to.
+    modelId: {
+      enforced: false,
+      note: "The Cursor CLI runs on your Cursor account, which chooses the model itself.",
+    },
+    // Permanent for the same reason: Cursor's CLI takes no temperature either.
+    temperature: {
+      enforced: false,
+      note: "The Cursor CLI runs on your Cursor account and ignores temperature.",
+    },
+    // The ACP bridge pauses on its own built-ins: every tool call goes through
+    // `session/request_permission`, and under the adapter's "allow-reads" mode
+    // anything outside read/search/think/fetch emits a `tool-approval-request`
+    // the turn waits on. Verified against a live cursor-agent.
+    //
+    // ENFORCED describes the NATIVE surface, which is what this control means
+    // here. Whether Cursor also pauses on MCP-server tools is not yet measured
+    // — the adapter's `supportsMcpToolApproval` is `false` pending that check,
+    // so a host that requires approval AND selects servers is refused outright
+    // rather than run with some calls unapproved. Refused, never silently
+    // un-enforced.
+    requireToolApproval: ENFORCED,
+    // The real Cursor CLI owns its own tool discovery, same as the other two.
+    progressiveToolDiscovery: {
+      enforced: false,
+      note: "The Cursor CLI does its own tool discovery.",
     },
   },
 };

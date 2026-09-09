@@ -98,6 +98,15 @@ export interface LocalHarnessEnvOptions {
    * that (see `configStrategy` in the manifest).
    */
   scoped?: Readonly<Record<string, string>>;
+  /**
+   * Windows only: the Git Bash the vendor CLI's shell tool runs through.
+   * Claude Code on Windows executes Bash commands via Git for Windows and
+   * looks for it on PATH — which the child does not have, by design — or in
+   * `CLAUDE_CODE_GIT_BASH_PATH`. The provider resolves a real, existing
+   * `bash.exe` and names it here; absent, the CLI reports the missing shell
+   * itself. Ignored on every other platform.
+   */
+  gitBashPath?: string;
   platform?: NodeJS.Platform;
   base?: NodeJS.ProcessEnv;
 }
@@ -123,6 +132,10 @@ const SCOPED_NAME_DENYLIST = new Set([
   "TMPDIR",
   "TMP",
   "TEMP",
+  // Same reason as TMPDIR, and the reason it is set at all: the vendor CLI
+  // extracts its native binary here, so a scoped override would put that
+  // extraction back outside the session's disposable state.
+  "CLAUDE_CODE_TMPDIR",
   "XDG_CONFIG_HOME",
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",
@@ -130,6 +143,10 @@ const SCOPED_NAME_DENYLIST = new Set([
   "APPDATA",
   "LOCALAPPDATA",
   "PWD",
+  // Names the shell the vendor CLI runs commands through. A scoped override
+  // would point it at any executable; the provider sets it from a path it
+  // has verified exists.
+  "CLAUDE_CODE_GIT_BASH_PATH",
 ]);
 
 export class LocalHarnessEnvError extends Error {}
@@ -165,6 +182,12 @@ export function buildLocalHarnessEnv(
   // at the session's own disposable state so nothing lands in the user's real
   // config and everything is removed with the session.
   env.TMPDIR = path.join(opts.syntheticHome, "tmp");
+  // Claude Code's own temp knob, which it honours ahead of `TMPDIR`. It has to
+  // be set on the BRIDGE too, not only on the CLI the bridge starts: the SDK
+  // extracts its native binary at import time and hardcodes `/tmp` on darwin
+  // unless this is present. Without it a session's extraction lands outside
+  // the session's disposable state and survives it.
+  env.CLAUDE_CODE_TMPDIR = env.TMPDIR;
   env.XDG_CONFIG_HOME = path.join(opts.syntheticHome, ".config");
   env.XDG_CACHE_HOME = path.join(opts.syntheticHome, ".cache");
   env.XDG_DATA_HOME = path.join(opts.syntheticHome, ".local", "share");
@@ -175,6 +198,12 @@ export function buildLocalHarnessEnv(
     env.LOCALAPPDATA = path.join(opts.syntheticHome, "AppData", "Local");
     env.TEMP = env.TMPDIR;
     env.TMP = env.TMPDIR;
+    if (opts.gitBashPath !== undefined) {
+      if (!path.isAbsolute(opts.gitBashPath)) {
+        throw new LocalHarnessEnvError("gitBashPath must be an absolute path");
+      }
+      env.CLAUDE_CODE_GIT_BASH_PATH = opts.gitBashPath;
+    }
   }
   // Vendor CLIs treat a TTY as permission to draw interactive UI and, in some
   // builds, to prompt. A supervised child has no terminal.

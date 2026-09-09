@@ -28,6 +28,7 @@ import { isProjectScopedRoutePath } from "./app-routes";
 import {
   buildProjectPath,
   isAppRelativeTarget,
+  isProjectIdShape,
   parseProjectPath,
   stripProjectFromPath,
 } from "./project-route";
@@ -52,6 +53,8 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "models",
   "slack",
   "discord",
+  "observability",
+  "budget",
 ] as const;
 
 export type OrganizationRouteSection =
@@ -63,12 +66,14 @@ export type OrganizationRouteSection =
  * section fail quietly rather than 404, and why the coverage test exists.
  */
 export function parseOrganizationSection(
-  segment: string | undefined
+  segment: string | undefined,
 ): OrganizationRouteSection {
   if (segment === "billing") return "billing";
   if (segment === "models") return "models";
   if (segment === "slack") return "slack";
   if (segment === "discord") return "discord";
+  if (segment === "observability") return "observability";
+  if (segment === "budget") return "budget";
   return "overview";
 }
 
@@ -165,7 +170,7 @@ export function buildProjectPluginPath(pluginId?: string | null): string {
 
 /** Build the exact path for one project environment's detail. */
 export function buildProjectEnvironmentPath(
-  environmentId?: string | null
+  environmentId?: string | null,
 ): string {
   if (!environmentId) return routePaths.environments;
   return `${routePaths.environments}/${encodeURIComponent(environmentId)}`;
@@ -179,7 +184,7 @@ export function buildHostsPath(hostId?: string | null): string {
 
 /** Build a path that deep-links into Compare with a pre-selected set of hosts. */
 export function buildHostComparePath(
-  hostIds?: ReadonlyArray<string> | null
+  hostIds?: ReadonlyArray<string> | null,
 ): string {
   if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
   const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);
@@ -221,7 +226,7 @@ export function buildUserTestingScenarioPath(
     sel?: string;
     /** Typed like `tab`, so an unknown view cannot be minted into a link. */
     view?: InsightsView;
-  } = {}
+  } = {},
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
@@ -255,7 +260,7 @@ export function isLegacyUserTestingEditTab(search: string): boolean {
  * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
  */
 export function parseUserTestingDetailTab(
-  search: string
+  search: string,
 ): UserTestingDetailTab {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
@@ -270,8 +275,8 @@ export function parseUserTestingDetailTab(
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
 export const swarmsCreatePath = `${routePaths.swarms}/new`;
 
-/** Detail tabs on `/swarms/:swarmId`. Insights is the default landing tab. */
-export type SwarmDetailTab = "insights" | "sessions";
+/** Detail tabs on `/swarms/:swarmId`. Findings is the default landing tab. */
+export type SwarmDetailTab = "findings" | "insights" | "sessions";
 
 /**
  * Build a path to one Swarm Run (wave) detail. `swarmId` is the durable
@@ -283,20 +288,29 @@ export function buildSwarmPath(
     tab?: SwarmDetailTab;
     session?: string;
     sel?: string;
-  } = {}
+    /**
+     * Rubric criterion the viewer FOLLOWED here (`criterionId`). Carried so the
+     * run page can name the finding behind a session it was deep-linked to —
+     * landing on a transcript with no statement of what was found is what made
+     * a followed finding unreadable. An id, not a sentence: the label is
+     * resolved from the wave's own findings, so it cannot go stale in a URL.
+     */
+    finding?: string;
+  } = {},
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
+  if (opts.tab && opts.tab !== "findings") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
+  if (opts.finding) search.set("finding", opts.finding);
   const query = search.toString();
   return query ? `${base}?${query}` : base;
 }
 
 /**
  * Parse the detail-tab query on a Swarm Run path. Missing / unknown →
- * insights. Legacy `overview` / `personas` → insights (personas live there).
+ * findings. Legacy `overview` / `personas` → insights (personas lived there).
  * A `session` deep-link without an explicit tab still opens Sessions.
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
@@ -306,8 +320,9 @@ export function parseSwarmDetailTab(search: string): SwarmDetailTab {
   if (value === "insights" || value === "personas" || value === "overview") {
     return "insights";
   }
+  if (value === "findings") return "findings";
   if (params.get("session")) return "sessions";
-  return "insights";
+  return "findings";
 }
 
 /**
@@ -374,7 +389,7 @@ export function parseSwarmSessionParams(search: string): {
  * consumed-and-stripped query parameter could not survive.
  */
 export function buildSessionsPath(
-  opts: { session?: string; project?: string } = {}
+  opts: { session?: string; project?: string } = {},
 ): string {
   const search = new URLSearchParams();
   if (opts.session) search.set("session", opts.session);
@@ -388,7 +403,7 @@ export function buildSessionsPath(
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,
-  section?: OrganizationRouteSection
+  section?: OrganizationRouteSection,
 ): string {
   if (section === "billing") return `/organizations/${orgId}/billing`;
   if (section === "models") return `/organizations/${orgId}/models`;
@@ -400,6 +415,14 @@ export function buildOrganizationPath(
   // Discord has no sub-tabs at all (see DiscordAgentSettingsSection), so it
   // needs even less than Slack does — one segment, no `?tab=`.
   if (section === "discord") return `/organizations/${orgId}/discord`;
+  // Trace destinations. One segment like Discord: the create/edit form is a
+  // dialog rather than a view, so there is nothing for a `?tab=` to select.
+  if (section === "observability")
+    return `/organizations/${orgId}/observability`;
+  // The organization spend budget. One segment like the two above: the cap
+  // and its alert thresholds are one form, so there is nothing for a `?tab=`
+  // to select.
+  if (section === "budget") return `/organizations/${orgId}/budget`;
   return `/organizations/${orgId}`;
 }
 
@@ -442,11 +465,11 @@ export function buildEvaluatePath(route: EvalRoute): string {
 export function legacyCiEvalsPathToRunsPath(
   pathname: string,
   search = "",
-  hash = ""
+  hash = "",
 ): string {
   return `${pathname.replace(
     /^\/ci-evals/,
-    routePaths.evalsRuns
+    routePaths.evalsRuns,
   )}${search}${hash}`;
 }
 
@@ -456,6 +479,12 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       return prefix;
     case "create":
       return `${prefix}/create`;
+    case "eval-server":
+      // The first-run preview is Evaluate (New) only. /evals has no home
+      // for it, so degrade to that prefix's list the same way commit-detail
+      // degrades on /evaluate.
+      if (prefix !== routePaths.evaluate) return prefix;
+      return `${prefix}/eval-server/${encodeURIComponent(route.serverId)}`;
     case "suite-overview": {
       const params = new URLSearchParams();
       if (route.view && route.view !== "runs") params.set("view", route.view);
@@ -473,7 +502,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.compareToRunId) params.set("compareTo", route.compareToRunId);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
@@ -481,16 +510,17 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/test/${encodeURIComponent(route.testId)}${query ? `?${query}` : ""}`;
     }
     case "test-edit": {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
       if (route.iteration) params.set("iteration", route.iteration);
+      if (route.fromEvalServer) params.set("fromEvalServer", route.fromEvalServer);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/test/${encodeURIComponent(route.testId)}/edit${
         query ? `?${query}` : ""
       }`;
@@ -551,7 +581,7 @@ function currentAppPathname(): string {
  */
 export function scopeNavigationTarget(
   to: string,
-  fromPathname?: string
+  fromPathname?: string,
 ): string {
   if (typeof to !== "string" || !to) return to;
   if (to.startsWith("?") || to.startsWith("#")) return to;
@@ -614,7 +644,7 @@ export function useAppNavigate() {
       }
       navigateApp(target, options);
     },
-    [navigator, pathname]
+    [navigator, pathname],
   );
 }
 
@@ -628,7 +658,7 @@ export function useAppNavigate() {
 export function useActiveTab(): string {
   const locationContext = useContext(UNSAFE_LocationContext);
   const [fallbackPathname, setFallbackPathname] = useState(
-    getWindowFallbackPathname
+    getWindowFallbackPathname,
   );
 
   useLayoutEffect(() => {
@@ -660,7 +690,7 @@ export function useActiveTab(): string {
 export function useCurrentPathname(): string {
   const locationContext = useContext(UNSAFE_LocationContext);
   const [fallbackPathname, setFallbackPathname] = useState(
-    getWindowFallbackPathname
+    getWindowFallbackPathname,
   );
 
   useLayoutEffect(() => {
@@ -776,7 +806,7 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
  */
 export function buildConformanceRunPath(
   runId: string,
-  projectId?: string | null
+  projectId?: string | null,
 ): string {
   const base = `${routePaths.conformanceRuns}/${encodeURIComponent(runId)}`;
   return projectId ? buildProjectPath(projectId, base) : base;
@@ -874,7 +904,7 @@ function decodePathSegment(segment: string): string {
 
 export function navigationTargetToPath(
   rawTarget: string,
-  fallback: string = routePaths.servers
+  fallback: string = routePaths.servers,
 ): string {
   // A scoped target normalizes on its LOGICAL half and is re-scoped to the
   // same project. Without this, `/p/A/evals/suite/X` would reduce to the
@@ -942,7 +972,7 @@ export function normalizeInitialLegacyHashBookmark(): void {
  */
 export function normalizeReturnTargetPath(
   target?: string | null,
-  fallback: string = routePaths.servers
+  fallback: string = routePaths.servers,
 ): string {
   const trimmed = target?.trim() ?? "";
   if (!trimmed) return fallback;
@@ -983,6 +1013,38 @@ export function buildProjectSwitchTarget(projectId: string): string {
 /** The per-project settings gear in the picker — one gesture, one URL. */
 export function buildProjectSettingsTarget(projectId: string): string {
   return buildProjectPath(projectId, routePaths.projectSettings);
+}
+
+/**
+ * Where picking another organization in the switcher lands.
+ *
+ * Same contract as `buildProjectSwitchTarget`: the switcher NAVIGATES and the
+ * route coordinator performs the state switch, because the URL named a project
+ * that lives in the other organization. The previous shape — set the active
+ * organization, then navigate to the logical `/servers` — could not work: the
+ * logical path is already `/servers`, so the navigation no-opped, the URL kept
+ * `/p/<project-in-the-old-org>`, and the coordinator dutifully switched the
+ * organization back to the one the URL still named.
+ *
+ * The organization's most recently updated project is the destination, matching
+ * the ordering the project list itself uses. With no project to aim at — a
+ * brand-new organization, or a membership list that has not loaded yet — the
+ * organization overview is the landing spot, and `ensureDefaultProject`
+ * provisions one from there.
+ */
+export function buildOrganizationSwitchTarget(
+  organizationId: string,
+  projects:
+    | ReadonlyArray<{ _id: string; organizationId?: string; updatedAt: number }>
+    | undefined,
+): string {
+  const mostRecent = (projects ?? [])
+    .filter((project) => project.organizationId === organizationId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (mostRecent && isProjectIdShape(mostRecent._id)) {
+    return buildProjectSwitchTarget(mostRecent._id);
+  }
+  return buildOrganizationPath(organizationId);
 }
 
 export function getInvalidOrganizationRouteNavigationTarget({

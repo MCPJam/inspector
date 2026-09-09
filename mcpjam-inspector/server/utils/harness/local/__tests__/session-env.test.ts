@@ -87,6 +87,7 @@ describe("the child environment is an allowlist", () => {
     expect(Object.keys(env).sort()).toEqual(
       [
         "CI",
+        "CLAUDE_CODE_TMPDIR",
         "HOME",
         "LANG",
         "NO_COLOR",
@@ -151,6 +152,9 @@ describe("scoped values", () => {
     "XDG_CONFIG_HOME",
     "XDG_CACHE_HOME",
     "TMPDIR",
+    // The vendor CLI extracts its native binary here, so a scoped override
+    // would put that extraction back outside the session's disposable state.
+    "CLAUDE_CODE_TMPDIR",
     "APPDATA",
   ])("refuses to let a caller inject %s", (name) => {
     expect(() =>
@@ -274,5 +278,66 @@ describe("preconditions", () => {
       `${HOME}/.local/share`,
       `${HOME}/.local/state`,
     ]);
+  });
+});
+
+describe("the vendor CLI's shell on Windows", () => {
+  const WIN_HOME = "C:\\state\\sessions\\s1\\home";
+  const WIN_ROOT = "C:\\Users\\dev\\project";
+
+  it("names Git Bash for the child only when the provider resolved one", () => {
+    const without = buildLocalHarnessEnv({
+      syntheticHome: WIN_HOME,
+      sessionRoot: WIN_ROOT,
+      platform: "win32",
+      base: {},
+    });
+    expect(without.CLAUDE_CODE_GIT_BASH_PATH).toBeUndefined();
+
+    const withBash = buildLocalHarnessEnv({
+      syntheticHome: WIN_HOME,
+      sessionRoot: WIN_ROOT,
+      platform: "win32",
+      base: {},
+      gitBashPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+    });
+    expect(withBash.CLAUDE_CODE_GIT_BASH_PATH).toBe(
+      "C:\\Program Files\\Git\\bin\\bash.exe",
+    );
+  });
+
+  it("ignores it off Windows, where the CLI has a real shell", () => {
+    const env = buildLocalHarnessEnv({
+      syntheticHome: HOME,
+      sessionRoot: ROOT,
+      platform: "linux",
+      base: {},
+      gitBashPath: "/usr/bin/bash",
+    });
+    expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBeUndefined();
+  });
+
+  it("refuses a relative shell path", () => {
+    expect(() =>
+      buildLocalHarnessEnv({
+        syntheticHome: WIN_HOME,
+        sessionRoot: WIN_ROOT,
+        platform: "win32",
+        base: {},
+        gitBashPath: "Git\\bin\\bash.exe",
+      }),
+    ).toThrow(LocalHarnessEnvError);
+  });
+
+  it("will not let a scoped value point the CLI at a different shell", () => {
+    expect(() =>
+      buildLocalHarnessEnv({
+        syntheticHome: WIN_HOME,
+        sessionRoot: WIN_ROOT,
+        platform: "win32",
+        base: {},
+        scoped: { CLAUDE_CODE_GIT_BASH_PATH: "C:\\evil\\bash.exe" },
+      }),
+    ).toThrow(/not allowed/);
   });
 });

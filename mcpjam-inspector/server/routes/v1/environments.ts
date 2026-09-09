@@ -545,6 +545,7 @@ environments.get(
       modelMatrix?: boolean;
       ephemeralEnvironmentLaunch?: boolean;
       skillVersionPins?: boolean;
+      secretGrants?: boolean;
     } = {};
     try {
       capabilities =
@@ -576,6 +577,12 @@ environments.get(
       ephemeralEnvironmentLaunch:
         capabilities.ephemeralEnvironmentLaunch === true,
       skillVersionPins: capabilities.skillVersionPins === true,
+      // Whether an environment may carry a CREDENTIAL GRANT. Same reason as
+      // its neighbours: a backend that predates `secretSelection` rejects the
+      // unknown field with a validator error that names nothing, so a client
+      // has to ask before offering it. `=== true` for the same reason too —
+      // absence is a no, never an assumption.
+      secretGrants: capabilities.secretGrants === true,
     });
   },
 );

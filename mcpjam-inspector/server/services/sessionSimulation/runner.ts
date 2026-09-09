@@ -1,3 +1,13 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
@@ -320,6 +330,19 @@ export interface SyntheticHostRuntime {
    * prepareChatV2's pinned branch, which throws on harness).
    */
   pinnedSkills?: PinnedSkillArtifact[];
+  /**
+   * The Project Environment this target runs (`environmentRef.environmentId` on
+   * the pinned execution spec). Absent for a legacy host target, which has no
+   * environment and therefore no secret grant at all.
+   *
+   * Threaded for the harness path's EXTERNAL-ACCOUNT credential check: brokered
+   * project secrets are composed onto a box from its environment's
+   * `secretSelection`, so this is what separates "the run's environment grants
+   * this credential" from "some environment in the project does". Without it a
+   * bound-but-unselected secret reads as available and the attempt provisions a
+   * box that then fails vendor auth against a placeholder.
+   */
+  environmentId?: string;
 }
 
 /** Attribution tags stamped onto every transcript persist for this session. */
@@ -427,6 +450,7 @@ export async function runSyntheticHostSession(
     harnessSandboxBinding,
     accessVersion,
     scenarioId,
+    environmentId,
   } = runtime;
 
   // FAIL CLOSED before anything is built (B-isolation F4). `runHarnessTurn`
@@ -608,6 +632,33 @@ export async function runSyntheticHostSession(
       browserToolPolicy,
       { source: "sessionSimulation" },
     );
+    // WHAT THE RUN'S OWN PAGE OFFERS, from the box this session provisioned.
+    // Read-only and fail-empty, and skipped entirely unless this session
+    // declared a browser policy AND brought a desktop box — a journey session
+    // with neither must not pay a daemon round trip to learn it has no browser.
+    // What this run advertised from the page, for the turn trace. A synthetic
+    // session's transcript is read back like any other, and a card in it wants
+    // the same answer: which tool on which page, as it was then.
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            // A harness takes its toolset as a constructor argument and never
+            // re-reads it, so page tools it could not use are latency spent on
+            // definitions nothing will call.
+            isHarnessTurn: Boolean(harness),
+            hasV1PageTools: false,
+            engine: "hosted",
+            projectId,
+            bearer: authHeader,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+          })
+        : undefined,
+    );
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
@@ -627,6 +678,10 @@ export async function runSyntheticHostSession(
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
+        onBrowserPageTools: ({ minted }) => {
+          advertisedPageTools = minted;
+        },
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
@@ -979,6 +1034,13 @@ export async function runSyntheticHostSession(
         // when a harness is selected — the emulated engine's shell binds through
         // `resolveHostTools` above instead.
         ...(harness && harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+        // The target's Project Environment — the GRANT BOUNDARY the harness
+        // turn checks a BROKERED external-account credential against. Harness
+        // only: the emulated engine resolves no such credential, and this
+        // runner delivers no materialized secrets on either path (see the
+        // `runtimeSecrets` contract on `MCPJamHandlerOptions`), so brokered
+        // delivery is the only one a swarm attempt can use.
+        ...(harness && environmentId ? { environmentId } : {}),
         // Server-executed built-ins (`web_search`, …) for the HARNESS turn.
         // The emulated engine already receives them merged into `tools` via
         // prepareChatV2's `allTools`; the harness reads them off this separate
@@ -1086,7 +1148,18 @@ export async function runSyntheticHostSession(
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
-        turnTrace,
+        // An EMPTY array is meaningful and is written: "this turn advertised no
+        // page tools" is a different fact from "we do not know", and only the
+        // second is what an absent field means.
+        turnTrace: pageToolsSnapshot
+          ? {
+              ...turnTrace,
+              pageToolsAtTurn: toMintedPageToolRecords(
+                advertisedPageTools,
+                pageToolsSnapshot,
+              ),
+            }
+          : turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
         // §3: ride this turn's harness resume-state commit into /ingest-chat
@@ -1539,6 +1612,7 @@ export async function drainAssistantTurn(
     harnessMcpProxy,
     pinnedHarnessSkills,
     harnessSandboxBinding,
+    environmentId,
     builtInTools: harnessBuiltInTools,
     extraBodyFields,
     hooks,
@@ -1744,6 +1818,10 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // The turn's Project Environment — the grant boundary the harness path
+    // checks a BROKERED external-account credential against. Inert for the
+    // emulated engine, which resolves no such credential.
+    ...(environmentId ? { environmentId } : {}),
     // Server-executed built-ins for the harness path (see the drain's option).
     ...(harnessBuiltInTools ? { builtInTools: harnessBuiltInTools } : {}),
     ...(args.requireToolApproval !== undefined

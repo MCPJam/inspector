@@ -27,8 +27,22 @@ export interface BrowserdSandbox {
    */
   runBackground(
     command: string,
-    options: { envs: Record<string, string>; onStdout: (chunk: string) => void },
+    options: {
+      envs: Record<string, string>;
+      onStdout: (chunk: string) => void;
+    },
   ): Promise<{ kill: () => Promise<unknown>; wait: () => Promise<unknown> }>;
+  /**
+   * Run a short foreground command and report its exit code.
+   *
+   * Resolves for a FAILING command too, rather than throwing: the display
+   * check below asks `xdpyinfo` a question whose answer is its exit status,
+   * and the E2B SDK turns a non-zero exit into a rejection.
+   */
+  run(
+    command: string,
+    options?: { envs?: Record<string, string> },
+  ): Promise<{ exitCode: number }>;
   /** The public HTTPS host for a sandbox port. */
   getHost(port: number): string;
 }
@@ -48,6 +62,25 @@ export interface BootBrowserdOptions {
    * the persistent profile a playground login depends on.
    */
   contextMode?: "persistent" | "ephemeral";
+  /** The X display browserd's Chromium draws on. Defaults to `:0`. */
+  display?: string;
+  /**
+   * Make the window cover the display, with no chrome.
+   *
+   * The static half of the video gate: the encoder grabs the WHOLE display, so
+   * "the display IS the page" only holds if the window fills it. Without it the
+   * grab is a desktop with a browser somewhere on it, and every click the pane
+   * mapped would be off by the window's origin.
+   */
+  kiosk?: boolean;
+  /**
+   * The device pixel ratio the box renders at.
+   *
+   * Sent only when a deployment is trying a candidate — the shipped default is
+   * 1 — and applied to the X screen and to Chromium together, or the browser
+   * paints past the edge of what is captured.
+   */
+  deviceScaleFactor?: number;
 }
 
 export interface BrowserdHandle {
@@ -58,15 +91,152 @@ export interface BrowserdHandle {
   port: number;
   /** `https://<getHost(port)>` — where the inspector reaches browserd. */
   publicOrigin: string;
+  /**
+   * The wire compatibility number this daemon announced, if it announced one.
+   *
+   * Absent from a daemon predating V-4a. Recorded with the session so a later
+   * lookup can answer "can I talk to it?" without a probe — and so a hash-only
+   * difference can be told from an incompatible one.
+   */
+  protocolVersion?: number;
   /** Reap the daemon. Idempotent and never throws. */
   stop: () => Promise<void>;
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 
+/**
+ * The X display a desktop box draws on — `:0`, the same one `@e2b/desktop`
+ * defaults to, so a box we bootstrap and a box that SDK created look alike.
+ */
+export const BROWSERD_DISPLAY = ":0";
+
+/**
+ * `@e2b/desktop`'s own default geometry, for the same parity reason.
+ *
+ * ALSO THE TEMPLATE'S. The desktop image's start command brings up Xvfb at this
+ * size (`templates/desktop/geometry.json` in the backend repo), and this is the
+ * fallback used when a box has no X server yet. The two must agree: a browser
+ * painting a page larger than the display it is captured from is a picture with
+ * its right-hand edge missing, and nothing in either repository would say so.
+ * `boot-browserd.test.ts` pins the value on this side; the backend's
+ * `desktopTemplateBuild.test.ts` pins it on the other.
+ */
+export const DISPLAY_GEOMETRY = "1024x768x24";
+const DISPLAY_READY_ATTEMPTS = 20;
+const DISPLAY_POLL_MS = 500;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+async function displayIsUp(
+  sandbox: BrowserdSandbox,
+  display: string,
+): Promise<boolean> {
+  try {
+    const { exitCode } = await sandbox.run(
+      `xdpyinfo -display ${display} >/dev/null 2>&1`,
+    );
+    return exitCode === 0;
+  } catch {
+    // A command that cannot even run is not a display.
+    return false;
+  }
+}
+
+/**
+ * Make sure something is drawing on `display` before the daemon launches a
+ * HEADED Chromium at it.
+ *
+ * The desktop image bakes Xfce, Xvfb and noVNC, but nothing in it STARTS them:
+ * that is `@e2b/desktop`'s `Sandbox.create`, via its internal `_start()`. The
+ * hosted path never calls that — the computer is provisioned by the backend and
+ * this process only ever `connect`s, which the desktop SDK does not override.
+ * So a freshly provisioned desktop box has no X server, Playwright refuses to
+ * launch headed ("Looks like you launched a headed browser without having a
+ * XServer running"), and browserd dies before its ready line — surfacing as
+ * `browserd exited before it reported listening (exit status 1)`.
+ *
+ * Idempotent by construction: a display that is already up (a warm box, a
+ * relaunch, a box the desktop SDK did create) short-circuits on the first
+ * probe, so this costs one command on the common path.
+ *
+ * Xfce is best-effort. The browser only needs an X server; the window manager
+ * is what makes the noVNC stream look like a desktop rather than a bare root
+ * window, and failing the whole boot over cosmetics would be wrong.
+ */
+export async function ensureDisplay(
+  sandbox: BrowserdSandbox,
+  display: string = BROWSERD_DISPLAY,
+  /**
+   * Device pixels per CSS pixel, when this boot is asking for a sharper one.
+   *
+   * The display and the page are the SAME rectangle: a browser rendering at
+   * 1.5× on a 1024×768 screen paints past the edge of what is captured, and the
+   * missing strip is on the right-hand side where nothing looks obviously
+   * wrong. Only used on the fallback path — a box whose template already
+   * brought X up keeps the geometry the template chose.
+   */
+  deviceScaleFactor = 1,
+): Promise<void> {
+  if (await displayIsUp(sandbox, display)) return;
+
+  await sandbox.runBackground(
+    `Xvfb ${display} -ac -screen 0 ${geometryFor({ deviceScaleFactor })} -retro -dpi 96 -nolisten tcp -nolisten unix`,
+    { envs: {}, onStdout: () => {} },
+  );
+
+  for (let attempt = 0; attempt < DISPLAY_READY_ATTEMPTS; attempt++) {
+    if (await displayIsUp(sandbox, display)) {
+      await sandbox
+        .runBackground("startxfce4", {
+          envs: { DISPLAY: display },
+          onStdout: () => {},
+        })
+        .catch(() => {
+          // Cosmetic; see above.
+        });
+      return;
+    }
+    await sleep(DISPLAY_POLL_MS);
+  }
+  throw new Error(
+    `no X display on ${display}: Xvfb did not come up within ${
+      (DISPLAY_READY_ATTEMPTS * DISPLAY_POLL_MS) / 1000
+    }s`,
+  );
+}
+
+/**
+ * The X screen geometry for a boot.
+ *
+ * Scaled by the device scale factor, because the display and the page are the
+ * SAME rectangle: a browser rendering at 1.5× on a 1024×768 screen paints past
+ * the edge of what is captured, and the missing strip is on the right-hand side
+ * where nothing looks obviously wrong.
+ */
+function geometryFor(options: { deviceScaleFactor?: number }): string {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (dpr === 1) return DISPLAY_GEOMETRY;
+  const [width, height, depth] = DISPLAY_GEOMETRY.split("x").map(Number);
+  return `${Math.round((width ?? 1024) * dpr)}x${Math.round(
+    (height ?? 768) * dpr,
+  )}x${depth ?? 24}`;
+}
+
 interface BrowserdReadyLine {
   port: number;
   bootId: string;
+  /**
+   * The daemon's wire compatibility number, when it printed one.
+   *
+   * VALIDATED WHEN PRESENT, OPTIONAL WHEN ABSENT. A daemon baked into an older
+   * image prints the pre-V-4a line, and refusing that would turn a boot into a
+   * hard failure over a field nothing needs to boot. Absent means "unknown",
+   * which the reuse ladder treats as "cannot prove compatibility" — a relaunch
+   * — rather than as a match.
+   */
+  protocolVersion?: number;
 }
 
 function parseReadyLine(line: string): BrowserdReadyLine | null {
@@ -82,15 +252,49 @@ function parseReadyLine(line: string): BrowserdReadyLine | null {
   const record = parsed as Record<string, unknown>;
   if (record.event !== "listening") return null;
   if (typeof record.port !== "number") return null;
-  if (typeof record.bootId !== "string" || record.bootId.length === 0) return null;
-  return { port: record.port, bootId: record.bootId };
+  if (typeof record.bootId !== "string" || record.bootId.length === 0)
+    return null;
+  const protocolVersion = record.protocolVersion;
+  if (
+    protocolVersion !== undefined &&
+    (typeof protocolVersion !== "number" ||
+      !Number.isSafeInteger(protocolVersion) ||
+      protocolVersion < 1)
+  ) {
+    // A field that IS there and is nonsense is a daemon we do not understand.
+    // Refusing the line is the loud failure; treating it as absent would let a
+    // garbled build be adopted as a compatible one.
+    return null;
+  }
+  return {
+    port: record.port,
+    bootId: record.bootId,
+    ...(typeof protocolVersion === "number" ? { protocolVersion } : {}),
+  };
 }
 
-function buildEnv(bearer: string, options: BootBrowserdOptions): Record<string, string> {
+function buildEnv(
+  bearer: string,
+  options: BootBrowserdOptions,
+): Record<string, string> {
   const env: Record<string, string> = {
     MCPJAM_BROWSERD_TOKEN: bearer,
     MCPJAM_BROWSERD_PORT: String(options.port),
     MCPJAM_BROWSERD_USER_DATA_DIR: options.userDataDir,
+    // Chromium is launched HEADED here and finds its X server through this
+    // variable alone: E2B command shells do not inherit the image's Dockerfile
+    // `ENV`, so an image-level `DISPLAY` would not reach the daemon.
+    DISPLAY: options.display ?? BROWSERD_DISPLAY,
+    // Kiosk is what makes "the display IS the page" true for the video
+    // encoder, and it is the static half of the daemon's own h264 gate.
+    ...(options.kiosk ? { MCPJAM_BROWSERD_KIOSK: "1" } : {}),
+    // Sent only when a deployment is trying a candidate: the shipped default
+    // is 1, and a value the daemon does not receive is one it cannot
+    // misinterpret.
+    ...(options.deviceScaleFactor !== undefined &&
+    options.deviceScaleFactor !== 1
+      ? { MCPJAM_BROWSERD_DPR: String(options.deviceScaleFactor) }
+      : {}),
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";
@@ -146,25 +350,33 @@ export function bootBrowserd(
         bootId: outcome.bootId,
         port: outcome.port,
         publicOrigin: `https://${sandbox.getHost(outcome.port)}`,
+        ...(outcome.protocolVersion !== undefined
+          ? { protocolVersion: outcome.protocolVersion }
+          : {}),
         stop: kill,
       });
     };
 
-    void sandbox
-      .runBackground(`node ${JSON.stringify(options.scriptPath)}`, {
-        envs: env,
-        onStdout: (chunk) => {
-          if (settled) return;
-          carry += chunk;
-          let index: number;
-          while ((index = carry.indexOf("\n")) >= 0) {
-            const line = carry.slice(0, index);
-            carry = carry.slice(index + 1);
-            const ready = parseReadyLine(line);
-            if (ready) finish(ready);
-          }
-        },
-      })
+    // Chained rather than awaited before this promise is built: the boot's
+    // ready-line choreography (and its timeout) must own every failure path,
+    // including "the box never got an X server".
+    void ensureDisplay(sandbox, options.display, options.deviceScaleFactor)
+      .then(() =>
+        sandbox.runBackground(`node ${JSON.stringify(options.scriptPath)}`, {
+          envs: env,
+          onStdout: (chunk) => {
+            if (settled) return;
+            carry += chunk;
+            let index: number;
+            while ((index = carry.indexOf("\n")) >= 0) {
+              const line = carry.slice(0, index);
+              carry = carry.slice(index + 1);
+              const ready = parseReadyLine(line);
+              if (ready) finish(ready);
+            }
+          },
+        }),
+      )
       .then((command) => {
         started = command;
         // The deadline may have fired before the handle existed; reap here.
@@ -176,7 +388,9 @@ export function bootBrowserd(
         }
         void command
           .wait()
-          .then(() => finish(new Error("browserd exited before it reported listening")))
+          .then(() =>
+            finish(new Error("browserd exited before it reported listening")),
+          )
           .catch((error) =>
             finish(
               new Error(
@@ -187,10 +401,17 @@ export function bootBrowserd(
             ),
           );
       })
-      .catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
+      .catch((error) =>
+        finish(error instanceof Error ? error : new Error(String(error))),
+      );
 
     timer = setTimeout(
-      () => finish(new Error(`browserd did not report listening within ${readyTimeoutMs}ms`)),
+      () =>
+        finish(
+          new Error(
+            `browserd did not report listening within ${readyTimeoutMs}ms`,
+          ),
+        ),
       readyTimeoutMs,
     );
     // A synchronous ready line settles before the timer exists; clear it.

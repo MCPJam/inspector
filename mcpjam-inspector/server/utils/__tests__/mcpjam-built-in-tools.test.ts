@@ -160,10 +160,19 @@ describe("workspace tool catalog", () => {
       "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
+      "list_eval_suite_revisions",
       "get_eval_run_disclosure",
       "run_eval_case",
       "run_eval_suite",
       "get_eval_run",
+      "get_eval_run_stage_analytics",
+      "get_eval_run_gate",
+      "get_eval_run_route_facts",
+      "get_eval_run_server_facts",
+      "get_eval_description_experiment",
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "list_eval_suite_stage_analytics",
       "compare_eval_run",
       // The gate-waiver trio. The READ is advertised alongside the writes on
       // purpose: a waiver only its grantors can see is not a visible waiver,
@@ -176,8 +185,9 @@ describe("workspace tool catalog", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "request_eval_run_judge",
-      // The GitHub Checks READ. Its connect sibling is in
-      // EXCLUDED_FROM_WORKSPACE: it reaches a shared repository.
+      // The GitHub-checks READ, under both spellings. Their connect siblings
+      // are in EXCLUDED_FROM_WORKSPACE: they reach a shared repository.
+      "list_eval_github_repos",
       "list_eval_check_repos",
       "list_scenarios",
       "get_scenario",
@@ -580,5 +590,23 @@ describe("live server operations", () => {
     // The registry reads stay approval-free.
     expect(approval("search_registry_directory")).toBe(false);
     expect(approval("list_registry_connections")).toBe(false);
+  });
+
+  it("requires approval for both description-experiment spends, like the judge", () => {
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("request_eval_run_judge")).toBe(true);
+    expect(approval("propose_eval_description_rewrite")).toBe(true);
+    expect(approval("start_eval_description_experiment")).toBe(true);
+    // The read closes the loop and spends nothing.
+    expect(approval("get_eval_description_experiment")).toBe(false);
   });
 });

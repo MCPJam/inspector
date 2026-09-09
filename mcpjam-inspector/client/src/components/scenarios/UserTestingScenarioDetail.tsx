@@ -1,26 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import {
   AlertTriangle,
   ExternalLink,
+  Eye,
   PenLine,
   Pencil,
   Trash2,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
-import {
-  ScenarioShareBanner,
-  ScenarioShareEmptyPanel,
-} from "@/components/scenarios/ScenarioShareBanner";
+import { ScenarioShareEmptyPanel } from "@/components/scenarios/ScenarioShareEmptyPanel";
+import { ScenarioShareDialog } from "@/components/scenarios/ScenarioShareDialog";
 import { ScenarioShareSection } from "@/components/scenarios/ScenarioShareSection";
 import { ScenarioPerTurnFeedbackToggle } from "@/components/scenarios/ScenarioPerTurnFeedbackToggle";
+import { ScenarioTasksSection } from "@/components/scenarios/ScenarioTasksSection";
 import { ScenarioUsagePanel } from "@/components/scenarios/ScenarioUsagePanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
 import {
@@ -34,15 +28,9 @@ import {
 } from "@/hooks/scenario-usage-filters";
 import type { InsightsView } from "@/hooks/useInsightsFlowController";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { ScenarioPreviewPane } from "@/components/scenarios/ScenarioPreviewPane";
 import { ScenarioDeleteConfirmDialog } from "@/components/scenarios/ScenarioDeleteConfirmDialog";
 import { EditableTitle } from "@/components/evals/EditableTitle";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
 import {
   composerStateFromEnvironments,
   composerHasTarget,
@@ -57,7 +45,6 @@ import {
   useScenarioMutations,
   type ScenarioSettings,
 } from "@/hooks/useScenarios";
-import { useHost } from "@/hooks/useClients";
 import {
   useProjectEnvironment,
   useProjectEnvironments,
@@ -74,7 +61,10 @@ import {
   type UserTestingDetailTab,
   useAppNavigate,
 } from "@/lib/app-navigation";
-import { buildScenarioLink } from "@/lib/scenario-session";
+import {
+  buildScenarioLink,
+  withScenarioPreviewSurface,
+} from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
@@ -82,11 +72,15 @@ import { ActionableFindings } from "@/components/shared/actionable-insights/acti
 /**
  * One User Testing scenario.
  *
- * Detail (`/user-testing/:id`): Insights | Sessions, share banner, Edit /
- * Open preview in the header. Edit (`/user-testing/:id/edit`): setup, full
- * share controls, and a docked live Preview. Preview embeds the share link,
- * so opening Edit starts a REAL guest session — it shows up in Sessions.
- * The embed tags itself `?surface=preview` so that session is labelled.
+ * Detail (`/user-testing/:id`): Insights | Sessions under one header carrying
+ * Edit / Open preview / Share. Edit (`/user-testing/:id/edit`) wears the same
+ * action row and holds Settings — environment, sharing permissions, ratings,
+ * grading — beside a docked live Preview. Only the back link differs: Edit is
+ * a sub-route, so it returns to the scenario rather than out to the list.
+ *
+ * Preview embeds the share link, so opening Edit starts a REAL guest session —
+ * it shows up in Sessions. The embed tags itself `?surface=preview` so that
+ * session is labelled.
  *
  * Insights are per-scenario — `ScenarioUsagePanel` is scenario-scoped. There is
  * deliberately no project-wide insights view: aggregating across scenarios that
@@ -94,9 +88,7 @@ import { ActionableFindings } from "@/components/shared/actionable-insights/acti
  */
 interface UserTestingScenarioDetailProps {
   scenario: ScenarioSettings;
-  /** Gates the host query behind Preview's iframe permissions. */
-  isAuthenticated: boolean;
-  /** `/user-testing/:id/edit` — setup / share / preview, no detail tabs. */
+  /** `/user-testing/:id/edit` — the study's settings, no detail tabs. */
   editMode?: boolean;
   onBack: () => void;
   /** Parent returns to the list. */
@@ -113,7 +105,6 @@ const TAB_OPTIONS: ReadonlyArray<{
 
 export function UserTestingScenarioDetail({
   scenario,
-  isAuthenticated,
   editMode = false,
   onBack,
   onDeleted,
@@ -125,7 +116,7 @@ export function UserTestingScenarioDetail({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [nameEnvironmentOpen, setNameEnvironmentOpen] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // The environment row itself — for `origin` and `revision`, which the
   // scenario settings envelope deliberately doesn't carry. Host-backed
@@ -349,32 +340,6 @@ export function UserTestingScenarioDetail({
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
   const tab = parseUserTestingDetailTab(location.search);
-  // Prefer hiding the header strip until Insights reports a filled cohort —
-  // the empty panel already carries share, and a flash of both reads as a
-  // duplicate. Sessions always shows the strip (see render below).
-  //
-  // The report is keyed by scenarioId so a scenario switch does not need a
-  // separate reset effect (which can race the remounted workbench's report
-  // in the same passive-effect flush and leave the strip stuck hidden).
-  const [insightsEmptyReport, setInsightsEmptyReport] = useState<{
-    scenarioId: string;
-    empty: boolean;
-  } | null>(null);
-  const insightsEmpty =
-    insightsEmptyReport?.scenarioId === scenario.scenarioId
-      ? insightsEmptyReport.empty
-      : true;
-  // Stable ref: a new one each render loops InsightsWorkbench's report effect.
-  const handleInsightsEmptyChange = useCallback(
-    (empty: boolean) => {
-      setInsightsEmptyReport((prev) =>
-        prev?.scenarioId === scenario.scenarioId && prev.empty === empty
-          ? prev
-          : { scenarioId: scenario.scenarioId, empty },
-      );
-    },
-    [scenario.scenarioId],
-  );
   const searchParams = new URLSearchParams(location.search);
   const sessionParam = searchParams.get("session");
   const sessionDeepLinkThreadId = sessionParam;
@@ -407,26 +372,11 @@ export function UserTestingScenarioDetail({
     });
   }, [scenario.scenarioId, editMode, location.search, navigate]);
 
-  // Preview remount key — follows environment rebinds while Edit is open.
-  const previewEnvironmentKey = scenario.environmentId ?? "";
-
-  // The host config sets the preview iframe's `allow` ceiling. Waiting for it
-  // is about FIDELITY, not enforcement: the attribute only takes effect at
-  // mount and its no-config default is permissive, so mounting early would
-  // give a deny-all host a wider wrapper than it asked for. It is not a
-  // security hole when the host doesn't resolve — the wrapper is a ceiling,
-  // and the mcp-apps renderer INSIDE the frame re-reads the real host policy
-  // and enforces it per resource (see `previewIframeAllow`). So a null host
-  // still previews; only a genuinely pending one waits.
-  // `useHost` reports a SKIPPED query as loading forever — treat it as
-  // pending only when it can actually resolve.
-  const previewHostId = scenario.namedHostId ?? null;
-  const { host: previewHost, isLoading: previewHostLoading } = useHost({
-    isAuthenticated,
-    hostId: previewHostId,
-  });
-  const isPreviewProfilePending =
-    isAuthenticated && Boolean(previewHostId) && previewHostLoading;
+  // Settings no longer docks a live Preview beside itself (BB-176). The pane
+  // embedded the share link, so merely OPENING Edit started a real guest
+  // session that showed up in the study's own Sessions list — the creator's
+  // editing was indistinguishable from tester traffic. "Open preview" in the
+  // action row does the same job on demand, in a tab, and says so.
 
   const goToTab = (next: UserTestingDetailTab) => {
     // Replace, not push: flipping a sub-tab shouldn't put a stop on the back
@@ -475,37 +425,108 @@ export function UserTestingScenarioDetail({
         className="-ml-2 shrink-0 px-2 text-xl font-semibold tracking-tight"
         inputClassName="min-w-[8rem] max-w-full text-xl font-semibold tracking-tight"
       />
-      {!editMode ? (
-        <TextareaAutosize
-          aria-label="Scenario description"
-          data-testid="user-testing-description"
-          value={descriptionDraft}
-          onChange={(e) => setDescriptionDraft(e.target.value)}
-          onFocus={() => {
-            descriptionFocusedRef.current = true;
-          }}
-          onBlur={() => void persistDescription()}
-          minRows={1}
-          maxRows={4}
-          maxLength={2000}
-          placeholder="Add a description…"
-          className={cn(
-            "min-h-0 min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm",
-            "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-            "focus-visible:border-0 focus-visible:ring-0",
-          )}
-        />
-      ) : scenario.namedHostName ? (
-        <span className="text-sm text-muted-foreground">
+      <TextareaAutosize
+        aria-label="Scenario description"
+        data-testid="user-testing-description"
+        value={descriptionDraft}
+        onChange={(e) => setDescriptionDraft(e.target.value)}
+        onFocus={() => {
+          descriptionFocusedRef.current = true;
+        }}
+        onBlur={() => void persistDescription()}
+        minRows={1}
+        maxRows={4}
+        maxLength={2000}
+        placeholder="Add a description…"
+        className={cn(
+          "min-h-0 min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm",
+          "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
+          "focus-visible:border-0 focus-visible:ring-0",
+        )}
+      />
+      {/* Host-backed scenarios get no Environment section — nothing else on
+          Edit names the client they run against, so the header does. */}
+      {editMode && !composerActive && scenario.namedHostName ? (
+        <span
+          className="shrink-0 text-sm text-muted-foreground"
+          data-testid="user-testing-host-client"
+        >
           Client: {scenario.namedHostName}
         </span>
       ) : null}
     </div>
   );
 
+  // One action row, identical on the detail tabs and on Edit: Edit, Open
+  // preview, and the single primary Share. Sharing has no other entry point on
+  // either surface — a second affordance was the thing this row replaced.
+  const headerActions = (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="rounded-lg"
+        data-testid="user-testing-edit-button"
+        // On Edit this is the current page, so it is marked rather than
+        // hidden: dropping a button out of the row on one route makes the
+        // shared header stop reading as the same header.
+        aria-current={editMode ? "page" : undefined}
+        onClick={() =>
+          navigate(buildUserTestingScenarioEditPath(scenario.scenarioId))
+        }
+      >
+        <Pencil className="mr-1.5 size-3.5" />
+        Edit
+      </Button>
+      {publishLink && !environmentError ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="rounded-lg"
+          asChild
+        >
+          <a
+            // TAGGED as preview traffic. A creator opening their own study
+            // starts a real guest session, so an untagged link puts their
+            // look-around in the study's own Sessions list as if a tester had
+            // run it. The docked pane used to set this on its iframe; with the
+            // pane gone this is the only preview path, so it carries it here.
+            href={withScenarioPreviewSurface(publishLink)}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="user-testing-open-preview"
+            /* Says WHAT opens, because research read this button as a second
+               step of setting the study up rather than as the tester's own
+               session (BB-176). The visible label stays short; the hover and
+               accessible name carry the rest. */
+            title="Opens this study exactly as a tester sees it, in a new tab"
+            aria-label="Open preview — this study as a tester sees it"
+          >
+            <Eye className="mr-1.5 size-3.5" />
+            Open preview
+          </a>
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        size="sm"
+        className="rounded-lg"
+        data-testid="user-testing-share-button"
+        onClick={() => setShareOpen(true)}
+      >
+        <ExternalLink className="mr-1.5 size-3.5" />
+        Share
+      </Button>
+    </>
+  );
+
   if (editMode) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        {/* Back goes to the scenario, not the list: Edit is a sub-route, and
+            its own Edit button is inert here, so the list would strand it. */}
         <DetailPageHeader
           backLabel={scenario.name || "Scenario"}
           onBack={() =>
@@ -513,133 +534,142 @@ export function UserTestingScenarioDetail({
           }
           backTestId="user-testing-detail-back"
           title={headerTitle}
-          actions={
-            publishLink && !environmentError ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-lg"
-                asChild
-              >
-                <a
-                  href={publishLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  data-testid="user-testing-open-preview"
-                >
-                  <ExternalLink className="mr-1.5 size-3.5" />
-                  Open preview
-                </a>
-              </Button>
-            ) : null
-          }
+          actions={headerActions}
         />
         <div
           className="relative min-h-0 flex-1 overflow-hidden"
           data-testid="user-testing-edit-tab"
         >
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={48} minSize={32}>
-              <div className="h-full overflow-y-auto px-8 py-4">
-                {environmentError ? (
-                  <div
-                    data-testid="user-testing-detail-environment-error"
-                    className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3"
-                  >
-                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
-                    <div className="min-w-0 text-sm">
-                      <p className="font-medium text-foreground">
-                        {environmentError.code === "ENV_ARCHIVED"
-                          ? "This scenario's environment is archived — the share link no longer opens."
-                          : "This scenario's environment can't be loaded right now — the share link won't open."}
-                      </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {environmentError.message} Its sessions are unaffected.
-                      </p>
-                    </div>
+          {/* ONE COLUMN, 560px, left-aligned (BB-176). The split this
+              replaces gave settings half a screen and spent the other half on
+              a preview whose only job was to be looked at — so a form built
+              for a readable measure got squeezed, and every field wrapped.
+              A fixed measure with `max-w-full` also keeps it honest on a
+              narrow window, where a percentage panel just kept shrinking. */}
+          <div className="h-full overflow-y-auto px-8 py-4">
+            <div className="w-[560px] max-w-full space-y-8">
+              <h1 className="text-xl font-semibold tracking-tight text-foreground">
+                Settings
+              </h1>
+
+              {environmentError ? (
+                <div
+                  data-testid="user-testing-detail-environment-error"
+                  className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+                >
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                  <div className="min-w-0 text-sm">
+                    <p className="font-medium text-foreground">
+                      {environmentError.code === "ENV_ARCHIVED"
+                        ? "This scenario's environment is archived — the share link no longer opens."
+                        : "This scenario's environment can't be loaded right now — the share link won't open."}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {environmentError.message} Its sessions are unaffected.
+                    </p>
                   </div>
-                ) : null}
+                </div>
+              ) : null}
 
+              {/* Where this scenario runs, edited in place. It used to hide
+                    behind a footer "Edit setup" dialog; the setup IS the
+                    setting, so it reads as one here. */}
+              {composerActive ? (
+                <section
+                  className="space-y-4"
+                  data-testid="user-testing-environment-section"
+                >
+                  <h2 className="text-lg font-medium tracking-tight text-foreground">
+                    Environment
+                  </h2>
+                  <div className="min-w-0">
+                    <EnvironmentComposer
+                      projectId={scenario.projectId}
+                      environments={liveNamedEnvironments}
+                      value={composer}
+                      onChange={handleComposerChange}
+                      maxTargets={1}
+                      disabled={isRebinding || !composerReady}
+                      testIdPrefix="user-testing-detail"
+                      environmentPickerFooter={
+                        canPromoteEnvironment ? (
+                          // The row behind this setup is ad-hoc:
+                          // content-addressed, immutable, labeled by its
+                          // client rather than a name. Saving it (in place,
+                          // same id) turns it into a curated environment
+                          // other surfaces can pick.
+                          <button
+                            type="button"
+                            onClick={() => setNameEnvironmentOpen(true)}
+                            data-testid="user-testing-save-as-environment"
+                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                          >
+                            <PenLine className="size-3.5 shrink-0" />
+                            Save as environment
+                          </button>
+                        ) : null
+                      }
+                    />
+                  </div>
+                </section>
+              ) : null}
+
+              <section className="space-y-4">
+                <h2 className="text-lg font-medium tracking-tight text-foreground">
+                  Sharing permissions
+                </h2>
                 <ScenarioShareSection scenario={scenario} />
+              </section>
 
+              <section className="space-y-4">
+                <h2 className="text-lg font-medium tracking-tight text-foreground">
+                  Ratings
+                </h2>
                 {/* Keyed per scenario: the toggle holds optimistic state
-                    across an await, and reusing one instance would let a
-                    write started on one scenario resolve into another's. */}
+                      across an await, and reusing one instance would let a
+                      write started on one scenario resolve into another's. */}
                 <ScenarioPerTurnFeedbackToggle
                   key={scenario.scenarioId}
                   scenario={scenario}
                 />
+              </section>
 
-                {/* Production scoring: grade sampled real sessions against
+              {/* Production scoring: grade sampled real sessions against
                     deterministic checks. Its own section — grading config is
                     a peer of sharing, not part of it. */}
-                <ScenarioGradingSection scenario={scenario} />
+              <ScenarioGradingSection scenario={scenario} />
 
-                <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
-                  {composerActive ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="rounded-lg"
-                      disabled={isRebinding}
-                      onClick={() => setSetupOpen(true)}
-                      data-testid="user-testing-edit-setup"
-                    >
-                      <Pencil className="mr-1.5 size-4" />
-                      Edit setup
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => setDeleteOpen(true)}
-                    data-testid="user-testing-delete"
-                  >
-                    <Trash2 className="mr-1.5 size-4" />
-                    Delete scenario
-                  </Button>
-                </div>
+              {/* The same "what to try" list create step 2 authors, keyed
+                    per scenario for the reason the ratings toggle is: this
+                    section holds an unsaved draft, and reusing one instance
+                    across scenarios would carry one study's rows into
+                    another's editor. */}
+              <ScenarioTasksSection
+                key={scenario.scenarioId}
+                scenario={scenario}
+              />
+
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/40 pt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setDeleteOpen(true)}
+                  data-testid="user-testing-delete"
+                >
+                  <Trash2 className="mr-1.5 size-4" />
+                  Delete scenario
+                </Button>
               </div>
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={52} minSize={30}>
-              <div
-                className="flex h-full min-h-0 flex-col border-l border-border/40"
-                data-testid="user-testing-edit-preview"
-              >
-                <div className="flex h-9 shrink-0 items-center border-b border-border/40 px-4">
-                  <p className="text-sm font-medium text-foreground">Preview</p>
-                </div>
-                <div className="relative min-h-0 flex-1">
-                  {isPreviewProfilePending ? (
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                      Loading preview…
-                    </div>
-                  ) : (
-                    <ScenarioPreviewPane
-                      publishLink={environmentError ? null : publishLink}
-                      mcpProfile={previewHost?.config.mcpProfile}
-                      remountKey={previewEnvironmentKey}
-                      emptyTitle={
-                        environmentError
-                          ? "This scenario can't be previewed"
-                          : undefined
-                      }
-                      emptyBody={
-                        environmentError
-                          ? `${environmentError.message} Its sessions are unaffected.`
-                          : undefined
-                      }
-                    />
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </div>
+          </div>
         </div>
+
+        <ScenarioShareDialog
+          scenario={scenario}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
 
         <ScenarioDeleteConfirmDialog
           entityLabel="scenario"
@@ -658,45 +688,6 @@ export function UserTestingScenarioDetail({
             environment={environment}
           />
         ) : null}
-
-        {composerActive ? (
-          <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
-            <DialogContent
-              className="sm:max-w-xl"
-              aria-describedby={undefined}
-              data-testid="user-testing-setup-dialog"
-            >
-              <DialogHeader>
-                <DialogTitle>Edit setup</DialogTitle>
-              </DialogHeader>
-              <div className="min-w-0">
-                <EnvironmentComposer
-                  projectId={scenario.projectId}
-                  environments={liveNamedEnvironments}
-                  value={composer}
-                  onChange={handleComposerChange}
-                  maxTargets={1}
-                  disabled={isRebinding || !composerReady}
-                  inModal
-                  testIdPrefix="user-testing-detail"
-                  environmentPickerFooter={
-                    canPromoteEnvironment ? (
-                      <button
-                        type="button"
-                        onClick={() => setNameEnvironmentOpen(true)}
-                        data-testid="user-testing-save-as-environment"
-                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                      >
-                        <PenLine className="size-3.5 shrink-0" />
-                        Save as environment
-                      </button>
-                    ) : null
-                  }
-                />
-              </div>
-            </DialogContent>
-          </Dialog>
-        ) : null}
       </div>
     );
   }
@@ -708,42 +699,7 @@ export function UserTestingScenarioDetail({
         onBack={onBack}
         backTestId="user-testing-detail-back"
         title={headerTitle}
-        actions={
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="rounded-lg"
-              data-testid="user-testing-edit-button"
-              onClick={() =>
-                navigate(buildUserTestingScenarioEditPath(scenario.scenarioId))
-              }
-            >
-              <Pencil className="mr-1.5 size-3.5" />
-              Edit
-            </Button>
-            {publishLink && !environmentError ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-lg"
-                asChild
-              >
-                <a
-                  href={publishLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  data-testid="user-testing-open-preview"
-                >
-                  <ExternalLink className="mr-1.5 size-3.5" />
-                  Open preview
-                </a>
-              </Button>
-            ) : null}
-          </>
-        }
+        actions={headerActions}
         tabs={{
           value: tab,
           options: TAB_OPTIONS,
@@ -751,11 +707,7 @@ export function UserTestingScenarioDetail({
           ariaLabel: "Scenario view",
           indicatorId: "user-testing-detail",
         }}
-      >
-        {tab === "insights" && insightsEmpty ? null : (
-          <ScenarioShareBanner scenario={scenario} />
-        )}
-      </DetailPageHeader>
+      />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {tab === "sessions" ? (
@@ -886,7 +838,6 @@ export function UserTestingScenarioDetail({
                 }
                 autoBackfillTopicMap
                 emptyState={<ScenarioShareEmptyPanel scenario={scenario} />}
-                onEmptyChange={handleInsightsEmptyChange}
                 className="px-8 py-4"
                 testIdPrefix="scenario-insights"
               />
@@ -894,6 +845,12 @@ export function UserTestingScenarioDetail({
           </div>
         ) : null}
       </div>
+
+      <ScenarioShareDialog
+        scenario={scenario}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+      />
 
       <ScenarioDeleteConfirmDialog
         entityLabel="scenario"
@@ -911,49 +868,6 @@ export function UserTestingScenarioDetail({
           projectId={scenario.projectId}
           environment={environment}
         />
-      ) : null}
-
-      {composerActive ? (
-        <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
-          <DialogContent
-            className="sm:max-w-xl"
-            aria-describedby={undefined}
-            data-testid="user-testing-setup-dialog"
-          >
-            <DialogHeader>
-              <DialogTitle>Edit setup</DialogTitle>
-            </DialogHeader>
-            <div className="min-w-0">
-              <EnvironmentComposer
-                projectId={scenario.projectId}
-                environments={liveNamedEnvironments}
-                value={composer}
-                onChange={handleComposerChange}
-                maxTargets={1}
-                disabled={isRebinding || !composerReady}
-                inModal
-                testIdPrefix="user-testing-detail"
-                environmentPickerFooter={
-                  canPromoteEnvironment ? (
-                    // The row behind this setup is ad-hoc: content-addressed,
-                    // immutable, labeled by its client rather than a name.
-                    // Saving it (in place, same id) turns it into a curated
-                    // environment other surfaces can pick.
-                    <button
-                      type="button"
-                      onClick={() => setNameEnvironmentOpen(true)}
-                      data-testid="user-testing-save-as-environment"
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <PenLine className="size-3.5 shrink-0" />
-                      Save as environment
-                    </button>
-                  ) : null
-                }
-              />
-            </div>
-          </DialogContent>
-        </Dialog>
       ) : null}
     </div>
   );

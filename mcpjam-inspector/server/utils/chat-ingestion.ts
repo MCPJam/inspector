@@ -1,6 +1,8 @@
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
+  Harness,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
@@ -261,6 +263,23 @@ export interface PersistedTurnTrace {
     name: string;
     revision: number;
   };
+  /**
+   * The page's WebMCP tools this turn ADVERTISED, and the exact document
+   * generation each was bound to.
+   *
+   * PERSISTED, not derived. The live tool set describes the page the browser is
+   * on NOW; a conversation reopened tomorrow would attribute its cards to
+   * whatever tool happens to carry that name then, and the Raw view would show
+   * a request that was never sent. Follows the `skillsAtTurn` precedent exactly
+   * — carried INSIDE the turn trace, which `buildIngestBody` serializes whole,
+   * so this reaches the wire with no change to the body builder.
+   *
+   * The backend validates and strips what it does not recognize, so this side
+   * never needs to; until its validator lands the field is dropped server-side
+   * and Raw falls back to synthesizing from the live browser, with a note
+   * saying so.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 // Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
@@ -281,7 +300,17 @@ export type ChatOrigin =
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
-  modelSource: "mcpjam" | "byok" | "local_byok";
+  /**
+   * Who paid for the turn's model spend. Hand-mirrors the backend's
+   * `chatModelSourceValidator`.
+   *
+   * `"external-account"` — the customer's own account with the RUNTIME vendor
+   * (Cursor), where MCPJam holds no model credential at all. Distinct from
+   * `"byok"` on purpose: both mean "MCPJam is not charged", but byok also
+   * asserts a configured model PROVIDER and its key, which an external-account
+   * turn does not have.
+   */
+  modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
   projectId?: string;
   sourceType?: "scenario" | "direct" | "eval" | "swarm";
@@ -348,7 +377,9 @@ interface PersistChatSessionOptions {
     scenarioId?: string;
     leaseId: string;
     expectedStateVersion: number;
-    harnessId: "claude-code" | "codex";
+    // The SDK union itself, not a copy: a stale copy here silently drops the
+    // session commit for a harness the rest of the stack already runs.
+    harnessId: Harness;
     harnessSessionId: string;
     resumeState: unknown;
     computerId: string;

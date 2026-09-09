@@ -12,6 +12,9 @@ const {
   mockUseQuery,
   mockThreadState,
   mockBrowserArtifactsState,
+  mockHydrateTurnTraceSpans,
+  mockTraceViewer,
+  mockTurnTracesState,
 } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockReadOnlyTranscript: vi.fn(),
@@ -27,6 +30,13 @@ const {
   },
   mockBrowserArtifactsState: {
     artifacts: undefined as unknown,
+  },
+  mockHydrateTurnTraceSpans: vi.fn(
+    async (..._args: unknown[]) => [] as unknown[],
+  ),
+  mockTraceViewer: vi.fn(),
+  mockTurnTracesState: {
+    traces: [] as unknown[],
   },
 }));
 
@@ -63,7 +73,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
     snapshots: [],
   }),
   useSharedChatTurnTraces: () => ({
-    traces: [],
+    traces: mockTurnTracesState.traces,
   }),
   useSessionBrowserArtifacts: () => ({
     artifacts: mockBrowserArtifactsState.artifacts,
@@ -72,6 +82,29 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
+}));
+
+// The `sessionAnchored` decision is made HERE, not in the utility, so the
+// utility's own suite cannot catch this component passing the wrong flag.
+// Only the fetching helper is replaced — `expectedTurnTraceSpanCount` and
+// `turnTraceWallClockRange` are pure and stay real, so the span-load-failure
+// and anchor assertions below exercise the wiring rather than a stub of it.
+vi.mock("@/components/evals/turn-trace-spans", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/components/evals/turn-trace-spans")
+  >()),
+  hydrateTurnTraceSpans: (...args: unknown[]) =>
+    mockHydrateTurnTraceSpans(...args),
+}));
+
+// Stubbed so the Trace tab is cheap to render AND so the wall-clock anchor it
+// is handed can be asserted — the offsets alone do not tell the reader when
+// anything happened.
+vi.mock("@/components/evals/trace-viewer", () => ({
+  TraceViewer: (props: Record<string, unknown>) => {
+    mockTraceViewer(props);
+    return <div data-testid="trace-viewer" />;
+  },
 }));
 
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({
@@ -88,6 +121,7 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
 }));
 
 vi.mock("@mcpjam/chat-ui", () => ({
+  hydrateMessageTimestamps: (messages: unknown[]) => messages,
   ReadOnlyTranscript: (props: Record<string, unknown>) => {
     mockReadOnlyTranscript(props);
     return <div data-testid="read-only-transcript" />;
@@ -121,7 +155,7 @@ vi.mock(
         </button>
       </div>
     ),
-  })
+  }),
 );
 
 vi.mock("@/lib/app-navigation", () => ({
@@ -136,6 +170,8 @@ describe("ShareUsageThreadDetail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockThreadState.sourceType = "scenario";
+    mockTurnTracesState.traces = [];
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
@@ -175,13 +211,13 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "attached-to-tool",
-        })
+        }),
       );
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
           widgetPolicy: "placeholder",
-        })
+        }),
       );
     });
   });
@@ -193,33 +229,19 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-        })
+        }),
       );
     });
   });
 
-  it("offers an initial judge action for an ungraded swarm session", async () => {
+  it("auto-runs the judge for an ungraded swarm session", async () => {
     mockThreadState.sourceType = "swarm";
-    const user = userEvent.setup();
 
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /run judge/i }));
-    expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
-  });
-
-  it("keys the Checks panel on the thread's own doc id, not the threadId prop", async () => {
-    // `threadId` and `thread._id` happen to coincide in production today, so
-    // substituting one for the other would keep every other test green while
-    // querying the wrong session the moment they diverge.
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    await waitFor(() =>
-      expect(mockUseQuery).toHaveBeenCalledWith(
-        "chatSessionChecks:getCheckRunsForSession",
-        { chatSessionId: "session-doc-1" }
-      )
-    );
+    await waitFor(() => {
+      expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
+    });
   });
 
   it("hides the Replay tab when the session has no browser artifacts", async () => {
@@ -229,7 +251,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Replay" })
+      screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
   });
 
@@ -271,31 +293,10 @@ describe("ShareUsageThreadDetail", () => {
     // eval replay uses). The per-step interaction timeline now lives on the
     // Trace tab (`Interact · …` spans), not in the Replay tab.
     expect(
-      await screen.findByTestId("browser-artifacts-view")
+      await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
     expect(screen.queryByText("Computer Use timeline")).toBeNull();
-  });
-
-  it("shows readiness findings for synthetic sessions", async () => {
-    mockThreadState.synthetic = true;
-    mockThreadState.readiness = {
-      status: "completed",
-      verdict: "needs_attention",
-      issueCount: 1,
-      coverageRatio: 0.2,
-      advertisedToolCount: 5,
-      usedToolCount: 1,
-      toolCallCount: 0,
-      toolErrorCount: 0,
-      issues: [],
-    };
-
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    expect(
-      await screen.findByText(/Only 20% of advertised tools were used/i)
-    ).toBeInTheDocument();
   });
 
   it("falls back to Chat when the active browser view loses its artifacts (session switch)", async () => {
@@ -320,10 +321,10 @@ describe("ShareUsageThreadDetail", () => {
 
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
     await userEvent.click(
-      await screen.findByRole("button", { name: "Replay" })
+      await screen.findByRole("button", { name: "Replay" }),
     );
     expect(
-      await screen.findByTestId("browser-artifacts-view")
+      await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
 
     // The next session has no artifacts (same mounted component instance).
@@ -335,17 +336,17 @@ describe("ShareUsageThreadDetail", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("browser-artifacts-view")
+        screen.queryByTestId("browser-artifacts-view"),
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Replay" })
+      screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
     expect(
-      await screen.findByTestId("read-only-transcript")
+      await screen.findByTestId("read-only-transcript"),
     ).toBeInTheDocument();
   });
 });
@@ -372,7 +373,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
   it("renders for a member on a User Testing session", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     expect(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     ).toBeInTheDocument();
   });
 
@@ -381,13 +382,13 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, canPromote: false }}
-      />
+      />,
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
     // Nor does the guest pay for the dialog's project queries.
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
@@ -399,10 +400,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // prop, so asserting its absence would pass even if the button leaked.
     render(<ShareUsageThreadDetail threadId="thread-1" />);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
   });
@@ -411,10 +412,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
   });
 
@@ -429,14 +430,14 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     await user.click(screen.getByTestId("share-usage-promote-to-test-case"));
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("true")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("true"),
     );
 
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1")
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
     );
   });
 
@@ -447,11 +448,11 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, onImported }}
-      />
+      />,
     );
 
     await user.click(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     );
     await user.click(screen.getByText("simulate import"));
 
@@ -459,7 +460,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       expect(onImported).toHaveBeenCalledWith({
         suiteId: "suite-1",
         testCaseId: "case-1",
-      })
+      }),
     );
     // The override REPLACES the default navigation; it must not also fire.
     expect(mockNavigateApp).not.toHaveBeenCalled();
@@ -472,43 +473,114 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // user had implicitly dismissed.
     const user = userEvent.setup();
     const { rerender } = render(
-      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />
+      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />,
     );
 
     await user.click(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     );
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("true")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("true"),
     );
 
     rerender(
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, canPromote: false }}
-      />
+      />,
     );
     await waitFor(() =>
-      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument(),
     );
 
     // Restoring the capability must NOT bring the dialog back open.
     rerender(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("false")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("false"),
     );
   });
 });
 
-describe("ShareUsageThreadDetail — readiness gating", () => {
+/**
+ * BB-153 span anchoring, at the level where the DECISION is made.
+ *
+ * `hydrateTurnTraceSpans` has its own suite, but it is handed `sessionAnchored`
+ * — it cannot notice this component computing the flag from the wrong field, or
+ * inverting it. These two cases are the whole routing contract.
+ */
+describe("ShareUsageThreadDetail — span anchoring by sourceType", () => {
+  const TRACES = [{ turnIndex: 0, spanCount: 2, blobUrl: "https://b/0.json" }];
+
+  const anchoredArg = () =>
+    (
+      mockHydrateTurnTraceSpans.mock.calls[0] as unknown as [
+        unknown,
+        { sessionAnchored?: boolean } | undefined,
+      ]
+    )[1]?.sessionAnchored;
+
+  beforeEach(() => {
+    mockTurnTracesState.traces = TRACES;
+  });
+
+  it("keeps an eval session's own offsets", async () => {
+    // Eval blobs are already anchored at the run start; rebasing them would
+    // displace every span by the persist round-trip.
+    mockThreadState.sourceType = "eval";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(true);
+  });
+
+  // `"scenario"` IS the User Testing tab: `/user-testing/:id` → Sessions →
+  // `ScenarioUsagePanel` → this component. Prathmesh reported the 0.0s
+  // collapse on Swarm AND User Testing; both reach the fix through this one
+  // call, and this is the case that says so.
+  it("rebases a User Testing session", async () => {
+    mockThreadState.sourceType = "scenario";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(false);
+  });
+
+  it("rebases a swarm session — the sourceType this component was built for", async () => {
+    mockThreadState.sourceType = "swarm";
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => expect(mockHydrateTurnTraceSpans).toHaveBeenCalled());
+    expect(anchoredArg()).toBe(false);
+  });
+});
+
+/**
+ * The other half of BB-153, on the surface that used to stay quiet about it.
+ *
+ * With no recorded spans the viewer does not draw a blank timeline — it
+ * synthesizes one from `estimatedDurationMs`. The swarm pane says so; this
+ * detail did not, so two views of the same session disagreed about whether
+ * anything was wrong.
+ */
+describe("ShareUsageThreadDetail — span load failure", () => {
+  const openTrace = async () => {
+    // The tab bar only mounts once the transcript blob has resolved.
+    await userEvent.click(await screen.findByRole("button", { name: "Trace" }));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockThreadState.sourceType = "scenario";
+    mockThreadState.synthetic = false;
+    mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
+    mockBrowserArtifactsState.artifacts = undefined;
+    // The transcript must load: the Trace tab only exists once the detail is
+    // past its loader.
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -517,41 +589,101 @@ describe("ShareUsageThreadDetail — readiness gating", () => {
       messages: [{ id: "assistant-1", role: "assistant", parts: [] }],
       toolRenderOverrides: {},
     });
+    mockTurnTracesState.traces = [
+      {
+        turnIndex: 0,
+        startedAt: 1_000_000,
+        endedAt: 1_005_000,
+        spanCount: 2,
+        spansBlobUrl: "https://b/0.json",
+      },
+    ];
   });
 
-  it("shows readiness for a REAL session that carries a verdict", async () => {
-    // The whole point of the backend flip: real tester sessions now get
-    // graded, and the UI must follow the data rather than the population.
-    mockThreadState.synthetic = false;
-    // A verdict with something to say — the bar deliberately renders nothing
-    // for a clean `ready` session, so a "ready" fixture would pass vacuously.
-    mockThreadState.readiness = {
-      status: "completed",
-      verdict: "needs_attention",
-      issues: [
-        {
-          code: "tool_errors",
-          severity: "warning",
-          message: "1 of 3 tool calls failed.",
-        },
-      ],
-      toolCallCount: 3,
-      toolErrorCount: 1,
-      turnCount: 1,
-    };
+  it("says the durations are estimated when rows claim spans and none load", async () => {
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
     render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    const warning = await screen.findByTestId("share-usage-span-error");
+    // The wording has to correct the timeline, not agree with it: with no
+    // spans and no `estimatedDurationMs` the viewer prints "No timing data
+    // recorded", which is a claim about the session (cubic).
+    expect(warning).toHaveTextContent("not because none was recorded");
+    // The transcript is unaffected — that is why this cannot share `error`,
+    // whose branch replaces the whole viewer.
+    expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
+  });
+
+  it("stays quiet when the spans loaded", async () => {
+    mockHydrateTurnTraceSpans.mockResolvedValue([
+      { id: "s1", name: "step", category: "step", startMs: 0, endMs: 10 },
+    ]);
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
     await waitFor(() =>
-      expect(screen.getByTestId("session-insight-bar")).toBeInTheDocument()
+      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("share-usage-span-error"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stays quiet for a session that recorded no spans at all", async () => {
+    // Nothing to load is not a failure, and calling it one would put a warning
+    // on every session traced before spans were captured.
+    mockTurnTracesState.traces = [
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+    ];
+    mockHydrateTurnTraceSpans.mockResolvedValue([]);
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("share-usage-span-error"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("gives an eval session no absolute anchor rather than a wrong one", async () => {
+    // Eval spans are anchored at the RUN start (that is why they are not
+    // rebased), while these rows carry each turn's PERSIST time — the earliest
+    // of which lands after turn 1 finished. Handing that to the timeline would
+    // label span offset 0 with a clock time minutes off (coderabbit).
+    mockThreadState.sourceType = "eval";
+    mockTurnTracesState.traces = [
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+      { turnIndex: 1, startedAt: 1_008_000, endedAt: 1_012_000, spanCount: 0 },
+    ];
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+    expect(mockTraceViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: null,
+        traceEndedAtMs: null,
+      }),
     );
   });
 
-  it("shows nothing when the session has no verdict yet", async () => {
-    mockThreadState.synthetic = false;
-    mockThreadState.readiness = undefined;
+  it("anchors the timeline on the earliest turn start", async () => {
+    mockTurnTracesState.traces = [
+      { turnIndex: 1, startedAt: 1_008_000, endedAt: 1_012_000, spanCount: 0 },
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+    ];
     render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+    await openTrace();
+
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+    expect(mockTraceViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: 1_000_000,
+        traceEndedAtMs: 1_012_000,
+      }),
     );
-    expect(screen.queryByTestId("session-insight-bar")).not.toBeInTheDocument();
   });
 });

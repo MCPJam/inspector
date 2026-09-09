@@ -56,6 +56,19 @@ describe("authFetch bearer on the eval chain routes", () => {
     // D5c — stage analytics, both the suite page and the run-scoped reader.
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics",
     "/api/v1/projects/proj_1/eval-runs/run_1/stage-analytics",
+    "/api/v1/projects/proj_1/eval-runs/run_1/route-facts",
+    // F2 — the run's server facts, read by the same panel.
+    "/api/v1/projects/proj_1/eval-runs/run_1/server-facts",
+    // The per-trial chains: one page of iterations, each carrying its own
+    // stage rows. MOVED here from the negative list below — it was correctly
+    // pinned as unreachable until a reader needed it, and the entry it now
+    // requires is the one that would otherwise 401 as "could not be loaded".
+    "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
+    // What changed since the previous run.
+    "/api/v1/projects/proj_1/eval-runs/run_1/compare",
+    "/api/v1/projects/proj_1/eval-description-experiments/exp_1",
+    "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments",
+    "/api/v1/projects/proj_1/eval-description-experiments/exp_1/start",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });
@@ -75,7 +88,6 @@ describe("authFetch bearer on the eval chain routes", () => {
     // The blanket prefix these patterns exist to avoid: a sibling
     // project-scoped route must NOT inherit the UI's bearer.
     "/api/v1/projects/proj_1/eval-runs/run_1",
-    "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
     "/api/v1/projects/proj_1/eval-suites/suite_1",
     "/api/v1/projects/proj_1/eval-suites/suite_1/runs",
     // Paths that merely start the same way.
@@ -86,6 +98,29 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics/overall",
     // The run-scoped suffix is a closed set, not a wildcard.
     "/api/v1/projects/proj_1/eval-runs/run_1/insights",
+    // …including near-misses of the newest member.
+    "/api/v1/projects/proj_1/eval-runs/run_1/server-facts-export",
+    "/api/v1/projects/proj_1/eval-runs/run_1/server-facts/servers",
+    // The suite quality-gate report is a CLI/SDK read. The app does not
+    // call this route, so allowlisting it would widen the UI bearer for
+    // nothing the sheet uses.
+    "/api/v1/projects/proj_1/eval-runs/run_1/gate",
+    // Granting the iterations LIST must not grant what hangs beneath it. A
+    // trace is a transcript and steps are authored results; both are read by
+    // other paths with their own auth, and a pattern that swallowed them
+    // would be the blanket prefix these tests exist to catch.
+    "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1/trace",
+    "/api/v1/projects/proj_1/eval-runs/run_1/iterations/iter_1",
+    "/api/v1/projects/proj_1/eval-runs/run_1/steps",
+    // Same narrowness for the compare read: the literal segment only.
+    "/api/v1/projects/proj_1/eval-runs/run_1/compare-export",
+    "/api/v1/projects/proj_1/eval-runs/run_1/compare/cases",
+    // The suite's revision history is an AGENT read. The app reads the same
+    // history through Convex (`testSuites:listSuiteRevisions`), so allowlisting
+    // this route would widen the UI bearer's reach for nothing the app uses.
+    "/api/v1/projects/proj_1/eval-suites/suite_1/revisions",
+    "/api/v1/projects/proj_1/eval-description-experiments/exp_1/report",
+    "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments/export",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });

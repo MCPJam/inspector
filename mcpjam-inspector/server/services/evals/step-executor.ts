@@ -30,6 +30,7 @@ import type {
 } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
+  checkRole,
   evaluatePredicates,
   extractFinalAssistantMessage,
   summarizeRenderObservations,
@@ -690,8 +691,14 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       await runAssertStep(step, stepIndex, browser, state);
       const last = state.assertionResults[state.assertionResults.length - 1];
-      if (last && !last.passed) {
-        // Fail-fast: a failed assertion halts the run; later steps are Skipped.
+      const gatingFailed =
+        last &&
+        !last.passed &&
+        checkRole(last.predicateResult?.predicate) !== "advisory";
+      if (gatingFailed) {
+        // Fail-fast: a failed GATING assertion halts the run; later steps
+        // are Skipped. An advisory (Warn) failure records the result and
+        // continues — it must never halt a trial.
         emitStatus(stepIndex, "fail");
         recordSkippedSteps(
           state,
@@ -729,7 +736,10 @@ export function stepsVerdict(state: StepExecutionState): {
   passed: boolean;
   failedAsserts: StepAssertionResult[];
 } {
-  const failedAsserts = state.assertionResults.filter((r) => !r.passed);
+  const failedAsserts = state.assertionResults.filter(
+    (r) =>
+      !r.passed && checkRole(r.predicateResult?.predicate) !== "advisory"
+  );
   const passed =
     failedAsserts.length === 0 && state.interactionFailures.length === 0;
   return { passed, failedAsserts };

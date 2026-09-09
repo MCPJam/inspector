@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  probeProcess,
   readProcessBirthIdentity,
   supportsOwnershipProof,
+  terminateOwnedProcess,
 } from "../process-identity.js";
 import { listProcessRecords } from "../process-registry.js";
 import { LocalHarnessSupervisor, SupervisorError } from "../supervisor.js";
@@ -216,23 +216,21 @@ describe("a root that exits while its tree does not", () => {
   );
 
   it.skipIf(!canOwnProcesses)(
-    "retains ownership when the root exits naturally before stop",
+    "settles the tree from the exit snapshot when the root exits first",
     async () => {
-      // The root here is gone before `stopSession` ever looks, so nothing in
-      // the stop ties the surviving group to this tree: the id could have been
-      // released and reissued at any point since the root exited, and an
-      // unrelated leader that has since exited would leave a live group
-      // wearing it. So the stop reports the survivor rather than SIGKILLing a
-      // group it cannot prove is ours, and KEEPS the record, which is the only
-      // durable handle on it. This test previously expected the sweep.
+      // The root is gone before `stopSession` ever looks, so the GROUP id no
+      // longer proves anything: it could have been released and reissued, and
+      // an unrelated leader that has since exited would leave a live group
+      // wearing it. A group-wide signal is therefore refused, and used to be
+      // the end of it — which is how an aborted turn left a 357 MB vendor CLI
+      // running.
       //
-      // Restoring the sweep soundly needs per-MEMBER identity, not a group
-      // signal: enumerate the group once at the moment the root exits — while
-      // its id provably still belongs to us — and record each member's pid and
-      // birth identity, then at stop verify each with `isSameProcess` and
-      // signal only those that still match. That is immune to pid reuse, but
-      // it is a new platform primitive plus supervisor plumbing, deliberately
-      // not folded in here.
+      // The fix is per-MEMBER identity rather than a group signal: the group is
+      // enumerated at the instant the root exits, while its id provably still
+      // belongs to us, recording each member's pid and birth identity. At stop
+      // each is re-verified and only matching members are signalled, so pid
+      // reuse in between means a member is skipped, never that a stranger's
+      // process is killed.
       const sup = supervisor();
       const handle = await sup.spawnSupervised(
         request("s-natural-desert", "natural-deserter.js"),
@@ -253,22 +251,35 @@ describe("a root that exits while its tree does not", () => {
       ).toBeDefined();
 
       await expect(sup.stopSession("s-natural-desert")).resolves.toEqual({
-        stopped: false,
-        escaped: 1,
+        stopped: true,
+        escaped: 0,
       });
-      // Not signalled, and still visible: an unswept survivor the operator can
-      // still see beats a SIGKILL delivered to whoever now holds the id.
-      expect((await probeProcess(descendant)).state).toBe("alive");
+      // Settled, not stranded — and the record is gone with it, because the
+      // stop can now prove the whole tree is down.
+      expect(await waitForExit(descendant)).toBe(true);
       expect(
         (await listProcessRecords()).find(
           (record) => record.sessionId === "s-natural-desert",
         ),
-      ).toBeDefined();
-      try {
-        process.kill(descendant, "SIGKILL");
-      } catch {
-        /* already gone */
-      }
+      ).toBeUndefined();
+    },
+  );
+
+  it.skipIf(!canOwnProcesses)(
+    "leaves a group member alone once its pid belongs to somebody else",
+    async () => {
+      // The snapshot records a birth identity per member precisely so that a
+      // pid reused between the root's exit and the stop is skipped rather than
+      // signalled. `terminateOwnedProcess` is the unit that enforces it.
+      const identity = await readProcessBirthIdentity(process.pid);
+      expect(identity).not.toBeNull();
+      await expect(
+        terminateOwnedProcess({
+          pid: process.pid,
+          identity: `${identity}-but-not-really`,
+          graceMs: 50,
+        }),
+      ).resolves.toBe("not-owned");
     },
   );
 });

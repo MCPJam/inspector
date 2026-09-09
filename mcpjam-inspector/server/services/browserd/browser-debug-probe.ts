@@ -11,8 +11,15 @@
  * connection released in a `finally`, on every path.
  */
 import { randomUUID } from "node:crypto";
-import type { BootBrowserdOptions, BrowserdHandle, BrowserdSandbox } from "./boot-browserd";
-import type { BrowserdCommandResponse } from "./browserd-client";
+import type {
+  BootBrowserdOptions,
+  BrowserdHandle,
+  BrowserdSandbox,
+} from "./boot-browserd";
+import type {
+  BrowserdCommandResponse,
+  BrowserdStatus,
+} from "./browserd-client";
 import type { BrowserCommand } from "./protocol";
 
 /** The sandbox pieces the probe needs, once connected. */
@@ -31,6 +38,11 @@ export interface ProbeClient {
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
+  /**
+   * Optional, so an older fake need not grow a method to keep compiling.
+   * Absent simply means the probe reports no compatibility fields.
+   */
+  status?(): Promise<BrowserdStatus>;
 }
 
 export interface BrowserProbeDeps {
@@ -41,7 +53,10 @@ export interface BrowserProbeDeps {
   /** Connect to the sandbox. */
   connect(sandboxId: string): Promise<ProbeSandbox>;
   /** Boot browserd (the real `bootBrowserd` in production). */
-  boot(sandbox: BrowserdSandbox, options: BootBrowserdOptions): Promise<BrowserdHandle>;
+  boot(
+    sandbox: BrowserdSandbox,
+    options: BootBrowserdOptions,
+  ): Promise<BrowserdHandle>;
   /** Build the client for a booted daemon. */
   createClient(baseUrl: string, bearer: string): ProbeClient;
 }
@@ -64,6 +79,32 @@ export interface BrowserProbeResult {
   settled: boolean;
   /** Size of the returned screenshot (base64 chars) — proof a frame came back. */
   screenshotBytes: number;
+  /**
+   * What the daemon says about itself.
+   *
+   * The reuse ladder's whole decision now rests on these, and they cross a
+   * sandbox boundary, a bundler and a control plane before anything reads
+   * them. A staging probe that could not show them would leave "why did that
+   * session relaunch?" answerable only by reasoning.
+   */
+  protocolVersion?: number;
+  bundleHash?: string;
+  features?: readonly string[];
+  /**
+   * Did the BOX start this daemon, or did the probe?
+   *
+   * The prelaunch exit criterion. A `true` here on a fresh desktop is the
+   * difference between a warm start and a cold one, and it is not otherwise
+   * observable from outside the sandbox.
+   */
+  startedBy?: "prelaunch" | "inspector";
+  /**
+   * How long the boot took, in ms.
+   *
+   * The number prelaunch exists to move. Measured around the boot alone, not
+   * the reserve or the connect, because those are the same either way.
+   */
+  msToBoot?: number;
 }
 
 const DEFAULT_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -90,11 +131,13 @@ export async function runBrowserProbe(
   try {
     const scriptPath = input.scriptPath ?? DEFAULT_SCRIPT_PATH;
     await sandbox.writeBundle(scriptPath, input.bundle);
+    const bootStartedAt = Date.now();
     handle = await deps.boot(sandbox.browserd, {
       scriptPath,
       port: input.port ?? DEFAULT_PORT,
       userDataDir: input.userDataDir ?? DEFAULT_USER_DATA_DIR,
     });
+    const msToBoot = Date.now() - bootStartedAt;
 
     const client = deps.createClient(handle.publicOrigin, handle.bearer);
     const nav = await client.sendCommand(
@@ -109,7 +152,9 @@ export async function runBrowserProbe(
       throw new Error(`browserd navigate rejected: ${nav.status}`);
     }
     if (!nav.result.ok) {
-      throw new Error(`browserd navigate failed: ${nav.result.error ?? "unknown"}`);
+      throw new Error(
+        `browserd navigate failed: ${nav.result.error ?? "unknown"}`,
+      );
     }
     const shot = await client.sendCommand(
       inspectorCommand({ kind: "observe", mode: "screenshot" }),
@@ -119,16 +164,33 @@ export async function runBrowserProbe(
       throw new Error(`browserd screenshot rejected: ${shot.status}`);
     }
     if (!shot.result.ok) {
-      throw new Error(`browserd screenshot failed: ${shot.result.error ?? "unknown"}`);
+      throw new Error(
+        `browserd screenshot failed: ${shot.result.error ?? "unknown"}`,
+      );
     }
 
-    const screenshot = (shot.result.output as { screenshot?: string })?.screenshot ?? "";
+    const screenshot =
+      (shot.result.output as { screenshot?: string })?.screenshot ?? "";
+    // Best-effort and LAST: the probe's verdict is the screenshot, and a
+    // status read that fails must not turn a working pipeline into a failure.
+    const status = (await client.status?.().catch(() => null)) ?? null;
     return {
       computerId,
       bootId: handle.bootId,
       url: input.url,
       settled: nav.result.settled ?? false,
       screenshotBytes: screenshot.length,
+      ...(status && status.kind !== "unauthorized"
+        ? {
+            ...(status.protocolVersion !== undefined
+              ? { protocolVersion: status.protocolVersion }
+              : {}),
+            ...(status.bundleHash ? { bundleHash: status.bundleHash } : {}),
+            ...(status.features ? { features: status.features } : {}),
+            ...(status.startedBy ? { startedBy: status.startedBy } : {}),
+          }
+        : {}),
+      msToBoot,
     };
   } finally {
     // Never leave a daemon running in a durable computer; never kill the box.

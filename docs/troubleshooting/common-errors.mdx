@@ -94,6 +94,31 @@ This response comes from **your MCP server**, not from MCPJam Inspector. The ser
 - **Bearer Token** - Use this if you already have an API token from the server
 - **OAuth 2.0** - Use this for servers that require OAuth authorization flow
 
+### "resolves to a private/reserved IP address" during OAuth discovery
+
+The **web app at app.mcpjam.com runs on our servers**, so it can only reach
+authorization servers that are reachable from the public internet. A local
+authorization server — on `localhost`, on your LAN, or on a hostname like
+`auth.local` that resolves to `127.0.0.1` — is not, and discovery is refused
+with a message naming the address it resolved to.
+
+**Solution:** use the local inspector for a local OAuth setup:
+
+```bash
+npx @mcpjam/inspector
+```
+
+The local inspector reaches loopback, LAN, CGNAT, and unique-local addresses,
+including hostnames that resolve to them, because it runs on your machine. No
+flag or configuration is needed. The same applies to the CLI, which reaches
+private targets by default and takes `--https-only` when you want to reproduce
+the hosted policy.
+
+Link-local and cloud-metadata addresses (`169.254.169.254` and friends) are
+refused everywhere, including locally. If you see the message naming a
+"link-local or cloud-metadata host", something is pointing discovery at an
+instance-metadata endpoint rather than at an authorization server.
+
 ### Getting 401 Unauthorized errors
 
 If you're seeing **401 Unauthorized** errors when trying to connect to your server, this typically means the server requires authentication that hasn't been set up yet.

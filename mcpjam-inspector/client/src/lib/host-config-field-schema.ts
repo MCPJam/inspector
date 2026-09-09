@@ -741,6 +741,42 @@ const PAGINATION_FIELD: HostConfigFieldDef = {
   read: (cfg) => mcpProfile(cfg)?.paginationTraversal,
 };
 
+/**
+ * `mcpProfile.toolCallCancellation` — whether stopping an in-flight tool call
+ * reaches the server, or only ends the turn inside the host.
+ *
+ * Two independently-measured facts, one per era, because a host can be right
+ * on one and wrong on the other: MCPJam cancelled correctly on 2025 while
+ * never aborting the stream on 2026. Named by era rather than by mechanism —
+ * the reader wants to know "will my server hear the stop on the revision I
+ * speak", not which message carries it.
+ */
+const TOOL_CALL_CANCELLATION_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
+  [
+    [
+      "legacy",
+      "Tool cancellation (2025)",
+      "Client tells the server when the user stops an in-flight tool call on a 2025 connection, by sending notifications/cancelled.",
+    ],
+    [
+      "modern",
+      "Tool cancellation (2026)",
+      "Client tells the server when the user stops an in-flight tool call on a 2026-07-28 connection, by closing that request's response stream.",
+    ],
+  ] as const
+).map(
+  ([key, label, description]): HostConfigFieldDef => ({
+    id: `toolCallCancellation.${key}`,
+    section: "protocol",
+    subsection: "Cancellation",
+    label,
+    path: `mcpProfile.toolCallCancellation.${key}`,
+    description,
+    kind: { kind: "boolean" },
+    read: (cfg) => mcpProfile(cfg)?.toolCallCancellation?.[key],
+  })
+);
+
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   // Agent · Agent tooling
@@ -1150,6 +1186,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   ...TOOL_RESULT_WIDGET_FIELDS,
   ...TOOL_LIST_CHANGED_FIELDS,
   PAGINATION_FIELD,
+  ...TOOL_CALL_CANCELLATION_FIELDS,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

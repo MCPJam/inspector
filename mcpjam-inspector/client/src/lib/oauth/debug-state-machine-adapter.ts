@@ -379,9 +379,16 @@ export function createInspectorOAuthStateMachine(
     // The debugger is a local-dev inspection surface: when the server under
     // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
     // fetches must be permitted. Mirror the Connect flow — allow loopback only
-    // when the debugged server URL is loopback; the guard still blocks
-    // LAN/link-local/reserved destinations regardless.
+    // when the debugged server URL is loopback. On its own this flag leaves
+    // LAN/link-local/reserved destinations blocked; outside hosted mode the
+    // wider allowance below supersedes it for the private ranges, and
+    // link-local/cloud-metadata stays refused in both.
     allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
+    // Outside hosted mode the backend proxy behind this adapter runs on the
+    // developer's machine, so the whole private range is in scope — including
+    // an authorization server on a custom hostname that answers 127.0.0.1,
+    // which the loopback-literal test above cannot recognise.
+    allowPrivateMetadataFetch: !HOSTED_MODE,
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of
