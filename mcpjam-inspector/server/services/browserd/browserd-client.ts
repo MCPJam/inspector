@@ -19,6 +19,18 @@
  */
 import type { BrowserCommand } from "./protocol";
 import {
+  decodePaneCommand,
+  decodePaneState,
+  decodeViewport,
+  type PaneCommandOutcome,
+} from "./pane-client";
+import type { BrowserStateSnapshot } from "../../../shared/browser-session-state";
+import type {
+  BrowserPaneCommand,
+  InteractionAnchor,
+} from "../../../shared/browser-pane-command";
+import type { SessionViewport } from "../../../shared/browser-viewport";
+import {
   asRecord,
   decodeCommandResponse,
   decodeHealth,
@@ -228,7 +240,62 @@ export class BrowserdClient {
     });
   }
 
-  /** Send a command and interpret the daemon's reply. */
+  /**
+   * The whole browser, for the pane's shell.
+   *
+   * `holder` rides in the QUERY rather than the body because this is a GET —
+   * the daemon compares it against the lease to decide whether this watcher
+   * may see the tab list at all, exactly as the frame stream does.
+   */
+  async paneState(args: { holder?: string }): Promise<BrowserStateSnapshot | null> {
+    const query = args.holder
+      ? `?holder=${encodeURIComponent(args.holder)}`
+      : "";
+    const res = await this.request(`/v1/state${query}`, { method: "GET" }, true);
+    return decodePaneState({ status: res.status, body: await this.json(res) });
+  }
+
+  /** One human navigation, taking the browser first if it is free. */
+  async paneCommand(args: {
+    holder: string;
+    command: BrowserPaneCommand;
+    commandId?: string;
+    anchor?: InteractionAnchor;
+  }): Promise<PaneCommandOutcome> {
+    const res = await this.request(
+      "/v1/pane-command",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args),
+      },
+      true,
+    );
+    return decodePaneCommand({
+      status: res.status,
+      body: await this.json(res),
+    });
+  }
+
+  /** Report a panel measurement; answer with the size the session settled at. */
+  async paneViewport(args: {
+    width: number;
+    height: number;
+  }): Promise<SessionViewport | null> {
+    const res = await this.request(
+      "/v1/viewport",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(args),
+      },
+      true,
+    );
+    if (res.status !== 200) return null;
+    const body = (await this.json(res)) as Record<string, unknown>;
+    return decodeViewport(body.viewport);
+  }
+
   /**
    * Send a command and interpret the daemon's reply.
    *

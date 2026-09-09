@@ -53,7 +53,7 @@ import {
 } from "../electron/agent-surface.js";
 import {
   createInProcessBrowserdClient,
-  type InProcessBrowserdClient,
+  type InProcessPaneClient,
 } from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
@@ -237,7 +237,7 @@ interface LocalSession {
    * refusal — and narrowing a union at each call site would be a cast asserting
    * something this module already knows.
    */
-  inProcessClient: InProcessBrowserdClient;
+  inProcessClient: InProcessPaneClient;
   driver: ChromiumDriver;
   lease: HandoffLease;
   handle: LocalBrowserSessionHandle;
@@ -618,7 +618,7 @@ export function touchLocalBrowserSession(
  */
 export function findLocalBrowserSession(bootId: string):
   | {
-      client: InProcessBrowserdClient;
+      client: InProcessPaneClient;
       handler: BrowserdStack["handler"];
       handle: LocalBrowserSessionHandle;
       /**
@@ -672,7 +672,7 @@ export function findLocalBrowserSessionForProject(projectId: string):
 
 /** What a caller gets when it has found the browser it may reach. */
 export interface LiveLocalBrowser {
-  client: InProcessBrowserdClient;
+  client: InProcessPaneClient;
   handle: LocalBrowserSessionHandle;
   ledger: BrowserdStack["ledger"];
   projectKey: string;

@@ -42,6 +42,11 @@ import {
   startChromiumInstall,
 } from "../../utils/browser-rendering-setup.js";
 import {
+  parseAnchor,
+  parsePaneCommand,
+} from "../../services/browserd/daemon/pane-command.js";
+import { supportsPane } from "../../services/browserd/pane-client.js";
+import {
   ensureLocalBrowserSession,
   findLocalBrowserSession,
   findLocalBrowserSessionByKey,
@@ -514,6 +519,151 @@ computers.post("/local-browser/input", async (c) => {
   }
   touchLocalBrowserSession(session.handle);
   return c.json({ ok: true });
+});
+
+/**
+ * What the browser IS — every tab, the history, who is driving, the size.
+ *
+ * POST like every other local-browser route: the project id travels in the
+ * body alongside the consent capability, and the shared `post` helper on the
+ * client is what attaches that header.
+ *
+ * READS, NEVER STARTS, for the same reason `/page-tools` does not: a tab strip
+ * appearing in a side panel must not be what opens a Chromium window on
+ * somebody's desk.
+ */
+computers.post("/local-browser/state", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+    holder?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const session = findLocalBrowserSession(bootId);
+  if (!session) return c.json({ error: "no_browser_session" }, 404);
+  const client = session.client;
+  if (!supportsPane(client)) {
+    return c.json({ error: "state_unsupported" }, 501);
+  }
+  const state = await client.paneState({
+    ...(typeof body?.holder === "string" ? { holder: body.holder } : {}),
+  });
+  if (!state) return c.json({ error: "state_unavailable" }, 409);
+  return c.json({ state });
+});
+
+/**
+ * A person's navigation, which TAKES the browser.
+ *
+ * `pane-command`, not `command`: `/local-browser/command` already exists and
+ * carries an outside coding AGENT's commands, which are refused while a lease
+ * is held. This one acquires the lease as its first act. Two authorities on
+ * one path, told apart by which fields happened to be present, is what the
+ * ledger's `source` column exists to prevent.
+ *
+ * The `holder` is the pane's, supplied by the client — honest on a
+ * single-user device, exactly as `/local-browser/lease` explains: consent plus
+ * the session token already prove this is the machine's owner, and the holder
+ * id only has to tell one PANE from another so two tabs cannot each believe
+ * they have control.
+ */
+computers.post("/local-browser/pane-command", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+    holder?: unknown;
+    command?: unknown;
+    commandId?: unknown;
+    anchor?: unknown;
+  } | null;
+  const holder = typeof body?.holder === "string" ? body.holder : "";
+  if (!holder) return c.json({ error: "holder_required" }, 400);
+  const command = parsePaneCommand(body?.command);
+  if (!command) return c.json({ error: "invalid_command" }, 400);
+  const session = findLocalBrowserSession(
+    typeof body?.bootId === "string" ? body.bootId : "",
+  );
+  if (!session) return c.json({ error: "no_browser_session" }, 404);
+  const client = session.client;
+  if (!supportsPane(client)) {
+    return c.json({ error: "pane_command_unsupported" }, 501);
+  }
+  const anchor = parseAnchor(body?.anchor);
+  const outcome = await client.paneCommand({
+    holder,
+    command,
+    ...(typeof body?.commandId === "string"
+      ? { commandId: body.commandId }
+      : {}),
+    ...(anchor ? { anchor } : {}),
+  });
+  // Driving IS using the browser — otherwise the idle reap would close the
+  // window on somebody who is mid-login and has simply not clicked for a
+  // while. Touched even on a refusal, matching `/lease`: a person who lost a
+  // race for the browser is still a person at the pane.
+  touchLocalBrowserSession(session.handle);
+  if (!outcome.ok) {
+    const status =
+      outcome.reason === "lease_held"
+        ? 423
+        : outcome.reason === "page_changed"
+          ? 409
+          : outcome.reason === "unsupported"
+            ? 501
+            : 502;
+    return c.json(
+      {
+        error: outcome.reason,
+        ...(outcome.reason === "lease_held" && outcome.holder
+          ? { holder: outcome.holder }
+          : {}),
+      },
+      status,
+    );
+  }
+  return c.json({
+    ok: true,
+    ...(outcome.viewport ? { viewport: outcome.viewport } : {}),
+  });
+});
+
+/**
+ * The panel measured a size.
+ *
+ * No activity touch, matching the hosted twin: a resize happens TO a pane
+ * rather than being something a person did with the browser, and a window
+ * moved between monitors sends one.
+ */
+computers.post("/local-browser/viewport", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+    width?: unknown;
+    height?: unknown;
+  } | null;
+  if (typeof body?.width !== "number" || typeof body?.height !== "number") {
+    return c.json({ error: "invalid_viewport" }, 400);
+  }
+  const session = findLocalBrowserSession(
+    typeof body?.bootId === "string" ? body.bootId : "",
+  );
+  if (!session) return c.json({ error: "no_browser_session" }, 404);
+  const client = session.client;
+  if (!supportsPane(client)) {
+    return c.json({ error: "viewport_unsupported" }, 501);
+  }
+  const viewport = await client.paneViewport({
+    width: body.width,
+    height: body.height,
+  });
+  if (!viewport) return c.json({ error: "viewport_unsupported" }, 501);
+  return c.json({ viewport });
 });
 
 /**
