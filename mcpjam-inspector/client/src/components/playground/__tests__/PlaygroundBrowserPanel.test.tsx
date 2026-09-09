@@ -26,7 +26,6 @@ vi.mock("@/hooks/useComputerEngine", () => ({
 }));
 
 const sessionState = {
-  enabled: true,
   sessionId: "chat-1" as string | null,
 };
 
@@ -41,10 +40,6 @@ vi.mock("@/hooks/useProjectComputer", () => ({
     token: "conversation-tok",
     expiresAt: Date.now() + 60_000,
   }),
-}));
-
-vi.mock("@/hooks/useBrowserSessionsEnabled", () => ({
-  useBrowserSessionsEnabled: () => sessionState.enabled,
 }));
 
 vi.mock("@/stores/active-chat-session-store", () => ({
@@ -121,7 +116,6 @@ beforeEach(() => {
   engineState.engine = "local";
   engineState.selectedEngine = "local";
   engineState.granted = true;
-  sessionState.enabled = true;
   sessionState.sessionId = "chat-1";
   useBrowserWorkspaceStore.setState({
     open: true,
@@ -313,10 +307,12 @@ describe("the browser a chat owns", () => {
     );
   });
 
-  it("falls back to the project token when sessions are off", async () => {
-    // `browser-sessions` off is not "no browser" — it is the old shared
-    // project browser, which is exactly what the project mint returns.
-    sessionState.enabled = false;
+  it("falls back to the project token when there is no conversation", async () => {
+    // No active chat session is not "no browser" — it is the shared project
+    // browser, which is exactly what the project mint returns. This is the
+    // only remaining way to land there now that per-conversation browsers
+    // are the default rather than a flag.
+    sessionState.sessionId = null;
     engineState.engine = "cloud";
     engineState.selectedEngine = "cloud";
     renderPanel();
