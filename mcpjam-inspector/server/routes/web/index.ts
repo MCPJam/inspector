@@ -6,6 +6,7 @@ import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
+import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -88,6 +89,19 @@ for (const startsWork of [
   "/conformance/oauth/start",
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
+}
+// Same reasoning as the conformance ceiling above, one finding later (MJ-001):
+// these two routes open a connection to a URL the caller stored, and the
+// `guestRateLimitMiddleware` on `/servers/*` returns early for anyone who is
+// not a guest — so a signed-in caller was spending our egress unmetered. Keyed
+// per credential rather than per address, because the differential error a
+// scan reads is per request and the accounts are free to create.
+//
+// Listed path-by-path, not as `/servers/*`: the rest of that router is Convex
+// reads and writes with no outbound MCP connection, and metering them on an
+// egress-shaped budget would be the wrong ceiling on the wrong thing.
+for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
+  web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
 // Connector Bench. Listed path-by-path rather than as `/bench/*` because
 // `/bench/results/:secret` must stay reachable with no session at all — the
