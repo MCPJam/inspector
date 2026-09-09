@@ -42,7 +42,10 @@ import {
   isComputersDataPlaneConfigured,
   touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -317,7 +320,10 @@ export function createComputerBrowserFramesWsHandler(
       if (!claims) {
         refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
       } else {
-        const info = await sandboxInfo({ computerId: claims.computerId });
+        const target = claims.computerId
+          ? { computerId: claims.computerId }
+          : { sandboxRowId: claims.sandboxRowId };
+        const info = await sandboxInfo(target);
         if (!info.ok) {
           refusal = { code: CLOSE_UNAVAILABLE, reason: "computer unavailable" };
         } else if (
@@ -330,7 +336,8 @@ export function createComputerBrowserFramesWsHandler(
         } else {
           viewerId = claims.userId;
           const lookup = await lookupSession({
-            computerId: claims.computerId,
+            ...target,
+            ...(claims.sandboxRowId ? { watched: true } : {}),
             expectedBundleHash: bundleHash(),
             // `"any"`: a pane watches whatever browser this computer is
             // running, which is the same question the panel's own lookup asks.
@@ -339,6 +346,11 @@ export function createComputerBrowserFramesWsHandler(
           session = lookup.session;
           if (!session) {
             refusal = { code: CLOSE_NOT_FOUND, reason: "no_browser_session" };
+          } else if (
+            claims.sessionId &&
+            session.logicalSessionId !== claims.sessionId
+          ) {
+            refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
           } else if (wantsVideo) {
             // ANNOUNCED, never assumed. A daemon too old to encode would answer
             // an error stream, and a reader cannot tell that apart from a dead
@@ -456,16 +468,28 @@ export function createComputerBrowserFramesWsHandler(
             // enough, which is exactly the case for somebody who took control
             // to solve a CAPTCHA and issues no agent commands at all.
             //
-            // Throttled through the shared per-computer window — input arrives
-            // twenty times a second and a touch is a control-plane write — and
-            // only on a dispatch that actually landed.
+            // BOTH touches are throttled, each on its OWN key, and only on a
+            // dispatch that actually landed. `onDispatched` fires per landed
+            // flush — tens a second through a drag — and every touch is a
+            // control-plane write.
+            //
+            // The session touch is keyed by SESSION because that is the row it
+            // patches, and because a sandbox target has no computer id to key
+            // on; the computer touch stays keyed by COMPUTER. Both are
+            // leading-edge, so the first input after a pause writes at once and
+            // nothing is slept out from under somebody who just came back.
             if (closed) return;
-            if (!shouldTouchActivity(live.computerId)) return;
-            void touchSession({
-              sessionId: live.sessionId,
-              kind: "command",
-            }).catch(() => {});
-            void touchActivity({ computerId: live.computerId }).catch(() => {});
+            if (shouldTouchSessionCommand(live.sessionId)) {
+              void touchSession({
+                sessionId: live.sessionId,
+                kind: "command",
+              }).catch(() => {});
+            }
+            const computerId =
+              live.target === "sandbox" ? undefined : live.computerId;
+            if (computerId && shouldTouchActivity(computerId)) {
+              void touchActivity({ computerId }).catch(() => {});
+            }
           },
         });
 
@@ -516,10 +540,12 @@ export function createComputerBrowserFramesWsHandler(
               // up, and touching then keeps a computer awake for a socket that
               // is gone.
               if (closed || !counted) return;
-              if (!shouldTouchActivity(live.computerId)) return;
-              void touchActivity({ computerId: live.computerId }).catch(
-                () => {},
-              );
+              const computerId =
+                live.target === "sandbox" ? undefined : live.computerId;
+              if (!computerId || !shouldTouchActivity(computerId)) {
+                return;
+              }
+              void touchActivity({ computerId }).catch(() => {});
             })
             .catch(() => {});
         };
@@ -643,7 +669,8 @@ export function createComputerBrowserFramesWsHandler(
         if (!started.ok) {
           detach();
           logger.warn("[computers] browser frame stream refused", {
-            computerId: live.computerId,
+            browserTarget:
+              live.target === "computer" ? live.computerId : live.sandboxRowId,
             status: started.status,
           });
           ws.close(

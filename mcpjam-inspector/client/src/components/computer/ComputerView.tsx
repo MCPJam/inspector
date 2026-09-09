@@ -40,6 +40,7 @@ import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
 import { PaneMessage } from "./PaneMessage";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
+import { BrowserProfilesSettings } from "./BrowserProfilesSettings";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -94,14 +95,14 @@ export function ComputerView({
   const attachedEnvironmentId = status?.environmentId ?? null;
   const hasCustomImage = attachedEnvironmentId != null;
   const attachedEnvName = hasCustomImage
-    ? environments?.find((e) => e.environmentId === attachedEnvironmentId)
-        ?.name ?? null
+    ? (environments?.find((e) => e.environmentId === attachedEnvironmentId)
+        ?.name ?? null)
     : null;
   // A custom image is attached but its name hasn't resolved yet (list still
   // loading, or it's not visible to this caller) — don't mislabel it as base.
   const imageLabel = !hasCustomImage
     ? "Base image"
-    : attachedEnvName ?? "Custom image";
+    : (attachedEnvName ?? "Custom image");
 
   // Where the terminal lives: this server (local data plane), a deployed
   // data plane (remote URL → cross-origin WS), or nowhere (honest empty
@@ -115,7 +116,8 @@ export function ComputerView({
   const dataPlaneUnavailable =
     dataPlane !== undefined && !dataPlane.localConfigured && !remoteWsBase;
 
-  const liveStatus = status === undefined ? undefined : status?.status ?? null;
+  const liveStatus =
+    status === undefined ? undefined : (status?.status ?? null);
   const hibernatedReason = status?.hibernatedReason;
   // Paused because compute hours ran out and the wallet couldn't cover the
   // overage (COMP-7) — distinct from an idle sleep the user can just wake.
@@ -158,7 +160,7 @@ export function ComputerView({
           useMCPJamLimitDialogStore.getState().notifyLimitHit();
         } else {
           toast.error(
-            getBillingErrorMessage(err, "Could not start the computer.")
+            getBillingErrorMessage(err, "Could not start the computer."),
           );
         }
       } finally {
@@ -176,7 +178,7 @@ export function ComputerView({
       toast.success("Computer deleted.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not delete the computer.")
+        getBillingErrorMessage(err, "Could not delete the computer."),
       );
     } finally {
       setDeleting(false);
@@ -193,7 +195,7 @@ export function ComputerView({
       toast.success("Computer hibernated. It'll wake next time you use it.");
     } catch (err) {
       toast.error(
-        getBillingErrorMessage(err, "Could not hibernate the computer.")
+        getBillingErrorMessage(err, "Could not hibernate the computer."),
       );
     } finally {
       setHibernating(false);
@@ -209,7 +211,7 @@ export function ComputerView({
       toast.success(
         res.reset
           ? "Resetting your computer to its image…"
-          : "Nothing to reset."
+          : "Nothing to reset.",
       );
     } catch (err) {
       toast.error(getBillingErrorMessage(err, "Could not reset the computer."));
@@ -242,7 +244,7 @@ export function ComputerView({
     if (!effectiveProjectId) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "The Computer tools need a signed-in project — sign in and select a project first."
+        "The Computer tools need a signed-in project — sign in and select a project first.",
       );
     }
     // Config still loading: `dataPlaneUnavailable` is false while `dataPlane`
@@ -253,13 +255,13 @@ export function ComputerView({
     if (dataPlane === undefined) {
       throw createInspectorCommandClientError(
         "execution_failed",
-        "The Computer configuration is still loading — try again in a moment."
+        "The Computer configuration is still loading — try again in a moment.",
       );
     }
     if (dataPlaneUnavailable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "Computers aren't available in this deployment (no data plane), so the Computer tools are off."
+        "Computers aren't available in this deployment (no data plane), so the Computer tools are off.",
       );
     }
     return effectiveProjectId;
@@ -285,12 +287,15 @@ export function ComputerView({
             // Daily start cap hit — report the cap, never a bypass.
             throw createInspectorCommandClientError(
               "execution_failed",
-              getBillingErrorMessage(err, "Daily computer start limit reached.")
+              getBillingErrorMessage(
+                err,
+                "Daily computer start limit reached.",
+              ),
             );
           }
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not start the computer.")
+            getBillingErrorMessage(err, "Could not start the computer."),
           );
         }
       },
@@ -308,7 +313,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not hibernate the computer.")
+            getBillingErrorMessage(err, "Could not hibernate the computer."),
           );
         }
       },
@@ -322,7 +327,7 @@ export function ComputerView({
             "execution_failed",
             `The computer can't be reset from "${
               liveStatus ?? "none"
-            }" — reset only when it's ready or hibernating.`
+            }" — reset only when it's ready or hibernating.`,
           );
         }
         try {
@@ -334,7 +339,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not reset the computer.")
+            getBillingErrorMessage(err, "Could not reset the computer."),
           );
         }
       },
@@ -347,7 +352,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not delete the computer.")
+            getBillingErrorMessage(err, "Could not delete the computer."),
           );
         }
       },
@@ -368,7 +373,7 @@ export function ComputerView({
         };
       }
       return {
-        status: liveStatus === undefined ? "loading" : liveStatus ?? "none",
+        status: liveStatus === undefined ? "loading" : (liveStatus ?? "none"),
         hasComputer,
         isReady,
         hibernatedReason: hibernatedReason ?? null,
@@ -728,6 +733,8 @@ export function ComputerView({
         <ComputerUsageMeter projectId={projectId} />
       </UsageMeterBoundary>
 
+      <BrowserProfilesSettings projectId={projectId} />
+
       {liveStatus === "error" && status?.lastError ? (
         <div className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {status.lastError}
@@ -757,10 +764,10 @@ function ComputerUsageMeter({ projectId }: { projectId: string }) {
     allowanceMs === null
       ? 0
       : allowanceMs <= 0
-      ? awakeMs > 0
-        ? 100
-        : 0
-      : Math.min(100, (awakeMs / allowanceMs) * 100);
+        ? awakeMs > 0
+          ? 100
+          : 0
+        : Math.min(100, (awakeMs / allowanceMs) * 100);
 
   return (
     <div

@@ -77,8 +77,18 @@ import { buildWebmcpPageTools, type PeekedPageTool } from "./page-tools.js";
 import { pageToolsFromObservation } from "@/shared/browser-page-tools";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
+import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
-import { ensureLocalBrowserSession } from "../../services/browserd/local/local-browser-session.js";
+import {
+  ensureLocalBrowserSession,
+  localBrowserKeyFor,
+  resolveLocalBrowserRuntime,
+} from "../../services/browserd/local/local-browser-session.js";
+import {
+  getComputerSandboxInfo,
+  provisionPlaygroundSandbox,
+  wakePlaygroundSandbox,
+} from "../computers/control-plane-client.js";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -124,6 +134,18 @@ export type BrowserApprovalDelivery =
   | { kind: "attested" }
   | { kind: "unattended"; policy: BrowserUnattendedPolicy };
 
+export type BrowserSessionOwnerKind =
+  | "conversation"
+  | "swarm_attempt"
+  | "eval_iteration"
+  | "participant_session";
+
+export interface BrowserSessionScope {
+  kind: BrowserSessionOwnerKind;
+  sessionId: string;
+  hostId?: string;
+}
+
 export interface BrowserToolsOptions {
   /**
    * Told while a turn is parked behind a person holding the browser.
@@ -167,6 +189,12 @@ export interface BrowserToolsOptions {
   engine?: BrowserEngine;
   /** ABSENT ⇒ nothing is built. See the fail-closed note above. */
   approvalDelivery?: BrowserApprovalDelivery;
+  /** Durable identity for this browser-owning surface. */
+  sessionScope?: BrowserSessionScope;
+  /** Explicit host/eval profile pin; conversation sessions otherwise use the user default. */
+  browserProfileId?: string;
+  /** Notices emitted while a watched browser is provisioning or waking. */
+  onBrowserNotice?: (notice: string) => void;
   /**
    * Ephemeral for unattended runs, persistent for interactive ones. Threaded
    * from `approvalDelivery` rather than configured, because the two must never
@@ -195,7 +223,9 @@ export interface BrowserToolsOptions {
       kind: "sandbox";
       sandboxRowId: string;
       sandboxId: string;
+      watched?: boolean;
     };
+    logicalSessionId?: string;
     signal?: AbortSignal;
   }) => Promise<BrowserSessionHandle>;
   /** Surfaced to the run when a tool is deliberately not advertised. */
@@ -674,7 +704,15 @@ class BrowserTurnState {
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
       ...(this.opts.sandboxTarget
-        ? { target: { kind: "sandbox" as const, ...this.opts.sandboxTarget } }
+        ? {
+            target: {
+              kind: "sandbox" as const,
+              ...this.opts.sandboxTarget,
+            },
+          }
+        : {}),
+      ...(this.opts.sessionScope
+        ? { logicalSessionId: this.opts.sessionScope.sessionId }
         : {}),
       ...(signal ? { signal } : {}),
     });
@@ -866,6 +904,18 @@ export function buildBrowserTools(
   // one browser and one cookie jar — so a run that cannot name itself gets no
   // browser at all rather than somebody else's session.
   const ownerKey = unattended ? unattendedOwnerKey(opts) : undefined;
+  if (opts.sessionScope?.kind === "conversation" && unattended) {
+    logger.warn(
+      "[built-in-tools] browser tools not advertised: a conversation browser scope cannot be unattended",
+      { projectId: opts.projectId, sessionId: opts.sessionScope.sessionId },
+    );
+    opts.onToolSuppressed?.({
+      id: BROWSER_BUILT_IN_TOOL_ID,
+      reason:
+        "a conversation browser is interactive and cannot be used by an unattended run",
+    });
+    return undefined;
+  }
   if (unattended && engine === "hosted" && !opts.sandboxTarget) {
     // NOBODY IS WATCHING, AND THE HOSTED BROWSER WOULD BE THE MEMBER'S OWN BOX.
     //
@@ -908,7 +958,7 @@ export function buildBrowserTools(
   }
   const state = new BrowserTurnState(
     opts,
-    opts.ensureSession ?? defaultEnsureSession(engine),
+    opts.ensureSession ?? defaultEnsureSession(engine, opts),
     contextMode,
     ownerKey,
     opts.tokenMemory ?? browserTokenMemory,
@@ -1607,18 +1657,19 @@ export function buildBrowserTools(
   add(
     "browser_webmcp_invoke",
     tool({
-      description: firstClassPageTools && canBindPageTools
-        ? // Kept for the engines that cannot grow their tool set inside a turn
-          // (BYOK, the harness): they were handed the page's tools as they were
-          // at turn start, so a page the model navigates to DURING the turn is
-          // reachable only through this. Retiring it there would remove a
-          // capability rather than replace one.
-          "Call a WebMCP tool on the current page BY NAME. Use this only for a page you " +
-          "navigated to during this turn: a page's tools are otherwise available to you " +
-          "directly as `webmcp_*` tools, which are typed and validated — prefer one of " +
-          "those whenever it exists."
-        : "Call one of the WebMCP tools the current page offers. Every observation " +
-          "reports what the page has.",
+      description:
+        firstClassPageTools && canBindPageTools
+          ? // Kept for the engines that cannot grow their tool set inside a turn
+            // (BYOK, the harness): they were handed the page's tools as they were
+            // at turn start, so a page the model navigates to DURING the turn is
+            // reachable only through this. Retiring it there would remove a
+            // capability rather than replace one.
+            "Call a WebMCP tool on the current page BY NAME. Use this only for a page you " +
+            "navigated to during this turn: a page's tools are otherwise available to you " +
+            "directly as `webmcp_*` tools, which are typed and validated — prefer one of " +
+            "those whenever it exists."
+          : "Call one of the WebMCP tools the current page offers. Every observation " +
+            "reports what the page has.",
       inputSchema: z.object({
         toolName: z.string(),
         input: z.unknown().optional(),
@@ -1652,15 +1703,16 @@ export function buildBrowserTools(
   // carry an identity nothing checks, and the call would still be resolved by
   // name at the far end. That is the generic verb wearing a typed schema, so
   // the honest thing is to ship the generic verb.
-  const page = firstClassPageTools && canBindPageTools
-    ? buildPageToolsFor({
-        opts,
-        unattended,
-        needsApproval,
-        send,
-        reservedNames: new Set(built),
-      })
-    : EMPTY_PAGE_TOOLS;
+  const page =
+    firstClassPageTools && canBindPageTools
+      ? buildPageToolsFor({
+          opts,
+          unattended,
+          needsApproval,
+          send,
+          reservedNames: new Set(built),
+        })
+      : EMPTY_PAGE_TOOLS;
   Object.assign(tools, page.tools);
 
   // `canBindPageTools` HERE TOO, matching the initial build. Gating only the
@@ -2212,10 +2264,74 @@ function unattendedOwnerKey(opts: BrowserToolsOptions): string | undefined {
 /** The session path for an engine — the ONE seam between the two. */
 function defaultEnsureSession(
   engine: BrowserEngine,
+  opts: BrowserToolsOptions,
 ): NonNullable<BrowserToolsOptions["ensureSession"]> {
   if (engine === "local") {
-    return async ({ projectId, contextMode, ownerKey }) =>
-      ensureLocalBrowserSession({
+    return async ({
+      bearer,
+      projectId,
+      contextMode,
+      ownerKey,
+      logicalSessionId,
+      signal,
+    }) => {
+      const service = new BrowserSessionService();
+      const logical =
+        service.enabled && opts.sessionScope && logicalSessionId
+          ? await service.resolveSession({
+              owner: {
+                kind: opts.sessionScope.kind,
+                id: logicalSessionId,
+              },
+              projectId,
+              bearer,
+              engine: "local",
+              profile: "blank",
+              ...(opts.browserProfileId
+                ? { profileId: opts.browserProfileId }
+                : {}),
+              ...(signal ? { signal } : {}),
+            })
+          : null;
+      if (service.enabled && opts.sessionScope && logicalSessionId && !logical) {
+        throw new Error("The durable browser session could not be opened");
+      }
+      // `startSession` derives its profile directory from exactly these two
+      // conditions and imports an archive only when it has one: Electron's
+      // profile is a session PARTITION it manages itself, and an ephemeral
+      // context has no profile at all. Downloading an archive that launch will
+      // drop spends up to 256 MB on nothing and leaves the pin looking
+      // honored — refuse it here, and say so.
+      const canImportProfile =
+        contextMode === "persistent" &&
+        resolveLocalBrowserRuntime() === "playwright";
+      if (
+        service.enabled &&
+        logical?.profileId &&
+        !logical.lastBootId &&
+        !canImportProfile
+      ) {
+        logger.warn(
+          "[built-in-tools] saved browser profile not applied: this local browser has no profile directory to import it into",
+          { projectId, contextMode, runtime: resolveLocalBrowserRuntime() },
+        );
+        opts.onBrowserNotice?.(
+          "The saved browser profile was not applied: the browser on this machine has no profile directory to import it into.",
+        );
+      }
+      const profileArchive =
+        canImportProfile &&
+        service.enabled &&
+        logical?.profileId &&
+        !logical.lastBootId
+          ? await service.downloadProfile({
+              projectId,
+              profileId: logical.profileId,
+              bearer,
+              ...(signal ? { signal } : {}),
+            })
+          : null;
+      const handle = await ensureLocalBrowserSession({
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),
@@ -2235,26 +2351,196 @@ function defaultEnsureSession(
          * silently recorded at whatever size somebody's window happened to be.
          */
         viewportPolicy: contextMode === "persistent" ? "followPane" : "fixed",
+        ...(logicalSessionId ? { sessionId: logicalSessionId } : {}),
+        ...(profileArchive ? { profileArchive } : {}),
       });
+      if (logical) {
+        const serviceArgs = {
+          sessionId: logical.sessionId,
+          projectId,
+          bearer,
+          ...(signal ? { signal } : {}),
+        };
+        const bound = await service.bindBox({
+          ...serviceArgs,
+          box: {
+            localKey: localBrowserKeyFor({
+              projectId,
+              contextMode,
+              ...(ownerKey ? { ownerKey } : {}),
+              sessionId: logicalSessionId,
+            }),
+          },
+        });
+        if (!bound)
+          throw new Error("The durable browser session could not be bound");
+        if (
+          !(await service.recordBoot({ ...serviceArgs, bootId: handle.bootId }))
+        ) {
+          throw new Error(
+            "The durable browser session could not record its boot",
+          );
+        }
+      }
+      return handle;
+    };
   }
   // Hosted. `target` decides WHICH BOX — the run's own disposable desktop when
   // it brought one, the member's project computer otherwise — and everything
   // else about this file stays engine- and box-blind.
-  return async ({ bearer, projectId, contextMode, target, signal }) =>
-    target
+  return async ({
+    bearer,
+    projectId,
+    contextMode,
+    target,
+    logicalSessionId,
+    signal,
+  }) => {
+    if (opts.sessionScope && logicalSessionId) {
+      return ensureHostedConversationSession({
+        bearer,
+        projectId,
+        contextMode,
+        logicalSessionId,
+        ownerKind: opts.sessionScope.kind,
+        hostId: opts.sessionScope.hostId,
+        ...(target?.kind === "sandbox" ? { target } : {}),
+        ...(opts.browserProfileId
+          ? { browserProfileId: opts.browserProfileId }
+          : {}),
+        signal,
+        onNotice: opts.onBrowserNotice,
+      });
+    }
+    return target
       ? ensureLiveBrowserSession({
           bearer,
           projectId,
           contextMode,
           target,
+          ...(logicalSessionId ? { logicalSessionId } : {}),
           ...(signal ? { signal } : {}),
         })
       : ensureLiveBrowserSession({
           bearer,
           projectId,
           contextMode,
+          ...(logicalSessionId ? { logicalSessionId } : {}),
           ...(signal ? { signal } : {}),
         });
+  };
+}
+
+/**
+ * Resolve the conversation's durable identity, then lazily obtain its watched
+ * desktop. Opening a chat advertises browser tools but does not spend a
+ * sandbox; the first browser command is the provisioning boundary.
+ */
+async function ensureHostedConversationSession(args: {
+  bearer: string;
+  projectId: string;
+  contextMode: BrowserContextMode;
+  logicalSessionId: string;
+  ownerKind: BrowserSessionOwnerKind;
+  hostId?: string;
+  browserProfileId?: string;
+  target?: {
+    kind: "sandbox";
+    sandboxRowId: string;
+    sandboxId: string;
+    watched?: boolean;
+  };
+  signal?: AbortSignal;
+  onNotice?: (notice: string) => void;
+}): Promise<BrowserSessionHandle> {
+  const service = new BrowserSessionService();
+  const logical = await service.resolveSession({
+    owner: { kind: args.ownerKind, id: args.logicalSessionId },
+    projectId: args.projectId,
+    bearer: args.bearer,
+    engine: "hosted",
+    profile: "blank",
+    ...(args.browserProfileId ? { profileId: args.browserProfileId } : {}),
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  if (!logical) {
+    throw new Error("The durable browser session could not be opened");
+  }
+  const logicalSessionId = logical.sessionId;
+  const profileArchive = logical.profileId && !logical.lastBootId
+    ? await new BrowserSessionService().downloadProfile({
+        projectId: args.projectId,
+        profileId: logical.profileId,
+        bearer: args.bearer,
+        ...(args.signal ? { signal: args.signal } : {}),
+      })
+    : null;
+  let sandboxRowId: string | undefined = args.target?.sandboxRowId;
+  let sandboxId: string | undefined = args.target?.sandboxId;
+  const watched = args.ownerKind === "conversation";
+  if (logical?.box && "sandboxRowId" in logical.box) {
+    sandboxRowId = logical.box.sandboxRowId;
+    const info = await getComputerSandboxInfo({
+      sandboxRowId,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+    if (info.ok && info.value.providerComputerId) {
+      if (info.value.status === "sleeping") {
+        const wake = await wakePlaygroundSandbox({
+          bearer: args.bearer,
+          sandboxRowId,
+          ...(args.signal ? { signal: args.signal } : {}),
+        });
+        if (!wake.ok) {
+          throw new Error(wake.error);
+        }
+      }
+      sandboxId = info.value.providerComputerId;
+    }
+  }
+  if (!sandboxRowId || !sandboxId) {
+    if (!watched) {
+      throw new Error(
+        "The unattended browser session did not receive its sandbox target",
+      );
+    }
+    const provisioned = await provisionPlaygroundSandbox({
+      bearer: args.bearer,
+      projectId: args.projectId,
+      chatSessionId: args.logicalSessionId,
+      ...(args.hostId ? { hostId: args.hostId } : {}),
+      ...(args.signal ? { signal: args.signal } : {}),
+      onWait: ({ delayMs, resource }) => {
+        args.onNotice?.(
+          `The watched browser is waiting for ${resource ?? "desktop"} capacity; retrying in ${Math.ceil(delayMs / 1000)}s.`,
+        );
+      },
+    });
+    if (!provisioned.ok) {
+      throw new Error(provisioned.error);
+    }
+    sandboxRowId = provisioned.value.sandboxRowId;
+    sandboxId = provisioned.value.providerSandboxId;
+    if (!sandboxId) {
+      throw new Error(
+        "The watched browser sandbox did not return a provider id",
+      );
+    }
+  }
+  return ensureLiveBrowserSession({
+    bearer: args.bearer,
+    projectId: args.projectId,
+    contextMode: args.contextMode,
+    logicalSessionId,
+    target: {
+      kind: "sandbox",
+      sandboxRowId,
+      sandboxId,
+      ...(watched ? { watched: true as const } : {}),
+    },
+    ...(profileArchive ? { profileArchive } : {}),
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
 }
 
 /**
@@ -2708,21 +2994,23 @@ function pageToolNamesFrom(output: unknown): string[] {
   if (typeof output !== "object" || output === null) return [];
   const tools = (output as { tools?: unknown }).tools;
   if (!Array.isArray(tools)) return [];
-  return tools
-    .map((tool) =>
-      typeof tool === "object" && tool !== null
-        ? (tool as { name?: unknown }).name
-        : undefined,
-    )
-    .filter((name): name is string => typeof name === "string")
-    // BOUNDED PER NAME, not only per list. These are the page's own raw names,
-    // not the sanitized model-facing ones, and 64 of them ride every
-    // observation — so without this a page decides how much of the model's
-    // context its tool list occupies. The fence already stops them posing as
-    // instructions; context is the budget nothing else on this path holds.
-    .map((name) => sanitizeDeclaredText(name, PAGE_TOOL_NAME_MAX_CHARS))
-    .filter((name) => name.length > 0)
-    .slice(0, 64);
+  return (
+    tools
+      .map((tool) =>
+        typeof tool === "object" && tool !== null
+          ? (tool as { name?: unknown }).name
+          : undefined,
+      )
+      .filter((name): name is string => typeof name === "string")
+      // BOUNDED PER NAME, not only per list. These are the page's own raw names,
+      // not the sanitized model-facing ones, and 64 of them ride every
+      // observation — so without this a page decides how much of the model's
+      // context its tool list occupies. The fence already stops them posing as
+      // instructions; context is the budget nothing else on this path holds.
+      .map((name) => sanitizeDeclaredText(name, PAGE_TOOL_NAME_MAX_CHARS))
+      .filter((name) => name.length > 0)
+      .slice(0, 64)
+  );
 }
 
 /** One page-chosen tool name's share of an observation. */

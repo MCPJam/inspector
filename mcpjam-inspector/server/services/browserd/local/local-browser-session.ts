@@ -57,6 +57,10 @@ import {
 } from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
+import {
+  exportBrowserProfileArchive,
+  importBrowserProfileArchive,
+} from "../profile-archive.js";
 import type { LocalBrowserSessionHandle } from "../browser-session.js";
 import type { BrowserContextMode } from "../browser-sessions-client.js";
 
@@ -82,6 +86,32 @@ export function getLocalBrowserProfileDir(projectId: string): string {
     throw new Error(`invalid local browser profile path for project ${key}`);
   }
   return dir;
+}
+
+/** Profile directory for a persistent logical conversation session. */
+export function getLocalBrowserSessionProfileDir(
+  projectId: string,
+  sessionId: string,
+): string {
+  const project = validateLocalProjectKey(projectId);
+  const id = validateLogicalSessionId(sessionId);
+  const root = getLocalBrowserRoot();
+  const dir = resolve(root, project, "sessions", id, "profile");
+  if (!dir.startsWith(root + sep)) {
+    throw new Error(
+      `invalid local browser session profile path for ${project}`,
+    );
+  }
+  return dir;
+}
+
+export function validateLogicalSessionId(sessionId: string): string {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(sessionId)) {
+    throw new Error(
+      "browser session id must be 1-64 letters, numbers, underscores or hyphens",
+    );
+  }
+  return sessionId;
 }
 
 /**
@@ -166,6 +196,7 @@ export interface LocalBrowserDeps {
    * still writing into the developer's own `~/.mcpjam` tree.
    */
   profileDirFor(projectId: string): string;
+  profileDirForSession?(projectId: string, sessionId: string): string;
   now(): number;
   env: NodeJS.ProcessEnv;
 }
@@ -177,12 +208,15 @@ const liveDeps = (): LocalBrowserDeps => ({
   chromiumInstalled: isChromiumInstalled,
   probeProfileOwner: probeSingletonOwner,
   profileDirFor: getLocalBrowserProfileDir,
+  profileDirForSession: getLocalBrowserSessionProfileDir,
   now: Date.now,
   env: process.env,
 });
 
 export interface EnsureLocalBrowserArgs {
   projectId: string;
+  /** Durable logical session identity; absent keeps the legacy project browser. */
+  sessionId?: string;
   /**
    * `persistent` (interactive) keeps the profile so a login survives between
    * turns. `ephemeral` (evals, swarms, journeys) has no profile at all, so one
@@ -216,6 +250,8 @@ export interface EnsureLocalBrowserArgs {
    * panel to follow.
    */
   viewportPolicy?: SessionViewportPolicy;
+  /** Saved profile bytes applied before a new persistent session launches. */
+  profileArchive?: Uint8Array;
 }
 
 interface LocalSession {
@@ -270,7 +306,14 @@ let killGeneration = 0;
 
 function sessionKey(args: EnsureLocalBrowserArgs): string {
   const project = validateLocalProjectKey(args.projectId);
-  if (args.contextMode !== "ephemeral") return `${project}:persistent`;
+  const sessionId = args.sessionId
+    ? validateLogicalSessionId(args.sessionId)
+    : undefined;
+  if (args.contextMode !== "ephemeral") {
+    return sessionId
+      ? `${project}:session:${sessionId}`
+      : `${project}:persistent`;
+  }
   // No fallback owner. An omitted key used to collapse to "anonymous", which
   // silently gave two unattended runs on one project ONE browser and one
   // cookie jar — the exact sharing an ephemeral context exists to prevent.
@@ -410,7 +453,9 @@ async function startSession(
   // process owns it, which is the thing the probe exists to establish.
   const profileDir =
     persistent && runtime === "playwright"
-      ? deps.profileDirFor(args.projectId)
+      ? args.sessionId && deps.profileDirForSession
+        ? deps.profileDirForSession(args.projectId, args.sessionId)
+        : deps.profileDirFor(args.projectId)
       : undefined;
 
   if (profileDir) {
@@ -432,6 +477,9 @@ async function startSession(
             : `another process (pid ${owner.pid ?? "unknown"}) is already using this project's browser profile; close it, or run this inspector with a different project`,
         ),
       );
+    }
+    if (args.profileArchive) {
+      await importBrowserProfileArchive(profileDir, args.profileArchive);
     }
   }
 
@@ -481,7 +529,11 @@ async function startSession(
           nativeSurface,
           ...(surface ? { surface } : {}),
           ...(persistent
-            ? { partitionKey: validateLocalProjectKey(args.projectId) }
+            ? {
+                partitionKey: args.sessionId
+                  ? `${validateLocalProjectKey(args.projectId)}--session-${validateLogicalSessionId(args.sessionId)}`
+                  : validateLocalProjectKey(args.projectId),
+              }
             : {}),
         })
       : await deps.launch({
@@ -589,6 +641,9 @@ async function startSession(
     lease,
     contextMode,
     ...(args.captureTypedText ? { captureTypedText: true } : {}),
+    ...(profileDir
+      ? { profileExport: () => exportBrowserProfileArchive(profileDir) }
+      : {}),
   });
   const client = createInProcessBrowserdClient(stack, token);
   // BY BOOT ID, which is what the renderer knows and the only thing it may
@@ -694,11 +749,21 @@ export function findLocalBrowserSession(bootId: string):
  * Throws (from the key validator) on a malformed project id, exactly as the
  * ensure path does, so a route can answer 400 rather than 404.
  */
-export function findLocalBrowserSessionForProject(projectId: string):
-  | LiveLocalBrowser
-  | undefined {
+export function findLocalBrowserSessionForProject(
+  projectId: string,
+): LiveLocalBrowser | undefined {
   const project = validateLocalProjectKey(projectId);
   return findLocalBrowserSessionByKey(`${project}:persistent`);
+}
+
+/** Find a live logical session without starting a new browser. */
+export function findLocalBrowserSessionForSession(
+  projectId: string,
+  sessionId: string,
+): LiveLocalBrowser | undefined {
+  const project = validateLocalProjectKey(projectId);
+  const id = validateLogicalSessionId(sessionId);
+  return findLocalBrowserSessionByKey(`${project}:session:${id}`);
 }
 
 /** What a caller gets when it has found the browser it may reach. */
@@ -904,7 +969,9 @@ const TEARDOWN_HOLDER = "browserd:teardown";
  */
 export async function closeLocalBrowserSession(
   bootId: string,
-): Promise<{ closed: true } | { closed: false; reason: "not_found" | "lease_held" }> {
+): Promise<
+  { closed: true } | { closed: false; reason: "not_found" | "lease_held" }
+> {
   for (const session of sessions.values()) {
     if (session.stack.bootId !== bootId) continue;
     // CLAIMED, not merely checked. A read says who held the lease a moment ago;

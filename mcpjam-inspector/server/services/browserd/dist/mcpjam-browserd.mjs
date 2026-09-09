@@ -179,6 +179,13 @@ var CommandQueue = class {
       );
     }
   }
+  /** Whether every per-tab FIFO is drained. Used for profile snapshots. */
+  isIdle() {
+    for (const count of this.depth.values()) {
+      if (count > 0) return false;
+    }
+    return true;
+  }
   async submit(command) {
     if (isOutOfBand(command)) return this.runOutOfBand(command);
     if (isReplayable(command)) return this.runUntracked(command);
@@ -966,8 +973,8 @@ function createVideoRecorder(options) {
     }
     let settleExit = () => {
     };
-    const exited = new Promise((resolve) => {
-      settleExit = resolve;
+    const exited = new Promise((resolve2) => {
+      settleExit = resolve2;
     });
     const entry = {
       id: args.id,
@@ -1059,13 +1066,13 @@ function createVideoRecorder(options) {
       let timer;
       await Promise.race([
         entry.exited,
-        new Promise((resolve) => {
+        new Promise((resolve2) => {
           timer = setTimer(() => {
             try {
               entry.child.kill("SIGKILL");
             } catch {
             }
-            resolve();
+            resolve2();
           }, graceMs);
         })
       ]);
@@ -1319,6 +1326,7 @@ var BrowserdRequestHandler = class {
   ledger;
   captureTypedText;
   recorder;
+  profileExport;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -1354,6 +1362,7 @@ var BrowserdRequestHandler = class {
     this.ledger = deps.ledger;
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
+    this.profileExport = deps.profileExport;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -1431,8 +1440,10 @@ var BrowserdRequestHandler = class {
         // never as a verdict: the caller applies its own quiet threshold, so
         // changing that threshold does not need a daemon deploy.
         lease: this.lease.state().state,
+        leaseHeld: this.lease.state().state !== "free",
         ...this.watchers ? { watchers: this.watchers() } : {},
-        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }
+        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) },
+        ...this.tabsSnapshot()?.list ? { tabs: this.tabsSnapshot().list } : {}
       };
       return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
@@ -1456,6 +1467,12 @@ var BrowserdRequestHandler = class {
         return { status: 405, headers: { allow: "GET, POST" } };
       }
       return this.handleRecord(req);
+    }
+    if (req.path === "/v1/profile/export") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleProfileExport();
     }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
@@ -1670,6 +1687,35 @@ var BrowserdRequestHandler = class {
       height: body.height
     });
     return { status: 200, body: { viewport, bootId: this.bootId } };
+  }
+  async handleProfileExport() {
+    if (!this.profileExport) {
+      return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    if (!this.queue.isIdle?.()) {
+      return { status: 409, body: { error: "profile_busy" } };
+    }
+    if (this.lease.state().state !== "free") {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    try {
+      const archive = await this.profileExport();
+      return {
+        status: 200,
+        body: archive,
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": "attachment; filename=browser-profile.tar.gz"
+        }
+      };
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error: error instanceof Error ? error.message : "profile_export_failed"
+        }
+      };
+    }
   }
   handleTrace(req) {
     if (!this.ledger) {
@@ -2034,7 +2080,10 @@ var BrowserdRequestHandler = class {
       return;
     }
     if (outcome.deduped) {
-      const known = this.ledger.read({ commandId: command.commandId, limit: 1 });
+      const known = this.ledger.read({
+        commandId: command.commandId,
+        limit: 1
+      });
       if (known.entries.length > 0) return;
       this.recordRow(command, startedAt, {
         outcome: "executed",
@@ -2976,7 +3025,7 @@ var DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 var BodyTooLargeError = class extends Error {
 };
 function readRequestBody(req, limitBytes) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const chunks = [];
     let size = 0;
     let refused = false;
@@ -2991,7 +3040,7 @@ function readRequestBody(req, limitBytes) {
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => resolve2(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -3002,6 +3051,16 @@ function writeResponse(res, response) {
       ...response.headers
     });
     res.end();
+    return;
+  }
+  if (response.body instanceof Uint8Array) {
+    const payload2 = Buffer.from(response.body);
+    res.writeHead(response.status, {
+      "content-type": "application/octet-stream",
+      "content-length": payload2.byteLength,
+      ...response.headers
+    });
+    res.end(payload2);
     return;
   }
   const payload = JSON.stringify(response.body);
@@ -3093,7 +3152,8 @@ function buildBrowserdStack(driver, config) {
     ledger,
     ...config.captureTypedText ? { captureTypedText: true } : {},
     ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
-    ...config.recorder ? { recorder: config.recorder } : {}
+    ...config.recorder ? { recorder: config.recorder } : {},
+    ...config.profileExport ? { profileExport: config.profileExport } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -3947,8 +4007,8 @@ var SessionBarrier = class {
   request(size) {
     this.pending = size;
     if (this.pendingSince === 0) this.pendingSince = this.now();
-    const settled = new Promise((resolve) => {
-      this.requestWaiters.push(resolve);
+    const settled = new Promise((resolve2) => {
+      this.requestWaiters.push(resolve2);
     });
     this.clearTimer(this.debounceHandle);
     this.debounceHandle = this.setTimer(() => {
@@ -4003,7 +4063,7 @@ var SessionBarrier = class {
     this.resizing = this.apply(size).catch(() => {
     }).then(() => {
       this.resizing = null;
-      for (const resolve of waiters) resolve();
+      for (const resolve2 of waiters) resolve2();
       this.maybeResize();
     });
   }
@@ -5175,8 +5235,8 @@ var WebMcpBridge = class {
       }
       throw error;
     }
-    const output = await new Promise((resolve, reject) => {
-      const waiter = { resolve, reject, cdp: owner };
+    const output = await new Promise((resolve2, reject) => {
+      const waiter = { resolve: resolve2, reject, cdp: owner };
       const early = this.earlyResponses.get(invocationId);
       if (early) {
         this.earlyResponses.delete(invocationId);
@@ -7157,8 +7217,8 @@ var ChromiumDriver = class {
     this.closing = true;
     await Promise.race([
       Promise.allSettled([...this.pendingTabs.values()]),
-      new Promise((resolve) => {
-        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+      new Promise((resolve2) => {
+        const timer = setTimeout(resolve2, CLOSE_PENDING_TAB_GRACE_MS);
         timer.unref?.();
       })
     ]);
@@ -8363,6 +8423,7 @@ function adaptContext(context, options = {}) {
 // server/services/browserd/daemon/main.ts
 import { mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { readFile as readFile2, unlink as unlink2 } from "node:fs/promises";
 
 // server/services/browserd/daemon/display-resize.ts
 function displayGeometryFor(size, options = {}) {
@@ -8498,6 +8559,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // typo must not silently cost a run its evidence.
     recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
+    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
   };
@@ -8509,7 +8571,8 @@ function readDeviceScaleFactor(env) {
 }
 function readRecordMaxBytes(env) {
   const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
-  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
@@ -8562,19 +8625,291 @@ function defaultHashFile(path) {
   return createHash2("sha256").update(readFileSync(path)).digest("hex");
 }
 
+// server/services/browserd/profile-archive.ts
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join as join3, relative, resolve, sep } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+var MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
+var MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES = MAX_BROWSER_PROFILE_ARCHIVE_BYTES * 4;
+var TAR_BLOCK_BYTES = 512;
+var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "cache",
+  "code cache",
+  "gpucache",
+  "dawncache",
+  "grshadercache",
+  "shadercache",
+  "singletonlock",
+  "singletoncookie",
+  "singletonsock"
+]);
+function isExcludedProfilePath(path) {
+  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+}
+function assertSafeArchivePath(path) {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.split("/").some((segment) => segment === "..")) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+}
+function writeTarString(header, value, offset, length) {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength > length) {
+    throw new Error("browser profile path is too long for a portable archive");
+  }
+  bytes.copy(header, offset);
+}
+function writeTarOctal(header, value, offset, length) {
+  const encoded = `${Math.max(0, value).toString(8).padStart(length - 1, "0")}\0`;
+  if (encoded.length > length) {
+    throw new Error("browser profile archive metadata is too large");
+  }
+  header.write(encoded, offset, length, "ascii");
+}
+function makeTarHeader(path, kind, size, mode) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  assertSafeArchivePath(normalized);
+  const header = Buffer.alloc(TAR_BLOCK_BYTES);
+  let name = normalized;
+  let prefix = "";
+  if (Buffer.byteLength(name) > 100) {
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+    prefix = normalized.slice(0, slash);
+    name = normalized.slice(slash + 1);
+    if (Buffer.byteLength(prefix) > 155 || Buffer.byteLength(name) > 100) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+  }
+  writeTarString(header, name, 0, 100);
+  writeTarOctal(header, mode & 4095, 100, 8);
+  writeTarOctal(header, 0, 108, 8);
+  writeTarOctal(header, 0, 116, 8);
+  writeTarOctal(header, size, 124, 12);
+  writeTarOctal(header, 0, 136, 12);
+  header.fill(32, 148, 156);
+  header[156] = kind === "directory" ? 53 : 48;
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  writeTarString(header, "mcpjam", 265, 32);
+  writeTarString(header, "mcpjam", 297, 32);
+  writeTarString(header, prefix, 345, 155);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  return header;
+}
+async function collectProfileEntries(profileDir, currentDir, entries, uncompressedBytes) {
+  const children = await readdir(currentDir, { withFileTypes: true });
+  for (const child of children) {
+    const absolutePath = join3(currentDir, child.name);
+    const archivePath = relative(profileDir, absolutePath).split(sep).join("/");
+    assertSafeArchivePath(archivePath);
+    if (isExcludedProfilePath(archivePath)) continue;
+    const stat2 = await lstat(absolutePath);
+    if (stat2.isDirectory()) {
+      const header2 = makeTarHeader(archivePath, "directory", 0, stat2.mode);
+      entries.push(header2);
+      uncompressedBytes.value += header2.byteLength;
+      if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+        throw new Error(
+          "browser profile archive exceeds the expanded size limit"
+        );
+      }
+      await collectProfileEntries(
+        profileDir,
+        absolutePath,
+        entries,
+        uncompressedBytes
+      );
+      continue;
+    }
+    if (!stat2.isFile()) continue;
+    if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error("browser profile archive exceeds the expanded size limit");
+    }
+    const contents = await readFile(absolutePath);
+    const header = makeTarHeader(
+      archivePath,
+      "file",
+      contents.byteLength,
+      stat2.mode
+    );
+    const padding = Buffer.alloc(
+      (TAR_BLOCK_BYTES - contents.byteLength % TAR_BLOCK_BYTES) % TAR_BLOCK_BYTES
+    );
+    entries.push(header, contents, padding);
+    uncompressedBytes.value += header.byteLength + contents.byteLength + padding.byteLength;
+    if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+  }
+}
+function parseTarNumber(header, offset, length) {
+  const raw = header.subarray(offset, offset + length).toString("ascii").replace(/\0.*$/, "").trim();
+  if (!raw) return 0;
+  const value = Number.parseInt(raw, 8);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("browser profile archive contains invalid metadata");
+  }
+  return value;
+}
+function parseTarString(header, offset, length) {
+  return header.subarray(offset, offset + length).toString("utf8").replace(/\0.*$/, "");
+}
+function isZeroTarBlock(block) {
+  for (const byte of block) {
+    if (byte !== 0) return false;
+  }
+  return true;
+}
+function assertTarChecksum(header) {
+  const expected = parseTarNumber(header, 148, 8);
+  const actual = header.reduce(
+    (sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte),
+    0
+  );
+  if (actual !== expected) {
+    throw new Error("browser profile archive has an invalid checksum");
+  }
+}
+async function ensureSafeDirectory(profileDir, directory) {
+  const absoluteProfileDir = resolve(profileDir);
+  const absoluteDirectory = resolve(directory);
+  if (absoluteDirectory !== absoluteProfileDir && !absoluteDirectory.startsWith(`${absoluteProfileDir}${sep}`)) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+  const relativeDirectory = relative(absoluteProfileDir, absoluteDirectory);
+  let current = absoluteProfileDir;
+  for (const segment of relativeDirectory ? relativeDirectory.split(sep) : []) {
+    current = join3(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error("browser profile archive targets a symbolic link");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await mkdir(current, { mode: 448 });
+    }
+  }
+}
+async function exportBrowserProfileArchive(profileDir) {
+  const entries = [];
+  const uncompressedBytes = { value: 0 };
+  await collectProfileEntries(
+    profileDir,
+    profileDir,
+    entries,
+    uncompressedBytes
+  );
+  entries.push(Buffer.alloc(TAR_BLOCK_BYTES * 2));
+  const archive = gzipSync(Buffer.concat(entries), {
+    portable: true,
+    mtime: 0
+  });
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  return new Uint8Array(archive);
+}
+async function importBrowserProfileArchive(profileDir, archive, options = {}) {
+  const maxUncompressed = options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
+  if (archive.byteLength <= 0) {
+    throw new Error("browser profile archive is empty");
+  }
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  let tarball;
+  try {
+    tarball = gunzipSync(Buffer.from(archive), {
+      maxOutputLength: maxUncompressed
+    });
+  } catch (error) {
+    if (error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+    throw error;
+  }
+  await mkdir(profileDir, { recursive: true, mode: 448 });
+  await ensureSafeDirectory(profileDir, profileDir);
+  let offset = 0;
+  let sawEnd = false;
+  while (offset + TAR_BLOCK_BYTES <= tarball.byteLength) {
+    const header = tarball.subarray(offset, offset + TAR_BLOCK_BYTES);
+    offset += TAR_BLOCK_BYTES;
+    if (isZeroTarBlock(header)) {
+      if (sawEnd) break;
+      sawEnd = true;
+      continue;
+    }
+    if (sawEnd) {
+      throw new Error("browser profile archive has data after its end marker");
+    }
+    assertTarChecksum(header);
+    const name = parseTarString(header, 0, 100);
+    const prefix = parseTarString(header, 345, 155);
+    const archivePath = prefix ? `${prefix}/${name}` : name;
+    assertSafeArchivePath(archivePath);
+    const size = parseTarNumber(header, 124, 12);
+    if (size > tarball.byteLength - offset) {
+      throw new Error("browser profile archive is truncated");
+    }
+    if (!archivePath || archivePath === "." || isExcludedProfilePath(archivePath)) {
+      offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      continue;
+    }
+    const kind = header[156];
+    const target = join3(profileDir, ...archivePath.split("/"));
+    if (kind === 53) {
+      if (size !== 0)
+        throw new Error("browser profile directory has file data");
+      await ensureSafeDirectory(profileDir, target);
+    } else if (kind === 48 || kind === 0) {
+      const parent = resolve(target, "..");
+      await ensureSafeDirectory(profileDir, parent);
+      try {
+        if ((await lstat(target)).isSymbolicLink()) {
+          throw new Error("browser profile archive targets a symbolic link");
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await writeFile(target, tarball.subarray(offset, offset + size), {
+        mode: 384
+      });
+    } else {
+      throw new Error("browser profile archive contains an unsupported entry");
+    }
+    offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+  }
+  if (!sawEnd) {
+    throw new Error("browser profile archive is missing its end marker");
+  }
+}
+
 // server/services/browserd/daemon/main.ts
 function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
 `);
 }
 function runShell(command) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     execFile(
       "/bin/sh",
       ["-c", command],
       { timeout: 1e4 },
       (error, _stdout, stderr) => {
-        resolve({
+        resolve2({
           exitCode: error ? error.code ?? 1 : 0,
           stderr: typeof stderr === "string" ? stderr : void 0
         });
@@ -8583,7 +8918,9 @@ function runShell(command) {
   });
 }
 function displayWidth(config) {
-  return Math.round(BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor);
+  return Math.round(
+    BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor
+  );
 }
 function displayHeight(config) {
   return Math.round(
@@ -8593,6 +8930,15 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
+  if (config.profileArchivePath && config.contextMode === "persistent") {
+    const archive = await readFile2(config.profileArchivePath);
+    await importBrowserProfileArchive(
+      config.userDataDir,
+      new Uint8Array(archive)
+    );
+    await unlink2(config.profileArchivePath).catch(() => {
+    });
+  }
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
@@ -8690,6 +9036,7 @@ async function main() {
     features,
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
+    ...config.contextMode === "persistent" ? { profileExport: () => exportBrowserProfileArchive(config.userDataDir) } : {},
     // THE DISPLAY AS IT IS NOW, not as it booted.
     //
     // `cssViewport` below already follows the session, and these two are one

@@ -624,8 +624,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-      : undefined;
+        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+        : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -709,19 +709,19 @@ chatV2.post("/", async (c) => {
       !resolvedExecution.harness
         ? "emulated"
         : harnessSupportsSkills(resolvedExecution.harness)
-        ? "harness"
-        : "unsupported";
+          ? "harness"
+          : "unsupported";
     const turnProvenance = environmentSpec
       ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
       : scenarioEnvironment
-      ? turnSkillProvenance(
-          {
-            environmentRef: scenarioEnvironment.environmentRef,
-            skills: scenarioEnvironment.skills ?? [],
-          },
-          { delivery: skillDeliveryMode },
-        )
-      : undefined;
+        ? turnSkillProvenance(
+            {
+              environmentRef: scenarioEnvironment.environmentRef,
+              skills: scenarioEnvironment.skills ?? [],
+            },
+            { delivery: skillDeliveryMode },
+          )
+        : undefined;
 
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
@@ -797,7 +797,7 @@ chatV2.post("/", async (c) => {
     // standing if the refusal were ever moved.
     const externalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-        harnessUsesExternalAccount(resolvedExecution.harness),
+      harnessUsesExternalAccount(resolvedExecution.harness),
     );
     // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
     // below resolves anything. `resolveHostModelDefinition` asks the org's
@@ -940,9 +940,7 @@ chatV2.post("/", async (c) => {
     // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        | { executionScope?: ExecutionScope }
-        | null
-        | undefined
+        { executionScope?: ExecutionScope } | null | undefined
     )?.executionScope;
 
     // COMP-16: the host-configured computer working directory — the SAME
@@ -1476,8 +1474,7 @@ chatV2.post("/", async (c) => {
     // stream layer calls this right after writing the SSE parts; until it does,
     // the notices stay pending server-side and are re-delivered next turn.
     let ackSandboxNotices:
-      | ((delivered: SandboxNoticeReason[]) => void)
-      | undefined;
+      ((delivered: SandboxNoticeReason[]) => void) | undefined;
     // Drop the personal-computer resource for every suppressing plan, so
     // `bash` is not advertised at all rather than falling back to the member's
     // own box — which is precisely the behaviour this feature replaces:
@@ -1688,9 +1685,7 @@ chatV2.post("/", async (c) => {
     // callback, exactly as it does the approval classification.
     let pageToolRefresh:
       | {
-          refreshPageTools: (ctx: {
-            signal?: AbortSignal;
-          }) => Promise<unknown>;
+          refreshPageTools: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
           currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
         }
@@ -1735,9 +1730,24 @@ chatV2.post("/", async (c) => {
         // A person is watching this surface, so it may advertise interactive
         // browser tools and keep a signed-in profile.
         browserApprovalDelivery: { kind: "attested" },
-        ...(pageToolsSnapshot
-          ? { browserPageTools: pageToolsSnapshot }
+        ...(resolvedExecution.browserProfileId
+          ? { browserProfileId: resolvedExecution.browserProfileId }
           : {}),
+        // A Playground conversation owns one durable browser identity. It is
+        // resolved lazily by the browser tool on first use, so merely opening
+        // the chat does not provision a paid desktop.
+        ...(body.browserScope === "conversation" &&
+        body.chatSessionId &&
+        !isScenarioSession
+          ? {
+              browserSessionScope: {
+                kind: "conversation" as const,
+                sessionId: body.chatSessionId,
+                ...(hostId ? { hostId } : {}),
+              },
+            }
+          : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset as
         // a constructor argument and never re-reads it, so claiming it here
         // would build a refresher nothing consumes. NOT gated on the snapshot:
@@ -1904,7 +1914,7 @@ chatV2.post("/", async (c) => {
             ? {
                 toolCallCancellation:
                   toolCallCancellationFromMcpProfile(
-                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
                   ) ?? {},
               }
             : {}),

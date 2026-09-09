@@ -169,6 +169,14 @@ export class CommandQueue {
     }
   }
 
+  /** Whether every per-tab FIFO is drained. Used for profile snapshots. */
+  isIdle(): boolean {
+    for (const count of this.depth.values()) {
+      if (count > 0) return false;
+    }
+    return true;
+  }
+
   async submit(command: BrowserCommand): Promise<BrowserCommandOutcome> {
     // A STOP DOES NOT WAIT ITS TURN. Everything else here is ordered against
     // the tab's other work; a cancellation is ordered against the very command

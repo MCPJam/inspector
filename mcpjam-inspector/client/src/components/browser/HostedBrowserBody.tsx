@@ -21,6 +21,7 @@ import {
   labelFor,
 } from "@/components/browser/PaneControlBar";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
   createTierController,
   encoderTierFor,
@@ -46,6 +47,7 @@ import {
   sendHostedPaneCommand,
   createBrowserTokenCache,
   fetchHostedBrowserSession,
+  fetchHostedBrowserProfileArchive,
   HostedBrowserError,
   openHostedBrowserFrameStream,
   sendHostedBrowserInput,
@@ -114,10 +116,13 @@ const HOSTED_TIERS = ["auto", "sharp", "saver", "mjpeg", "vnc"] as const;
 
 export function HostedBrowserBody({
   projectId,
+  sessionId,
   mintToken,
   active = true,
 }: {
   projectId: string | null;
+  /** Durable logical browser session, when this pane belongs to a chat. */
+  sessionId?: string;
   /** Mints a fresh ~60s browser token for this project. */
   mintToken: (args: { projectId: string }) => Promise<{
     token: string;
@@ -1056,6 +1061,11 @@ export function HostedBrowserBody({
     [],
   );
 
+  const exportProfile = useCallback(async () => {
+    if (!tokens) throw new Error("The hosted browser is not ready yet.");
+    return fetchHostedBrowserProfileArchive(tokens);
+  }, [tokens]);
+
   const forwarder = useMemo(() => {
     if (!tokens || !holding) return null;
     return createInputForwarder(
@@ -1228,7 +1238,7 @@ export function HostedBrowserBody({
           }}
         />
         <div className="min-h-0 flex-1 px-3 pb-3">
-          <BrowserPanel projectId={projectId} />
+          <BrowserPanel projectId={projectId} sessionId={sessionId} />
         </div>
       </>
     );
@@ -1298,13 +1308,22 @@ export function HostedBrowserBody({
       error={error ?? shell.error}
       {...(placeholder ? { placeholder } : {})}
       trailing={
-        <PaneSettingsMenu
-          statsOpen={statsOpen}
-          onToggleStats={onStatsToggle}
-          tier={tierPreference}
-          tiers={HOSTED_TIERS}
-          onTier={onTier}
-        />
+        <>
+          {session && sessionId ? (
+            <BrowserProfileSaveButton
+              projectId={projectId ?? ""}
+              exportArchive={exportProfile}
+              disabled={holding || busy}
+            />
+          ) : null}
+          <PaneSettingsMenu
+            statsOpen={statsOpen}
+            onToggleStats={onStatsToggle}
+            tier={tierPreference}
+            tiers={HOSTED_TIERS}
+            onTier={onTier}
+          />
+        </>
       }
     >
       <BrowserPaneSurface
