@@ -26,20 +26,28 @@ import type { ChatSessionStageFunnel } from "@/components/shared/user-value-chai
 import { ScenarioGoalChain } from "@/components/scenarios/findings/scenario-goal-chain";
 import { ScenarioFindingsTab } from "@/components/scenarios/findings/scenario-findings-tab";
 
-const { mockUseQuery, mockUseGoalOutcomeDrilldown, mockReportBoundaryError } =
-  vi.hoisted(() => ({
-    mockUseQuery: vi.fn(),
-    mockUseGoalOutcomeDrilldown: vi.fn(),
-    mockReportBoundaryError: vi.fn(),
-  }));
+const {
+  mockUseQuery,
+  mockUseGoalOutcomeDrilldown,
+  mockUseUsageInsights,
+  mockReportBoundaryError,
+} = vi.hoisted(() => ({
+  mockUseQuery: vi.fn(),
+  mockUseGoalOutcomeDrilldown: vi.fn(),
+  mockUseUsageInsights: vi.fn(),
+  mockReportBoundaryError: vi.fn(),
+}));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
 
+// The tab reads the breakdown too, for the one signal the drill-down cannot
+// give it: whether an analysis has ever run (BB-196).
 vi.mock("@/hooks/useUsageInsights", () => ({
   useGoalOutcomeDrilldown: (...args: unknown[]) =>
     mockUseGoalOutcomeDrilldown(...args),
+  useUsageInsights: (...args: unknown[]) => mockUseUsageInsights(...args),
 }));
 
 vi.mock("@/lib/error-reporting", () => ({
@@ -141,7 +149,22 @@ function twoGoalDrilldown() {
 beforeEach(() => {
   mockUseQuery.mockReset();
   mockUseGoalOutcomeDrilldown.mockReset();
+  mockUseUsageInsights.mockReset();
   mockReportBoundaryError.mockReset();
+  // A study already analyzed: these tests are about the chain, not about the
+  // first-analysis start, so `latestRun` keeps that path out of them.
+  mockUseUsageInsights.mockReturnValue({
+    threads: undefined,
+    breakdown: {
+      totalSessions: 4,
+      latestRun: { status: "done" },
+    },
+    rebuild: vi.fn().mockResolvedValue({
+      runId: "run-1",
+      status: "queued",
+      alreadyRunning: false,
+    }),
+  });
   mockUseGoalOutcomeDrilldown.mockReturnValue({
     drilldown: drilldownFixture(),
     isLoading: false,
@@ -241,6 +264,106 @@ describe("ScenarioGoalChain", () => {
 });
 
 // ── the tab ─────────────────────────────────────────────────────────────────
+
+describe("the Findings tab starts its own analysis (BB-196)", () => {
+  /** Sessions exist but none is analyzed — the state a tester lands on. */
+  function unanalyzed() {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          { _id: "s-1", threadId: "t-1", lastActivityAt: 1 },
+          { _id: "s-2", threadId: "t-2", lastActivityAt: 2 },
+        ],
+        nextBefore: null,
+        total: 2,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+  }
+
+  it("queues the analysis and says it is working, not waiting", async () => {
+    // This is the LANDING tab, so it is the surface the ticket is really
+    // about. Before this it read "No session has been analyzed yet" with
+    // nothing queued and no affordance — less than the old button offered.
+    unanalyzed();
+    const rebuild = vi.fn().mockResolvedValue({
+      runId: "run-1",
+      status: "queued",
+      alreadyRunning: false,
+    });
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 2, latestRun: null },
+      rebuild,
+    });
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+
+    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("scenario-findings-empty")).toHaveTextContent(
+      /Analyzing sessions/,
+    );
+  });
+
+  it("keeps the honest dead end when the start is refused", async () => {
+    // A signed-out guest: the rebuild mutation authenticates, so nothing is
+    // ever coming and a spinner would be a lie.
+    unanalyzed();
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 2, latestRun: null },
+      rebuild: vi.fn().mockRejectedValue(new Error("Not authenticated")),
+    });
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("scenario-findings-empty")).toHaveTextContent(
+        "No session has been analyzed yet.",
+      ),
+    );
+  });
+
+  it("does not start one for a study with no sessions", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [],
+        nextBefore: null,
+        total: 0,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const rebuild = vi.fn();
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 0, latestRun: null },
+      rebuild,
+    });
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(screen.getByTestId("scenario-findings-empty")).toHaveTextContent(
+      "No sessions in this study yet.",
+    );
+  });
+
+  it("leaves an already-analyzed study alone", () => {
+    unanalyzed();
+    const rebuild = vi.fn();
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: { totalSessions: 2, latestRun: { status: "done" } },
+      rebuild,
+    });
+
+    render(<ScenarioFindingsTab scenarioId="scn-1" />);
+
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+});
 
 describe("the Findings tab, once a goal is open", () => {
   it("paints the measured chain and opens on the break", async () => {
