@@ -11,7 +11,6 @@
  * called "staging bot" still reads `Claude · Claude Haiku 4.5`.
  */
 import {
-  getModelById,
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
@@ -45,14 +44,49 @@ export function clientLabelForSession(args: {
 }
 
 /**
+ * The catalog entry a BARE hosted id belongs to, e.g. `claude-haiku-4.5` →
+ * `anthropic/claude-haiku-4.5`.
+ *
+ * `getCanonicalModelId` cannot do this for us: it only tries the prefixed form
+ * when it is TOLD which provider to look under, and a session row carries an
+ * id with no provider beside it. Without this, 148 of the 173 hosted ids read
+ * back as their raw id whenever a session stored the bare shape — including
+ * `claude-haiku-4.5`, one of the two examples this label exists to print.
+ *
+ * Only a UNIQUE match counts. Two vendors shipping the same model name is not
+ * hypothetical, and guessing between them would put one vendor's curated label
+ * on the other's session — a wrong answer, where the id tail is merely a plain
+ * one. Ties therefore fall through to the tail.
+ */
+function uniqueBareIdMatch(
+  candidates: readonly ModelDefinition[],
+  id: string,
+): ModelDefinition | undefined {
+  if (id.includes("/")) return undefined;
+  const suffix = `/${id}`;
+  // Keyed by id, because the same model arrives from both the live catalog and
+  // the snapshot — two entries for one model are one candidate, not a tie. The
+  // first writer wins, and `candidates` is ordered so that is the live
+  // catalog's curated name.
+  const byId = new Map<string, ModelDefinition>();
+  for (const model of candidates) {
+    if (!model.id.endsWith(suffix) || byId.has(model.id)) continue;
+    byId.set(model.id, model);
+  }
+  if (byId.size !== 1) return undefined;
+  return byId.values().next().value;
+}
+
+/**
  * The model a session ran on, as the catalog names it.
  *
  * Resolution order is widest-first: the live hosted catalog (curated names such
  * as "GPT-5"), then the BYOK statics, then the checked-in hosted snapshot — and
- * each is tried against the id as stored AND against its canonical form, since
- * sessions persist both the bare (`claude-haiku-4.5`) and prefixed
- * (`anthropic/claude-haiku-4.5`) shapes. An id no catalog knows still gets an
- * answer: its tail, which is what the reader would have read off the Raw tab.
+ * each is tried against the id as stored, against its canonical form, and
+ * against its bare form, since sessions persist both the bare
+ * (`claude-haiku-4.5`) and prefixed (`anthropic/claude-haiku-4.5`) shapes. An
+ * id no catalog knows still gets an answer: its tail, which is what the reader
+ * would have read off the Raw tab.
  */
 export function modelLabelForSession(
   modelId: string | undefined | null,
@@ -69,8 +103,8 @@ export function modelLabelForSession(
   const canonical = getCanonicalModelId(id, undefined, candidates);
   const named =
     candidates.find((model) => model.id === id) ??
-    getModelById(id) ??
-    candidates.find((model) => model.id === canonical);
+    candidates.find((model) => model.id === canonical) ??
+    uniqueBareIdMatch(candidates, id);
 
   return compactModelLabel(named?.name) || compactModelIdTail(id);
 }

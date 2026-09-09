@@ -47,6 +47,33 @@ describe("modelLabelForSession", () => {
     expect(modelLabelForSession("claude-opus-5")).toBe("Claude Opus 5");
   });
 
+  it("resolves a bare hosted id to the catalog's curated name", () => {
+    // Sessions persist both shapes, and the bare one carries no provider for
+    // `getCanonicalModelId` to look under — without the suffix match this read
+    // back as the raw id on 148 of the 173 hosted models.
+    expect(
+      modelLabelForSession("gpt-oss-120b", [
+        {
+          id: "openai/gpt-oss-120b",
+          name: "GPT-OSS 120B",
+          provider: "openai" as const,
+        },
+      ]),
+    ).toBe("GPT-OSS 120B");
+    // Real snapshot entry, no injected catalog — the example from the task.
+    expect(modelLabelForSession("claude-haiku-4.5")).toBe("Claude Haiku 4.5");
+  });
+
+  it("refuses to guess when two vendors claim the same bare name", () => {
+    // A plain id beats a confidently wrong vendor label.
+    expect(
+      modelLabelForSession("mystery-7b", [
+        { id: "openai/mystery-7b", name: "OpenAI Mystery", provider: "openai" as const },
+        { id: "acme/mystery-7b", name: "Acme Mystery", provider: "acme" as const },
+      ]),
+    ).toBe("mystery-7b");
+  });
+
   it("falls back to the id tail for a model no catalog knows", () => {
     // Better the string the Raw tab would have shown than nothing at all.
     expect(modelLabelForSession("acme/experimental-7b")).toBe(
