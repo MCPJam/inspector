@@ -234,3 +234,19 @@ repositories**, and turn off the **Comments** switch.
 
 This setting changes nothing about the check itself — whether it runs, what it
 measures, and how it reports are all decided elsewhere. Only the comment stops.
+
+## Fork pull requests
+
+Pull requests opened from a **fork** run with credential isolation: the check
+cannot access your organization's saved model providers, built-in tools,
+harnesses, or saved computers. The eval suite runs with MCP-only configuration
+— the server under test and the MCP tools it exposes.
+
+If the suite bound to the repository relies on any of those features, a fork PR
+check will be refused before evaluation starts and the check will conclude
+**Action required**. The check run body names the reason.
+
+<Note>
+This restriction applies to the fork's eval run only. Pull requests from
+branches within the same repository are unaffected.
+</Note>
