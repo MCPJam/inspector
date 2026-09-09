@@ -19,7 +19,7 @@
  * footnotes its own coverage rather than presenting a subset as the whole.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
 import { useGoalOutcomeDrilldown } from "@/hooks/useUsageInsights";
 import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
@@ -32,6 +32,8 @@ import {
   deriveScenarioFindingsModel,
 } from "./scenario-findings-derivation";
 import { composeScenarioFindingsSummary } from "./scenario-findings-summary";
+import { ScenarioGoalChain } from "./scenario-goal-chain";
+import type { ScenarioGoalStages } from "./scenario-findings-stages";
 
 /**
  * One page. `MAX_LIMIT` server-side is 200, and paging the whole study to build
@@ -69,22 +71,19 @@ export function ScenarioFindingsTab({
             : drilldown.totalTruncated ||
               drilldown.sessions.length < drilldown.total,
       }),
-    [drilldown]
+    [drilldown],
   );
 
   // A User Testing goal is a cluster, and the list must carry the same
   // hide-synthetic policy as the count that opened it.
   const sessionScope = useMemo(
     () => ({ kind: "scenario", scenarioId, filters }) as const,
-    [scenarioId, filters]
+    [scenarioId, filters],
   );
-  const summary = useMemo(
-    () => composeScenarioFindingsSummary(model),
-    [model]
-  );
+  const summary = useMemo(() => composeScenarioFindingsSummary(model), [model]);
   const footnotes = useMemo(
     () => deriveScenarioFindingsFootnotes(model),
-    [model]
+    [model],
   );
 
   // Keyed by name rather than index: the strip re-derives as sessions load, and
@@ -98,6 +97,17 @@ export function ScenarioFindingsTab({
     goalId: string;
     stage: JourneyStageId;
   } | null>(null);
+  // The open goal's chain, and the goal it describes. Stored as a pair so an
+  // answer for a goal the reader has since closed cannot paint the new one.
+  const [chain, setChain] = useState<{
+    goalId: string;
+    stages: ScenarioGoalStages | null;
+  } | null>(null);
+  const handleChain = useCallback(
+    (goalId: string, stages: ScenarioGoalStages | null) =>
+      setChain({ goalId, stages }),
+    [],
+  );
 
   const chosenIndex =
     personaChoice === null
@@ -105,7 +115,7 @@ export function ScenarioFindingsTab({
       : model.personas.findIndex((p) => p.name === personaChoice);
   const personaIndex = Math.min(
     chosenIndex >= 0 ? chosenIndex : model.defaultPersonaIndex,
-    Math.max(0, model.personas.length - 1)
+    Math.max(0, model.personas.length - 1),
   );
   const persona = model.personas[personaIndex];
 
@@ -113,13 +123,64 @@ export function ScenarioFindingsTab({
     expandedChoice && expandedChoice.personaName === persona?.name
       ? expandedChoice.goalId
       : null;
-  const expandedGoal = persona?.goals.find(
-    (goal) => goal.runId === expandedGoalId
+  // Only the goal that is open has a chain, and only while it is still the
+  // goal that asked for it.
+  const goalChain =
+    chain && expandedGoalId && chain.goalId === expandedGoalId
+      ? chain.stages
+      : null;
+
+  // The measured chain replaces the unmeasured placeholder on the open goal
+  // and nothing else. Fields are named rather than spread so a field this
+  // model does not have cannot ride along.
+  //
+  // `diagnosis` and `diagnosisStage` are carried even though nothing on this
+  // surface renders them yet. Leaving them behind would keep a goal we just
+  // measured asserting "Not measured per goal yet", which is the sort of stale
+  // claim that survives right up until someone renders it.
+  const personaInView = useMemo(() => {
+    if (!persona || !goalChain || !expandedGoalId) return persona;
+    return {
+      ...persona,
+      goals: persona.goals.map((goal) =>
+        goal.runId === expandedGoalId
+          ? {
+              ...goal,
+              stages: goalChain.stages,
+              diagnosisStage: goalChain.diagnosisStage,
+              diagnosis: goalChain.diagnosis,
+              defaultStage: goalChain.defaultStage,
+            }
+          : goal,
+      ),
+    };
+  }, [persona, goalChain, expandedGoalId]);
+
+  const expandedGoal = personaInView?.goals.find(
+    (goal) => goal.runId === expandedGoalId,
   );
+  // A chain arriving after the panel opened moves the selection onto the break
+  // it just found, which is where the reader was heading. It cannot move a
+  // selection the reader made themselves — `stageChoice` wins whenever it
+  // names this goal.
   const selectedStage: JourneyStageId =
     stageChoice && stageChoice.goalId === expandedGoal?.runId
       ? stageChoice.stage
-      : expandedGoal?.defaultStage ?? "value";
+      : (expandedGoal?.defaultStage ?? "value");
+
+  // Goal-scoped, so it is only shown while that goal is open and it names the
+  // goal it is about. The study-level footnotes describe a different
+  // population and must not absorb this one.
+  const cardFootnotes = useMemo(
+    () =>
+      goalChain?.truncated && expandedGoal
+        ? [
+            ...footnotes,
+            `"${expandedGoal.title}" has more sessions than the chain scan covers. Its stages describe the most recent ones.`,
+          ]
+        : footnotes,
+    [footnotes, goalChain, expandedGoal],
+  );
 
   if (isLoading && drilldown === undefined) {
     return (
@@ -145,12 +206,22 @@ export function ScenarioFindingsTab({
     );
   }
 
+  // `persona` is narrowed by the guard above; the memo cannot carry that.
+  const shownPersona = personaInView ?? persona;
+
   return (
     <div className="w-full" data-testid="scenario-findings-tab">
+      {expandedGoalId ? (
+        <ScenarioGoalChain
+          scenarioId={scenarioId}
+          goalId={expandedGoalId}
+          onResolved={handleChain}
+        />
+      ) : null}
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
         summary={summary}
-        footnotes={footnotes}
+        footnotes={cardFootnotes}
       />
       <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
         Choose a persona
@@ -176,7 +247,7 @@ export function ScenarioFindingsTab({
         />
       </div>
       <FindingsPersonaCard
-        persona={persona}
+        persona={shownPersona}
         selectedTabId={`findings-persona-tab-${personaIndex}`}
         expandedGoalRunId={expandedGoalId}
         onToggleGoal={(goalId) =>
