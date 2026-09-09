@@ -151,6 +151,32 @@ that image — not on your personal computer.
 - **Environments with no pinned image** also continue to use your personal
   computer as before.
 
+## Saved browser profiles
+
+When a persistent browser is running in the Playground's browser pane and a chat session is attached, a **Save profile** button appears in the browser panel toolbar. Clicking it exports the current browser session as a named archive (a `.tar.gz` of the browser profile directory, with caches and lock files excluded) and uploads it to your project.
+
+### Saving a profile
+
+1. Open the Playground and start a chat session.
+2. Open the browser pane and let the browser start.
+3. Hand back control to the agent (the **Save profile** button is disabled while you are holding the lease).
+4. Click **Save profile**, enter a name, and confirm.
+
+The profile is saved to your project and appears in the **Saved browser profiles** section of the Computer tab.
+
+### Managing profiles
+
+The **Saved browser profiles** section in the Computer tab lists every profile saved to the project. From there you can:
+
+- **Use for chats** — Set a profile as your personal default. New chat sessions that use the browser tool will start from this profile's state (cookies, local storage, etc.) instead of a blank browser.
+- **Delete** — Remove a profile permanently.
+
+Only one profile can be your default at a time. Selecting a new default replaces the previous one.
+
+### Pinning a profile to a host
+
+In the **Computer** tab of the host config editor, a **Browser profile** field lets you pin a specific saved profile to that host. When a pin is set, browser sessions started by that host use the pinned profile instead of your personal default. Leave the field on **Default profile for my chats** to keep using whichever profile you have set as your default.
+
 ## Data & persistence
 
 Your computer is **scratch space, not durable storage.** Treat it like a fresh
