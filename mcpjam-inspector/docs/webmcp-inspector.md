@@ -596,16 +596,127 @@ The findings that shaped the code:
   provider synthesizes removal per frame; without it the registry would serve
   tools from pages the user has left.
 - **Cross-origin subframe tools never reach the page's CDP session**, and the
-  frame is absent from `Page.getFrameTree` — it is a separate target. V1 scope
-  is therefore main frame plus same-process frames.
-- **Annotation values are not plumbed through** for imperative registrations: a
-  tool registered `readOnly: true` is reported as `false`. Annotations are
-  displayed as claims and never decide policy.
+  frame is absent from `Page.getFrameTree` — it is a separate target. That is
+  not a scope boundary but the reason for one session per such frame; see
+  **Cross-origin frames** below.
+- **Annotations are carried through, per field.** The page API reads the `*Hint`
+  key names and the CDP `Annotation` type reports them under the bare ones:
+  `readOnlyHint` → `readOnly`, `untrustedContentHint` → `untrustedContent`,
+  values included. `consequentialHint` is **not** copied at the pinned
+  151.0.7922.34 (current Chromium does copy it, so this is a version fact and
+  the spike fails when it changes), and `autosubmit` can only come from markup.
+  A tool that declared the BARE names gets `false`, because those are not the
+  keys Blink reads. None of this changes the rule: **a page's claim about itself
+  never decides approval.**
+- **Declarative tools** (`<form toolname>`) carry a `backendNodeId` and no
+  `stackTrace` — the inverse of an imperative registration, which is what
+  `registrationKind` reads. Blink derives their `inputSchema` from the form's
+  controls: `min`/`max`/`step` become `minimum`/`maximum`/`multipleOf`, a
+  `<select>` or radio group becomes an `enum` with `anyOf` consts beside it,
+  `multiple` becomes an array, and the date-ish inputs get a `format` — `date`
+  is a real JSON Schema format name, the rest are regexes.
 - `invokeTool` takes `{frameId, toolName, input}` and returns `{invocationId}`
   before the tool settles — and before its own `toolInvoked` event. Statuses are
   `Completed | Canceled | Error`; on `Error` the message is on
   `exception.description`, not `errorText`.
 - Oversized output passes through untruncated, so the 256 KiB cap is ours.
+
+### Cross-document results are the platform's job
+
+A WebMCP tool can finish in a document other than the one that started it: a
+declarative form navigates, an imperative tool sets `location.href`. **Chromium
+delivers those results itself, and we pass them through untouched.** It defers
+until the destination document has finished parsing, collects **every**
+`application/ld+json` block into a JSON **array**, and answers the ORIGINAL
+invocation through the same probe behind `WebMCP.toolResponded`. The bridge keys
+pending invocations by id and settles on that event whatever frame it came from,
+so nothing in this repo reconstructs a result from a page — and nothing should
+start to. This is written down because the code makes it look like a gap: the
+bridge drops a navigated frame's tools and has no notion of a destination
+document, so the next person to read it will reach the same wrong conclusion.
+
+Measured per navigation shape (`webmcp-cdp.spike.test.ts`, "cross-document tool
+results"), and end to end through the provider and runtime
+(`playwright-provider.integration.test.ts`):
+
+| shape | delivered | output |
+| --- | --- | --- |
+| same-tab `toolautosubmit` | yes | array of the destination's JSON-LD |
+| named `target` frame | yes | same, while the invoking document survives |
+| imperative `location.href` | yes | same |
+| no `toolautosubmit`, a person submits | yes, when they do | same |
+| returns a value, then navigates | yes, **twice** | its own value first |
+| `target="_blank"` | **no** | nothing, ever |
+
+Details worth keeping:
+
+- **No intermediate null.** The declarative path suppresses the empty response
+  the invoking document would otherwise produce, so exactly one answer arrives
+  and settling on the first is settling on the real one.
+- **A missing block set is `Completed` with `[]`** — an authoritative, empty
+  answer, not an absence of one. Malformed blocks are skipped; the valid ones
+  around them are kept.
+- **The parse deferral is invisible.** The answer lands within tens of
+  milliseconds of the navigation, four orders of magnitude inside the 60s caller
+  deadline in `session-runtime.ts`.
+- **Two answers for a return-then-navigate tool.** `submit_and_return` is
+  answered with its own returned value and then, once the destination parses,
+  with that document's JSON-LD. The first is the invocation's true outcome, so
+  the bridge settles on it and DROPS the second rather than buffering it as
+  somebody's early response.
+- **Once answered, the invocation id is spent**: `cancelInvocation` rejects it.
+
+`target="_blank"` is the one shape that loses the response, and it is lost in
+the browser rather than on the way to us: nothing arrives on the opener's
+session, on the new tab's own session with the domain enabled there, or with
+`Target.setAutoAttach` on the opener, and the invocation is pending in no
+renderer at all. So there is nothing for a compatibility measure to recover —
+extracting the destination's JSON-LD ourselves would be manufacturing a tool
+result the browser deliberately did not produce, and presenting it as the page's
+answer. The invocation stays pending until the caller's deadline. The spike pins
+the behaviour so a Chromium that starts answering it fails loudly.
+
+### Cross-origin frames
+
+A cross-origin frame is a separate Chromium target, so its tools reach only a
+CDP session attached to that frame. The bridge therefore listens on a SET of
+sessions — the page's, plus one per separately-targeted frame — and merges what
+they report into its single `${frameId} ${name}` map. Frame ids are unique
+across sessions, so merging changes no identity and `toolKey` is untouched.
+
+- **Attachment is a probe, not an origin comparison.** Comparing origins does
+  not identify a separate renderer; Chromium's process allocation does. So the
+  provider attempts `context.newCDPSession(frame)` and reads the answer.
+  Playwright throws `"This frame does not have a separate CDP session…"` when
+  there is nothing to attach to, and **that error alone** is swallowed. Every
+  other failure is logged and raised as a session notice on the timeline,
+  because a frame we could not reach is a frame whose tools are silently
+  missing — the exact blind spot child sessions exist to close.
+- **A session token, not a frame id, is what teardown quotes.** A frame keeps
+  its CDP id across a cross-origin navigation, so a frame id names the frame and
+  never one particular session on it. `addSession` answers with a token per
+  attachment; a removal that arrives after the frame has been re-attached names
+  an attachment that is already gone and does nothing. Cleanup keyed on the
+  frame id would delete the live session's tools and leave a working frame
+  showing an empty list.
+- **`remove` is not `swap`.** `Page.frameDetached` carries a reason. A swap is a
+  target moving — it is what the page's session reports the moment a frame
+  becomes cross-origin — so only what THAT session registered is dropped. A
+  removal is the frame going away, and takes every session's tools for it.
+- **Nested targets.** In the Playwright providers, attachment does not recurse:
+  Playwright's own auto-attach already does, so `page.frames()` is a flat list
+  that reaches a widget inside a widget and one sweep covers it. Electron has no
+  such list, so `Target.setAutoAttach` is sent again on each child session —
+  attachment is recursive there or it is incomplete.
+- **Cancellation binds to the owning session**, captured at invoke time. A
+  cancel routed through whatever session currently owns the frame would reach a
+  renderer that never started the invocation.
+- **No silent default to the main session.** `WebMCP.invokeTool` rejects a frame
+  id belonging to another target ("FrameId does not belong to current target"),
+  so a plausible-looking fallback is not a degraded call — it is a call to the
+  wrong renderer, which for a same-named tool runs something nobody named. An
+  invocation whose owning session cannot be resolved is `webmcp_tool_gone` with
+  a reason.
 
 ## Identity
 
@@ -654,9 +765,15 @@ running two at once would interleave their effects.
 
 - **Popups are reported, not inspected.** They are deliberately left open —
   closing one, or re-hosting its URL in the main tab, breaks OAuth and anything
-  using `window.opener`. Their tools belong to a separate target.
-- **Cross-origin subframe tools are invisible**, per the finding above.
-  Supporting them means `Target.setAutoAttach`.
+  using `window.opener`. Their tools belong to a separate target, and unlike a
+  cross-origin FRAME nothing attaches a session to them.
+- **A tool whose form targets `_blank` never settles.** The browser produces no
+  response for it at the pinned Chromium (see **Cross-document results** above),
+  and there is nothing to recover, so the invocation runs out the caller's
+  deadline and the timeline records it as cancelled-by-timeout. That reading is
+  literally true — the tool ran, and never answered — but it under-describes
+  what happened, and nothing observable distinguishes this case from a page that
+  is merely slow. Every other navigation shape is answered natively.
 - **Chat sees a per-turn snapshot** of the page's tools; a registration that
   happens mid-turn surfaces on the next one.
 - **Headed needs a display.** Over SSH, in a container, or on a bare WSL

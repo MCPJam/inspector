@@ -41,7 +41,7 @@ import {
 } from "@/shared/webmcp-inspector-protocol";
 import { logger } from "../../utils/logger.js";
 import { PAGE_API_PROBE } from "./launch-args";
-import { WebMcpBridge } from "../browserd/daemon/webmcp-bridge";
+import { WebMcpBridge, type CdpLike } from "../browserd/daemon/webmcp-bridge";
 // Moved to `browserd/electron/` so the Electron BROWSER ENGINE can use the
 // same adapter; this provider is now one of two callers rather than its owner.
 // It went there rather than staying here because the dependency has to point
@@ -121,6 +121,15 @@ function originOf(url: string): string {
 export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
   private readonly bridge: WebMcpBridge;
   private readonly cdp: DebuggerCdpAdapter;
+  /**
+   * Auto-attached CDP session id → the bridge token for its attachment.
+   *
+   * One map for the whole tree, not one per level: a nested frame's session is
+   * announced on its parent's session but torn down the same way, and the
+   * token is what teardown quotes so a late detach cannot empty a frame its
+   * replacement has already re-registered.
+   */
+  private readonly frameSessions = new Map<string, string>();
   private url: string;
   private disposed = false;
   private lastActivityReport = 0;
@@ -169,6 +178,7 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
   async start(url: string): Promise<void> {
     this.wireNavigation();
     this.wirePage();
+    this.wireFrameSessions();
 
     // The bridge treats a throwing probe as "unsupported", which is right for a
     // probe and wrong for a navigation: a DNS failure or a refused connection
@@ -197,6 +207,110 @@ export class ElectronWebviewWebMcpSession implements WebMcpBrowserSession {
           "(document.modelContext), so no tools can be discovered. The page " +
           "itself loaded normally; check that the page is origin-isolated and " +
           "that the WebMCP tools Permissions Policy is allowed for it.",
+      );
+    }
+  }
+
+  /**
+   * Keep one CDP session per out-of-process frame, the Electron way.
+   *
+   * There is no `context.newCDPSession(frame)` here — only one debugger — so
+   * the equivalent is FLAT AUTO-ATTACH: Chromium hands us a `sessionId` for
+   * every frame that gets its own target, and the adapter routes that session's
+   * events to a `CdpLike` of its own. Same reason as everywhere else: a
+   * cross-origin frame's tools never reach the page's session, so a page whose
+   * tools live in a third-party widget would inspect as having none.
+   *
+   * RECURSIVE, EXPLICITLY. `setAutoAttach` is per target, and so is the
+   * `Target.attachedToTarget` it produces: a cross-origin frame INSIDE a
+   * cross-origin frame is announced on its parent's session, not on the page's.
+   * So both the call and the subscription are re-made on every child session —
+   * `wireTargets` applies to whichever session it is handed. Without that,
+   * attachment would stop one level down and be quietly incomplete. (The
+   * Playwright providers need no such recursion: Playwright's own auto-attach
+   * already walks the tree, so `page.frames()` is flat and reaches every
+   * depth.)
+   *
+   * Wired BEFORE `bridge.start()` enables anything, so a frame that attaches
+   * during the first page load is not missed.
+   */
+  private wireFrameSessions(): void {
+    this.wireTargets(this.cdp, "this page");
+  }
+
+  /**
+   * Subscribe one session's target events and ask it to auto-attach.
+   *
+   * `label` is only for the message a person reads when it fails; the mechanism
+   * is identical for the page's session and every frame session under it.
+   */
+  private wireTargets(cdp: CdpLike, label: string): void {
+    cdp.on("Target.attachedToTarget", (payload) => {
+      const event = (payload ?? {}) as {
+        sessionId?: string;
+        targetInfo?: { type?: string };
+      };
+      // Frames only. A worker or a service worker registers no page tools, and
+      // enabling the WebMCP domain on one would be a round trip for nothing.
+      if (!event.sessionId || event.targetInfo?.type !== "iframe") return;
+      void this.attachFrameSession(event.sessionId);
+    });
+    cdp.on("Target.detachedFromTarget", (payload) => {
+      const { sessionId } = (payload ?? {}) as { sessionId?: string };
+      if (!sessionId) return;
+      const token = this.frameSessions.get(sessionId);
+      this.frameSessions.delete(sessionId);
+      this.cdp.forgetSession(sessionId);
+      // Quoting the TOKEN, not the frame: a detach can land after the frame has
+      // been re-attached under a new session, and anything scoped to the frame
+      // would empty a frame that is working.
+      if (token !== undefined) this.bridge.removeSession(token);
+    });
+    void Promise.resolve(
+      cdp.send("Target.setAutoAttach", {
+        autoAttach: true,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      }),
+    ).catch((error: unknown) => {
+      // Not fatal: the frames this session already covers still work. It IS
+      // reported, because the symptom otherwise is a cross-origin widget's
+      // tools silently missing from a session that looks healthy.
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn("[webmcp] flat auto-attach was refused", {
+        target: label,
+        error: message,
+      });
+      this.callbacks.onSessionNotice?.(
+        `Could not look inside cross-origin frames of ${label} (${message}). Any WebMCP tools they register are not listed.`,
+      );
+    });
+  }
+
+  private async attachFrameSession(sessionId: string): Promise<void> {
+    if (this.disposed || this.frameSessions.has(sessionId)) return;
+    const child = this.cdp.childFor(sessionId);
+    try {
+      // Before anything else, so a frame nested inside THIS one is announced.
+      this.wireTargets(child, "a cross-origin frame");
+      const tree = (await child.send("Page.getFrameTree")) as {
+        frameTree?: { frame?: { id?: string } };
+      };
+      const frameId = tree?.frameTree?.frame?.id;
+      if (!frameId) return;
+      const token = await this.bridge.addSession(frameId, child);
+      if (this.disposed) {
+        this.bridge.removeSession(token);
+        return;
+      }
+      this.frameSessions.set(sessionId, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn("[webmcp] could not inspect an out-of-process frame", {
+        error: message,
+      });
+      this.callbacks.onSessionNotice?.(
+        `Could not inspect a cross-origin frame in this page: ${message}. Any WebMCP tools it registers are not listed.`,
       );
     }
   }

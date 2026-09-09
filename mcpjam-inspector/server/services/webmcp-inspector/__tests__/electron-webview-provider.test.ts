@@ -345,6 +345,193 @@ describe("electron-webview provider — the session surface", () => {
     expect(settled).toEqual({ output: { available: true } });
   });
 
+  it("finds an out-of-process frame's tools through flat auto-attach", async () => {
+    // The Electron half of cross-origin frame support. There is only ONE
+    // debugger here, so the equivalent of `newCDPSession(frame)` is flat
+    // auto-attach: Chromium hands over a `sessionId` per frame target and the
+    // adapter routes that session's events to a `CdpLike` of its own.
+    const { session, guest, recorder } = await startSession();
+    expect(
+      guest.debugger.calls.find(
+        (call) => call.method === "Target.setAutoAttach",
+      )?.params,
+    ).toMatchObject({ autoAttach: true, flatten: true });
+
+    guest.debugger.replies.set("sess-1:Page.getFrameTree", {
+      frameTree: { frame: { id: "frame-oopif", url: "https://widget.test/w" } },
+    });
+    guest.debugger.emitCdp("Target.attachedToTarget", {
+      sessionId: "sess-1",
+      targetInfo: { type: "iframe", url: "https://widget.test/w" },
+    });
+    await vi.waitFor(() =>
+      expect(
+        guest.debugger.calls.some(
+          (call) =>
+            call.sessionId === "sess-1" && call.method === "WebMCP.enable",
+        ),
+      ).toBe(true),
+    );
+    // Attachment is recursive or it is incomplete: `setAutoAttach` is per
+    // target, so a cross-origin frame INSIDE this one only surfaces because the
+    // same call goes out on the child session too.
+    expect(
+      guest.debugger.calls.some(
+        (call) =>
+          call.sessionId === "sess-1" &&
+          call.method === "Target.setAutoAttach",
+      ),
+    ).toBe(true);
+
+    // Its tools arrive on that session and join the page's own catalog.
+    guest.debugger.emitCdp(
+      "WebMCP.toolsAdded",
+      { tools: [{ name: "widget_tool", frameId: "frame-oopif" }] },
+      "sess-1",
+    );
+    const names = () =>
+      (recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]).map(
+        (tool) => tool.name,
+      );
+    await vi.waitFor(() => expect(names()).toContain("widget_tool"));
+    expect(
+      (
+        recorder.toolSnapshots.at(-1) as { name: string; origin: string }[]
+      ).find((tool) => tool.name === "widget_tool")?.origin,
+    ).toBe("https://widget.test");
+
+    // ...and an invocation goes out on THAT session, never the page's: the
+    // browser rejects a frame id belonging to another target.
+    guest.debugger.replies.set("sess-1:WebMCP.invokeTool", {
+      invocationId: "inv-oopif",
+    });
+    const pending = session.invokeTool({
+      frameId: "frame-oopif",
+      toolName: "widget_tool",
+      input: {},
+      signal: new AbortController().signal,
+    });
+    await vi.waitFor(() =>
+      expect(
+        guest.debugger.calls.some(
+          (call) =>
+            call.sessionId === "sess-1" && call.method === "WebMCP.invokeTool",
+        ),
+      ).toBe(true),
+    );
+    guest.debugger.emitCdp(
+      "WebMCP.toolResponded",
+      { invocationId: "inv-oopif", status: "Completed", output: { ok: true } },
+      "sess-1",
+    );
+    expect(await pending).toEqual({ output: { ok: true } });
+
+    // A detach drops only what THAT session registered. It arrives on the
+    // session that announced the attach — the page's, here — which is also why
+    // the same subscription has to exist on every child session.
+    guest.debugger.emitCdp("Target.detachedFromTarget", {
+      sessionId: "sess-1",
+    });
+    await vi.waitFor(() => expect(names()).not.toContain("widget_tool"));
+  });
+
+  it("reaches a cross-origin frame NESTED inside a cross-origin frame", async () => {
+    // ATTACHMENT IS RECURSIVE OR IT IS INCOMPLETE. `Target.setAutoAttach` is
+    // per target, and so is the `attachedToTarget` it produces: the inner
+    // frame is announced on the OUTER frame's session, never on the page's. A
+    // version that only subscribed on the page would stop one level down and
+    // report a widget-inside-a-widget's tools as absent.
+    const { guest, recorder } = await startSession();
+    guest.debugger.replies.set("outer:Page.getFrameTree", {
+      frameTree: { frame: { id: "frame-outer", url: "https://outer.test/" } },
+    });
+    guest.debugger.replies.set("inner:Page.getFrameTree", {
+      frameTree: { frame: { id: "frame-inner", url: "https://inner.test/" } },
+    });
+
+    guest.debugger.emitCdp("Target.attachedToTarget", {
+      sessionId: "outer",
+      targetInfo: { type: "iframe", url: "https://outer.test/" },
+    });
+    await vi.waitFor(() =>
+      expect(
+        guest.debugger.calls.some(
+          (call) =>
+            call.sessionId === "outer" &&
+            call.method === "Target.setAutoAttach",
+        ),
+      ).toBe(true),
+    );
+
+    // The inner frame is announced ON THE OUTER SESSION.
+    guest.debugger.emitCdp(
+      "Target.attachedToTarget",
+      { sessionId: "inner", targetInfo: { type: "iframe" } },
+      "outer",
+    );
+    // Wait until the inner session is actually wired: `addSession` enables the
+    // domains and reads the frame tree before it subscribes, and a tool emitted
+    // into that gap would be missed by a real browser too.
+    await vi.waitFor(() =>
+      expect(
+        guest.debugger.calls.some(
+          (call) =>
+            call.sessionId === "inner" && call.method === "WebMCP.enable",
+        ),
+      ).toBe(true),
+    );
+    guest.debugger.emitCdp(
+      "WebMCP.toolsAdded",
+      { tools: [{ name: "inner_tool", frameId: "frame-inner" }] },
+      "inner",
+    );
+    await vi.waitFor(() =>
+      expect(
+        (recorder.toolSnapshots.at(-1) as { name: string }[]).map(
+          (tool) => tool.name,
+        ),
+      ).toContain("inner_tool"),
+    );
+    expect(
+      (recorder.toolSnapshots.at(-1) as { origin: string }[]).at(-1)?.origin,
+    ).toBe("https://inner.test");
+  });
+
+  it("carries a cross-document JSON-LD ARRAY through the webview adapter", async () => {
+    // The third transport. The `<webview>` reaches the same bridge through
+    // `webContents.debugger` rather than a Playwright `CDPSession`, and the
+    // adapter in between fans one `"message"` listener out to per-method
+    // handlers — so the question worth asking here is whether an ARRAY output
+    // (what Blink answers a navigating tool with) survives that fan-out as
+    // itself. `deliver()` passes `responded.output` straight to the caller, and
+    // this is what keeps it that way.
+    const { session, guest } = await startSession();
+    guest.debugger.emitCdp("WebMCP.toolsAdded", {
+      tools: [{ name: "submit_order", frameId: "frame-9" }],
+    });
+    guest.debugger.replies.set("WebMCP.invokeTool", { invocationId: "inv-ld" });
+    const pending = session.invokeTool({
+      frameId: "frame-9",
+      toolName: "submit_order",
+      input: { sku: "S1" },
+      signal: new AbortController().signal,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const jsonLd = [
+      { "@context": "https://schema.org", "@type": "OrderConfirmation" },
+      { "@context": "https://schema.org", "@type": "Receipt" },
+    ];
+    guest.debugger.emitCdp("WebMCP.toolResponded", {
+      invocationId: "inv-ld",
+      status: "Completed",
+      output: jsonLd,
+    });
+    const settled = await pending;
+    expect(Array.isArray(settled.output)).toBe(true);
+    expect(settled.output).toEqual(jsonLd);
+  });
+
   it("maps a name the page no longer offers to the named error", async () => {
     const { session } = await startSession();
     // Nothing registered: the page moved on. The timeline should say that
