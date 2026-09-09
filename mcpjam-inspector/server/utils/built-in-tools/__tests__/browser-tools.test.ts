@@ -753,15 +753,18 @@ describe("buildBrowserTools — a human has the browser (W4/L6)", () => {
     bootId: "boot-1",
   };
 
-  it("tells the model to WAIT, and says nothing was observed", async () => {
-    // A bare "blocked" reads as a transient error and models retry it in a
-    // loop; the useful information is that a person is mid-flow and that no
-    // frame was captured, so waiting is correct and re-observing is required.
+  it("does not tell the model to wait, on an engine it cannot wait on", async () => {
+    // The advice used to be "wait for them to hand it back", which is correct
+    // and unusable: a model's only move is to call a tool, so "wait" becomes a
+    // retry loop while somebody signs in. Waiting now happens INSIDE the call
+    // (`browser-handoff.ts`) — but this fake client has no `lease()` to poll,
+    // so there is nothing to park on, and the honest answer is the one that
+    // does not send the model round the loop.
     const { result } = build({}, async () => LEASE_BLOCKED);
     const out = await run(result!.tools, "browser_observe", {});
     expect(out.error).toContain("browser_in_use");
-    expect(out.error).toContain("Wait");
     expect(out.error).toMatch(/nothing was observed/i);
+    expect(out.error).toMatch(/retrying will not free it/i);
   });
 
   it("drops cached page tokens, so the next act cannot be pinned to a pre-handoff page", async () => {

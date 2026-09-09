@@ -52,6 +52,7 @@ import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { webmcpPageToolsMode } from "../../config.js";
 import { logger } from "../logger.js";
+import { parkForHandoff } from "./browser-handoff.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import {
@@ -109,6 +110,18 @@ export type BrowserApprovalDelivery =
   | { kind: "unattended"; policy: BrowserUnattendedPolicy };
 
 export interface BrowserToolsOptions {
+  /**
+   * Told while a turn is parked behind a person holding the browser.
+   *
+   * The "visible waiting state" the handoff needs: without it, a turn that is
+   * politely waiting for somebody to finish signing in is indistinguishable
+   * from a turn that has hung. Optional because an unattended run has nobody
+   * to show it to.
+   */
+  onHandoffWaiting?: (state: {
+    waiting: boolean;
+    holder?: { kind: "human" | "script" };
+  }) => void;
   /** Bearer authorization forwarded to the control plane. */
   authHeader: string;
   /** Project whose computer this turn drives. */
@@ -379,6 +392,11 @@ interface CommandSender {
  * Read BOTH failure layers of a daemon reply. The transport status says
  * whether the command was ADMITTED; `result.ok` says whether the browser
  * actually did it. Only when both are good is this a success.
+ */
+/**
+ * The handoff coordinator, imported rather than inlined: it is the one piece
+ * of this file with no browser in it at all, and it is easier to trust when it
+ * can be tested against a clock the test owns.
  */
 function unwrapCommand(response: {
   status: string;
@@ -1111,6 +1129,37 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
+      // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
+      // a fresh look rather than with this command's result — which does not
+      // exist, because the command was never run. @see browser-handoff.ts
+      if (response.status === "lease_blocked" && !recovering) {
+        state.forgetTokens(handle.bootId);
+        return {
+          ...(await parkForHandoff<ObservationStateToken>({
+            // The SESSION client, not the `CommandSender` cast above: reading
+            // the lease is a different method, and it is the one thing here
+            // that a `sendCommand`-shaped view cannot answer.
+            client: handle.client,
+            ...(args.signal ? { signal: args.signal } : {}),
+            observe: (signal) =>
+              send(
+                { kind: "observe", mode: "a11y" },
+                {
+                  ...(args.tabId ? { tabId: args.tabId } : {}),
+                  ...(signal ? { signal } : {}),
+                  // The observation belongs to the model — it is what the next
+                  // action is decided from — so its token is remembered like
+                  // any other. `raw` would withhold exactly the thing that
+                  // makes the resumption usable.
+                },
+              ),
+            ...(opts.onHandoffWaiting
+              ? { onWaiting: opts.onHandoffWaiting }
+              : {}),
+          })),
+          tabId,
+        };
+      }
       let outcome = unwrapCommand(response);
       // W4/L6 — a handoff invalidates everything this turn cached. Two signals
       // reach us: a refusal while the person still holds the browser, and the

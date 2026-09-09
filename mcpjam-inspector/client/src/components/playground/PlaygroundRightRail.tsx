@@ -3,7 +3,6 @@ import {
   Cloud,
   FileText,
   FolderTree,
-  Globe,
   Laptop,
   Loader2,
   PanelRightClose,
@@ -27,10 +26,6 @@ import { useHarnessWorkdir } from "@/stores/harness-workdir-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
-import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
-import { fetchLocalBrowserStatus } from "@/lib/local-browser/client";
-import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -73,44 +68,16 @@ export function PlaygroundRightRail({
   );
 }
 
-type RightRailTab = "logs" | "shell" | "browser";
-
-/** How often to ask whether this machine has a browser open. */
-const LOCAL_BROWSER_PROBE_MS = 5_000;
-
 /**
- * Is there a live browser on this machine right now?
+ * The rail's tabs, now two.
  *
- * Polled rather than derived from the host config, because the thing that
- * opens one may not be this app: an agent running `mcpjam browser open` in
- * another process starts a browser this rail should show. The status route is
- * consent-free and machine-anonymous — no paths, no profile directories, no
- * process ids — so asking it costs nothing a person has not already agreed to.
- *
- * Off entirely on the hosted engine, where this route describes a machine that
- * is not the one running the browser.
+ * The Browser used to be the third, and it moved out to a panel of its own
+ * beside chat — a page rendered at 30% of a workspace is a page in its mobile
+ * layout, and hiding it to read the logs hides it at the moment you most want
+ * to see what the agent just did. What stays here is text: a log stream and a
+ * shell, which are exactly right in a narrow column.
  */
-function useLocalBrowserRunning(enabled: boolean): boolean {
-  const [running, setRunning] = useState(false);
-  useEffect(() => {
-    if (!enabled) {
-      setRunning(false);
-      return;
-    }
-    let cancelled = false;
-    const probe = async () => {
-      const status = await fetchLocalBrowserStatus().catch(() => null);
-      if (!cancelled && status) setRunning(status.running === true);
-    };
-    void probe();
-    const timer = window.setInterval(() => void probe(), LOCAL_BROWSER_PROBE_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [enabled]);
-  return running;
-}
+type RightRailTab = "logs" | "shell";
 
 function RightRailTabbed({
   onClose,
@@ -139,44 +106,6 @@ function RightRailTabbed({
   // ask for. The CHIP follows the resolved `engine`, so it can never claim
   // "This machine" while commands actually run in the cloud.
   const isLocalShell = engine.selectedEngine === "local";
-  // The Browser tab follows the HOST's attached capability, and ONLY that: a
-  // host without `browser` has no browser for the model to drive, so a pane for
-  // one would be showing something nothing can use. The engine decides which
-  // BODY goes in it, not whether the tab exists — both engines have a browser,
-  // and the tab vanishing on an engine switch was a rail that looked broken.
-  // The hosted body additionally needs a signed-in user: every one of its
-  // calls carries a minted browser token, so before authentication is ready it
-  // can only fail — and it would fail into an "unreachable" state with nothing
-  // to retry it once auth arrives. The Shell's cloud body gates the same way.
-  //
-  // A LOCAL BROWSER THAT IS ALREADY RUNNING also shows the tab, whatever the
-  // host config says. An outside coding agent can now open a session through
-  // `mcpjam browser open` without the host carrying the built-in at all, and
-  // hiding the tab in that case would mean the browser somebody is driving is
-  // visible in no window in this app — which is exactly the "an agent driving
-  // a browser you cannot see" problem the pane exists to solve.
-  const localBrowserRunning = useLocalBrowserRunning(
-    engine.selectedEngine === "local",
-  );
-  const hasBrowser = Boolean(
-    (hostConfig?.builtInToolIds?.includes("browser") &&
-      (engine.selectedEngine === "local" || isAuthenticated)) ||
-      localBrowserRunning,
-  );
-  // Which body. Follows `selectedEngine` like the Shell above, so someone who
-  // picked "This machine" but has not authorized it yet sees the local body's
-  // pointer rather than a cloud browser they did not ask for.
-  const isLocalBrowser = engine.selectedEngine === "local";
-  const mintBrowserToken = useMintBrowserToken();
-
-  // A tab that disappears cannot stay selected. Only a host losing the browser
-  // capability can do that now — the engine switch swaps the body instead —
-  // but leaving `activeTab` on a hidden pane hides all three and the rail looks
-  // broken.
-  useEffect(() => {
-    if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
-  }, [hasBrowser, activeTab]);
-
   const handleTabClick = useCallback(
     (next: RightRailTab) => {
       if (next === activeTab) return;
@@ -205,18 +134,6 @@ function RightRailTabbed({
           isActive={activeTab === "shell"}
           onClick={() => handleTabClick("shell")}
         />
-        {/* When this host has the browser capability — a tab offering a
-            browser the model cannot use would be a promise the host config
-            does not keep — OR when this machine simply has one running, which
-            an outside agent can now arrange without the host's help. */}
-        {hasBrowser ? (
-          <TabButton
-            icon={Globe}
-            label="Browser"
-            isActive={activeTab === "browser"}
-            onClick={() => handleTabClick("browser")}
-          />
-        ) : null}
         <button
           type="button"
           onClick={onClose}
@@ -236,37 +153,6 @@ function RightRailTabbed({
       >
         <LoggerView isCollapsable={false} />
       </div>
-      {hasBrowser ? (
-        <div
-          className={cn(
-            "min-h-0 flex-1 flex-col",
-            activeTab === "browser" ? "flex" : "hidden",
-          )}
-        >
-          {/* Mounted-hidden like the others: switching tabs must not drop the
-              frame socket, which would stop the screencast and make the agent's
-              browser go dark every time somebody glanced at the logs.
-
-              `active` is what makes that safe. Mounted-hidden is not "being
-              watched": both panes say somebody is looking in order to defer the
-              idle reap, and a pane behind the Logs tab must stop claiming it —
-              on the hosted engine that claim keeps a METERED box awake. */}
-          {isLocalBrowser ? (
-            <LocalBrowserBody
-              projectId={projectId}
-              consentGranted={engine.consent.granted}
-              consentToken={engine.consent.token}
-              active={activeTab === "browser"}
-            />
-          ) : (
-            <HostedBrowserBody
-              projectId={projectId}
-              mintToken={mintBrowserToken}
-              active={activeTab === "browser"}
-            />
-          )}
-        </div>
-      ) : null}
       <div
         className={cn(
           "min-h-0 flex-1 flex-col",

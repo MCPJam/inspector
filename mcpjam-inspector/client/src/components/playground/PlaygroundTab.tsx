@@ -29,6 +29,18 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
+import {
+  browserPanelAvailable,
+  PlaygroundBrowserPanel,
+} from "@/components/playground/PlaygroundBrowserPanel";
+import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
+import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useComputersEnabledState } from "@/hooks/useComputersEnabled";
+import {
+  MAX_BROWSER_PANEL_SIZE,
+  MIN_BROWSER_PANEL_SIZE,
+  useBrowserWorkspaceStore,
+} from "@/stores/browser-workspace-store";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -228,6 +240,58 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const [isLeftRailVisible, setIsLeftRailVisible] = useState(true);
   const [isRightRailVisible, setIsRightRailVisible] = useState(false);
 
+  // The browser panel's own layout, which is a STORE rather than state here
+  // because three unrelated things move it: the agent starting to browse, the
+  // person dragging the divider, and the panel's own controls.
+  const browserOpen = useBrowserWorkspaceStore((state) => state.open);
+  const browserSize = useBrowserWorkspaceStore((state) => state.size);
+  const browserExpanded = useBrowserWorkspaceStore((state) => state.expanded);
+  const setBrowserSize = useBrowserWorkspaceStore((state) => state.setSize);
+  const closeBrowser = useBrowserWorkspaceStore((state) => state.closeBrowser);
+  const collapsedRailForBrowser = useBrowserWorkspaceStore(
+    (state) => state.collapsedRailForBrowser,
+  );
+  const noteRailCollapsed = useBrowserWorkspaceStore(
+    (state) => state.noteRailCollapsed,
+  );
+
+  const projectScope = props.sharedProjectId ?? props.activeProjectId ?? null;
+  const computersEnabled = useComputersEnabledState();
+  const browserEngine = useComputerEngine(projectScope);
+  // Polled only on the local engine, where the question means something: on
+  // hosted this route describes a machine that is not the one running the
+  // browser.
+  const localBrowserRunning = useLocalBrowserRunning(
+    browserEngine.selectedEngine === "local" && computersEnabled === true,
+  );
+  const canBrowse =
+    computersEnabled === true &&
+    browserPanelAvailable({
+      hostHasBrowser: !!effectiveHostConfig?.builtInToolIds?.includes("browser"),
+      selectedEngine: browserEngine.selectedEngine,
+      isAuthenticated: isConvexAuthenticated,
+      localBrowserRunning,
+    });
+  const showBrowser = browserOpen && canBrowse;
+
+  // The browser takes its room from the Sessions rail, ONCE. Doing it on every
+  // reopen would fight a person who deliberately put the rail back — which is
+  // why the store remembers that it happened rather than this effect keying on
+  // `showBrowser` alone.
+  useEffect(() => {
+    if (!showBrowser || collapsedRailForBrowser) return;
+    noteRailCollapsed();
+    setIsLeftRailVisible(false);
+  }, [showBrowser, collapsedRailForBrowser, noteRailCollapsed]);
+
+  // A host that loses the browser capability while the panel is open leaves it
+  // showing a browser nothing can drive. Closed rather than left inert: the
+  // session behind it is gone either way, and an empty panel holding 60% of
+  // the workspace is worse than the room back.
+  useEffect(() => {
+    if (browserOpen && !canBrowse) closeBrowser();
+  }, [browserOpen, canBrowse, closeBrowser]);
+
   // Panel handles let us programmatically expand a collapsed rail when the
   // user clicks the corresponding `CollapsedPanelStrip` peek button.
   const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
@@ -328,8 +392,21 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                       <ResizablePanel
                         id="playground-center"
                         order={2}
-                        minSize={40}
-                        className="min-h-0 min-w-0 overflow-hidden"
+                        // The floor drops once a browser is beside it. 40% of
+                        // the workspace for chat and 60% for the browser do not
+                        // both fit, and the panel group answers an impossible
+                        // set of constraints by ignoring the sizes it was
+                        // given — so the browser opened at whatever was left
+                        // rather than at the size it asked for.
+                        minSize={showBrowser ? 15 : 40}
+                        className={cn(
+                          "min-h-0 min-w-0 overflow-hidden",
+                          // An expanded browser hides chat rather than
+                          // unmounting it: the panel group would otherwise
+                          // renumber its children, and a remounted chat pane
+                          // loses its scroll position and its composer draft.
+                          browserExpanded && showBrowser && "hidden",
+                        )}
                       >
                         <PlaygroundCenter
                           activeProjectId={props.activeProjectId}
@@ -346,13 +423,52 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           }
                         />
                       </ResizablePanel>
+                      {showBrowser ? (
+                        <>
+                          {/* No handle while expanded: there is nothing on the
+                              other side of it to resize against, and a divider
+                              that moves a hidden panel is a control that does
+                              nothing visible. */}
+                          {browserExpanded ? null : <ResizableHandle withHandle />}
+                          <ResizablePanel
+                            id="playground-browser"
+                            order={3}
+                            defaultSize={browserExpanded ? 100 : browserSize}
+                            minSize={
+                              browserExpanded ? 100 : MIN_BROWSER_PANEL_SIZE
+                            }
+                            maxSize={
+                              browserExpanded ? 100 : MAX_BROWSER_PANEL_SIZE
+                            }
+                            // The store, not the panel group, is the record of
+                            // what somebody chose — the group forgets on
+                            // unmount, and the browser panel unmounts every
+                            // time it is closed.
+                            onResize={(size) => {
+                              if (!browserExpanded) setBrowserSize(size);
+                            }}
+                            className="min-h-0 min-w-0 overflow-hidden"
+                          >
+                            <PlaygroundBrowserPanel
+                              projectId={projectScope}
+                              // MOUNTED but not claiming while the panel is off
+                              // screen. Dropping the socket would stop the
+                              // screencast and lose whatever the agent was
+                              // mid-way through; claiming while hidden keeps a
+                              // metered box awake.
+                              visible={showBrowser}
+                              onClose={closeBrowser}
+                            />
+                          </ResizablePanel>
+                        </>
+                      ) : null}
                       {isRightRailVisible ? (
                         <>
                           <ResizableHandle withHandle />
                           <ResizablePanel
                             ref={rightPanelRef}
                             id="playground-right"
-                            order={3}
+                            order={4}
                             defaultSize={30}
                             minSize={4}
                             maxSize={50}
