@@ -16,6 +16,8 @@ import { ChromiumDriver } from "./chromium-driver";
 import { launchBrowserdContext } from "./chromium-launch";
 import { HandoffLease } from "./lease";
 import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { resizeHostedDisplay } from "./display-resize";
 import {
   announcedFeatures,
   extraArgsFor,
@@ -30,6 +32,32 @@ import {
 
 function log(message: string): void {
   process.stderr.write(`[mcpjam-browserd] ${message}\n`);
+}
+
+/**
+ * Run one command on the box this daemon is inside.
+ *
+ * The daemon runs IN the sandbox, so `xrandr` is a local process rather than
+ * something to ask the inspector to run remotely — which is the whole reason
+ * the resize can be one coordinated transition instead of a round trip per
+ * step.
+ */
+function runShell(
+  command: string,
+): Promise<{ exitCode: number; stderr?: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      "/bin/sh",
+      ["-c", command],
+      { timeout: 10_000 },
+      (error, _stdout, stderr) => {
+        resolve({
+          exitCode: error ? ((error as { code?: number }).code ?? 1) : 0,
+          stderr: typeof stderr === "string" ? stderr : undefined,
+        });
+      },
+    );
+  });
 }
 
 /**
@@ -64,7 +92,66 @@ async function main(): Promise<void> {
   // holds the browser) and the driver (which makes the first observation after
   // they hand it back loud).
   const lease = new HandoffLease();
-  const driver = new ChromiumDriver(context, { lease });
+  /**
+   * The video encoder, once it exists, so a resize can restart it.
+   *
+   * Late-bound because the ordering is circular: the encoder needs the display
+   * geometry the driver publishes, and the driver needs a way to restart the
+   * encoder when that geometry moves.
+   */
+  let encoder: ReturnType<typeof createVideoEncoder> | undefined;
+  const driver = new ChromiumDriver(context, {
+    lease,
+    viewport: {
+      /**
+       * The DAEMON's default is `fixed`, and the door widens it.
+       *
+       * Every existing opener — an eval, a swarm, a CLI run, an SDK consumer —
+       * gets exactly the 1024x768 session it has always had, and only a caller
+       * that negotiated a responsive one moves off it. A daemon that defaulted
+       * the other way would silently change the size of every recorded eval
+       * the first time somebody dragged a panel.
+       */
+      policy: config.viewportPolicy,
+      // KIOSK IS THE TEST for "does this box have a display of its own". It is
+      // the switch that makes "the display IS the page" true for the encoder,
+      // and it is set only on the hosted image; a local Chromium's page is a
+      // window, and resizing it is the whole job.
+      ...(config.kiosk
+        ? {
+            resizeDisplay: async (next, previous) => {
+              const outcome = await resizeHostedDisplay(
+                {
+                  display: process.env.DISPLAY || ":0",
+                  run: runShell,
+                  deviceScaleFactor: config.deviceScaleFactor,
+                  restartEncoder: async (size) => {
+                    // A fresh codec configuration and a keyframe: an H.264
+                    // stream whose SPS says 1024 wide cannot carry a 1400-wide
+                    // frame, and a decoder handed one drops it or renders
+                    // garbage.
+                    await encoder?.resize?.({
+                      width: Math.round(size.width * config.deviceScaleFactor),
+                      height: Math.round(size.height * config.deviceScaleFactor),
+                    });
+                  },
+                },
+                next,
+                previous,
+              );
+              if (!outcome.ok) {
+                log(
+                  `display resize failed (${outcome.reason}); ` +
+                    `${outcome.restored ? "restored" : "COULD NOT RESTORE"} ` +
+                    `${previous.width}x${previous.height}`,
+                );
+              }
+              return outcome.ok;
+            },
+          }
+        : {}),
+    },
+  });
   // Created only when the box is configured for it, and STARTED only when a
   // watcher asks — `subscribe` spawns ffmpeg, `unsubscribe` of the last
   // watcher stops it. An encoder running for nobody is CPU the agent is also
@@ -79,6 +166,7 @@ async function main(): Promise<void> {
         height: displayHeight(config),
       })
     : undefined;
+  encoder = video;
   // The recorder is its OWN ffmpeg, never a sink on the encoder above: that one
   // starts on the first watcher and stops on the last, and restarts whole on a
   // tier change — each of which would truncate a file the run is still filling.

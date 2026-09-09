@@ -181,8 +181,28 @@ export async function ensureDisplay(
 ): Promise<void> {
   if (await displayIsUp(sandbox, display)) return;
 
+  // Xvnc, matching the template, and for the reason the template gives: Xvfb
+  // fixes its screen geometry when it starts, so the only way to give a box a
+  // different display is to restart X — taking the desktop, the kiosk browser
+  // and every open page with it, mid-session, because somebody dragged a
+  // panel. A box brought up on this fallback path must be as resizable as one
+  // the template started, or a session's viewport policy would work or not
+  // depending on how its box happened to boot.
+  //
+  // FALLING BACK TO Xvfb IF Xvnc IS NOT THERE. An older image has no
+  // `tigervnc-standalone-server`, and refusing to bring up a display at all
+  // would turn "this box cannot resize" into "this box has no browser". The
+  // session's policy negotiation is what notices the difference; this only has
+  // to produce a display.
   await sandbox.runBackground(
-    `Xvfb ${display} -ac -screen 0 ${geometryFor({ deviceScaleFactor })} -retro -dpi 96 -nolisten tcp -nolisten unix`,
+    `if command -v Xvnc >/dev/null 2>&1; then ` +
+      `Xvnc ${display} -geometry ${screenSizeFor({ deviceScaleFactor })} ` +
+      `-depth 24 -rfbport ${XVNC_LOOPBACK_PORT} -localhost ` +
+      `-SecurityTypes None -AlwaysShared -desktop mcpjam; ` +
+      `else ` +
+      `Xvfb ${display} -ac -screen 0 ${geometryFor({ deviceScaleFactor })} ` +
+      `-retro -dpi 96 -nolisten tcp -nolisten unix; ` +
+      `fi`,
     { envs: {}, onStdout: () => {} },
   );
 
@@ -201,7 +221,7 @@ export async function ensureDisplay(
     await sleep(DISPLAY_POLL_MS);
   }
   throw new Error(
-    `no X display on ${display}: Xvfb did not come up within ${
+    `no X display on ${display}: the X server did not come up within ${
       (DISPLAY_READY_ATTEMPTS * DISPLAY_POLL_MS) / 1000
     }s`,
   );
@@ -215,6 +235,23 @@ export async function ensureDisplay(
  * the edge of what is captured, and the missing strip is on the right-hand side
  * where nothing looks obviously wrong.
  */
+/**
+ * The loopback port Xvnc's own RFB listener binds to.
+ *
+ * Mirrors `templates/desktop/build.ts` in the backend repository, and exists
+ * for the same reason: Xvnc IS a VNC server and cannot be run without one.
+ * NOTHING connects to it. It is bound to `-localhost`, so it adds no listener
+ * anything outside the sandbox can reach, and the authenticated desktop viewer
+ * keeps going through the x11vnc + noVNC path the image already bakes.
+ */
+export const XVNC_LOOPBACK_PORT = 5999;
+
+/** `WxH` at this scale — what Xvnc's `-geometry` takes, without the depth. */
+function screenSizeFor(options: { deviceScaleFactor?: number }): string {
+  const [width, height] = geometryFor(options).split("x");
+  return `${width}x${height}`;
+}
+
 function geometryFor(options: { deviceScaleFactor?: number }): string {
   const dpr = options.deviceScaleFactor ?? 1;
   if (dpr === 1) return DISPLAY_GEOMETRY;

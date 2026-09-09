@@ -325,6 +325,23 @@ export interface ChromiumDriverOptions {
     onChange?: (viewport: SessionViewport) => void;
     /** Test seam for the barrier's debounce. */
     debounceMs?: number;
+    /**
+     * Take the box's DISPLAY to the new size too, on an engine that has one.
+     *
+     * Hosted only. There, "the display IS the page" is literally true —
+     * Chromium fills the X screen in kiosk mode and the encoder grabs that
+     * screen — so a page resized without the display behind it paints past the
+     * edge of what is captured, and the missing strip is on the right where
+     * nothing looks obviously wrong. On a local Chromium there is no display
+     * to move: the page is a window, and resizing it is the whole job.
+     *
+     * Returns whether it landed. A false ABORTS the viewport change, so the
+     * published number never runs ahead of the picture.
+     */
+    resizeDisplay?: (
+      next: ViewportSize,
+      previous: ViewportSize,
+    ) => Promise<boolean>;
   };
 }
 
@@ -533,6 +550,9 @@ export class ChromiumDriver implements BrowserDriver {
     | ((viewport: SessionViewport) => void)
     | undefined;
   private readonly barrier: SessionBarrier;
+  private readonly resizeDisplay:
+    | ((next: ViewportSize, previous: ViewportSize) => Promise<boolean>)
+    | undefined;
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -551,6 +571,7 @@ export class ChromiumDriver implements BrowserDriver {
       ? { width: initial.width, height: initial.height, revision: 0 }
       : INITIAL_SESSION_VIEWPORT;
     this.onViewportChange = options.viewport?.onChange;
+    this.resizeDisplay = options.viewport?.resizeDisplay;
     this.barrier = new SessionBarrier(
       (size) => this.applyViewport(size),
       options.viewport?.debounceMs !== undefined
@@ -610,6 +631,21 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     const previous = this.sessionViewport;
+    // THE DISPLAY FIRST, on a box that has one. A kiosk window told to fill a
+    // screen that has not grown yet fills the old one, and every page resized
+    // underneath it would then be describing a rectangle the capture cannot
+    // reach. @see display-resize.ts
+    if (this.resizeDisplay) {
+      const moved = await this.resizeDisplay(
+        { width: next.width, height: next.height },
+        { width: previous.width, height: previous.height },
+      );
+      if (!moved) {
+        throw new Error(
+          "display_resize_failed: the box would not change its display size",
+        );
+      }
+    }
     const applied: DriverPage[] = [];
     try {
       for (const page of pages) {

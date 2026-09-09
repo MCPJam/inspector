@@ -3249,6 +3249,8 @@ function createVideoEncoder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const listeners = /* @__PURE__ */ new Set();
   let tier = options.tier ?? "auto";
+  let width = Math.max(2, Math.round(options.width));
+  let height = Math.max(2, Math.round(options.height));
   let child;
   let splitter = createAccessUnitSplitter();
   let failure;
@@ -3297,8 +3299,13 @@ function createVideoEncoder(options) {
         ffmpegPath,
         ffmpegArgs({
           display: options.display,
-          width: options.width,
-          height: options.height,
+          // The CURRENT geometry, not the one this encoder was built with: a
+          // `followPane` session moves the display, and an ffmpeg restarted
+          // after that must grab the screen that is actually there. `x11grab`
+          // with a `-video_size` larger than the screen fails outright; one
+          // smaller silently captures a corner.
+          width,
+          height,
           tier
         }),
         { stdio: ["ignore", "pipe", "pipe"] }
@@ -3343,6 +3350,16 @@ function createVideoEncoder(options) {
     subscriberCount: () => listeners.size,
     failure: () => failure,
     tier: () => tier,
+    resize(size) {
+      const nextWidth = Math.max(2, Math.round(size.width));
+      const nextHeight = Math.max(2, Math.round(size.height));
+      if (nextWidth === width && nextHeight === height) return;
+      width = nextWidth;
+      height = nextHeight;
+      if (!child) return;
+      stop();
+      start();
+    },
     setTier(next) {
       if (next === tier) return;
       tier = next;
@@ -4061,6 +4078,9 @@ function advanceViewport(current, requested, policy) {
 }
 function isPointInSessionViewport(x, y, viewport) {
   return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= viewport.width - 1 && y <= viewport.height - 1;
+}
+function parseViewportPolicy(value) {
+  return value === "followPane" ? "followPane" : "fixed";
 }
 
 // server/services/browserd/daemon/observation-budget.ts
@@ -5655,6 +5675,7 @@ var ChromiumDriver = class {
   viewportPolicy;
   onViewportChange;
   barrier;
+  resizeDisplay;
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
@@ -5669,6 +5690,7 @@ var ChromiumDriver = class {
     const initial = options.viewport?.initial;
     this.sessionViewport = initial ? { width: initial.width, height: initial.height, revision: 0 } : INITIAL_SESSION_VIEWPORT;
     this.onViewportChange = options.viewport?.onChange;
+    this.resizeDisplay = options.viewport?.resizeDisplay;
     this.barrier = new SessionBarrier(
       (size) => this.applyViewport(size),
       options.viewport?.debounceMs !== void 0 ? { debounceMs: options.viewport.debounceMs } : {}
@@ -5717,6 +5739,17 @@ var ChromiumDriver = class {
       );
     }
     const previous = this.sessionViewport;
+    if (this.resizeDisplay) {
+      const moved = await this.resizeDisplay(
+        { width: next.width, height: next.height },
+        { width: previous.width, height: previous.height }
+      );
+      if (!moved) {
+        throw new Error(
+          "display_resize_failed: the box would not change its display size"
+        );
+      }
+    }
     const applied = [];
     try {
       for (const page of pages) {
@@ -8009,6 +8042,83 @@ function adaptContext(context, options = {}) {
 
 // server/services/browserd/daemon/main.ts
 import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+
+// server/services/browserd/daemon/display-resize.ts
+function displayGeometryFor(size, options = {}) {
+  const dpr = options.deviceScaleFactor ?? 1;
+  const even = (value) => {
+    const scaled = Math.round(value * dpr);
+    return scaled % 2 === 0 ? scaled : scaled + 1;
+  };
+  return {
+    width: even(size.width),
+    height: even(size.height),
+    depth: options.depth ?? 24
+  };
+}
+function shellSafeDisplay(display) {
+  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
+}
+async function resizeHostedDisplay(deps, next, previous) {
+  const display = shellSafeDisplay(deps.display);
+  if (!display) {
+    return {
+      ok: false,
+      reason: `refusing to resize a display named ${JSON.stringify(deps.display)}`,
+      restored: true
+    };
+  }
+  const geometry = displayGeometryFor(next, {
+    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+  });
+  const applyDisplay = async (size) => {
+    const command = `xrandr --display ${display} --fb ${size.width}x${size.height}`;
+    try {
+      const result = await deps.run(command);
+      return result.exitCode === 0 ? { ok: true } : {
+        ok: false,
+        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error)
+      };
+    }
+  };
+  const restore = async () => {
+    const back = displayGeometryFor(previous, {
+      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+    });
+    const result = await applyDisplay(back);
+    if (!result.ok) return false;
+    await deps.resizePage?.(previous).catch(() => {
+    });
+    await deps.restartEncoder?.(previous).catch(() => {
+    });
+    return true;
+  };
+  const display_ = await applyDisplay(geometry);
+  if (!display_.ok) {
+    return {
+      ok: false,
+      reason: display_.reason ?? "the display refused the new size",
+      restored: await restore()
+    };
+  }
+  try {
+    await deps.resizePage?.(next);
+    await deps.restartEncoder?.(next);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      restored: await restore()
+    };
+  }
+  return { ok: true, applied: next };
+}
 
 // server/services/browserd/daemon/config.ts
 import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
@@ -8052,6 +8162,12 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     // contradictory rather than merely unusual, so the one that decides
     // whether there is a picture wins.
     kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
+    // kiosk's own: a display that resized under a Chromium that is not filling
+    // it leaves the page one size and the capture another, which is the exact
+    // disagreement between the number and the picture this whole path exists
+    // to prevent.
+    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
     deviceScaleFactor: readDeviceScaleFactor(env),
     recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
     recordMaxBytes: readRecordMaxBytes(env),
@@ -8128,6 +8244,21 @@ function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
 `);
 }
+function runShell(command) {
+  return new Promise((resolve) => {
+    execFile(
+      "/bin/sh",
+      ["-c", command],
+      { timeout: 1e4 },
+      (error, _stdout, stderr) => {
+        resolve({
+          exitCode: error ? error.code ?? 1 : 0,
+          stderr: typeof stderr === "string" ? stderr : void 0
+        });
+      }
+    );
+  });
+}
 function displayWidth(config) {
   return Math.round(BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor);
 }
@@ -8147,13 +8278,58 @@ async function main() {
     deviceScaleFactor: config.deviceScaleFactor
   });
   const lease = new HandoffLease();
-  const driver = new ChromiumDriver(context, { lease });
+  let encoder;
+  const driver = new ChromiumDriver(context, {
+    lease,
+    viewport: {
+      /**
+       * The DAEMON's default is `fixed`, and the door widens it.
+       *
+       * Every existing opener — an eval, a swarm, a CLI run, an SDK consumer —
+       * gets exactly the 1024x768 session it has always had, and only a caller
+       * that negotiated a responsive one moves off it. A daemon that defaulted
+       * the other way would silently change the size of every recorded eval
+       * the first time somebody dragged a panel.
+       */
+      policy: config.viewportPolicy,
+      // KIOSK IS THE TEST for "does this box have a display of its own". It is
+      // the switch that makes "the display IS the page" true for the encoder,
+      // and it is set only on the hosted image; a local Chromium's page is a
+      // window, and resizing it is the whole job.
+      ...config.kiosk ? {
+        resizeDisplay: async (next, previous) => {
+          const outcome = await resizeHostedDisplay(
+            {
+              display: process.env.DISPLAY || ":0",
+              run: runShell,
+              deviceScaleFactor: config.deviceScaleFactor,
+              restartEncoder: async (size) => {
+                await encoder?.resize?.({
+                  width: Math.round(size.width * config.deviceScaleFactor),
+                  height: Math.round(size.height * config.deviceScaleFactor)
+                });
+              }
+            },
+            next,
+            previous
+          );
+          if (!outcome.ok) {
+            log(
+              `display resize failed (${outcome.reason}); ${outcome.restored ? "restored" : "COULD NOT RESTORE"} ${previous.width}x${previous.height}`
+            );
+          }
+          return outcome.ok;
+        }
+      } : {}
+    }
+  });
   const features = announcedFeatures(config);
   const video = features.includes("h264") ? createVideoEncoder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
     height: displayHeight(config)
   }) : void 0;
+  encoder = video;
   const recorder = features.includes("record") ? createVideoRecorder({
     display: process.env.DISPLAY || ":0",
     width: displayWidth(config),
