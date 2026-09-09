@@ -261,11 +261,17 @@ export class BrowserdClient {
    * the daemon compares it against the lease to decide whether this watcher
    * may see the tab list at all, exactly as the frame stream does.
    */
-  async paneState(args: { holder?: string }): Promise<BrowserStateSnapshot | null> {
+  async paneState(args: {
+    holder?: string;
+  }): Promise<BrowserStateSnapshot | null> {
     const query = args.holder
       ? `?holder=${encodeURIComponent(args.holder)}`
       : "";
-    const res = await this.request(`/v1/state${query}`, { method: "GET" }, true);
+    const res = await this.request(
+      `/v1/state${query}`,
+      { method: "GET" },
+      true,
+    );
     return decodePaneState({ status: res.status, body: await this.json(res) });
   }
 
@@ -293,6 +299,7 @@ export class BrowserdClient {
 
   /** Report a panel measurement; answer with the size the session settled at. */
   async paneViewport(args: {
+    policy?: "fixed" | "followPane";
     width: number;
     height: number;
   }): Promise<SessionViewport | null> {
@@ -364,6 +371,7 @@ export class BrowserdClient {
    * that stops issuing ids once exhausted.
    */
   async sendInput(args: {
+    anchor?: unknown;
     holder: string;
     events: readonly ViewportInputEvent[];
     tabId?: string;
@@ -375,6 +383,7 @@ export class BrowserdClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           holder: args.holder,
+          ...(args.anchor !== undefined ? { anchor: args.anchor } : {}),
           events: args.events,
           ...(args.tabId ? { tabId: args.tabId } : {}),
         }),

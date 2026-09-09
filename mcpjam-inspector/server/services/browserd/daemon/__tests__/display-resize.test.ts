@@ -37,7 +37,10 @@ describe("displayGeometryFor", () => {
       depth: 24,
     });
     expect(
-      displayGeometryFor({ width: 1024, height: 768 }, { deviceScaleFactor: 2 }),
+      displayGeometryFor(
+        { width: 1024, height: 768 },
+        { deviceScaleFactor: 2 },
+      ),
     ).toMatchObject({ width: 2048, height: 1536 });
   });
 
@@ -56,7 +59,10 @@ describe("displayGeometryFor", () => {
 
   it("keeps an odd size even after scaling", () => {
     expect(
-      displayGeometryFor({ width: 701, height: 401 }, { deviceScaleFactor: 1.5 }),
+      displayGeometryFor(
+        { width: 701, height: 401 },
+        { deviceScaleFactor: 1.5 },
+      ),
     ).toMatchObject({ width: 1052, height: 602 });
   });
 });
@@ -88,12 +94,15 @@ describe("resizing a hosted display", () => {
     expect(order.slice(1)).toEqual(["page", "encoder"]);
   });
 
-  it("sets the framebuffer rather than selecting a mode", async () => {
-    // `-s` only picks among the modes the server advertises, and Xvnc
-    // advertises one. `--fb` is the RandR operation it implements for this.
+  it("sets the output mode with the framebuffer and verifies it", async () => {
+    // Add arbitrary pane sizes and keep the output attached when shrinking.
     const h = harness();
     await resizeHostedDisplay(h.deps, TO, AT);
-    expect(h.commands[0]).toBe("xrandr --display :0 --fb 1400x900");
+    expect(h.commands[0]).toContain("--newmode mcpjam-1400x900");
+    expect(h.commands[0]).toContain(
+      "--output VNC-0 --mode mcpjam-1400x900 --fb 1400x900",
+    );
+    expect(h.commands[0]).toContain("END { exit !found }");
   });
 
   it("puts everything back when the display refuses", async () => {
@@ -123,10 +132,9 @@ describe("resizing a hosted display", () => {
     });
     const outcome = await resizeHostedDisplay(h.deps, TO, AT);
     expect(outcome).toMatchObject({ ok: false, restored: true });
-    expect(h.commands).toEqual([
-      "xrandr --display :0 --fb 1400x900",
-      "xrandr --display :0 --fb 1024x768",
-    ]);
+    expect(h.commands).toHaveLength(2);
+    expect(h.commands[0]).toContain("--fb 1400x900");
+    expect(h.commands[1]).toContain("--mode mcpjam-1024x768 --fb 1024x768");
   });
 
   it("says so when it cannot even restore", async () => {
@@ -183,7 +191,7 @@ describe("resizing a hosted display", () => {
   it("scales the display by the device pixel ratio", async () => {
     const h = harness({ deviceScaleFactor: 2 });
     await resizeHostedDisplay(h.deps, TO, AT);
-    expect(h.commands[0]).toBe("xrandr --display :0 --fb 2800x1800");
+    expect(h.commands[0]).toContain("--mode mcpjam-2800x1800 --fb 2800x1800");
     // The PAGE keeps its logical size — the scale is a property of the
     // display, and the model's coordinates are CSS pixels.
     expect(h.pages).toEqual([TO]);

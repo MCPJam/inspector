@@ -80,6 +80,7 @@ describe("the native Electron browser pane", () => {
     expect(await lastAsk()).toEqual({
       bootId: "boot-1",
       holder: "rail-1",
+      takeover: false,
       visible: true,
       bounds: { x: RECT.x, y: RECT.y, width: RECT.width, height: RECT.height },
     });

@@ -1,3 +1,4 @@
+import { negotiateViewport } from "../../../../shared/browser-viewport";
 /**
  * The seam between the daemon's control plane (queue + HTTP) and the real
  * browser. The control plane owns ordering, de-duplication, auth, and boot
@@ -17,11 +18,7 @@ import {
 } from "../protocol";
 import type { CommandExecutor } from "./command-queue";
 import type { TabViewport } from "./viewport";
-import {
-  leaseRefusalFor,
-  type HandoffLease,
-  type LeaseRefusal,
-} from "./lease";
+import { leaseRefusalFor, type HandoffLease, type LeaseRefusal } from "./lease";
 import type {
   SessionViewport,
   SessionViewportPolicy,
@@ -34,6 +31,10 @@ export interface DriverHealth {
 }
 
 export interface BrowserDriver {
+  sessionViewportPolicy?(): SessionViewportPolicy;
+  interactionAnchor?():
+    | import("../../../../shared/browser-pane-command").InteractionAnchor
+    | undefined;
   /**
    * Execute one command against the real browser and return its result. This is
    * exactly the `CommandExecutor` the queue drives; the queue owns idempotency,
@@ -86,7 +87,10 @@ export interface BrowserDriver {
    * `activate_tab` changes what a watching person sees; without this the pane
    * could not say so, and the picture would simply become a different page.
    */
-  tabsSnapshot?(): { active?: string; list: Array<{ id: string; url: string }> };
+  tabsSnapshot?(): {
+    active?: string;
+    list: Array<{ id: string; url: string }>;
+  };
   /**
    * A tab's page-tool set as `{revision, hash, count}`, read from the driver's
    * own cache.
@@ -154,6 +158,7 @@ export interface BrowserDriver {
    * identically: read the viewport out of the answer and use that.
    */
   requestViewport?(size: {
+    policy?: SessionViewportPolicy;
     width: number;
     height: number;
   }): Promise<SessionViewport>;
@@ -206,6 +211,18 @@ export function guardStaleness(
 ): CommandExecutor {
   return async (command: BrowserCommand): Promise<BrowserCommandResult> => {
     const { action } = command;
+    if (
+      command.source !== "manual" &&
+      action.kind !== "webmcp_cancel" &&
+      !negotiateViewport(driver.sessionViewportPolicy?.() ?? "fixed", command)
+        .ok
+    ) {
+      return {
+        ok: false,
+        error:
+          "responsive_viewport_required: this session follows an interactive pane; use a fixed session or declare responsiveViewport support",
+      };
+    }
     if (action.kind !== "act" || action.expectedState === undefined) {
       return driver.execute(command);
     }

@@ -116,7 +116,9 @@ export interface ViewportSize {
  * from a detached element is a missing measurement, and the smallest legal
  * size is the safest thing to show while one arrives.
  */
-export function normalizeViewportSize(size: Partial<ViewportSize>): ViewportSize {
+export function normalizeViewportSize(
+  size: Partial<ViewportSize>,
+): ViewportSize {
   return {
     width: clampDimension(
       size.width,
@@ -161,7 +163,11 @@ export function advanceViewport(
   if (next.width === current.width && next.height === current.height) {
     return current;
   }
-  return { width: next.width, height: next.height, revision: current.revision + 1 };
+  return {
+    width: next.width,
+    height: next.height,
+    revision: current.revision + 1,
+  };
 }
 
 /**
@@ -261,3 +267,8 @@ export function sameViewport(a: SessionViewport, b: SessionViewport): boolean {
     a.width === b.width && a.height === b.height && a.revision === b.revision
   );
 }
+
+/** Explicit negotiation sent only by the interactive pane. */
+export type PaneViewportRequest = ViewportSize & {
+  policy?: SessionViewportPolicy;
+};

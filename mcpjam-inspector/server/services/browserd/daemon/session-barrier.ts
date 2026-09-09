@@ -41,13 +41,12 @@ export interface SessionBarrierOptions {
    */
   debounceMs?: number;
   /**
-   * Ceiling on how long a resize waits for in-flight work to finish.
+   * Ceiling on timer polling while waiting for in-flight work to finish.
    *
    * A resize that waited forever would be a browser stuck at the wrong size
    * behind one hung command — and the hung command's own timeout is minutes.
-   * On expiry the resize runs ANYWAY: the person is looking at a panel that is
-   * the wrong size right now, and the action that would be disturbed has
-   * already blown its own budget.
+   * On expiry we stop polling and wait for work/drag completion. A timeout
+   * is not proof that input stopped; it must never break mutual exclusion.
    */
   maxWaitMs?: number;
   now?: () => number;
@@ -204,8 +203,7 @@ export class SessionBarrier {
   }
 
   /**
-   * Run the pending resize if the session is quiet — or if it has waited long
-   * enough that quiet is no longer worth waiting for.
+   * Run the pending resize only when the session is quiet.
    *
    * Called from three places (the debounce firing, work finishing, a drag
    * ending) because those are the three ways the answer can change, and a
@@ -218,10 +216,10 @@ export class SessionBarrier {
     if (this.debounceHandle !== undefined) return;
     const waited = this.now() - this.pendingSince;
     const expired = waited >= this.maxWaitMs;
-    if (!expired && (this.inFlight > 0 || this.dragging)) {
+    if (this.inFlight > 0 || this.dragging) {
       // Come back when the budget runs out, whether or not anything else
       // happens between now and then. @see expiryHandle
-      this.armExpiry(this.maxWaitMs - waited);
+      if (!expired) this.armExpiry(this.maxWaitMs - waited);
       return;
     }
     this.clearTimer(this.expiryHandle);

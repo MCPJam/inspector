@@ -54,6 +54,7 @@ import { SessionBarrier } from "./session-barrier";
 import { readTabMetadata } from "./tab-metadata";
 import {
   advanceViewport,
+  negotiateViewport,
   INITIAL_SESSION_VIEWPORT,
   isPointInSessionViewport,
   type SessionViewport,
@@ -121,10 +122,7 @@ const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
  * outer one wrong.
  */
 class ActError extends Error {
-  constructor(
-    readonly code: BrowserdErrorCode,
-    message: string,
-  ) {
+  constructor(readonly code: BrowserdErrorCode, message: string) {
     super(message);
     this.name = "ActError";
   }
@@ -153,7 +151,9 @@ class LeaseTakenMidAct extends Error {}
  * read as part of the page's shape, and a model that tries one gets the clean
  * `unknown_ref` refusal that exists for exactly a ref this tab never issued.
  */
-function withoutRefIndex(fields: Record<string, unknown>): Record<string, unknown> {
+function withoutRefIndex(
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
   const { refs: _unstored, ...rest } = fields;
   return rest;
 }
@@ -313,6 +313,7 @@ export interface ChromiumDriverOptions {
    */
   viewport?: {
     policy: SessionViewportPolicy;
+    allowPaneResize?: boolean;
     initial?: ViewportSize;
     /**
      * Told whenever the session's size actually changes.
@@ -545,7 +546,9 @@ export class ChromiumDriver implements BrowserDriver {
   private sessionViewport: SessionViewport;
   /** Monotonic per boot, so two snapshots in one millisecond still order. */
   private stateSeq = 0;
-  private readonly viewportPolicy: SessionViewportPolicy;
+  private readonly allowPaneResize: boolean;
+  private viewportPolicy: SessionViewportPolicy;
+  private latestViewportRequest?: import("../../../../shared/browser-viewport").PaneViewportRequest;
   private readonly onViewportChange:
     | ((viewport: SessionViewport) => void)
     | undefined;
@@ -566,6 +569,7 @@ export class ChromiumDriver implements BrowserDriver {
       options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
     this.viewportPolicy = options.viewport?.policy ?? "fixed";
+    this.allowPaneResize = options.viewport?.allowPaneResize === true;
     const initial = options.viewport?.initial;
     this.sessionViewport = initial
       ? { width: initial.width, height: initial.height, revision: 0 }
@@ -593,9 +597,20 @@ export class ChromiumDriver implements BrowserDriver {
    * that transition lands, whatever size it carried. A `fixed` session
    * resolves immediately, having changed nothing.
    */
-  async requestViewport(size: ViewportSize): Promise<SessionViewport> {
+  sessionViewportPolicy(): SessionViewportPolicy {
+    return this.viewportPolicy;
+  }
+
+  async requestViewport(
+    size: import("../../../../shared/browser-viewport").PaneViewportRequest,
+  ): Promise<SessionViewport> {
+    if (size.policy === "followPane" && this.allowPaneResize)
+      this.viewportPolicy = "followPane";
     if (this.viewportPolicy === "fixed") return this.sessionViewport;
-    await this.barrier.request(size);
+    const request =
+      size.policy === "fixed" ? { ...size, width: 1024, height: 768 } : size;
+    this.latestViewportRequest = request;
+    await this.barrier.request(request);
     return this.sessionViewport;
   }
 
@@ -615,16 +630,24 @@ export class ChromiumDriver implements BrowserDriver {
    * matters is that `sessionViewport` is not advanced unless every page took
    * the new size, so the published number never runs ahead of the picture.
    */
-  private async applyViewport(size: ViewportSize): Promise<void> {
-    const next = advanceViewport(this.sessionViewport, size, this.viewportPolicy);
-    if (next === this.sessionViewport) return;
+  private async applyViewport(
+    size: import("../../../../shared/browser-viewport").PaneViewportRequest,
+  ): Promise<void> {
+    const next = advanceViewport(this.sessionViewport, size, "followPane");
+    if (next === this.sessionViewport) {
+      if (size.policy === "fixed" && this.latestViewportRequest === size)
+        this.viewportPolicy = "fixed";
+      return;
+    }
     const pages = [...this.tabs.values()]
       .map((entry) => entry.page)
       .filter((page) => !page.isClosed());
     // An engine that cannot resize must not be told it did. Refusing here is
     // what makes `setViewportSize` genuinely optional on `DriverPage` rather
     // than a method every engine has to pretend to have.
-    const unable = pages.find((page) => typeof page.setViewportSize !== "function");
+    const unable = pages.find(
+      (page) => typeof page.setViewportSize !== "function",
+    );
     if (unable) {
       throw new Error(
         "viewport_unsupported: this engine cannot resize its pages",
@@ -649,7 +672,10 @@ export class ChromiumDriver implements BrowserDriver {
     const applied: DriverPage[] = [];
     try {
       for (const page of pages) {
-        await page.setViewportSize?.({ width: next.width, height: next.height });
+        await page.setViewportSize?.({
+          width: next.width,
+          height: next.height,
+        });
         applied.push(page);
       }
     } catch (error) {
@@ -679,10 +705,12 @@ export class ChromiumDriver implements BrowserDriver {
       throw error;
     }
     this.sessionViewport = next;
+    if (size.policy === "fixed" && this.latestViewportRequest === size)
+      this.viewportPolicy = "fixed";
     // ANYTHING THAT APPEARED WHILE WE RAN. `pages` above is a snapshot, and a
     // `navigate {newTab: true}` can register a page inside the awaits below it
-    // — the barrier defers work while a resize transitions, but its ceiling
-    // lets one through when a command has outlived its budget. Such a page
+    // — external browser events can still create pages while the barrier
+    // defers commands during a transition. Such a page
     // sized itself from `sessionViewport` on creation, which was `previous`
     // until the line above; sweeping here is what closes the window rather
     // than leaving one tab a different size from the rest.
@@ -733,6 +761,18 @@ export class ChromiumDriver implements BrowserDriver {
   private async executeInBarrier(
     command: BrowserCommand,
   ): Promise<BrowserCommandResult> {
+    // Recheck after waiting for a resize, not only at queue admission.
+    if (
+      command.source !== "manual" &&
+      command.action.kind !== "webmcp_cancel" &&
+      !negotiateViewport(this.viewportPolicy, command).ok
+    ) {
+      return {
+        ok: false,
+        error:
+          "responsive_viewport_required: read the session viewport before acting",
+      };
+    }
     // W4/L6 — before ANYTHING can read, discard what a person's handoff left
     // behind. The 423 gate stops an agent observing DURING a handoff, but the
     // console ring fills from an eager page listener that knows nothing about
@@ -1548,7 +1588,13 @@ export class ChromiumDriver implements BrowserDriver {
     // the user approved, invoked under that approval.
     const binding = action.expectedBinding;
     if (binding) {
-      const stale = this.bindingRefusal(tabId, entry, bridge, action.toolKey, binding);
+      const stale = this.bindingRefusal(
+        tabId,
+        entry,
+        bridge,
+        action.toolKey,
+        binding,
+      );
       if (stale) {
         return {
           ok: false,
@@ -1693,7 +1739,10 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     const known = await bridge.cancel(invocationId);
-    return { ok: true, output: { cancelled: known, known: true, invocationId } };
+    return {
+      ok: true,
+      output: { cancelled: known, known: true, invocationId },
+    };
   }
 
   /**
@@ -2189,6 +2238,20 @@ export class ChromiumDriver implements BrowserDriver {
    * inside the same millisecond are ordinary on a fast box, and a reducer that
    * cannot order them would drop one at random.
    */
+  interactionAnchor():
+    | import("../../../../shared/browser-pane-command").InteractionAnchor
+    | undefined {
+    const tabId = this.activeTabId;
+    const entry = tabId ? this.tabs.get(tabId) : undefined;
+    if (!tabId || !entry || entry.page.isClosed()) return undefined;
+    return {
+      tabId,
+      url: safeUrl(entry.page),
+      navCounter: entry.navCounter,
+      viewportRevision: this.sessionViewport.revision,
+    };
+  }
+
   async stateSnapshot(): Promise<{
     seq: number;
     tabs: Array<{
@@ -2196,6 +2259,7 @@ export class ChromiumDriver implements BrowserDriver {
       url: string;
       title: string;
       faviconUrl?: string;
+      navCounter: number;
       loading: boolean;
     }>;
     activeTabId: string | null;
@@ -2220,13 +2284,14 @@ export class ChromiumDriver implements BrowserDriver {
     const activeTabId =
       this.activeTabId && read.some(({ id }) => id === this.activeTabId)
         ? this.activeTabId
-        : (read[0]?.id ?? null);
+        : read[0]?.id ?? null;
     const active = read.find(({ id }) => id === activeTabId);
     this.stateSeq += 1;
     return {
       seq: this.stateSeq,
-      tabs: read.map(({ id, meta }) => ({
+      tabs: read.map(({ id, meta, entry }) => ({
         id,
+        navCounter: entry.navCounter,
         url: meta.url,
         title: meta.title,
         ...(meta.faviconUrl ? { faviconUrl: meta.faviconUrl } : {}),

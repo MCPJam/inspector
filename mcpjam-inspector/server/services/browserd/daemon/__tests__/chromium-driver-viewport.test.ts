@@ -14,7 +14,13 @@ import type { SessionViewport } from "../../../../../shared/browser-viewport";
  * pins an act to an observation taken before the reflow.
  */
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
-  return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
+  return {
+    commandId: `c-${Math.random()}`,
+    tabId,
+    source: "chat",
+    action,
+    responsiveViewport: true,
+  };
 }
 
 /**
@@ -70,8 +76,12 @@ describe("session viewport", () => {
       context,
       responsive((viewport) => changes.push(viewport)),
     );
-    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "a"));
-    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "b"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "a"),
+    );
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/" }, "b"),
+    );
 
     await driver.requestViewport({ width: 1400, height: 900 });
 
@@ -123,10 +133,14 @@ describe("the published number never runs ahead of the picture", () => {
     const late = fakePage();
     const { context } = fakeContext({ pages: [first, late] });
     const driver = new ChromiumDriver(context, responsive());
-    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "a"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "a"),
+    );
     await driver.requestViewport({ width: 1400, height: 900 });
 
-    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "b"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/" }, "b"),
+    );
 
     // Its FIRST call, at creation — there is no resize afterwards to correct it.
     expect(late.calls.viewportSizes[0]).toEqual({ width: 1400, height: 900 });
@@ -143,8 +157,9 @@ describe("the published number never runs ahead of the picture", () => {
       throw new Error("the renderer is gone");
     };
     const { context } = fakeContext({ pages: [good, bad] });
-    const moves: Array<{ to: SessionViewport | { width: number; height: number } }> =
-      [];
+    const moves: Array<{
+      to: SessionViewport | { width: number; height: number };
+    }> = [];
     const driver = new ChromiumDriver(context, {
       viewport: {
         policy: "followPane" as const,
@@ -155,8 +170,12 @@ describe("the published number never runs ahead of the picture", () => {
         },
       },
     });
-    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "a"));
-    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "b"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "a"),
+    );
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/" }, "b"),
+    );
 
     await driver.requestViewport({ width: 1400, height: 900 });
 
@@ -183,8 +202,12 @@ describe("the published number never runs ahead of the picture", () => {
       context,
       responsive((viewport) => changes.push(viewport)),
     );
-    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "a"));
-    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "b"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "a"),
+    );
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/" }, "b"),
+    );
 
     await driver.requestViewport({ width: 1400, height: 900 });
 
@@ -261,7 +284,9 @@ describe("the viewport revision in the observation token", () => {
     expect(after?.urlHash).toBe(before.stateToken?.urlHash);
     expect(after?.navCounter).toBe(before.stateToken?.navCounter);
     // ...and yet it is a different page to click on.
-    expect(after?.viewportRevision).not.toBe(before.stateToken?.viewportRevision);
+    expect(after?.viewportRevision).not.toBe(
+      before.stateToken?.viewportRevision,
+    );
   });
 });
 

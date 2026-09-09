@@ -103,6 +103,10 @@ export function parseAnchor(raw: unknown): InteractionAnchor | undefined {
     tabId: value.tabId,
     url: value.url,
     navCounter: value.navCounter,
+    ...(typeof value.bootId === "string" ? { bootId: value.bootId } : {}),
+    ...(typeof value.viewportRevision === "number"
+      ? { viewportRevision: value.viewportRevision }
+      : {}),
   };
 }
 

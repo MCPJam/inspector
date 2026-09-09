@@ -55,6 +55,7 @@ export interface BrowserPaneClient {
   }): Promise<PaneCommandOutcome>;
   /** Report a panel measurement; resolve with the size the session settled at. */
   paneViewport(args: {
+    policy?: "fixed" | "followPane";
     width: number;
     height: number;
   }): Promise<SessionViewport | null>;

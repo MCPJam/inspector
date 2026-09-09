@@ -1,3 +1,4 @@
+import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
   noteWebmcpStats,
@@ -13,7 +14,10 @@ import {
 } from "@/components/browser/BrowserPaneSurface";
 import { BrowserShell } from "@/components/browser/BrowserShell";
 import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
-import { TakeoverCoordinator } from "@/lib/browser-shell/takeover";
+import {
+  paneInteractionAnchor,
+  TAKEOVER_RETRY_NOTICE,
+} from "../../../../shared/browser-pane-command";
 import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command";
 import {
   PaneSettingsMenu,
@@ -138,6 +142,7 @@ export function HostedBrowserBody({
    */
   active?: boolean;
 }) {
+  const workspaceEnabled = useBrowserWorkspaceEnabled();
   const [session, setSession] = useState<Session | null>(null);
   const [lease, setLease] = useState<HostedBrowserLease>({ state: "unknown" });
   const [holding, setHolding] = useState(false);
@@ -1169,15 +1174,24 @@ export function HostedBrowserBody({
         commandId?: string;
       }) => sendHostedPaneCommand(tokens, args),
       reportViewport: (size: { width: number; height: number }) =>
-        reportHostedPaneViewport(tokens, size),
+        reportHostedPaneViewport(tokens, { ...size, policy: "followPane" }),
       resume: async () => {
         await setLeaseAction("resume");
       },
     };
   }, [tokens, session, setLeaseAction]);
 
+  useEffect(() => {
+    if (!workspaceEnabled && tokens && session)
+      void reportHostedPaneViewport(tokens, {
+        width: 1024,
+        height: 768,
+        policy: "fixed",
+      });
+  }, [workspaceEnabled, tokens, session?.bootId]);
+
   const shell = useBrowserSession({
-    transport: shellTransport,
+    transport: workspaceEnabled ? shellTransport : null,
     // The hosted holder is the authenticated user, which this client never
     // sees. `holding` is passed to the shell explicitly instead, so it never
     // has to guess from an id it does not have.
@@ -1185,30 +1199,36 @@ export function HostedBrowserBody({
     active,
   });
 
-  const takeoverRef = useRef<TakeoverCoordinator<BrowserInputEvent[]> | null>(
-    null,
-  );
-  const setLeaseActionRef = useRef(setLeaseAction);
-  setLeaseActionRef.current = setLeaseAction;
+  const [takeoverNotice, setTakeoverNotice] = useState<string | null>(null);
+  const takingRef = useRef(false);
   const tokensRef = useRef(tokens);
   tokensRef.current = tokens;
-  const takeover = useCallback((events: BrowserInputEvent[]) => {
-    takeoverRef.current ??= new TakeoverCoordinator<BrowserInputEvent[]>({
-      isHolding: () => holdingRef.current,
-      acquire: async () =>
-        (await setLeaseActionRef.current("acquire"))
-          ? { ok: true as const }
-          : { ok: false as const },
-    });
-    void takeoverRef.current.gesture({ payload: events }).then((result) => {
-      if (result.status !== "deliver") return;
-      const current = tokensRef.current;
-      if (!current) return;
-      void sendHostedBrowserInput(current, {
-        events: result.payload,
-      }).catch(() => {});
-    });
-  }, []);
+  const takeover = useCallback(
+    async (events: BrowserInputEvent[]) => {
+      if (!tokens || takingRef.current) return;
+      const originalTokens = tokens;
+      const anchor = paneInteractionAnchor(shell.state, session?.bootId);
+      takingRef.current = true;
+      try {
+        if (
+          !(await setLeaseAction("acquire")) ||
+          tokensRef.current !== originalTokens
+        )
+          return;
+        if (!anchor) {
+          setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
+          return;
+        }
+        await sendHostedBrowserInput(originalTokens, { events, anchor });
+        setTakeoverNotice(null);
+      } catch {
+        setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
+      } finally {
+        takingRef.current = false;
+      }
+    },
+    [tokens, session?.bootId, setLeaseAction, shell.state],
+  );
 
   // The stats overlay's flag, which the take-control bar used to own.
   const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
@@ -1274,6 +1294,7 @@ export function HostedBrowserBody({
 
   return (
     <BrowserShell
+      enabled={workspaceEnabled}
       state={shell.state}
       holderId={null}
       // THIS engine's lease, not the shell's polled copy: the hosted body
@@ -1304,7 +1325,7 @@ export function HostedBrowserBody({
       // renders notices as a polite live region while errors are static
       // destructive text: routed through `error` it was announced to nobody
       // and drawn as a failure.
-      notice={notice ?? shell.notice ?? tabNotice}
+      notice={takeoverNotice ?? notice ?? shell.notice ?? tabNotice}
       error={error ?? shell.error}
       {...(placeholder ? { placeholder } : {})}
       trailing={
@@ -1332,11 +1353,21 @@ export function HostedBrowserBody({
         control={control}
         // NO take-control button. Using the browser is what takes it now, and
         // the shell's second row already says who is driving.
-        chrome="none"
+        chrome={workspaceEnabled ? "none" : "bar"}
         // The shell's menu owns this now; the surface draws it.
-        statsOpen={statsOpen}
+        statsOpen={workspaceEnabled ? statsOpen : undefined}
         onInput={send}
-        onTakeoverInput={takeover}
+        onTakeoverInput={workspaceEnabled ? takeover : undefined}
+        onTakeControl={
+          !workspaceEnabled && session && !holding && lease.state === "free"
+            ? () => void setLeaseAction("acquire")
+            : undefined
+        }
+        onHandBack={
+          !workspaceEnabled && session && holding
+            ? () => void setLeaseAction("resume")
+            : undefined
+        }
         active={active}
         engine="hosted"
       />

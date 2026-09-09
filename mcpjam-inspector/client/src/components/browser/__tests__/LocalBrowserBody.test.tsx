@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
+  workspaceEnabled: true,
   status: {
     installed: true,
     install: { status: "ready" as const },
@@ -41,6 +42,10 @@ const api = vi.hoisted(() => ({
     onclose?: (event: { code: number }) => void;
     onopen?: () => void;
   } | null,
+}));
+
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useBrowserWorkspaceEnabled: () => api.workspaceEnabled,
 }));
 
 vi.mock("@/lib/local-browser/client", async () => {
@@ -92,7 +97,25 @@ vi.mock("@/lib/local-browser/client", async () => {
     // The shell's three calls. Answered rather than left to the real module,
     // which would reach the network and leave the shell permanently
     // reconnecting — a state that is correct but drowns every other assertion.
-    fetchLocalBrowserState: async () => api.state,
+    fetchLocalBrowserState: async () =>
+      api.state ?? {
+        seq: 1,
+        tabs: [
+          {
+            id: "t1",
+            url: "https://example.test",
+            title: "Example",
+            loading: false,
+            navCounter: 0,
+          },
+        ],
+        activeTabId: "t1",
+        canGoBack: false,
+        canGoForward: false,
+        viewport: { width: 1024, height: 768, revision: 0 },
+        policy: "fixed",
+        control: { kind: "agent" },
+      },
     sendLocalPaneCommand: async (args: any) => {
       api.paneCommands.push(args.command);
       if (api.paneUnsupported) {
@@ -119,6 +142,7 @@ vi.mock("@/lib/local-browser/client", async () => {
 import { LocalBrowserBody } from "../LocalBrowserBody";
 
 beforeEach(() => {
+  api.workspaceEnabled = true;
   api.status = {
     installed: true,
     install: { status: "ready" },
@@ -169,7 +193,7 @@ async function deliverFrame() {
 async function clickPicture() {
   const image = await deliverFrame();
   image.getBoundingClientRect = () =>
-    ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+    ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
   fireEvent.click(image, { clientX: 10, clientY: 10 });
   return image;
 }
@@ -229,9 +253,7 @@ describe("the agent browser pane", () => {
 
     await clickPicture();
     expect(await screen.findByText(/you have it/i)).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /resume agent/i }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /resume agent/i })).toBeTruthy();
   });
 
   it("takes the browser on a paste, and sends the text", async () => {
@@ -336,7 +358,7 @@ describe("the agent browser pane — driving it", () => {
     const image = await deliverFrame();
     // jsdom lays nothing out, so the pane cannot map a point without one.
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
 
     fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 2 });
     fireEvent.mouseUp(image, { clientX: 10, clientY: 10, button: 2 });
@@ -356,7 +378,7 @@ describe("the agent browser pane — driving it", () => {
     await takeControl();
     const image = await deliverFrame();
     image.getBoundingClientRect = () =>
-      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+      ({ left: 0, top: 0, width: 1024, height: 768 } as DOMRect);
 
     fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
     fireEvent.mouseLeave(image, { clientX: 10, clientY: 10 });
@@ -524,9 +546,7 @@ describe("the agent browser pane — a hold you can get back", () => {
       await screen.findByRole("button", { name: /open the browser/i }),
     );
     expect(await screen.findByText(/someone else is driving/i)).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /resume agent/i }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /resume agent/i })).toBeNull();
   });
 });
 
@@ -563,8 +583,9 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // The slot FIRST: `capability()` resolves a tick after mount, and the pane
     // swaps component trees when it does — a button found before that is a
     // detached node by the time a click reaches it.
-    expect(await screen.findByTestId("rail-browser-native-slot")).toBeTruthy();
     await userEvent.click(await screen.findByText("Open the browser"));
+    expect(await screen.findByTestId("rail-browser-native-slot")).toBeTruthy();
+    expect(screen.getByTestId("browser-new-tab")).toBeTruthy();
     await waitFor(() => expect(api.ensures).toContain("proj-1"));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(api.socket).toBeNull();
@@ -578,8 +599,8 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // it.
     asDesktopApp();
     renderBody();
-    await screen.findByTestId("rail-browser-native-slot");
     await userEvent.click(await screen.findByText("Open the browser"));
+    await screen.findByTestId("rail-browser-native-slot");
     await waitFor(() => expect(api.watches).toContain("boot-proj-1"));
   });
 
@@ -644,12 +665,8 @@ describe("the agent browser pane — when somebody else is driving", () => {
       const ensuresBefore = api.ensures.length;
       const watchesBefore = api.watches.length;
       await vi.advanceTimersByTimeAsync(6_000);
-      expect(
-        await screen.findByText(/agent is driving/i),
-      ).toBeTruthy();
-      expect(
-        screen.queryByText(/somebody else has taken control/i),
-      ).toBeNull();
+      expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
+      expect(screen.queryByText(/somebody else has taken control/i)).toBeNull();
       // THROUGH `watch`, not `ensure`. `ensure` starts a browser when the one
       // it was asked about has gone, so a crash under a waiting pane would
       // launch a Chromium nobody asked for and answer with a different boot's
@@ -763,4 +780,39 @@ describe("a browser whose daemon predates the pane endpoints", () => {
     expect(screen.getByTestId("browser-tab-strip")).toBeInTheDocument();
     expect(screen.getByTestId("browser-address")).toBeDisabled();
   });
+});
+
+it("keeps explicit controls and no browser chrome when the workspace flag is off", async () => {
+  api.workspaceEnabled = false;
+  renderBody();
+  await userEvent.click(await screen.findByText("Open the browser"));
+  expect(
+    await screen.findByRole("button", { name: "Take control" }),
+  ).toBeTruthy();
+  expect(screen.queryByTestId("browser-new-tab")).toBeNull();
+});
+
+it("takes control but drops the first click if the daemon cannot identify the page", async () => {
+  api.state = {
+    seq: 1,
+    tabs: [
+      {
+        id: "t1",
+        url: "https://example.test",
+        title: "Example",
+        loading: false,
+      },
+    ],
+    activeTabId: "t1",
+    canGoBack: false,
+    canGoForward: false,
+    viewport: { width: 1024, height: 768, revision: 0 },
+    policy: "fixed",
+    control: { kind: "agent" },
+  };
+  renderBody();
+  await userEvent.click(await screen.findByText("Open the browser"));
+  await clickPicture();
+  expect(await screen.findByTestId("browser-notice")).toBeTruthy();
+  expect(api.inputs).toEqual([]);
 });

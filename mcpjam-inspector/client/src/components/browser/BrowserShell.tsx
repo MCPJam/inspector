@@ -41,6 +41,7 @@ import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command
  */
 
 export interface BrowserShellProps {
+  enabled?: boolean;
   state: BrowserSessionState;
   /** This pane's lease identity, for telling our hold from somebody else's. */
   holderId: string | null;
@@ -106,10 +107,13 @@ export interface BrowserShellProps {
    *
    * Absent on an engine that cannot resize, in which case nothing observes.
    */
-  onViewportMeasured?: ((size: { width: number; height: number }) => void) | undefined;
+  onViewportMeasured?:
+    | ((size: { width: number; height: number }) => void)
+    | undefined;
 }
 
 export function BrowserShell({
+  enabled = true,
   state,
   holderId,
   control: controlOverride,
@@ -182,7 +186,7 @@ export function BrowserShell({
   measuredRef.current = onViewportMeasured;
   useEffect(() => {
     const element = pageRef.current;
-    if (!element || !onViewportMeasured) return;
+    if (!enabled || !element || !onViewportMeasured) return;
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
@@ -195,7 +199,20 @@ export function BrowserShell({
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [onViewportMeasured]);
+  }, [enabled, onViewportMeasured]);
+
+  if (!enabled) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {placeholder ?? children}
+        {error ? (
+          <div role="alert" className="px-3 text-xs text-destructive">
+            {error}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">

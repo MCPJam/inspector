@@ -535,6 +535,8 @@ export type BrowserAction =
  * omit it for whole-session commands, which share a session-level queue.
  */
 export interface BrowserCommand {
+  /** Caller reads dimensions from each observation instead of assuming 1024x768. */
+  responsiveViewport?: boolean;
   commandId: string;
   tabId?: string;
   source: BrowserCommandSource;
