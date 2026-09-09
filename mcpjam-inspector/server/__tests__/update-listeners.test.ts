@@ -644,11 +644,26 @@ describe("update-listeners", () => {
       vi.advanceTimersByTime(1_000);
       expect(errorBroadcastCount(window)).toBe(0);
 
+      // The dock reopen builds a fresh window, so the replay has to wait for
+      // the renderer to finish loading like the status broadcast does.
       const reopened = createWindow(2);
+      reopened.webContents.isLoading.mockReturnValue(true);
       windows.push(reopened);
       mod.registerUpdateListeners(reopened as any);
 
+      expect(errorBroadcastCount(reopened)).toBe(0);
+      const [, onDidFinishLoad] =
+        reopened.webContents.once.mock.calls.find(
+          ([event]) => event === "did-finish-load",
+        ) ?? [];
+      onDidFinishLoad?.();
+
       expect(errorBroadcastCount(reopened)).toBe(1);
+      expect(reopened.webContents.send).toHaveBeenCalledWith("update-status", {
+        kind: "downloaded",
+        version: "2.5.0",
+        releaseNotes: "Notes",
+      });
 
       // Squirrel explaining the same dead install afterwards must not toast
       // a second time.
