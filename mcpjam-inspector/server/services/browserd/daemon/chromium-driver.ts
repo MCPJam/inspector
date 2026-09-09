@@ -658,6 +658,24 @@ export class ChromiumDriver implements BrowserDriver {
           .setViewportSize?.({ width: previous.width, height: previous.height })
           .catch(() => {});
       }
+      // THE DISPLAY COMES BACK TOO. It moved first, and on a hosted box it
+      // took the kiosk window and the encoder with it — so a page refusing
+      // afterwards left the screen at `next` while the pages and the published
+      // `sessionViewport` were at `previous`. `resizeHostedDisplay` cannot
+      // undo this on its own: its own rollback covers failures inside its own
+      // call, and it is not given a `resizePage` dependency here precisely
+      // because the driver owns the pages.
+      //
+      // Best-effort, and the throw below is unconditional either way: the
+      // caller's job on a failed resize is to keep publishing the last size
+      // everything agreed on, which is `previous`, and a display that would
+      // not come back is a bad picture rather than a lying coordinate space.
+      if (this.resizeDisplay) {
+        await this.resizeDisplay(
+          { width: previous.width, height: previous.height },
+          { width: next.width, height: next.height },
+        ).catch(() => false);
+      }
       throw error;
     }
     this.sessionViewport = next;

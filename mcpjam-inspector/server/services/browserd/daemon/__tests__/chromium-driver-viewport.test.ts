@@ -132,6 +132,45 @@ describe("the published number never runs ahead of the picture", () => {
     expect(late.calls.viewportSizes[0]).toEqual({ width: 1400, height: 900 });
   });
 
+  it("takes the DISPLAY back too when a page refuses", async () => {
+    // On a hosted box the display moves first, and it takes the kiosk window
+    // and the video encoder with it. A page refusing afterwards used to leave
+    // the screen at the new size while the pages and the published viewport
+    // were at the old one — a picture whose every coordinate lies.
+    const good = fakePage();
+    const bad = fakePage();
+    bad.setViewportSize = async () => {
+      throw new Error("the renderer is gone");
+    };
+    const { context } = fakeContext({ pages: [good, bad] });
+    const moves: Array<{ to: SessionViewport | { width: number; height: number } }> =
+      [];
+    const driver = new ChromiumDriver(context, {
+      viewport: {
+        policy: "followPane" as const,
+        debounceMs: 0,
+        resizeDisplay: async (to) => {
+          moves.push({ to });
+          return true;
+        },
+      },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "a"));
+    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "b"));
+
+    await driver.requestViewport({ width: 1400, height: 900 });
+
+    expect(moves.map((m) => m.to)).toEqual([
+      { width: 1400, height: 900 },
+      // ...and back, because nothing else agreed to go there.
+      { width: 1024, height: 768 },
+    ]);
+    expect(driver.sessionViewportState()).toMatchObject({
+      width: 1024,
+      height: 768,
+    });
+  });
+
   it("keeps the old size when a page refuses the resize", async () => {
     const good = fakePage();
     const bad = fakePage();

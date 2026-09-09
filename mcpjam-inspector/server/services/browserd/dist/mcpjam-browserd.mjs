@@ -5795,6 +5795,12 @@ var ChromiumDriver = class {
         await page.setViewportSize?.({ width: previous.width, height: previous.height }).catch(() => {
         });
       }
+      if (this.resizeDisplay) {
+        await this.resizeDisplay(
+          { width: previous.width, height: previous.height },
+          { width: next.width, height: next.height }
+        ).catch(() => false);
+      }
       throw error;
     }
     this.sessionViewport = next;
