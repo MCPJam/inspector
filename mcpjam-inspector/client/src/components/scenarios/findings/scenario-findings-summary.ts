@@ -49,7 +49,7 @@ function causeLine(persona: PersonaFindingsModel): string | null {
 }
 
 export function composeScenarioFindingsSummary(
-  model: ScenarioFindingsModel
+  model: ScenarioFindingsModel,
 ): string[] {
   const lead = model.personas[0];
   if (!lead) {
@@ -64,9 +64,17 @@ export function composeScenarioFindingsSummary(
     return ["No sessions in this study yet."];
   }
 
+  // Both halves of the fraction have to come from the SAME population.
+  // `sessionsAuthored` is tallied from the scanned page, which the tab caps, so
+  // pairing it with the study total reads "12 of 900" where the 12 was counted
+  // out of 200. The footnote about the cap sits nearby but a footnote cannot
+  // repair a fraction — by the time it is read the number has been believed.
+  const denominator = model.coverage.truncated
+    ? model.coverage.scanned
+    : model.sessionCount;
   const lines: string[] = [
-    `${lead.sessionsAuthored} of ${model.sessionCount} sessions ended ${endingPhrase(
-      lead
+    `${lead.sessionsAuthored} of ${denominator} sessions ended ${endingPhrase(
+      lead,
     )}.`,
   ];
 
@@ -76,7 +84,7 @@ export function composeScenarioFindingsSummary(
   const second = model.personas[1];
   if (second) {
     lines.push(
-      `${second.name} account for another ${second.sessionsAuthored}.`
+      `${second.name} account for another ${second.sessionsAuthored}.`,
     );
   }
 
