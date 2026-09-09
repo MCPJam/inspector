@@ -7508,6 +7508,9 @@ async function collectProfileEntries(profileDir, currentDir, entries, uncompress
       continue;
     }
     if (!stat2.isFile()) continue;
+    if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error("browser profile archive exceeds the expanded size limit");
+    }
     const contents = await readFile(absolutePath);
     const header = makeTarHeader(
       archivePath,

@@ -159,6 +159,16 @@ async function collectProfileEntries(
     // state, not portable profile data. Skipping them also prevents archive
     // imports from creating links that could escape the profile directory.
     if (!stat.isFile()) continue;
+    // REFUSE BEFORE READING. The aggregate check below runs after `readFile`
+    // has already allocated the whole file, so a single oversized entry — a
+    // large site-storage blob in a real profile — exhausts memory on the way
+    // to being rejected. `stat` is already in hand; ask it first.
+    if (
+      uncompressedBytes.value + stat.size >
+      MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES
+    ) {
+      throw new Error("browser profile archive exceeds the expanded size limit");
+    }
     const contents = await readFile(absolutePath);
     const header = makeTarHeader(
       archivePath,

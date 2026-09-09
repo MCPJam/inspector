@@ -146,6 +146,33 @@ export function BrowserPanel({
     }
   }, [authorized, ensure, markBrowserSessionActive, sessionId]);
 
+  /**
+   * A conversation switch is a change of BROWSER, so none of this panel's
+   * lease state survives it.
+   *
+   * `holding` in particular: the heartbeat effect below keys on `authorized`,
+   * which is rebuilt when `sessionId` changes, so without this reset the panel
+   * carried `holding: true` across the switch and began heartbeating the NEW
+   * conversation's lease with the new conversation's tokens — a lease it never
+   * acquired — while rendering "You have control" over it.
+   *
+   * It does NOT release the previous conversation's lease. Letting that one
+   * park is the documented behaviour (see the note at the top of this file):
+   * a lease that stops being heartbeaten parks rather than frees, precisely so
+   * an agent cannot resume underneath somebody who walked away mid-login.
+   * Freeing it here would trade a deliberate "stuck" for exactly the
+   * "surprising" this panel is built to avoid.
+   */
+  const identityRef = useRef<string | undefined>(sessionId);
+  useEffect(() => {
+    if (identityRef.current === sessionId) return;
+    identityRef.current = sessionId;
+    setSession(null);
+    setHolding(false);
+    setBusy(false);
+    setError(null);
+  }, [sessionId]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
