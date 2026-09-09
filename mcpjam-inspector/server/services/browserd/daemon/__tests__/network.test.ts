@@ -65,6 +65,18 @@ describe("retainHeaders", () => {
     }
   });
 
+  it("SANITIZES `location`, which is a URL and the one that carries the secret", () => {
+    // Review catch. `location` was retained verbatim, so an OAuth hop handed
+    // back `?code=…&state=…` — exactly what stripping the query off `url`
+    // exists to remove, arriving one field over. A reset link is the same
+    // shape.
+    const kept = retainHeaders({
+      location: "https://idp.test/cb?code=SECRET&state=xyz#tok=also-secret",
+    });
+    expect(kept!.location).toBe("https://idp.test/cb");
+    expect(JSON.stringify(kept)).not.toContain("SECRET");
+  });
+
   it("bounds a header value", () => {
     const kept = retainHeaders({ "content-type": "x".repeat(2_000) });
     expect(kept!["content-type"]!.length).toBeLessThanOrEqual(512);

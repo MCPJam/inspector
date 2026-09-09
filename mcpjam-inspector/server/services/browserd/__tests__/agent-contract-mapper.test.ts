@@ -173,6 +173,42 @@ describe("publishedOpFor — the reverse exhaustive check", () => {
   });
 });
 
+describe("toAgentPage — the dialog note reaches the agent surface", () => {
+  it("carries what was decided about a dialog, fenced", () => {
+    // Review catch: the daemon recorded it and this mapper dropped it, so the
+    // agent surface lost the one fact that explains a click which appears to
+    // have done nothing — the page asked, and it was cancelled.
+    const page = toAgentPage({
+      output: {
+        url: "https://x.test",
+        dialog: {
+          kind: "confirm",
+          message: "Delete this account?",
+          choice: "dismissed",
+          auto: true,
+        },
+      },
+      stateToken: TOKEN,
+    })!;
+    expect(page.pageContent.dialog).toMatchObject({
+      kind: "confirm",
+      message: "Delete this account?",
+      choice: "dismissed",
+    });
+    // Inside the fence, because the message is the page's own words.
+    expect(page.pageContent.untrusted).toBe(true);
+  });
+
+  it("ignores a `dialog` that is not the daemon's note", () => {
+    // The key could otherwise be claimed by a page-shaped payload.
+    const page = toAgentPage({
+      output: { url: "https://x.test", dialog: "not a note" },
+      stateToken: TOKEN,
+    })!;
+    expect(page.pageContent.dialog).toBeUndefined();
+  });
+});
+
 describe("toAgentPage — the untrusted fence on the structured half", () => {
   it("puts everything the page wrote under one marked key", () => {
     const page = toAgentPage({

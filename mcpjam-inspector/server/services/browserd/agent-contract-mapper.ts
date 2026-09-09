@@ -77,11 +77,24 @@ const OBSERVATION_KEYS = [
   "dom",
   "console",
   "network",
+  "dialog",
   "tools",
   "screenshot",
   "result",
   "refs",
 ] as const;
+
+/** Is this the daemon's dialog note, rather than something a page named? */
+function isDialogNote(
+  value: unknown,
+): value is NonNullable<BrowserAgentPageContent["dialog"]> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { kind?: unknown }).kind === "string" &&
+    typeof (value as { message?: unknown }).message === "string"
+  );
+}
 
 /** A command the contract will not hand to the daemon. */
 export interface ContractRefusal {
@@ -365,6 +378,9 @@ export function toAgentPage(
   if (Array.isArray(output?.network)) {
     pageContent.network = output.network as BrowserAgentPageContent["network"];
   }
+  // The explanation for a click that looks like it did nothing. Recorded by
+  // the daemon and, until this line, dropped on the way out.
+  if (isDialogNote(output?.dialog)) pageContent.dialog = output.dialog;
   if (output?.tools !== undefined) pageContent.pageTools = output.tools;
   if (output?.result !== undefined) pageContent.invocation = output.result;
   // Inside the fence: an accessible name is text the page chose, and a

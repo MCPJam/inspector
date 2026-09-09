@@ -652,7 +652,22 @@ export class ChromiumDriver implements BrowserDriver {
       // live entry, and `dispatchVerb` is handed a page. Throws `ActError`, so
       // the classifier below reports `stale_ref` / `unknown_ref` as themselves
       // rather than matching prose and landing on `act_failed`.
-      const refNode = await this.resolveActRef(tabId, entry, action.target);
+      const refNode = await this.resolveActRef(
+        tabId,
+        entry,
+        action.target,
+        permit,
+      );
+      // AND THE LEASE AGAIN, because resolving a ref is several awaits: a
+      // node lookup, sometimes a whole AX tree re-read for the recovery, then
+      // a scroll and a box measurement. The check above was the last word only
+      // while nothing yielded between it and the click; it no longer is.
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser while its target was being " +
+            "resolved; nothing was run and nothing was observed",
+        );
+      }
       await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
@@ -718,7 +733,42 @@ export class ChromiumDriver implements BrowserDriver {
     // before this line, and settling against a blocked renderer burns the full
     // 10s budget to report a page "unsettled" — which is true and useless.
     // Answered here so the settle below runs against a page that is running.
-    await this.answerOrRefuseDialog(tabId, action, permit, source);
+    const stillBlocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      source,
+    );
+    if (stillBlocked) {
+      // The dialog was NOT answered — a person raised it with their own
+      // command, and it is theirs. Returning here rather than pressing on is
+      // the whole point: the settle and the capture below would each spend
+      // their full budget against a stopped renderer and then describe the
+      // frame from before the dialog, which reads as an action that quietly
+      // did nothing.
+      //
+      // `ok: true`, because the act RAN. The refusal shape would promise that
+      // nothing did, and a caller told that would do it again.
+      const pending = entry.page.pendingDialog?.();
+      return {
+        ok: true,
+        settled: false,
+        output: {
+          ...(pending
+            ? {
+                dialog: {
+                  kind: pending.kind,
+                  message: pending.message,
+                  pending: true,
+                },
+              }
+            : {}),
+          note:
+            "the action ran and the page is now blocked on a dialog; it is " +
+            "waiting for whoever holds this browser to answer it",
+        },
+      };
+    }
     const settled = await this.settle(page);
     const observed = await this.afterAct(
       tabId,
@@ -764,6 +814,7 @@ export class ChromiumDriver implements BrowserDriver {
     tabId: string,
     entry: TabEntry,
     target: BrowserActTarget | undefined,
+    permit: () => boolean = () => true,
   ): Promise<ResolvedRefNode | undefined> {
     if (!target || !("a11yRef" in target)) return undefined;
     const raw = target.a11yRef;
@@ -795,7 +846,10 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     try {
-      return await resolveRefNode(cdp, parsed!, known);
+      // The recovery path RE-READS THE PAGE's accessibility tree, which is an
+      // observation — and the lease forbids observing as firmly as it forbids
+      // acting. Asked here because the lookup above is an await.
+      return await resolveRefNode(cdp, parsed!, known, permit);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
@@ -904,9 +958,16 @@ export class ChromiumDriver implements BrowserDriver {
     switch (action.verb) {
       case "click":
         if (refNode) {
-          return page.clickAt(
-            await this.pointForRef(page, refNode, refLabel, "occlusion"),
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion",
           );
+          // IMMEDIATELY BEFORE THE WRITE. Measuring the target is three round
+          // trips, and a person can take the browser inside them.
+          stillOurs();
+          return page.clickAt(at);
         }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
@@ -915,9 +976,14 @@ export class ChromiumDriver implements BrowserDriver {
         );
       case "hover":
         if (refNode) {
-          return page.hoverAt(
-            await this.pointForRef(page, refNode, refLabel, "occlusion"),
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion",
           );
+          stillOurs();
+          return page.hoverAt(at);
         }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
@@ -978,7 +1044,10 @@ export class ChromiumDriver implements BrowserDriver {
         // happened to be — the difference between Enter submitting the form
         // the model meant and Enter submitting whatever it clicked last.
         if (refNode) {
-          await focusBackendNodeId(await needCdp(), refNode.backendNodeId);
+          const cdp = await needCdp();
+          stillOurs();
+          await focusBackendNodeId(cdp, refNode.backendNodeId);
+          stillOurs();
         }
         return page.press(action.value);
       case "scroll": {
@@ -991,6 +1060,7 @@ export class ChromiumDriver implements BrowserDriver {
         const from = refNode
           ? await this.pointForRef(page, refNode, refLabel, "occlusion")
           : point;
+        if (refNode) stillOurs();
         if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
@@ -1014,8 +1084,10 @@ export class ChromiumDriver implements BrowserDriver {
           throw new Error("select needs the option value in `value`");
         }
         if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
           return selectOptionOnNode(
-            await needCdp(),
+            cdp,
             refNode.backendNodeId,
             action.value,
             refLabel,

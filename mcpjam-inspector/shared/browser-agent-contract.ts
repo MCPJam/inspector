@@ -220,6 +220,27 @@ export interface BrowserAgentPageContent {
    * path is as good a place to address a model as a tool description is.
    */
   network?: Array<Record<string, unknown>>;
+  /**
+   * A JavaScript dialog the page raised, and what was decided about it.
+   *
+   * The explanation for a click that appears to have done nothing: the page
+   * asked, and — with nobody to ask on the agent's behalf — the answer was
+   * `cancelled`. Without this the agent surface loses the one fact that makes
+   * that result legible, even though the daemon recorded it.
+   *
+   * Inside the fence: `message` is the page's own words, written for a person
+   * to read, which makes it as good a place to address a model as a tool
+   * description is.
+   */
+  dialog?: {
+    kind: string;
+    message: string;
+    choice?: "accepted" | "dismissed";
+    /** The choice was made for the agent, not by a person. */
+    auto?: true;
+    /** Still open, and waiting for whoever holds the browser. */
+    pending?: true;
+  };
   /** WebMCP tools this page offers. */
   pageTools?: unknown;
   /** A WebMCP invocation's own result. */

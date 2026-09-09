@@ -79,7 +79,15 @@ export function retainHeaders(
   const kept: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (RETAINED.has(lower)) kept[lower] = String(value).slice(0, 512);
+    if (!RETAINED.has(lower)) continue;
+    // `location` IS A URL, and the one place a redirect puts its secrets: an
+    // OAuth hop carries `?code=…&state=…`, a reset link carries its token.
+    // Keeping it verbatim would have handed back exactly what stripping the
+    // query off `url` exists to remove — the same value, one field over.
+    kept[lower] =
+      lower === "location"
+        ? sanitizeNetworkUrl(String(value))
+        : String(value).slice(0, 512);
   }
   return Object.keys(kept).length > 0 ? kept : undefined;
 }

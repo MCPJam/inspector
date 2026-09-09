@@ -3011,7 +3011,8 @@ function retainHeaders(headers) {
   const kept = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (RETAINED.has(lower)) kept[lower] = String(value).slice(0, 512);
+    if (!RETAINED.has(lower)) continue;
+    kept[lower] = lower === "location" ? sanitizeNetworkUrl(String(value)) : String(value).slice(0, 512);
   }
   return Object.keys(kept).length > 0 ? kept : void 0;
 }
@@ -3255,11 +3256,13 @@ async function pointForBackendNodeId(cdp, backendNodeId, label) {
     y: Math.round(ys.reduce((a, b) => a + b, 0) / 4)
   };
 }
-async function resolveRefNode(cdp, ref, entry) {
+async function resolveRefNode(cdp, ref, entry, guard = () => {
+}) {
   const known = entry.backendDOMNodeId;
   if (known !== void 0 && await nodeResolves(cdp, known)) {
     return { backendNodeId: known, recovered: false };
   }
+  guard();
   const recovered = await findByRoleAndName(cdp, entry);
   if (recovered !== void 0) {
     return { backendNodeId: recovered, recovered: true };
@@ -3302,7 +3305,8 @@ function describeEntry(entry) {
 async function focusBackendNodeId(cdp, backendNodeId) {
   await cdp.send("DOM.focus", { backendNodeId });
 }
-async function replaceTextInNode(cdp, backendNodeId, text) {
+async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
+}) {
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
   if (objectId) {
@@ -3323,6 +3327,7 @@ async function replaceTextInNode(cdp, backendNodeId, text) {
     }).catch(() => {
     });
   }
+  guard();
   await cdp.send("Input.insertText", { text });
 }
 async function selectOptionOnNode(cdp, backendNodeId, value, label) {
@@ -5165,7 +5170,17 @@ var ChromiumDriver = class {
       );
     }
     try {
-      const refNode = await this.resolveActRef(tabId, entry, action.target);
+      const refNode = await this.resolveActRef(
+        tabId,
+        entry,
+        action.target,
+        permit
+      );
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser while its target was being resolved; nothing was run and nothing was observed"
+        );
+      }
       await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
       if (error instanceof LeaseTakenMidAct) {
@@ -5191,7 +5206,29 @@ var ChromiumDriver = class {
         } : {}
       };
     }
-    await this.answerOrRefuseDialog(tabId, action, permit, source);
+    const stillBlocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      source
+    );
+    if (stillBlocked) {
+      const pending = entry.page.pendingDialog?.();
+      return {
+        ok: true,
+        settled: false,
+        output: {
+          ...pending ? {
+            dialog: {
+              kind: pending.kind,
+              message: pending.message,
+              pending: true
+            }
+          } : {},
+          note: "the action ran and the page is now blocked on a dialog; it is waiting for whoever holds this browser to answer it"
+        }
+      };
+    }
     const settled = await this.settle(page);
     const observed = await this.afterAct(
       tabId,
@@ -5227,7 +5264,7 @@ var ChromiumDriver = class {
    *   - `stale_ref` again when the id is dead AND no node still carries that
    *     exact role and name (`resolveRefNode` does the recovery).
    */
-  async resolveActRef(tabId, entry, target) {
+  async resolveActRef(tabId, entry, target, permit = () => true) {
     if (!target || !("a11yRef" in target)) return void 0;
     const raw = target.a11yRef;
     const map = this.refs.get(tabId);
@@ -5254,7 +5291,7 @@ var ChromiumDriver = class {
       );
     }
     try {
-      return await resolveRefNode(cdp, parsed, known);
+      return await resolveRefNode(cdp, parsed, known, permit);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
@@ -5326,9 +5363,14 @@ var ChromiumDriver = class {
     switch (action.verb) {
       case "click":
         if (refNode) {
-          return page.clickAt(
-            await this.pointForRef(page, refNode, refLabel, "occlusion")
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion"
           );
+          stillOurs();
+          return page.clickAt(at);
         }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
@@ -5337,9 +5379,14 @@ var ChromiumDriver = class {
         );
       case "hover":
         if (refNode) {
-          return page.hoverAt(
-            await this.pointForRef(page, refNode, refLabel, "occlusion")
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion"
           );
+          stillOurs();
+          return page.hoverAt(at);
         }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
@@ -5381,7 +5428,10 @@ var ChromiumDriver = class {
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
         if (refNode) {
-          await focusBackendNodeId(await needCdp(), refNode.backendNodeId);
+          const cdp = await needCdp();
+          stillOurs();
+          await focusBackendNodeId(cdp, refNode.backendNodeId);
+          stillOurs();
         }
         return page.press(action.value);
       case "scroll": {
@@ -5390,6 +5440,7 @@ var ChromiumDriver = class {
       }
       case "drag": {
         const from = refNode ? await this.pointForRef(page, refNode, refLabel, "occlusion") : point;
+        if (refNode) stillOurs();
         if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
@@ -5409,8 +5460,10 @@ var ChromiumDriver = class {
           throw new Error("select needs the option value in `value`");
         }
         if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
           return selectOptionOnNode(
-            await needCdp(),
+            cdp,
             refNode.backendNodeId,
             action.value,
             refLabel

@@ -108,11 +108,21 @@ export async function resolveRefNode(
   cdp: CdpLike,
   ref: string,
   entry: RefEntry,
+  /**
+   * Asked before the recovery re-reads the page.
+   *
+   * Reading a page is an observation, and the lease forbids observing as
+   * firmly as it forbids acting — so a handoff landing inside the node lookup
+   * must stop the tree read that would otherwise follow it. Throws, which the
+   * driver classifies as the lease refusal.
+   */
+  guard: () => void = () => {},
 ): Promise<ResolvedRefNode> {
   const known = entry.backendDOMNodeId;
   if (known !== undefined && (await nodeResolves(cdp, known))) {
     return { backendNodeId: known, recovered: false };
   }
+  guard();
   const recovered = await findByRoleAndName(cdp, entry);
   if (recovered !== undefined) {
     return { backendNodeId: recovered, recovered: true };
@@ -206,6 +216,8 @@ export async function replaceTextInNode(
   cdp: CdpLike,
   backendNodeId: number,
   text: string,
+  /** Asked immediately before the keystrokes land. See `resolveRefNode`. */
+  guard: () => void = () => {},
 ): Promise<void> {
   await focusBackendNodeId(cdp, backendNodeId);
   const objectId = await resolveObjectId(cdp, backendNodeId);
@@ -228,6 +240,10 @@ export async function replaceTextInNode(
       })
       .catch(() => {});
   }
+  // THE LAST WORD BEFORE THE TEXT LANDS. Focusing and selecting are awaits,
+  // and what is on the other side of them is an agent's keystrokes going into
+  // a page somebody else now has their hands on.
+  guard();
   // Insert even when the selection could not be cleared: typing into a field
   // that kept its old value is a visibly wrong result the model can see and
   // correct, and silently doing nothing is not.

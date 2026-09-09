@@ -4203,3 +4203,85 @@ describe("ChromiumDriver — observing the network", () => {
     expect((res.output as { network: unknown[] }).network).toEqual([]);
   });
 });
+
+/**
+ * Review catches — the two windows the ref and dialog work opened.
+ *
+ * Both are the same shape of mistake: a new `await` between the last check and
+ * the thing the check was protecting. Worth their own block because the
+ * guarantee they restore is the one the whole handoff design rests on.
+ */
+describe("ChromiumDriver — the lease across the awaits refs added", () => {
+  it("does NOT click when a person takes the browser during ref resolution", async () => {
+    // Resolving a ref is a node lookup, sometimes a whole AX tree re-read, a
+    // scroll and a box measurement. The permit check used to be the last word
+    // only because nothing yielded between it and the click; these awaits
+    // changed that, and a person taking control inside them would have got the
+    // agent's click in their own browser a beat later.
+    const lease = new HandoffLease();
+    let resolves = 0;
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "Sign in", id: 41 }],
+        }),
+        "DOM.resolveNode": { object: { objectId: "obj-1" } },
+        "DOM.getBoxModel": () => {
+          // The handoff lands while the target is being MEASURED — after the
+          // node resolved and before the click goes out, which is the window
+          // that had no check in it.
+          resolves += 1;
+          lease.acquire("someone-else");
+          return { model: { content: [80, 40, 120, 40, 120, 60, 80, 60] } };
+        },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: "e1" } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.leaseBlocked).toBe(true);
+    // The whole point: nothing reached the page.
+    expect(page.calls.acts).not.toContain("click:100,50");
+  });
+
+  it("REPORTS a dialog the act raised rather than settling through it", async () => {
+    // A person's own click raising `confirm()`. Their dialog, so it is not
+    // answered — and the settle and capture that used to follow would each
+    // spend their full budget against a stopped renderer and then describe the
+    // frame from before, which reads as an action that quietly did nothing.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://x.test/",
+      dialogOnAct: { kind: "confirm", message: "Delete this account?", at: 1 },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("holder");
+
+    const res = await driver.execute({
+      commandId: "c-manual",
+      source: "manual",
+      holder: "holder",
+      action: { kind: "act", verb: "click", target: { coordinates: [5, 6] } },
+    });
+    // The act RAN, so this is not a refusal — a caller told nothing happened
+    // would do it again.
+    expect(res.ok).toBe(true);
+    expect(res.settled).toBe(false);
+    expect(page.calls.acts).toContain("click:5,6");
+    // Unanswered, and named.
+    expect(page.dialogAnswers).toEqual([]);
+    expect(res.output).toMatchObject({
+      dialog: { kind: "confirm", pending: true },
+    });
+  });
+});
