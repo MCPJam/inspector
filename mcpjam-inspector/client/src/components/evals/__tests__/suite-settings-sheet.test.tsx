@@ -191,22 +191,28 @@ describe("nothing is written until the person says so", () => {
   });
 });
 
-describe("stage checks", () => {
-  it("saves a stage-check change directly", async () => {
+describe("adding a scorer", () => {
+  it("Add scorer appends a check and the sheet keeps rendering", async () => {
+    // Restored with the scorer table. The test that displaced it asserted the
+    // sheet sent `disabledStageChecks` — an argument `applySuiteSettings` has
+    // never declared — against a mock that validates nothing, so it certified
+    // a save that throws in production.
+    //
+    // The regression THIS covers is real: the menu passes an UPDATER, and a
+    // setter that stored it verbatim put a function where a list belongs.
+    // Everything that iterates `defaultPredicates` then threw, taking the
+    // sheet down.
     const user = userEvent.setup();
-    renderSettingsSheet();
-    await user.click(
-      screen.getByRole("checkbox", { name: "Description quality" }),
-    );
-    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() =>
-      expect(mocks.applySuiteSettings).toHaveBeenCalledTimes(1),
-    );
-    expect(mocks.applySuiteSettings.mock.calls[0][0]).toMatchObject({
-      disabledStageChecks: ["discovery.description"],
-      revision: { source: "ui" },
-    });
+    const { container } = renderSettingsSheet();
+    openSettingsRow(container, "checks");
+
+    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(await screen.findByTestId("add-scorer-noToolErrors"));
+
+    // Still standing, and the edit registered as one drafted change.
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
+    openSettingsRow(container, "name");
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
   });
 });
 

@@ -68,6 +68,17 @@ var BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /**
+   * Something is on top of the target at its click point, so the input would
+   * land on that element instead. The detail names the covering element.
+   *
+   * Its own code because the recovery is specific and the model can perform
+   * it: dismiss the banner or the modal, then retry the original target. A
+   * click that silently hit the overlay reports success, and a bare
+   * `act_failed` sends the model back to re-observe a page that has not
+   * changed.
+   */
+  "target_covered",
   /** A ref this tab's last observation never issued. */
   "unknown_ref",
   /** The page could not answer an accessibility tree at all. */
@@ -3036,6 +3047,471 @@ function createVideoEncoder(options) {
   };
 }
 
+// server/services/browserd/daemon/network.ts
+var RETAINED_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "cache-control",
+  "location",
+  "date",
+  "server",
+  "via",
+  "retry-after",
+  "x-request-id",
+  "x-trace-id",
+  "traceparent"
+];
+var RETAINED = new Set(RETAINED_HEADERS);
+function retainHeaders(headers) {
+  if (!headers) return void 0;
+  const kept = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (!RETAINED.has(lower)) continue;
+    kept[lower] = lower === "location" ? sanitizeNetworkUrl(String(value)) : String(value).slice(0, 512);
+  }
+  return Object.keys(kept).length > 0 ? kept : void 0;
+}
+function sanitizeNetworkUrl(raw) {
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "data:" || url.protocol === "blob:") {
+      return `${url.protocol}\u2026`;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return raw.slice(0, 200);
+  }
+}
+var NETWORK_RING_SIZE = 200;
+var DEFAULT_NETWORK_BUDGET = { maxEntries: 50 };
+function capNetwork(entries, budget = DEFAULT_NETWORK_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
+  return {
+    entries: kept.map((entry) => ({ ...entry })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+var NetworkRing = class {
+  constructor(size = NETWORK_RING_SIZE) {
+    this.size = size;
+  }
+  order = [];
+  byId = /* @__PURE__ */ new Map();
+  total = 0;
+  started(entry) {
+    const existing = this.byId.get(entry.requestId);
+    if (existing) {
+      existing.url = sanitizeNetworkUrl(entry.url);
+      existing.method = entry.method;
+      return;
+    }
+    const row = {
+      requestId: entry.requestId,
+      method: entry.method,
+      url: sanitizeNetworkUrl(entry.url),
+      ...entry.resourceType ? { resourceType: entry.resourceType } : {},
+      at: Date.now()
+    };
+    this.byId.set(row.requestId, row);
+    this.order.push(row.requestId);
+    this.total += 1;
+    while (this.order.length > this.size) {
+      const evicted = this.order.shift();
+      if (evicted !== void 0) this.byId.delete(evicted);
+    }
+  }
+  finished(update) {
+    const row = this.byId.get(update.requestId);
+    if (!row) return;
+    if (update.status !== void 0) row.status = update.status;
+    if (update.statusText) row.statusText = update.statusText;
+    if (update.mimeType) row.mimeType = update.mimeType;
+    if (update.bytes !== void 0) row.bytes = update.bytes;
+    if (update.failure) row.failure = update.failure;
+    const headers = retainHeaders(update.headers);
+    if (headers) row.headers = headers;
+    row.durationMs = Math.max(0, Date.now() - row.at);
+  }
+  entries() {
+    return this.order.map((id) => this.byId.get(id)).filter((row) => row !== void 0);
+  }
+  get(requestId) {
+    return this.byId.get(requestId);
+  }
+  /** Monotonic across eviction AND purge, exactly like the console cursor. */
+  count() {
+    return this.total;
+  }
+  /**
+   * Drop everything captured at or after `since`.
+   *
+   * The handoff purge. The ring fills from an eager listener that knows
+   * nothing about the lease, so the requests a person's own signing-in
+   * produced — the login POST, the token refresh, the URLs they visited —
+   * would otherwise be readable by the agent the instant they hand back. The
+   * console has had this from the start; a ring of URLs needs it at least as
+   * much.
+   */
+  dropSince(since) {
+    for (const id of [...this.order]) {
+      const row = this.byId.get(id);
+      if (row && row.at >= since) {
+        this.byId.delete(id);
+        this.order.splice(this.order.indexOf(id), 1);
+      }
+    }
+  }
+};
+
+// server/services/browserd/daemon/dialogs.ts
+function agentDefaultAccepts(kind) {
+  return kind === "beforeunload";
+}
+function safeUnderDialog(action) {
+  if (action.kind === "observe") {
+    return action.mode === "screenshot" || action.mode === "url" || action.mode === "console" || action.mode === "network" || // Reading the dialog is how a caller learns what it is deciding about.
+    action.mode === "dialog" || action.mode === "webmcp_revision";
+  }
+  if (action.kind === "act") {
+    return action.verb === "close_tab" || action.verb === "activate_tab" || // ANSWERING it is the one act that must always get through: it is the
+    // thing that unblocks the page, and refusing it because a dialog is open
+    // would be the deadlock this whole file exists to prevent.
+    action.verb === "accept_dialog" || action.verb === "dismiss_dialog";
+  }
+  return false;
+}
+function dialogRefusal(dialog) {
+  const quoted = dialog.message ? `: "${dialog.message}"` : "";
+  return `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page${quoted}. The page cannot be read or acted on until it is answered \u2014 answer it with \`accept_dialog\` or \`dismiss_dialog\`, hand the browser back so a person can, or close the tab.`;
+}
+
+// server/services/browserd/daemon/cdp-a11y.ts
+var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
+  "generic",
+  "none",
+  "presentation",
+  "InlineTextBox",
+  "LineBreak",
+  "StaticText"
+]);
+var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
+var CARRIED_PROPERTIES = {
+  checked: "checked",
+  disabled: "disabled",
+  expanded: "expanded",
+  focused: "focused",
+  level: "level",
+  pressed: "pressed",
+  readonly: "readonly",
+  required: "required",
+  selected: "selected",
+  url: "url",
+  valuemin: "valueMin",
+  valuemax: "valueMax",
+  valuetext: "valueText"
+};
+function scalar(value) {
+  const raw = value?.value;
+  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
+  if (typeof raw === "number") return raw;
+  return void 0;
+}
+async function readAxTree(cdp, rootBackendNodeId) {
+  try {
+    await cdp.send("Accessibility.enable");
+    const response = await cdp.send("Accessibility.getFullAXTree");
+    const nodes = response?.nodes;
+    if (!nodes || nodes.length === 0) return { ok: false };
+    const byId = /* @__PURE__ */ new Map();
+    for (const node of nodes) byId.set(node.nodeId, node);
+    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
+    if (!root) return { ok: true, tree: null };
+    const seen = /* @__PURE__ */ new Set();
+    const built = build(root, byId, seen);
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+function build(node, byId, seen) {
+  if (seen.has(node.nodeId)) return [];
+  seen.add(node.nodeId);
+  const children = [];
+  for (const childId of node.childIds ?? []) {
+    const child = byId.get(childId);
+    if (child) children.push(...build(child, byId, seen));
+  }
+  const role = scalar(node.role);
+  const name = scalar(node.name);
+  if (node.ignored) return children;
+  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
+    if (role === "StaticText" && typeof name === "string") {
+      return [{ role: "text", name }];
+    }
+    return children;
+  }
+  const built = {};
+  if (typeof role === "string") built.role = role;
+  if (typeof node.backendDOMNodeId === "number") {
+    built.backendDOMNodeId = node.backendDOMNodeId;
+  }
+  if (name !== void 0) built.name = String(name);
+  const value = scalar(node.value);
+  if (value !== void 0) built.value = value;
+  const description = scalar(node.description);
+  if (description !== void 0) built.description = String(description);
+  for (const property of node.properties ?? []) {
+    const key = property.name && CARRIED_PROPERTIES[property.name];
+    if (!key) continue;
+    const raw = property.value?.value;
+    if (raw === void 0 || raw === null || raw === "") continue;
+    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
+  }
+  if (children.length > 0) built.children = children;
+  return [built];
+}
+async function resolveBackendNodeId(cdp, selector) {
+  try {
+    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
+    const rootNodeId = doc?.root?.nodeId;
+    if (rootNodeId === void 0) return null;
+    const found = await cdp.send("DOM.querySelector", {
+      nodeId: rootNodeId,
+      selector
+    });
+    if (!found?.nodeId) return null;
+    const described = await cdp.send("DOM.describeNode", {
+      nodeId: found.nodeId
+    });
+    return described?.node?.backendNodeId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// server/services/browserd/daemon/node-target.ts
+async function pointForBackendNodeId(cdp, backendNodeId, label) {
+  await cdp.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {
+  });
+  const box = await cdp.send("DOM.getBoxModel", { backendNodeId }).catch(() => void 0);
+  const quad = box?.model?.content;
+  if (!quad || quad.length < 8) {
+    throw new Error(
+      `target_not_found: ${label} is on the page but has no visible box to aim at (it may be hidden or collapsed); observe again and pick a target that is showing`
+    );
+  }
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  return {
+    x: Math.round(xs.reduce((a, b) => a + b, 0) / 4),
+    y: Math.round(ys.reduce((a, b) => a + b, 0) / 4)
+  };
+}
+async function resolveRefNode(cdp, ref, entry, guard = () => {
+}) {
+  const known = entry.backendDOMNodeId;
+  if (known !== void 0 && await nodeResolves(cdp, known)) {
+    return { backendNodeId: known, recovered: false };
+  }
+  guard();
+  const recovered = await findByRoleAndName(cdp, entry);
+  if (recovered !== void 0) {
+    return { backendNodeId: recovered, recovered: true };
+  }
+  throw new Error(
+    `stale_ref: ${ref} pointed at ${describeEntry(entry)}, which is no longer on this page; observe again and use a ref from the new tree`
+  );
+}
+async function nodeResolves(cdp, backendNodeId) {
+  return cdp.send("DOM.describeNode", { backendNodeId }).then(
+    () => true,
+    () => false
+  );
+}
+async function findByRoleAndName(cdp, entry) {
+  const read = await readAxTree(cdp);
+  if (!read.ok || !read.tree) return void 0;
+  const wanted = entry.nth ?? 0;
+  let seen = 0;
+  let found;
+  const stack = [read.tree];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.role === entry.role && (typeof node.name === "string" ? node.name : "") === entry.name && typeof node.backendDOMNodeId === "number") {
+      if (seen === wanted) {
+        found = node.backendDOMNodeId;
+        break;
+      }
+      seen += 1;
+    }
+    const children = node.children ?? [];
+    for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
+  }
+  return found;
+}
+function describeEntry(entry) {
+  const name = entry.name ? ` "${entry.name}"` : "";
+  return `${entry.role}${name}`;
+}
+async function focusBackendNodeId(cdp, backendNodeId) {
+  await cdp.send("DOM.focus", { backendNodeId });
+}
+async function replaceTextInNode(cdp, backendNodeId, text, guard = () => {
+}) {
+  await focusBackendNodeId(cdp, backendNodeId);
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (objectId) {
+    await cdp.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function () {
+          if (typeof this.select === "function") { this.select(); return; }
+          const doc = this.ownerDocument;
+          const view = doc && doc.defaultView;
+          if (!view || !doc.createRange) return;
+          const range = doc.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (!selection) return;
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }`
+    }).catch(() => {
+    });
+  }
+  guard();
+  await cdp.send("Input.insertText", { text });
+}
+async function selectOptionOnNode(cdp, backendNodeId, value, label) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) {
+    throw new Error(
+      `target_not_found: ${label} could not be resolved to select an option`
+    );
+  }
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value }],
+    functionDeclaration: `function (wanted) {
+      if (this.tagName !== "SELECT") return "not_select";
+      const options = Array.from(this.options || []);
+      const match =
+        options.find((o) => o.value === wanted) ||
+        options.find((o) => (o.label || o.textContent || "").trim() === wanted);
+      if (!match) {
+        return "no_option:" + options
+          .slice(0, 12)
+          .map((o) => (o.label || o.textContent || "").trim())
+          .join(", ");
+      }
+      this.value = match.value;
+      this.dispatchEvent(new Event("input", { bubbles: true }));
+      this.dispatchEvent(new Event("change", { bubbles: true }));
+      return "ok";
+    }`
+  });
+  const answer = outcome?.result?.value ?? "";
+  if (answer === "ok") return;
+  if (answer === "not_select") {
+    throw new Error(
+      `target_not_found: ${label} is not a <select>; use click or type instead`
+    );
+  }
+  const offered = answer.startsWith("no_option:") ? answer.slice(10) : "";
+  throw new Error(
+    `target_not_found: ${label} has no option matching "${value}"` + (offered ? `; it offers: ${offered}` : "")
+  );
+}
+async function coveringElementAt(cdp, backendNodeId) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) return null;
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+        const el = this;
+        const doc = el.ownerDocument;
+        if (!doc || typeof doc.elementFromPoint !== "function") return null;
+        const rect = el.getBoundingClientRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return null;
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        let hit = doc.elementFromPoint(x, y);
+        if (!hit) return null;
+        // Shadow roots answer for their host, so descend to what a click
+        // would really reach.
+        let guard = 0;
+        while (hit.shadowRoot && guard < 32) {
+          const inner = hit.shadowRoot.elementFromPoint(x, y);
+          if (!inner || inner === hit) break;
+          hit = inner;
+          guard += 1;
+        }
+        // Walk upward THROUGH shadow boundaries: a node inside a shadow root
+        // has the root as its parent, and the root's host is the next element.
+        const up = (n) => {
+          const p = n.parentNode;
+          if (!p) return null;
+          return p.nodeType === 11 && p.host ? p.host : p;
+        };
+        const reaches = (from, to) => {
+          let n = from;
+          let steps = 0;
+          while (n && steps < 256) {
+            if (n === to) return true;
+            n = up(n);
+            steps += 1;
+          }
+          return false;
+        };
+        // The element itself, anything inside it, or anything it sits inside:
+        // in all three the click reaches the node the model named.
+        if (hit === el || reaches(hit, el) || reaches(el, hit)) return null;
+        // A label drives its own control, so a click on it is a click on this.
+        try {
+          if (hit.control === el || (hit.tagName === "LABEL" && reaches(el, hit))) return null;
+          const labels = el.labels ? Array.from(el.labels) : [];
+          if (labels.some((l) => l === hit || reaches(hit, l))) return null;
+        } catch (_) {}
+        const describe = (n) => {
+          if (!n || !n.tagName) return "another element";
+          const tag = n.tagName.toLowerCase();
+          if (n.id) return tag + "#" + n.id;
+          const cls = (n.className && typeof n.className === "string" ? n.className : "")
+            .trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          return cls.length ? tag + "." + cls.join(".") : tag;
+        };
+        let named = describe(hit);
+        // The nearest identified ancestor, which is usually what a person
+        // would call the thing ("inside div#cookie-banner").
+        let owner = up(hit);
+        let steps = 0;
+        while (owner && steps < 32) {
+          if (owner.id) { named += " inside " + describe(owner); break; }
+          owner = up(owner);
+          steps += 1;
+        }
+        return named.slice(0, 120);
+      }`
+  }).catch(() => void 0);
+  const value = outcome?.result?.value;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+async function resolveObjectId(cdp, backendNodeId) {
+  const resolved = await cdp.send("DOM.resolveNode", { backendNodeId }).catch(() => void 0);
+  return resolved?.object?.objectId;
+}
+
 // server/services/browserd/daemon/state-token.ts
 import { createHash } from "node:crypto";
 function shortHash(value) {
@@ -3291,114 +3767,6 @@ var PAGE_TEXT_FN = `() => {
 }`;
 var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
 var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
-
-// server/services/browserd/daemon/cdp-a11y.ts
-var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
-  "generic",
-  "none",
-  "presentation",
-  "InlineTextBox",
-  "LineBreak",
-  "StaticText"
-]);
-var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
-var CARRIED_PROPERTIES = {
-  checked: "checked",
-  disabled: "disabled",
-  expanded: "expanded",
-  focused: "focused",
-  level: "level",
-  pressed: "pressed",
-  readonly: "readonly",
-  required: "required",
-  selected: "selected",
-  url: "url",
-  valuemin: "valueMin",
-  valuemax: "valueMax",
-  valuetext: "valueText"
-};
-function scalar(value) {
-  const raw = value?.value;
-  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
-  if (typeof raw === "number") return raw;
-  return void 0;
-}
-async function readAxTree(cdp, rootBackendNodeId) {
-  try {
-    await cdp.send("Accessibility.enable");
-    const response = await cdp.send("Accessibility.getFullAXTree");
-    const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return { ok: false };
-    const byId = /* @__PURE__ */ new Map();
-    for (const node of nodes) byId.set(node.nodeId, node);
-    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
-    if (!root) return { ok: true, tree: null };
-    const seen = /* @__PURE__ */ new Set();
-    const built = build(root, byId, seen);
-    if (built.length === 0) return { ok: true, tree: null };
-    return {
-      ok: true,
-      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
-    };
-  } catch {
-    return { ok: false };
-  }
-}
-function build(node, byId, seen) {
-  if (seen.has(node.nodeId)) return [];
-  seen.add(node.nodeId);
-  const children = [];
-  for (const childId of node.childIds ?? []) {
-    const child = byId.get(childId);
-    if (child) children.push(...build(child, byId, seen));
-  }
-  const role = scalar(node.role);
-  const name = scalar(node.name);
-  if (node.ignored) return children;
-  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
-    if (role === "StaticText" && typeof name === "string") {
-      return [{ role: "text", name }];
-    }
-    return children;
-  }
-  const built = {};
-  if (typeof role === "string") built.role = role;
-  if (typeof node.backendDOMNodeId === "number") {
-    built.backendDOMNodeId = node.backendDOMNodeId;
-  }
-  if (name !== void 0) built.name = String(name);
-  const value = scalar(node.value);
-  if (value !== void 0) built.value = value;
-  const description = scalar(node.description);
-  if (description !== void 0) built.description = String(description);
-  for (const property of node.properties ?? []) {
-    const key = property.name && CARRIED_PROPERTIES[property.name];
-    if (!key) continue;
-    const raw = property.value?.value;
-    if (raw === void 0 || raw === null || raw === "") continue;
-    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
-  }
-  if (children.length > 0) built.children = children;
-  return [built];
-}
-async function resolveBackendNodeId(cdp, selector) {
-  try {
-    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
-    const rootNodeId = doc?.root?.nodeId;
-    if (rootNodeId === void 0) return null;
-    const found = await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector
-    });
-    if (!found?.nodeId) return null;
-    const described = await cdp.send("DOM.describeNode", {
-      nodeId: found.nodeId
-    });
-    return described?.node?.backendNodeId ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // server/services/browserd/daemon/a11y-refs.ts
 var INTERACTIVE_ROLES = /* @__PURE__ */ new Set([
@@ -4645,6 +5013,8 @@ var ChromiumDriver = class {
   settleOptions;
   a11yBudget;
   consoleBudget;
+  networkBudget;
+  dialogPolicy;
   webmcpOutputBudgetBytes;
   pageTextMaxBytes;
   lease;
@@ -4674,6 +5044,14 @@ var ChromiumDriver = class {
    * that minted them can tell the difference.
    */
   refs = /* @__PURE__ */ new Map();
+  /**
+   * What was decided about a dialog, waiting to ride the next observation.
+   *
+   * Carried rather than returned because the dialog is answered at the top of
+   * `execute`, before the command that will produce the result has run — the
+   * same shape as the handoff note, and read out in the same funnel.
+   */
+  dialogNotes = /* @__PURE__ */ new Map();
   /**
    * Tab creations already under way, by tabId.
    *
@@ -4731,12 +5109,14 @@ var ChromiumDriver = class {
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.dialogPolicy = options.dialogPolicy ?? "auto";
+    this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
   async execute(command) {
-    this.purgeHandoffConsole();
+    this.purgeHandoffRings();
     const permit = this.permitFor(command);
     if (!permit()) {
       return this.leaseBlockedResult(
@@ -4745,6 +5125,13 @@ var ChromiumDriver = class {
     }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
+    const blocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      command.source
+    );
+    if (blocked) return blocked;
     switch (action.kind) {
       case "navigate": {
         if (action.newTab) {
@@ -4797,7 +5184,7 @@ var ChromiumDriver = class {
       case "observe":
         return this.observe(tabId, action, permit);
       case "act":
-        return this.act(tabId, action, permit);
+        return this.act(tabId, action, permit, command.source);
       case "webmcp_invoke":
         return this.webmcpInvoke(tabId, action, permit, command.commandId);
       case "webmcp_cancel":
@@ -4820,7 +5207,7 @@ var ChromiumDriver = class {
    * L3 staleness is enforced upstream by `guardStaleness`, which compares the
    * act's `expectedState` before this runs.
    */
-  async act(tabId, action, permit) {
+  async act(tabId, action, permit, source) {
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -4831,6 +5218,36 @@ var ChromiumDriver = class {
       });
       await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
+      const pending = page.pendingDialog?.();
+      if (!pending) {
+        return {
+          ok: false,
+          error: formatBrowserdError(
+            "act_failed",
+            "there is no dialog open on this page to answer"
+          )
+        };
+      }
+      const accept = action.verb === "accept_dialog";
+      await page.resolveDialog?.(
+        accept,
+        accept && action.value !== void 0 ? action.value : void 0
+      );
+      this.dialogNotes.set(tabId, {
+        kind: pending.kind,
+        message: pending.message,
+        choice: accept ? "accepted" : "dismissed"
+      });
+      const settledAfter = await this.settle(page);
+      const observed2 = await this.afterAct(
+        tabId,
+        entry,
+        permit,
+        wantsFor(action.observe)
+      );
+      return observed2.ok ? { settled: settledAfter, ...observed2 } : observed2;
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
@@ -4846,7 +5263,18 @@ var ChromiumDriver = class {
       );
     }
     try {
-      await this.dispatchVerb(page, action, permit);
+      const refNode = await this.resolveActRef(
+        tabId,
+        entry,
+        action.target,
+        permit
+      );
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person took control of this browser while its target was being resolved; nothing was run and nothing was observed"
+        );
+      }
+      await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
       if (error instanceof LeaseTakenMidAct) {
         return this.leaseBlockedResult(
@@ -4871,6 +5299,29 @@ var ChromiumDriver = class {
         } : {}
       };
     }
+    const stillBlocked = await this.answerOrRefuseDialog(
+      tabId,
+      action,
+      permit,
+      source
+    );
+    if (stillBlocked) {
+      const pending = entry.page.pendingDialog?.();
+      return {
+        ok: true,
+        settled: false,
+        output: {
+          ...pending ? {
+            dialog: {
+              kind: pending.kind,
+              message: pending.message,
+              pending: true
+            }
+          } : {},
+          note: "the action ran and the page is now blocked on a dialog; it is waiting for whoever holds this browser to answer it"
+        }
+      };
+    }
     const settled = await this.settle(page);
     const observed = await this.afterAct(
       tabId,
@@ -4892,7 +5343,94 @@ var ChromiumDriver = class {
    * typed into it. The check is between steps because there is no way to take
    * back the ones already made.
    */
-  async dispatchVerb(page, action, permit = () => true) {
+  /**
+   * Turn an `a11yRef` target into a live node, or refuse in the model's terms.
+   *
+   * Three refusals, and they send the model three different places:
+   *
+   *   - `stale_ref` for a ref minted against a page this tab has since left.
+   *     Checked against the state token BEFORE anything is resolved, because a
+   *     backend node id is only unique within a document: a new page can reuse
+   *     the number, and resolving it would click a stranger with confidence.
+   *   - `unknown_ref` for a ref this tab's last observation never issued —
+   *     a model quoting a ref from an older turn, or inventing one.
+   *   - `stale_ref` again when the id is dead AND no node still carries that
+   *     exact role and name (`resolveRefNode` does the recovery).
+   */
+  async resolveActRef(tabId, entry, target, permit = () => true) {
+    if (!target || !("a11yRef" in target)) return void 0;
+    const raw = target.a11yRef;
+    const map = this.refs.get(tabId);
+    if (map && !this.refsStillDescribe(tabId, entry, map)) {
+      this.refs.delete(tabId);
+      throw new ActError(
+        "stale_ref",
+        `${raw} was issued for a page this tab has since left; observe again and use a ref from the new page`
+      );
+    }
+    const parsed = parseRef(raw);
+    const known = parsed ? map?.entries.get(parsed) : void 0;
+    if (!known) {
+      throw new ActError(
+        "unknown_ref",
+        `${raw} is not a ref from this tab's last observation; observe again and use a ref it names`
+      );
+    }
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates"
+      );
+    }
+    try {
+      return await resolveRefNode(cdp, parsed, known, permit);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
+    }
+  }
+  /**
+   * Where to aim for a resolved ref, refusing when something is on top of it.
+   *
+   * The occlusion check is HERE and not on the selector path because the two
+   * are not in the same position: Playwright's own actionability already
+   * refuses a selector click whose element cannot receive the event, which is
+   * why those fail as timeouts rather than landing somewhere else. A ref is
+   * clicked by coordinate, so nothing else is checking — and a coordinate that
+   * lands on a consent banner reports a click that "worked".
+   */
+  async pointForRef(page, refNode, label, check) {
+    const cdp = await page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates"
+      );
+    }
+    const point = await pointForBackendNodeId(
+      cdp,
+      refNode.backendNodeId,
+      label
+    );
+    if (!isPointInViewport(point.x, point.y)) {
+      throw new ActError(
+        "target_not_found",
+        `${label} is at (${point.x}, ${point.y}), outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} viewport even after scrolling; observe again to see where it is now`
+      );
+    }
+    if (check === "occlusion") {
+      const covering = await coveringElementAt(cdp, refNode.backendNodeId);
+      if (covering) {
+        throw new ActError(
+          "target_covered",
+          `${label} is covered by ${covering} at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header).`
+        );
+      }
+    }
+    return point;
+  }
+  async dispatchVerb(page, action, permit = () => true, refNode) {
     const stillOurs = () => {
       if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
     };
@@ -4904,23 +5442,55 @@ var ChromiumDriver = class {
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
-    if (target && "a11yRef" in target) {
-      throw new Error(
-        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector"
-      );
-    }
+    const refLabel = target && "a11yRef" in target ? target.a11yRef : "the target";
+    const needCdp = async () => {
+      const cdp = await page.cdp();
+      if (!cdp) {
+        throw new ActError(
+          "unsupported_target",
+          "this browser cannot resolve refs; use a selector or coordinates"
+        );
+      }
+      return cdp;
+    };
     switch (action.verb) {
       case "click":
+        if (refNode) {
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion"
+          );
+          stillOurs();
+          return page.clickAt(at);
+        }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
-        throw new Error("no element: click needs coordinates or a selector");
+        throw new Error(
+          "no element: click needs a ref, coordinates or a selector"
+        );
       case "hover":
+        if (refNode) {
+          const at = await this.pointForRef(
+            page,
+            refNode,
+            refLabel,
+            "occlusion"
+          );
+          stillOurs();
+          return page.hoverAt(at);
+        }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
-        throw new Error("no element: hover needs coordinates or a selector");
+        throw new Error(
+          "no element: hover needs a ref, coordinates or a selector"
+        );
       case "type": {
         const text = action.value ?? "";
-        if (selector) await page.fillSelector(selector, text);
+        if (refNode) {
+          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+        } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         if (action.submit) {
           stillOurs();
@@ -4950,13 +5520,21 @@ var ChromiumDriver = class {
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
+        if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
+          await focusBackendNodeId(cdp, refNode.backendNodeId);
+          stillOurs();
+        }
         return page.press(action.value);
       case "scroll": {
         const [dx, dy] = parseScrollDelta(action.value);
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
-        if (!point) throw new Error("drag needs start coordinates");
+        const from = refNode ? await this.pointForRef(page, refNode, refLabel, "occlusion") : point;
+        if (refNode) stillOurs();
+        if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
           throw new Error(
@@ -4968,13 +5546,23 @@ var ChromiumDriver = class {
             `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
           );
         }
-        return page.dragTo(point, to);
+        return page.dragTo(from, to);
       }
       case "select":
-        if (!selector) throw new Error("select needs a selector");
         if (action.value === void 0) {
           throw new Error("select needs the option value in `value`");
         }
+        if (refNode) {
+          const cdp = await needCdp();
+          stillOurs();
+          return selectOptionOnNode(
+            cdp,
+            refNode.backendNodeId,
+            action.value,
+            refLabel
+          );
+        }
+        if (!selector) throw new Error("select needs a ref or a selector");
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":
@@ -5305,6 +5893,54 @@ var ChromiumDriver = class {
         this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
+      case "dialog": {
+        const pending = entry.page.pendingDialog?.() ?? null;
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { dialog: pending },
+          frame,
+          permit
+        );
+      }
+      case "network": {
+        const all = entry.page.networkEntries?.();
+        if (!all) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "a11y_unavailable",
+              "this browser build does not record network requests"
+            )
+          };
+        }
+        if (action.requestId) {
+          const one = entry.page.networkEntries?.().find((row) => row.requestId === action.requestId);
+          const frame2 = await this.snapshot(entry.page);
+          return this.observation(
+            tabId,
+            entry,
+            one ? { network: [one] } : {
+              network: [],
+              // Named rather than left as an empty list: the ring is
+              // bounded, and "it scrolled off" is the answer.
+              omitted: 1
+            },
+            frame2,
+            permit
+          );
+        }
+        const { entries: rows, omitted } = capNetwork(all, this.networkBudget);
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { network: rows, ...omitted > 0 ? { omitted } : {} },
+          frame,
+          permit
+        );
+      }
       case "console": {
         const { entries, omitted } = capConsole(
           entry.page.consoleEntries(),
@@ -5593,7 +6229,10 @@ var ChromiumDriver = class {
       // page would reach the model unfiltered. Stamped at the funnel so no
       // future observation mode can forget it. An explicit `url` in `output`
       // still wins; today it is the same value.
-      output: this.withHandoffNote({ url: frame.url, ...output }),
+      output: this.withDialogNote(
+        tabId,
+        this.withHandoffNote({ url: frame.url, ...output })
+      ),
       stateToken: this.tokenFor(tabId, entry, frame)
     };
   }
@@ -5604,6 +6243,19 @@ var ChromiumDriver = class {
    * change that just happened. Consumed once, so it marks the result that
    * actually crossed the handoff rather than every later one.
    */
+  /**
+   * Fold in what was decided about a dialog, once, on the next observation.
+   *
+   * Consumed like the handoff note and for the same reason: it describes one
+   * moment, and repeating it on every later result would tell the model a
+   * dialog keeps appearing.
+   */
+  withDialogNote(tabId, output) {
+    const note = this.dialogNotes.get(tabId);
+    if (!note) return output;
+    this.dialogNotes.delete(tabId);
+    return { ...output, dialog: note };
+  }
   withHandoffNote(output) {
     return this.lease?.consumeResumedDirty() ? {
       ...output,
@@ -5624,6 +6276,42 @@ var ChromiumDriver = class {
    * command can take seconds (a navigation settles for up to ten), and the
    * handoff it must respect is the one happening NOW.
    */
+  /**
+   * Answer a pending dialog, or refuse the command that cannot run past one.
+   *
+   * Returns a refusal when the command must not proceed, and `undefined` when
+   * the page is clear — either it always was, or this call just made it so.
+   *
+   * WHO ANSWERS depends on the lease, and that is the whole reason the page
+   * wrapper captures dialogs instead of answering them. With the browser free,
+   * an agent-driven dialog is answered here on the agent's behalf and the
+   * choice is recorded for the model to read. With a person holding it, the
+   * dialog is THEIRS — dismissing it out from under someone signing in is
+   * exactly the surprise the handoff exists to prevent — so it stays open and
+   * the agent is told why its command cannot run.
+   */
+  async answerOrRefuseDialog(tabId, action, permit, source) {
+    const entry = this.tabs.get(tabId);
+    const dialog = entry?.page.pendingDialog?.();
+    if (!entry || !dialog) return void 0;
+    if (safeUnderDialog(action)) return void 0;
+    const decideForCaller = source !== "manual" && permit() && this.dialogPolicy === "auto";
+    if (!decideForCaller) {
+      return { ok: false, error: dialogRefusal(dialog) };
+    }
+    const accept = agentDefaultAccepts(dialog.kind);
+    const answered = await entry.page.resolveDialog?.(accept).catch(() => false);
+    if (!answered) {
+      return void 0;
+    }
+    this.dialogNotes.set(tabId, {
+      kind: dialog.kind,
+      message: dialog.message,
+      choice: accept ? "accepted" : "dismissed",
+      auto: true
+    });
+    return void 0;
+  }
   permitFor(command) {
     const lease = this.lease;
     if (!lease) return () => true;
@@ -5642,13 +6330,14 @@ var ChromiumDriver = class {
    * they may have opened one, and a leak in a tab nobody was watching is
    * still a leak. Consumed once per handoff.
    */
-  purgeHandoffConsole() {
+  purgeHandoffRings() {
     const since = this.lease?.consumeResumedHeldSince?.();
     if (since === void 0) return;
     for (const entry of this.tabs.values()) {
       if (entry.page.isClosed()) continue;
       try {
         entry.page.dropConsoleSince(since);
+        entry.page.dropNetworkSince?.(since);
       } catch {
       }
     }
@@ -6271,6 +6960,7 @@ function abortPromise(signal) {
 }
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
+var DIALOG_MESSAGE_BYTES = 2e3;
 var ACT_TIMEOUT_MS = 15e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
@@ -6287,6 +6977,73 @@ function wrapPage(page) {
       });
       consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+    }
+  });
+  const network = new NetworkRing();
+  const requestIds = /* @__PURE__ */ new WeakMap();
+  let nextRequestId = 0;
+  const idFor = (request) => {
+    const known = requestIds.get(request);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request, minted);
+    return minted;
+  };
+  page.on("request", (request) => {
+    try {
+      network.started({
+        requestId: idFor(request),
+        method: request.method?.() ?? "GET",
+        url: request.url?.() ?? "",
+        ...request.resourceType?.() ? { resourceType: request.resourceType() } : {}
+      });
+    } catch {
+    }
+  });
+  page.on("response", (response) => {
+    try {
+      const request = response.request?.();
+      if (!request) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request),
+        ...response.status ? { status: response.status() } : {},
+        ...response.statusText?.() ? { statusText: response.statusText() } : {},
+        ...Number.isFinite(length) ? { bytes: length } : {},
+        ...headers ? { headers } : {}
+      });
+    } catch {
+    }
+  });
+  page.on("requestfailed", (request) => {
+    try {
+      network.finished({
+        requestId: idFor(request),
+        failure: request.failure?.()?.errorText ?? "request failed"
+      });
+    } catch {
+    }
+  });
+  let pending = null;
+  page.on("dialog", (dialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: dialog.type?.() ?? "alert",
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...dialog.defaultValue?.() ? {
+            defaultPrompt: capText(
+              dialog.defaultValue(),
+              DIALOG_MESSAGE_BYTES
+            )
+          } : {},
+          at: Date.now()
+        }
+      };
     } catch {
     }
   });
@@ -6384,6 +7141,21 @@ function wrapPage(page) {
       } catch {
         return "";
       }
+    },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since) => network.dropSince(since),
+    networkCursor: () => network.count(),
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept, promptText) {
+      const open = pending;
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+      }
+      return true;
     },
     consoleEntries: () => consoleRing,
     consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),

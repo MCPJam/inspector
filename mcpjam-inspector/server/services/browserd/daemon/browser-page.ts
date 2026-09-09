@@ -11,6 +11,8 @@
  */
 
 import type { ConsoleEntry } from "./observation-budget";
+import type { PendingDialog } from "./dialogs";
+import type { NetworkEntry } from "./network";
 import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
 
 /**
@@ -117,6 +119,40 @@ export interface DriverPage {
    * method, and the ledger simply records no cursor rather than a wrong one.
    */
   consoleCursor?(): { console: number; errors: number };
+  /**
+   * The dialog this page is currently blocked on, if any.
+   *
+   * A JavaScript dialog stops the renderer, so this is asked BEFORE anything
+   * that would touch the page — a settle that runs against a blocked renderer
+   * simply burns its whole budget and reports the page unsettled, which is a
+   * true statement that explains nothing.
+   *
+   * Optional, like `consoleCursor`: an engine that does not track dialogs
+   * omits it, and the driver behaves exactly as it did before rather than
+   * refusing everything.
+   */
+  /**
+   * What this page asked the network for, oldest first.
+   *
+   * Optional for the same reason `consoleCursor` is: an engine that does not
+   * track requests omits it, and the observe mode reports that this browser
+   * cannot answer rather than that the page made no requests. Those are very
+   * different facts and a model acts differently on each.
+   */
+  networkEntries?(): readonly NetworkEntry[];
+  /** Discard requests captured at or after `since` — the handoff purge. */
+  dropNetworkSince?(since: number): void;
+  /** How many requests this page has EVER captured. Monotonic, like console. */
+  networkCursor?(): number;
+  pendingDialog?(): PendingDialog | null;
+  /**
+   * Answer the pending dialog, unblocking the renderer.
+   *
+   * Resolves `false` when there was nothing to answer — a dialog the page
+   * closed on its own, or a race with another answer. Never throws for that
+   * case, because "it is already gone" is success from the caller's side.
+   */
+  resolveDialog?(accept: boolean, promptText?: string): Promise<boolean>;
   /**
    * The page's WebMCP bridge, attached lazily on first use (attaching a CDP
    * session to every tab that may never invoke a page tool is wasted work).

@@ -26,6 +26,9 @@ Readiness checks and eval-suite targets build on this; they are not here yet.
 
 ```
 client/src/components/webmcp-inspector/   the /webmcp workspace
+  ├ WebmcpInspectorTab.tsx                 three-panel workspace (Tools-shaped)
+  ├ WebmcpToolsSidebar.tsx                 URL + tools list / invoke form
+  ├ ActivityTimeline.tsx                   activity as a log rail
   └ ElectronWebviewPane.tsx                the ONLY <webview> in the app
 client/src/stores/webmcp-inspector-store  session state, SSE stream
 client/src/lib/webmcp-inspector/          aliases, chat dispatch, export
@@ -34,6 +37,19 @@ server/routes/mcp/webmcp-inspector.ts     /api/mcp/webmcp/*
 server/services/webmcp-inspector/         providers, runtime, registry, hub
 src/main.ts                               the switch, webviewTag, the guest guard
 ```
+
+The workspace shares `ThreePanelLayout` with Tools / Resources / Prompts / Tasks:
+
+- **Left** — URL field, tool list (searchable), and on select the invoke form.
+- **Center** — the live page (webview, hosted Browser panel, or frame stream).
+- **Right** — session activity as logs (search, copy, JSON / OTLP export).
+
+The right rail is a custom slot, not the JSON-RPC `LoggerView`. Activity is
+WebMCP evidence (registrations, invocations, before/after screenshots), not MCP
+traffic. Session state and JSON-RPC traffic stay in separate stores. What is
+shared is the chrome: `LogRow`, `LogToolbar`, `ToolDetailsAccordion`, and
+`SelectedToolHeader` (tools identified by `{ id, label, description }`, so two
+frames that both register `submit` stay distinct).
 
 `provider.ts` is the browser boundary. Everything above it — runtime, registry,
 routes — is written against that interface and never imports Playwright, so the
@@ -84,7 +100,7 @@ silent fall-through to window behaviour.
 
 ## Watching the page inside the product
 
-The inspector's left pane shows the page as it paints, over the same session
+The inspector's center pane shows the page as it paints, over the same session
 that carries tools and invocations:
 
 ```text

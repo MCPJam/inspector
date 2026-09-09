@@ -5,6 +5,7 @@
  * a file with the local-mode viewport tests.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("@/lib/config", async (importOriginal) => {
@@ -27,6 +28,16 @@ vi.mock("@/components/computer/BrowserPanel", () => ({
       data-ensure={String(ensure)}
     />
   ),
+}));
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
 
 const contextState = vi.hoisted(() => ({

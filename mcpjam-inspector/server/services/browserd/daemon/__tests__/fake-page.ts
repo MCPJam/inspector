@@ -1,5 +1,7 @@
 import type { DriverContext, DriverPage } from "../browser-page";
 import type { CdpLike } from "../webmcp-bridge";
+import type { PendingDialog } from "../dialogs";
+import type { NetworkEntry } from "../network";
 
 /**
  * A CDP session that records what was sent and answers from a table.
@@ -66,6 +68,12 @@ export type ActLog = string[];
 
 export interface FakePage extends DriverPage {
   setUrl(u: string): void;
+  /** Record a request, as a page fetching something would. */
+  pushNetwork(row: NetworkEntry): void;
+  /** Raise a dialog, as a page calling `confirm()` would. */
+  setDialog(d: PendingDialog | null): void;
+  /** Every answer the driver gave a dialog, in order. */
+  readonly dialogAnswers: Array<{ accept: boolean; promptText?: string }>;
   /**
    * Called when an act dispatches, before the driver settles and captures.
    *
@@ -137,19 +145,31 @@ export function fakePage(init: {
    */
   actErrorFor?: (entry: string) => Error | undefined;
 
-  /** What `observe {mode:"text"}` reads off this page. */
-  text?: string;
-  /**
-   * Called inside `pageText`, for the same reason `onA11y` exists: it is the
-   * only way to open the window in which a person takes the browser WHILE a
-   * read is in flight.
-   */
-  onText?: () => void;
-  /** What this page's CDP session answers (the a11y tree is read over it). */
-  cdpReplies?: CdpReplies;
-  console?: Array<{ type: string; text: string; at: number }>;
-  webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
-} = {}): FakePage {
+    /** What `observe {mode:"text"}` reads off this page. */
+    text?: string;
+    /**
+     * Called inside `pageText`, for the same reason `onA11y` exists: it is the
+     * only way to open the window in which a person takes the browser WHILE a
+     * read is in flight.
+     */
+    onText?: () => void;
+    /** What this page's CDP session answers (the a11y tree is read over it). */
+    cdpReplies?: CdpReplies;
+    /**
+     * Requests this page has already made. `null` models an engine that does
+     * not record them at all, which is a different answer from "none".
+     */
+    network?: NetworkEntry[] | null;
+    /** A dialog already blocking the page when the command arrives. */
+    dialog?: PendingDialog;
+    /** A dialog the page raises from inside an act, as `confirm()` does. */
+    dialogOnAct?: PendingDialog;
+    console?: Array<{ type: string; text: string; at: number }>;
+    webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> }
+      ? B | null
+      : never;
+  } = {},
+): FakePage {
   let url = init.url ?? "about:blank";
   const consoleEntries = [...(init.console ?? [])];
   let dom = init.dom ?? "0BODY";
@@ -184,9 +204,16 @@ export function fakePage(init: {
   const setDom = (d: string) => { dom = d; };
   const setText = (t: string) => { text = t; };
   const setUrl = (u: string) => { url = u; };
+  // A dialog the page is blocked on. `dialogOnAct` raises one the way a real
+  // page does — from inside the act that triggered it — which is the only way
+  // to exercise the window where the renderer is blocked before the settle.
+  const network: NetworkEntry[] = [...(init.network ?? [])];
+  let dialog: PendingDialog | null = init.dialog ?? null;
+  const dialogAnswers: Array<{ accept: boolean; promptText?: string }> = [];
   const act = (entry: string) => {
     calls.acts.push(entry);
     page.onAct?.();
+    if (init.dialogOnAct) dialog = init.dialogOnAct;
     const targeted = init.actErrorFor?.(entry);
     if (targeted) throw targeted;
     if (init.actError) throw init.actError;
@@ -228,6 +255,27 @@ export function fakePage(init: {
     async pageText() {
       init.onText?.();
       return text;
+    },
+    networkEntries: init.network === null ? undefined : () => network,
+    dropNetworkSince: (since: number) => {
+      for (let i = network.length - 1; i >= 0; i -= 1) {
+        if (network[i]!.at >= since) network.splice(i, 1);
+      }
+    },
+    pushNetwork: (row) => network.push(row),
+    setDialog: (d) => {
+      dialog = d;
+    },
+    dialogAnswers,
+    pendingDialog: () => dialog,
+    async resolveDialog(accept, promptText) {
+      if (!dialog) return false;
+      dialog = null;
+      dialogAnswers.push({
+        accept,
+        ...(promptText === undefined ? {} : { promptText }),
+      });
+      return true;
     },
     consoleEntries: () => consoleEntries,
     dropConsoleSince: (since: number) => {

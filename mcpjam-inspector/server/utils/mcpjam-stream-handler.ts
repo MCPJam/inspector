@@ -2500,6 +2500,44 @@ async function handlePendingApprovals(
     }
   }
 
+  // RE-INTRODUCE EVERY UNRESOLVED CALL BEFORE ANY ANSWER GOES OUT.
+  //
+  // This response is a NEW one. The client's reducer looks for a tool part on
+  // the message it is currently building, so every chunk below that names a
+  // tool call from the PREVIOUS response — `tool-output-denied`, and the
+  // results `emitToolResults` writes — needs that call re-introduced first or
+  // the client throws `No tool invocation found for tool call ID "…"` and ends
+  // the turn with a red banner, after the tools have already run.
+  //
+  // EVERY unresolved call, not only the approved ones. Two of the three
+  // reasons a call is sitting here unresolved are not "it was approved":
+  //
+  //   - A DENIED call. Its `tool-output-denied` is written below, and nothing
+  //     had introduced it.
+  //   - A SIBLING that never needed approval. The approval pause is
+  //     whole-step: it drains only approval-free meta tools, so an ordinary
+  //     tool the model emitted in the same assistant message waits here too —
+  //     and `executeToolCallsFromMessages` below runs EVERY unresolved call,
+  //     so a result for that sibling is written whether or not anyone approved
+  //     anything.
+  //
+  // The mixed step is now the ordinary case rather than a corner. A page tool
+  // always pauses while the `browser_*` verbs follow their own floor, so one
+  // "add pepperoni" emits a `webmcp_*` call and a `browser_observe` in a
+  // single step, approves one, and resumes into exactly this.
+  //
+  // Idempotent by construction: the helper skips any call that already has a
+  // result, so a second pass over the same history emits nothing.
+  emitInheritedToolCalls(
+    writer,
+    messageHistory,
+    messageHistory.length,
+    tools,
+    traceTurn,
+    stepIndex,
+    onToolCall,
+  );
+
   let didHandle = false;
 
   // Emit denied tool notifications to the client and add tool-result entries
@@ -2603,57 +2641,9 @@ async function handlePendingApprovals(
   );
 
   if (needsExecution) {
-    // Emit tool-input-available for approved tool calls so the AI SDK client
-    // can attach the upcoming tool-output-available chunks. Without this, the
-    // stream consumer throws "No tool invocation found for tool call ID …"
-    // because the matching tool-call was on a prior assistant message and
-    // this resumed stream hasn't introduced it yet.
-    for (const toolCallId of approvedToolCallIds) {
-      if (existingResultIds.has(toolCallId)) continue;
-      const assistantIdx = toolCallIdToAssistantIdx.get(toolCallId);
-      if (assistantIdx === undefined) continue;
-      const assistantMsg = messageHistory[
-        assistantIdx
-      ] as AssistantModelMessage;
-      if (!Array.isArray(assistantMsg.content)) continue;
-      for (const part of assistantMsg.content) {
-        if (part.type === "tool-call" && part.toolCallId === toolCallId) {
-          emitToolInput(writer, {
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            input: part.input ?? {},
-            ...(part.providerOptions
-              ? { providerMetadata: part.providerOptions }
-              : {}),
-          });
-          // PR 5b-pre review fix (Cursor Medium "Resumed approvals
-          // skip onToolCall"): fire `onToolCall` for resumed approved
-          // tools so PR 5b's eval wiring sees a matching `tool_call`
-          // before the `tool_result` `emitToolResults` produces below.
-          if (onToolCall && traceTurn && typeof stepIndex === "number") {
-            try {
-              onToolCall({
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                input: part.input,
-                stepIndex,
-                promptIndex: traceTurn.promptIndex,
-                serverId: readToolServerId(tools, part.toolName),
-              });
-            } catch (error) {
-              logger.warn(
-                "[mcpjam-stream-handler] onToolCall callback failed (approval)",
-                {
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              );
-            }
-          }
-          break;
-        }
-      }
-    }
-
+    // The `tool-input-available` chunks these results attach to were written
+    // above, for every unresolved call rather than only the approved ones —
+    // see the comment there for why the difference matters.
     const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
       modelVisibleMcpToolResults,
