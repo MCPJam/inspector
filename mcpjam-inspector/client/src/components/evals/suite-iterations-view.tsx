@@ -1004,11 +1004,25 @@ export function SuiteIterationsView({
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const { isAuthenticated } = useConvexAuth();
-  // Reproducible-evals image picker (gated by the computers feature flag). Only
-  // fetch the project's images when the flag is on and we have a project.
+  // Reproducible-evals image picker.
+  //
+  // The row keeps its ORIGINAL flag gate as an additional condition, so a
+  // deployment whose capabilities read fails behaves exactly as it did before.
+  // What changes is what happens when capabilities ARE readable and say no: the
+  // row renders disabled with the reason instead of disappearing.
+  //
+  // ONE condition decides both whether the row renders and whether its images
+  // are fetched. They used to be written separately — visibility here, the
+  // fetch gated on the client flag alone — so a deployment whose capabilities
+  // say computers ARE available, seen by a client whose flag is off, rendered
+  // an ENABLED select whose only option was "None (default image)". A control
+  // that offers nothing is the failure this file is being repaired for.
   const computersEnabled = useComputersEnabled();
+  const computerEnvironmentRowVisible = capabilitiesReady
+    ? Boolean(projectId)
+    : computersEnabled && Boolean(projectId);
   const computerEnvironments = useSandboxImages(
-    computersEnabled && projectId ? projectId : null,
+    computerEnvironmentRowVisible ? projectId : null,
   );
   const ephemeralCloudAvailable = useEphemeralCloudAvailable();
   // Cloud-sandbox preflight, derived ONCE here — the parent owns every run
@@ -1399,13 +1413,8 @@ export function SuiteIterationsView({
     : capabilitiesReady && capabilities.ownership?.ciOwned
       ? CI_OWNED_REASON_COPY
       : undefined;
-  // The image row keeps its ORIGINAL flag gate as an additional condition, so a
-  // deployment whose capabilities read fails behaves exactly as it did before.
-  // What changes is what happens when capabilities ARE readable and say no: the
-  // row renders disabled with the reason instead of disappearing.
-  const computerEnvironmentRowVisible = capabilitiesReady
-    ? Boolean(projectId)
-    : computersEnabled && Boolean(projectId);
+  // `computerEnvironmentRowVisible` is declared beside the images it gates —
+  // see the comment there for why the two share one condition.
   const computerEnvironmentDisabledReason =
     ciOwnedReason ??
     (!capabilitiesReady
