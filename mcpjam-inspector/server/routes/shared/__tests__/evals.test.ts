@@ -12,6 +12,7 @@ import {
   shouldSkipExecution,
   assertTestCaseRunWithinCap,
   authorEvalSuite,
+  buildGithubCheckServerOverride,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
@@ -54,6 +55,42 @@ function buildTestCaseRequest(runs?: number): unknown {
     ...(runs === undefined ? {} : { testCaseOverrides: { runs } }),
   };
 }
+
+describe("GitHub check server override", () => {
+  it("pairs the ephemeral PR server name and project row", () => {
+    expect(
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["ephemeral-server-id"],
+        serverNames: ["gh-check-trigger-1"],
+      })
+    ).toEqual([
+      {
+        serverName: "gh-check-trigger-1",
+        projectServerId: "ephemeral-server-id",
+      },
+    ]);
+  });
+
+  it("does not override ordinary suite runs", () => {
+    expect(
+      buildGithubCheckServerOverride({
+        source: "ui",
+        persistedServerRefs: ["server-id"],
+        serverNames: ["server"],
+      })
+    ).toBeUndefined();
+  });
+
+  it("rejects incomplete PR server identity", () => {
+    expect(() =>
+      buildGithubCheckServerOverride({
+        source: "github_check",
+        persistedServerRefs: ["server-id"],
+      })
+    ).toThrow(WebRouteError);
+  });
+});
 
 describe("RunEvalsRequestSchema environmentId boundary", () => {
   it("accepts AND preserves environmentId (guards the silent-strip failure mode)", () => {

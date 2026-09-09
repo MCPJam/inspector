@@ -76,11 +76,25 @@ const OBSERVATION_KEYS = [
   "text",
   "dom",
   "console",
+  "network",
+  "dialog",
   "tools",
   "screenshot",
   "result",
   "refs",
 ] as const;
+
+/** Is this the daemon's dialog note, rather than something a page named? */
+function isDialogNote(
+  value: unknown,
+): value is NonNullable<BrowserAgentPageContent["dialog"]> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { kind?: unknown }).kind === "string" &&
+    typeof (value as { message?: unknown }).message === "string"
+  );
+}
 
 /** A command the contract will not hand to the daemon. */
 export interface ContractRefusal {
@@ -215,23 +229,12 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         ...(expectedState ? { expectedState } : {}),
         observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
       };
-      if (target && "ref" in target) {
-        // Refused HERE rather than at the browser, so the caller learns why in
-        // one hop and with the alternative named. The daemon would answer
-        // `unsupported_target` anyway — ref→node resolution is not built — and
-        // a round trip to be told so is a round trip wasted.
-        return {
-          ok: false,
-          action,
-          refusal: {
-            code: "unsupported_target",
-            message:
-              `ref targeting (\`${target.ref}\`) is not available yet; the ` +
-              "accessibility tree names the control, but acting on it needs a " +
-              "`selector` or `coordinates`",
-          },
-        };
-      }
+      // NO PRE-EMPTIVE REFUSAL FOR REFS. The daemon resolves them now, and it
+      // is the only layer that can: a ref is scoped to the tab that issued it
+      // and validated against that observation's state token. A daemon too old
+      // to resolve one still answers `unsupported_target` itself, which is the
+      // same answer this used to give without the round trip — and the wrong
+      // answer to give on a daemon that can.
       if (target && "coordinates" in target) {
         const [x, y] = target.coordinates;
         // REFUSED, never clamped and never dispatched. Chromium happily
@@ -260,6 +263,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         action: {
           kind: "observe",
           mode: daemonObserveMode(command.mode),
+          ...(command.requestId ? { requestId: command.requestId } : {}),
           ...(command.rootSelector ? { rootSelector: command.rootSelector } : {}),
           ...(command.rootRef ? { rootRef: command.rootRef } : {}),
           ...(command.filter ? { filter: command.filter } : {}),
@@ -371,6 +375,12 @@ export function toAgentPage(
   if (Array.isArray(output?.console)) {
     pageContent.console = output.console as BrowserAgentPageContent["console"];
   }
+  if (Array.isArray(output?.network)) {
+    pageContent.network = output.network as BrowserAgentPageContent["network"];
+  }
+  // The explanation for a click that looks like it did nothing. Recorded by
+  // the daemon and, until this line, dropped on the way out.
+  if (isDialogNote(output?.dialog)) pageContent.dialog = output.dialog;
   if (output?.tools !== undefined) pageContent.pageTools = output.tools;
   if (output?.result !== undefined) pageContent.invocation = output.result;
   // Inside the fence: an accessible name is text the page chose, and a

@@ -314,8 +314,77 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "Draw and share a diagram broke at Selection: an expected tool call was never made.",
     );
+    const pairings = screen.getByTestId("run-verdict-pairings");
+    expect(within(pairings).getAllByTestId("run-verdict-pairing")).toHaveLength(
+      1,
+    );
+    expect(within(pairings).getByText("1 passed")).toBeVisible();
+    expect(within(pairings).getByText("1 failed")).toBeVisible();
+    expect(within(pairings).getByTestId("result-count-bar")).toBeVisible();
+    expect(within(pairings).queryByText("1 of 2")).toBeNull();
+    expect(
+      pairings.compareDocumentPosition(
+        screen.getByRole("heading", { name: "What broke" }),
+      ),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.getByRole("heading", { name: "What broke" })).toHaveClass(
+      "text-sm",
+      "font-semibold",
+    );
+    expect(
+      screen.getByRole("heading", { name: /How to fix|Next step/ }),
+    ).toHaveClass("text-sm", "font-semibold");
     expect(screen.queryByTestId("run-grading-peek")).toBeNull();
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
+    expect(within(pairings).getByTestId("result-count-bar")).toHaveAttribute(
+      "role",
+      "img",
+    );
+  });
+
+  it("pairs hero deltas to a fallback previous launch when previousRunId is omitted", () => {
+    const current = {
+      _id: "run_2",
+      status: "running",
+      result: "pending",
+      namedHostId: "host-1",
+      effectiveModelId: "sonnet",
+      runNumber: 2,
+      createdAt: 2_000,
+    } as unknown as EvalSuiteRun;
+    const previous = {
+      _id: "run_1",
+      status: "completed",
+      result: "failed",
+      namedHostId: "host-1",
+      effectiveModelId: "sonnet",
+      runNumber: 1,
+      createdAt: 1_000,
+    } as unknown as EvalSuiteRun;
+    const previousRows = [
+      {
+        _id: "prev_1",
+        suiteRunId: "run_1",
+        result: "failed",
+        status: "completed",
+      },
+      {
+        _id: "prev_2",
+        suiteRunId: "run_1",
+        result: "failed",
+        status: "completed",
+      },
+    ] as unknown as EvalIteration[];
+
+    renderContent({
+      run: current,
+      iterations: ITERATIONS,
+      previousRunId: null,
+      siblingRuns: [previous, current],
+      allIterations: previousRows,
+    });
+
+    expect(screen.getByTestId("run-verdict-stat-delta")).toHaveTextContent("+1");
   });
 
   it("says nothing about a verdict while the read is in flight", () => {

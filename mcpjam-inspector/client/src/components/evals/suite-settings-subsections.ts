@@ -54,6 +54,13 @@ export function getSubsectionsForGroup(
         label: manifestLabel("environments"),
         target: { type: "row", key: "environments" },
       });
+      if (options.showComputerEnvironment) {
+        subs.push({
+          id: "computerEnvironment",
+          label: manifestLabel("computerEnvironment"),
+          target: { type: "row", key: "computerEnvironment" },
+        });
+      }
       return subs;
     }
     case "triggers": {

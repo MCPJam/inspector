@@ -14,11 +14,11 @@ describe("getSubsectionsForGroup", () => {
     showDelete: true,
   };
 
-  it("lists only quality gate and stage checks", () => {
+  it("lists quality gate and the scorers table", () => {
     const subs = getSubsectionsForGroup("grading", base);
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
-      "Checks by stage",
+      "Scorers",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -30,7 +30,7 @@ describe("getSubsectionsForGroup", () => {
     });
     expect(subs.map((sub) => sub.label)).toEqual([
       "Quality gate",
-      "Checks by stage",
+      "Scorers",
     ]);
   });
 

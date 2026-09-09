@@ -341,6 +341,33 @@ describe("CreateSuitePage", () => {
     });
   });
 
+  it("increments Suite N from existing numbered suite names", () => {
+    const { rerender } = render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1", "Checkout", "Suite 2"]}
+      />,
+    );
+
+    const nameInput = screen.getByTestId("create-suite-name");
+    expect(nameInput).toHaveValue("Suite 3");
+    expect(nameInput).toHaveAttribute("placeholder", "Suite 3");
+
+    rerender(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1", "Checkout", "Suite 2", "Suite 3"]}
+      />,
+    );
+    expect(screen.getByTestId("create-suite-name")).toHaveValue("Suite 4");
+  });
+
   it("disables Continue again if the default name is cleared", async () => {
     render(
       <CreateSuitePage
@@ -376,11 +403,46 @@ describe("CreateSuitePage", () => {
         projectId="proj-1"
         initialName="checkout-server"
         initialServerId="srv-a"
+        existingSuiteNames={["Suite 1"]}
       />,
     );
 
     expect(screen.getByTestId("create-suite-name")).toHaveValue(
       "checkout-server",
+    );
+  });
+
+  it("keeps an edited suite name when a later initialName arrives", () => {
+    const { rerender } = render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        existingSuiteNames={["Suite 1"]}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("create-suite-name"), {
+      target: { value: "My checkout suite" },
+    });
+    expect(screen.getByTestId("create-suite-name")).toHaveValue(
+      "My checkout suite",
+    );
+
+    rerender(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+        initialName="checkout-server"
+        existingSuiteNames={["Suite 1"]}
+      />,
+    );
+
+    expect(screen.getByTestId("create-suite-name")).toHaveValue(
+      "My checkout suite",
     );
   });
 
