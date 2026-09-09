@@ -762,6 +762,9 @@ export function resolveHostTools(
         authHeader,
         projectId: ctx.projectId,
         engine: isLocalBrowser ? "local" : "hosted",
+        // The host's switch, exactly as bash gets it. This family follows it
+        // rather than overruling it.
+        requireToolApproval: ctx.requireToolApproval,
         ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
         // The run's own identity, falling back to the chat session when a
         // surface has one — both name a single run, which is all the ephemeral

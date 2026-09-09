@@ -1058,12 +1058,13 @@ export function validatePageToolEntries(input: unknown): PageToolEntry[] {
  * the approval handshake, so routing execution back through the server would
  * add a round trip and a second approval path for no gain.
  *
- * `needsApproval` is unconditional — see `pageToolCallNeedsApproval`. The
- * description carries the origin because a model choosing between tools should
- * be able to see whose page each one belongs to.
+ * `needsApproval` follows the user's switch — see `pageToolCallNeedsApproval`.
+ * The description carries the origin because a model choosing between tools
+ * should be able to see whose page each one belongs to.
  */
 export function buildPageTools(
   pageTools: PageToolEntry[] | undefined,
+  requireToolApproval = false,
 ): ToolSet {
   if (!pageTools || pageTools.length === 0) return {};
   const out: ToolSet = {};
@@ -1073,8 +1074,8 @@ export function buildPageTools(
         entry.description ?? entry.rawName
       }`,
       inputSchema: entry.inputSchema,
-      // Floor: always.
-      needsApproval: pageToolCallNeedsApproval(),
+      // Floor: the switch.
+      needsApproval: pageToolCallNeedsApproval(requireToolApproval),
     });
   }
   return out;
@@ -1579,7 +1580,10 @@ export async function prepareChatV2(
   // way, so `page_<8hex>` cannot collide with a server tool, a UI tool or an
   // app alias. A collision here would mean two sessions minted the same alias,
   // which is a bug rather than a conflict to resolve, so it throws below.
-  const pageToolEntries = buildPageTools(pageTools);
+  const pageToolEntries = buildPageTools(
+    pageTools,
+    requireToolApproval === true,
+  );
   // COPIED, because the page-tool policy below removes entries from it and the
   // caller's object is the resolver's own return value.
   const builtInToolEntries: ToolSet = { ...(builtInTools ?? {}) };

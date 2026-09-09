@@ -25,6 +25,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolSet } from "ai";
 import { hasUnresolvedToolCalls } from "@/shared/http-tool-calls";
+
+// The stream handler imports one function from the harness runner, and that
+// module loads `@ai-sdk/harness/agent` at import time. Nothing here runs a
+// harness turn, and without this the file that pins the WHOLE approval matrix
+// fails to LOAD wherever that optional package is not installed.
+vi.mock("../harness/run-harness-turn", () => ({
+  runHarnessTurn: vi.fn(),
+}));
+
 import {
   createApprovalDecisionCache,
   handleMCPJamFreeChatModel,
@@ -355,8 +364,8 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: always — a model-driven shell on the user's own machine has no
-    // auto-approve in v1, "whatever the host config says" (bash.ts).
+    // Floor: setting. The sharpest tool here, and still the user's call — a
+    // switch some families ignore is a switch people stop believing.
     family: "local bash",
     name: "bash",
     input: { command: "ls" },
@@ -372,8 +381,8 @@ const MATRIX: MatrixRow[] = [
       ),
     }),
     expected: {
-      mcpjam: { on: "gate", off: "gate" },
-      byok: { on: "gate", off: "gate" },
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
     },
   },
   {
@@ -411,7 +420,8 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: always. Destructive wins over the switch in both directions.
+    // Floor: setting. `destructiveHint` still decides whether this entry is a
+    // READ or an ACTION; it no longer decides for the user.
     family: "ui_* destructive",
     name: UI_DESTRUCTIVE.name,
     tools: (flag) =>
@@ -419,8 +429,8 @@ const MATRIX: MatrixRow[] = [
         requireToolApproval: flag,
       }),
     expected: {
-      mcpjam: { on: "gate", off: "gate" },
-      byok: { on: "gate", off: "gate" },
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
     },
   },
   {
@@ -450,40 +460,46 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: always. Third-party code in a browser that is signed into things,
-    // and the page's own annotations are claims by the party whose code runs.
+    // Floor: setting. The page's annotations are still never read — they are
+    // claims by the party whose code runs — but the person who turned the
+    // switch off has said what they want from this host.
     family: "page_*",
     name: "page_ab12cd34",
-    tools: () =>
-      buildPageTools([
-        {
-          alias: "page_ab12cd34",
-          sessionId: "sess_1",
-          toolKey: "https://shop.test::checkout",
-          rawName: "checkout",
-          origin: "https://shop.test",
-          description: "Check out",
-        },
-      ] as never),
+    tools: (flag) =>
+      buildPageTools(
+        [
+          {
+            alias: "page_ab12cd34",
+            sessionId: "sess_1",
+            toolKey: "https://shop.test::checkout",
+            rawName: "checkout",
+            origin: "https://shop.test",
+            description: "Check out",
+          },
+        ] as never,
+        flag,
+      ),
     expected: {
-      mcpjam: { on: "gate", off: "gate" },
-      byok: { on: "gate", off: "gate" },
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
     },
   },
   {
-    // Floor: always.
+    // Floor: setting. This is the one the bug report was about: "Tool
+    // Approval: off" and a pill on `browser_navigate` anyway.
     family: "browser_* attested",
     name: "browser_act",
-    tools: () =>
+    tools: (flag) =>
       buildBrowserTools({
         authHeader: "Bearer u",
         projectId: "proj_1",
         approvalDelivery: { kind: "attested" },
+        requireToolApproval: flag,
         ensureSession: fakeBrowserSession() as never,
       })!.tools,
     expected: {
-      mcpjam: { on: "gate", off: "gate" },
-      byok: { on: "gate", off: "gate" },
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
     },
   },
   {
@@ -492,12 +508,16 @@ const MATRIX: MatrixRow[] = [
     // there is nobody to ask.
     family: "browser_* unattended read-only observation",
     name: "browser_observe",
-    tools: () =>
+    // THE FLAG IS THREADED AND STILL LOSES. An unattended run has nobody to
+    // ask, so a switch left on by whoever saved the host config must not turn
+    // every eval iteration into a hang.
+    tools: (flag) =>
       buildBrowserTools({
         authHeader: "Bearer u",
         projectId: "proj_1",
         engine: "local",
         runKey: "run-1",
+        requireToolApproval: flag,
         approvalDelivery: {
           kind: "unattended",
           policy: { mode: "read_only" },
@@ -510,20 +530,21 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // Floor: always. Same rule as local bash, same reason.
+    // Floor: setting. Same rule as local bash, same reason.
     family: "browser_* local",
     name: "browser_act",
-    tools: () =>
+    tools: (flag) =>
       buildBrowserTools({
         authHeader: "Bearer u",
         projectId: "proj_1",
         engine: "local",
         approvalDelivery: { kind: "attested" },
+        requireToolApproval: flag,
         ensureSession: fakeBrowserSession() as never,
       })!.tools,
     expected: {
-      mcpjam: { on: "gate", off: "gate" },
-      byok: { on: "gate", off: "gate" },
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
     },
   },
   {

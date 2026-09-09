@@ -174,8 +174,19 @@ describe("buildBrowserTools — fail-closed advertisement", () => {
       "browser_webmcp_invoke",
       "browser_webmcp_tools",
     ]);
-    // Everything gates by default: a page is third-party code and the browser
-    // is signed into things, so there is nothing trustworthy to relax on.
+    // The switch decides, and this build did not set it. A page is still
+    // third-party code in a browser that may be signed into things — what
+    // changed is that the person, not this builder, says whether to pause.
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(false);
+    }
+  });
+
+  it("gates every verb when the switch is on", () => {
+    const { result } = build({ requireToolApproval: true });
     for (const [name, definition] of Object.entries(result!.tools)) {
       expect(
         (definition as { needsApproval?: unknown }).needsApproval,
@@ -226,14 +237,14 @@ describe("buildBrowserTools — unattended policy", () => {
     expect(Object.keys(result!.tools)).toHaveLength(
       FIRST_CLASS_TOOL_NAMES.length,
     );
-    // The `build` helper runs unattended cases on the LOCAL engine, where the
-    // floor is `always` whoever is watching — a browser on someone's own
-    // machine is not something a policy can wave through.
+    // An UNATTENDED run declares none of them, whatever the switch says:
+    // there is nobody to ask, so a gate here would hang the run rather than
+    // protect it, and the declared `toolPolicy` is the answer instead.
     for (const [name, definition] of Object.entries(result!.tools)) {
       expect(
         (definition as { needsApproval?: unknown }).needsApproval,
         name,
-      ).toBe(true);
+      ).toBe(false);
     }
   });
 
@@ -1644,13 +1655,26 @@ describe("buildBrowserTools — engines and profile mode", () => {
     expect(seen[1]).toMatchObject({ contextMode: "persistent" });
   });
 
-  it("always asks before acting on the user's own machine", async () => {
-    const { result } = build({ engine: "local" });
+  it("asks before acting on the user's own machine when the switch is on", async () => {
+    const { result } = build({ engine: "local", requireToolApproval: true });
     for (const name of Object.keys(result!.tools)) {
       expect(
         (result!.tools as any)[name].needsApproval,
         `${name} must ask on the local engine`,
       ).toBe(true);
+    }
+  });
+
+  it("honours the switch being OFF on the local engine too", async () => {
+    // The local browser used to ask unconditionally. It is the sharpest case
+    // for asking and the weakest case for overruling: the machine is theirs,
+    // and so is the setting.
+    const { result } = build({ engine: "local" });
+    for (const name of Object.keys(result!.tools)) {
+      expect(
+        (result!.tools as any)[name].needsApproval,
+        `${name} must follow the switch`,
+      ).toBe(false);
     }
   });
 
@@ -2169,6 +2193,7 @@ describe("buildBrowserTools — first-class page tools", () => {
         approvalDelivery: { kind: "attested" },
         ensureSession,
         pageTools: PAGE_TOOLS,
+        requireToolApproval: true,
       }),
     )!;
     expect(Object.keys(built.tools)).toContain("webmcp_add_topping");
@@ -2180,6 +2205,25 @@ describe("buildBrowserTools — first-class page tools", () => {
       (built.tools.webmcp_add_topping as { needsApproval?: unknown })
         .needsApproval,
     ).toBe(true);
+  });
+
+  it("FLAG ON: a page tool follows the switch like everything else", () => {
+    // It used to gate whatever the switch said. The page's own annotations are
+    // still never consulted — the switch is what answers now.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+      }),
+    )!;
+    expect(
+      (built.tools.webmcp_add_topping as { needsApproval?: unknown })
+        .needsApproval,
+    ).toBe(false);
   });
 
   it("retires the generic verbs only on an engine that can grow mid-turn", () => {
@@ -2569,7 +2613,10 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     return { state, seen, commands, send };
   }
 
-  function build(fake: ReturnType<typeof daemon>) {
+  function build(
+    fake: ReturnType<typeof daemon>,
+    requireToolApproval = false,
+  ) {
     const { ensureSession } = fakeSession(fake.send);
     return withFlagOn(() =>
       buildBrowserTools({
@@ -2578,6 +2625,7 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
         approvalDelivery: { kind: "attested" },
         ensureSession,
         dynamicPageTools: true,
+        requireToolApproval,
         pageTools: {
           tools: [PAGE],
           bootId: "boot-1",
@@ -2839,7 +2887,9 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
 
   it("advertises a tool the page registered with no model action in between", async () => {
     const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
-    const built = build(fake);
+    // Switch ON, so the gate below is a real assertion rather than the
+    // default answer.
+    const built = build(fake, true);
     // The page registers a second tool two seconds after load. Nothing the
     // model did caused it, so nothing but this refresh could ever see it.
     fake.state.revision = 6;
@@ -2850,9 +2900,9 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     expect(Object.keys(refresh?.add ?? {})).toEqual(
       expect.arrayContaining(["webmcp_remove_topping"]),
     );
-    // It arrives WITH its gate, on the tool object. A tool that appeared
-    // mid-turn without one would be free — which on this engine executes
-    // with no pill at all.
+    // It arrives WITH the same gate a turn-start tool would have carried. A
+    // tool that appeared mid-turn and skipped the turn's approval policy would
+    // execute with no pill on an engine where every sibling has one.
     expect(
       (refresh?.add?.webmcp_remove_topping as { needsApproval?: unknown })
         ?.needsApproval,

@@ -70,33 +70,37 @@ export function isPageToolAlias(name: string): boolean {
   return PAGE_TOOL_ALIAS_REGEX.test(name);
 }
 
-/** Floor: always. The switch is not consulted, which is the point. */
-const PAGE_TOOL_APPROVAL_FLOOR: ApprovalFloor = "always";
+/** Floor: the user's switch, like every other tool that acts. */
+const PAGE_TOOL_APPROVAL_FLOOR: ApprovalFloor = "setting";
 
 /**
  * Whether a model-requested WebMCP page-tool call must pause for approval.
  *
- * ALWAYS, in V1, and not because of the `requireToolApproval` flag.
+ * THE USER'S SWITCH, like every other tool that acts.
  *
- * A page tool is code on a third-party site, invoked in a live browser that may
- * be signed into things. The only signal about what it does is the page's own
- * annotations, and those fail as a basis for policy twice over: they are claims
- * by the very party whose code would run, and Chromium 151 does not carry their
- * values through for imperative registrations at all — a tool registered
- * `readOnly: true` is reported as `false` (see `webmcp-cdp.spike.test.ts`). So
- * "the page says this is read-only" is not evidence, and there is nothing else
- * to go on.
+ * It used to be unconditional, and the reasoning was sound as far as it went: a
+ * page tool is code on a third-party site, invoked in a live browser that may
+ * be signed into things, and the only signal about what it does is the page's
+ * own annotations — claims by the very party whose code would run, which
+ * Chromium 151 does not even carry through for imperative registrations (a tool
+ * registered `readOnly: true` is reported as `false`; see
+ * `webmcp-cdp.spike.test.ts`). None of that changed.
+ *
+ * What changed is who decides. A person who turns Tool Approval off has said
+ * what they want from THIS host, and a family that answers "not you" is a
+ * setting that does not work — which is worse for trust than the pill was good
+ * for safety, because it teaches people the switch is decorative. The page's
+ * annotations are still not evidence and are still never read: the floor is the
+ * switch, not the page's word.
  *
  * A person clicking Invoke in the WebMCP tab is a different case entirely and
  * is not gated: they chose the tool, on a page they opened, and the click IS
  * the decision.
- *
- * The sanctioned way to relax this later is an explicit, per-session, opt-in
- * "trust this page's read-only claims" choice — not a flag that quietly turns
- * every page tool into an auto-run.
  */
-export function pageToolCallNeedsApproval(): boolean {
-  return needsApprovalFor(PAGE_TOOL_APPROVAL_FLOOR, false);
+export function pageToolCallNeedsApproval(
+  requireToolApproval: boolean,
+): boolean {
+  return needsApprovalFor(PAGE_TOOL_APPROVAL_FLOOR, requireToolApproval);
 }
 
 /**
@@ -181,15 +185,17 @@ export function uiToolApprovalFloor(opts: {
   // `readOnlyHint: true`. The validator rejects `readOnlyHint` disagreeing
   // with `readOnly`, but nothing stops "read-only AND destructive" — and
   // resolving that contradiction in favor of "don't ask" is the one reading
-  // that can silently delete something.
-  if (annotations.destructiveHint === true) return "always";
+  // that can silently delete something. It decides whether this entry is a
+  // READ (never asks) or an ACTION (the switch decides); it no longer
+  // overrides the switch, which is the user's to set.
+  if (annotations.destructiveHint === true) return "setting";
   // Read-only never gates. Honor BOTH signals: a partial annotation object
   // (e.g. `{destructiveHint: false}`) leaves `readOnlyHint` undefined, and
   // ignoring the legacy flag there would gate a snapshot for no reason.
   if (opts.readOnly || annotations.readOnlyHint === true) return "never";
   // Protocol default: absent destructiveHint means destructive, so an
-  // unannotated future tool asks in both modes rather than in neither.
-  return annotations.destructiveHint === false ? "setting" : "always";
+  // unannotated future tool is treated as an action rather than a read.
+  return "setting";
 }
 
 /**
