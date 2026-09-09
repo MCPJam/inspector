@@ -2337,6 +2337,160 @@ The command takes no flags of its own. The global `--timeout <ms>` flag sets the
 
 ---
 
+## `browser` commands
+
+Drive a local or cloud browser and read its session trace. See the [cloud browser guide](/cli/browser) for usage patterns and idempotency details.
+
+### Shared `browser` flags
+
+All `browser` subcommands accept these flags:
+
+| Flag | Description |
+|------|-------------|
+| `--cloud` | Drive an isolated MCPJam cloud browser instead of the local one. |
+| `--api-url <url>` | Cloud API URL (for example `https://app.mcpjam.com/api/v1`). |
+| `--api-key <key>` | Cloud API key (or use `MCPJAM_API_KEY` / `mcpjam cloud login`). |
+| `--inspector-url <url>` | Local Inspector base URL (local mode only; rejected with `--cloud`). |
+| `--project <id>` | Project whose browser to drive (default: `default` for local; required for cloud). |
+| `--session <id>` | Browser session ID (defaults to the last opened session for this project). |
+| `--consent <token>` | Local computer consent capability (local mode only; rejected with `--cloud`). |
+
+### `browser consent`
+
+Store the local computer capability granted in the Inspector.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--token <token>` | Yes | The capability the Inspector showed once. |
+
+### `browser open`
+
+Open a new browser session.
+
+| Flag | Description |
+|------|-------------|
+| `--mode <mode>` | Policy mode: `allow_all`, `read_only`, or `allowlist`. |
+| `--origin <origin>` | Allowed origin (repeatable; `allowlist` mode only). |
+| `--tool <tool>` | Allowed tool (repeatable; `allowlist` mode only). |
+| `--profile <profile>` | `persistent` or `ephemeral` (local mode only). |
+| `--run-key <key>` | Session identity key. Same key and policy reattach the same cloud session; omit for a fresh one. |
+| `--observe <mode>` | Observe mode to run immediately after open. |
+| `--screenshots` | Capture screenshots (default on; pass `--no-screenshots` to disable). |
+
+### `browser sessions`
+
+List browser sessions for this project (cloud mode only).
+
+No additional flags beyond the shared flags.
+
+### `browser observe`
+
+Look at the page.
+
+| Flag | Description |
+|------|-------------|
+| `--mode <mode>` | `a11y`, `screenshot`, `text`, `dom`, `console`, `network`, `dialog`, `url`, or `page_tools`. |
+| `--root-ref <ref>` | Scope the observation to this element ref. |
+| `--root-selector <selector>` | Scope the observation to this CSS selector. |
+| `--filter <filter>` | `interactive` or `all`. |
+| `--out-dir <dir>` | Where to write a screenshot file. |
+| `--inline` | Return screenshot bytes instead of a file path. |
+
+### `browser navigate`
+
+Navigate to a URL.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `url` | Yes | The URL to navigate to (positional argument). |
+| `--new-tab` | No | Open in a new tab. |
+| `--command-id <id>` | No | Idempotency key: reuse to retry safely after a transport failure. |
+| `--observe-after <mode>` | No | `a11y`, `screenshot`, or `none` (default: `a11y`). |
+
+### `browser back`
+
+Go back in the current browser tab.
+
+| Flag | Description |
+|------|-------------|
+| `--tab <id>` | Tab to drive. |
+| `--command-id <id>` | Idempotency key for this command. |
+
+### `browser forward`
+
+Go forward in the current browser tab.
+
+| Flag | Description |
+|------|-------------|
+| `--tab <id>` | Tab to drive. |
+| `--command-id <id>` | Idempotency key for this command. |
+
+### `browser reload`
+
+Reload the current browser tab.
+
+| Flag | Description |
+|------|-------------|
+| `--tab <id>` | Tab to drive. |
+| `--command-id <id>` | Idempotency key for this command. |
+
+### `browser act`
+
+Click, type, press, scroll, hover, drag, select, or move tabs.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--verb <verb>` | Yes | `click`, `type`, `press`, `scroll`, `hover`, `drag`, `select`, `close_tab`, `activate_tab`, `accept_dialog`, or `dismiss_dialog`. |
+| `--ref <ref>` | No | Target element by accessibility ref. |
+| `--selector <selector>` | No | Target element by CSS selector. |
+| `--x <n>` | No | Target x coordinate (requires `--y`). |
+| `--y <n>` | No | Target y coordinate (requires `--x`). |
+| `--value <text>` | No | Value for `type`, `press`, or `select`. |
+| `--expected-state <text>` | No | Expected page state after the action. |
+| `--command-id <id>` | No | Idempotency key: reuse to retry safely after a transport failure. |
+| `--observe-after <mode>` | No | `a11y`, `screenshot`, or `none` (default: `a11y`). |
+| `--out-dir <dir>` | No | Where to write a screenshot file. |
+
+### `browser invoke`
+
+Invoke a WebMCP tool listed by `observe --mode page_tools`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `toolKey` | Yes | The tool key to invoke (positional argument). |
+| `--input <json>` | No | Tool arguments as JSON (default: `{}`). |
+| `--frame <id>` | No | Frame declaring the tool. |
+| `--tab <id>` | No | Tab declaring the tool. |
+| `--command-id <id>` | No | Idempotency key for this invocation. |
+
+### `browser note`
+
+Write a marker into the session trace without driving the browser.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `text` | Yes | The note text (positional argument). |
+
+### `browser trace`
+
+Read this session's command history.
+
+| Flag | Description |
+|------|-------------|
+| `--after-seq <seq>` | Only rows after this sequence number. |
+| `--command-id <id>` | Find one command's row. |
+| `--limit <n>` | How many rows (default: `100`). |
+
+### `browser close`
+
+Close the browser session.
+
+| Flag | Description |
+|------|-------------|
+| `--close-browser` | Close the browser itself, not just this participant (local mode). In cloud mode, `close` always ends the session and releases its desktop. |
+
+---
+
 ## `telemetry` commands
 
 Telemetry commands inspect and configure anonymous CLI telemetry. They never emit telemetry events themselves.
