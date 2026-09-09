@@ -17,6 +17,7 @@ import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -61,15 +62,17 @@ export function CreateHostDialog({
   const catalogState = useHostCatalog();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
   const visibleCatalogHosts = useMemo(
     () =>
       catalogState.status === "live"
         ? filterHostsByFeatureFlags(getCatalogHosts(catalogState.catalog), {
             claudeCode: claudeCodeEnabled,
             codex: codexEnabled,
+            cursorCli: cursorCliEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled]
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)

@@ -477,6 +477,10 @@ export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
 // instead of re-typing the message — it is the server under test violating
 // RFC 8414, which a host may want to treat differently from its own errors.
 export { AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER } from "./oauth/state-machines/shared/required-metadata.js";
+// The debug proxy's own failures use a different error shape. This classifier
+// lets browser hosts keep a target server's authenticated-request rejection in
+// the debugger without sending it to their own exception tracker.
+export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // OAuth client emulation (HP-43): profile → generic machine knobs. Pure and
 // client-name-free — per-client profiles live in the private backend.
 export { deriveOAuthEmulation } from "./oauth/emulation/derive.js";
@@ -507,6 +511,7 @@ export {
   isPrivateHost,
   isDisallowedIpAddress,
   isLoopbackOAuthUrl,
+  isNeverDialableHost,
   OAuthOutboundUrlBlockedError,
 } from "./oauth/ssrf-guard.js";
 // RFC 9207 authorization-response `iss` validation. The comparison itself is
@@ -830,6 +835,7 @@ export type {
 } from "./sandbox-policy.js";
 // MCP protocol-version constants + predicates. Browser-safe by
 // construction (pure data + pure functions, no Node deps).
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,

@@ -12,12 +12,14 @@ import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
   "claude",
+  "claude-desktop",
   "claude-code",
   "chatgpt",
   "mistral",
   "goose",
   "slack",
   "cursor",
+  "cursor-cli",
   "codex",
   "copilot",
   "vscode",
@@ -129,7 +131,8 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
-    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.237");
+    // Bumped with the 2026-09-03 re-probe, from 2.1.237.
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.246");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -420,7 +423,9 @@ describe("seedHostTemplate", () => {
       ]
     ).toBe("#ffffff");
     expect(profile?.initialize).toEqual({
-      supportedProtocolVersions: ["2025-11-25"],
+      // Widened beyond the single version VS Code negotiates by default: it
+      // accepts all three 2025 revisions.
+      supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
       clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
     });
     expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({

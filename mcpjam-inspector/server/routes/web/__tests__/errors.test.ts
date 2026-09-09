@@ -558,6 +558,64 @@ describe("webError origin header", () => {
   });
 });
 
+/**
+ * The one direction of the hop change that must stay impossible.
+ *
+ * `hop` and `origin` are orthogonal: a hop names WHICH BOUNDARY broke, an
+ * origin names WHOSE PROBLEM it is. The monitor predicate lets a
+ * `user_server_hop` exclude a row, so if a declaration could ever lower a
+ * positively-MCPJam verdict, declaring the hop on the highest-traffic catch in
+ * the server would silence real MCPJam outages — the exact failure the origin
+ * program exists to prevent, arriving through the fix for it.
+ *
+ * These drive the real `mapRuntimeError` promotion and the real
+ * `webErrorFromRoute`, not a stub: the invariant lives in how those two
+ * compose, and a stubbed origin would assert nothing.
+ */
+describe("a declared hop never lowers an origin", () => {
+  async function respondWith(error: unknown, hop: string) {
+    const app = new Hono();
+    let meta: Record<string, unknown> | undefined;
+    app.get("/boom", (c) => {
+      const res = webErrorFromRoute(
+        c,
+        // A boundary the caller owns every throw reaching — how a catch site
+        // says "this hop was ours" through the real promotion path.
+        mapRuntimeError(error, { boundary: "mcpjam_internal" }),
+        { hop },
+      );
+      meta = c.get("webErrorMeta") as Record<string, unknown> | undefined;
+      return res;
+    });
+    const res = await app.request("/boom");
+    return { res, meta, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("keeps origin=mcpjam on a failure declared user_server_hop", async () => {
+    const { meta, body, res } = await respondWith(
+      new Error("kaboom"),
+      "user_server_hop",
+    );
+
+    // The verdict survives on all three surfaces a consumer can read.
+    expect(meta?.origin).toBe("mcpjam");
+    expect(body.origin).toBe("mcpjam");
+    expect(res.headers.get("x-mcpjam-error-origin")).toBe("mcpjam");
+    // Recorded beside it, not instead of it.
+    expect(meta?.hop).toBe("user_server_hop");
+  });
+
+  it("never ships hop in the response envelope", async () => {
+    // Telemetry, not client contract. Left in the extras spread it would
+    // become a response FIELD, the same trap `responseHeaders` is
+    // destructured out for.
+    const { body } = await respondWith(new Error("kaboom"), "user_server_hop");
+
+    expect(body.hop).toBeUndefined();
+    expect("hop" in body).toBe(false);
+  });
+});
+
 describe("protocol version pin status", () => {
   /**
    * `ProtocolVersionPinUnsupported` as the SDK raises it. Note what it does

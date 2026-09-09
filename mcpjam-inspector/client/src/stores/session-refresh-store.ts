@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
+
 /**
  * Why the Convex auth token could not be refreshed.
  *
@@ -32,6 +34,26 @@ export const useSessionRefreshStore = create<SessionRefreshState>(
     kind: null,
     retryNonce: 0,
     notifyFailure: (kind) => {
+      // A sign-out in flight produces this failure on purpose: the session was
+      // just revoked, and the refresh timer is reporting the revocation we
+      // asked for. Banner-ing it would flash "Your session has expired." over
+      // a page the user is deliberately leaving — and, on the `signed_out`
+      // path, redirect them to login mid-logout. Checked HERE rather than at
+      // each caller so every source of a failure is covered, transient ones
+      // and future ones included. See `sign-out-latch`.
+      //
+      // Cleared rather than just dropped, because the state this failure
+      // arrives into may already be a banner. A user who pressed Retry and
+      // then Log out sits at a disabled "Retrying…", and swallowing the
+      // failure silently would strand them there — the retry that would
+      // resolve it is the very thing that just failed, and Convex does not
+      // re-fire on its own. Harmless when the logout navigates; the difference
+      // only shows on the sign-out that cannot navigate because the session is
+      // already dead.
+      if (isSignOutInProgress()) {
+        set({ status: "idle", kind: null });
+        return;
+      }
       // A dead session never degrades back into a retryable one: once WorkOS
       // has rejected the refresh, a later network-flavored exhaustion must not
       // relabel it and offer a Retry that cannot possibly work.

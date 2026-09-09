@@ -48,7 +48,13 @@ vi.mock("@/stores/widget-debug-store", () => ({
 }));
 
 // Mock thread-helpers
-vi.mock("../../thread-helpers", () => ({
+// `importOriginal` rather than a bare factory: this module re-exports the
+// package's graph-free `@mcpjam/chat-ui/thread-helpers` subpath, and the parts
+// this file does not care about (notably `readTraceDisplayText`, which decides
+// whether a readable tool result is shown at all) have to behave like the real
+// thing rather than be re-stubbed in every test file that shadows one helper.
+vi.mock("../../thread-helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../thread-helpers")>()),
   getToolNameFromType: () => "test-tool",
   getToolStateMeta: () => ({
     Icon: (props: any) => <div data-testid="status-icon" {...props} />,
@@ -68,7 +74,12 @@ vi.mock("@mcpjam/design-system/badge", () => ({
 }));
 
 vi.mock("../../csp-workbench", () => ({
-  CspWorkbench: () => null,
+  CspWorkbench: ({ recordedPolicy }: any) => (
+    <div data-testid="recorded-widget-diagnostics">
+      Saved with this eval run
+      {JSON.stringify(recordedPolicy)}
+    </div>
+  ),
 }));
 
 // Mock JsonEditor to avoid pulling in additional lucide icons
@@ -248,5 +259,41 @@ describe("ToolPart display mode controls", () => {
     expect(
       screen.queryByLabelText("Edit input and output"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows recorded Data and CSP without live display or edit controls", async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolPart
+        part={basePart as any}
+        uiType="mcp-apps"
+        recordedWidgetDiagnostics={{
+          resourceUri: "ui://widget/create-view.html",
+          csp: { connectDomains: ["https://api.example.com"] },
+          permissions: { clipboardWrite: {} },
+          permissive: false,
+          prefersBorder: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Data")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sandbox")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Inline")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Edit input and output"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("test-tool"));
+    expect(screen.getByText("Recorded tool data")).toBeInTheDocument();
+    expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
+
+    await user.click(screen.getByLabelText("Sandbox"));
+    expect(screen.getByTestId("recorded-widget-diagnostics")).toHaveTextContent(
+      "Saved with this eval run",
+    );
+    expect(screen.getByTestId("recorded-widget-diagnostics")).toHaveTextContent(
+      "https://api.example.com",
+    );
   });
 });

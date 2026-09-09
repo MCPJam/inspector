@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, MoreHorizontal, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -20,12 +21,14 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import type { HostThemeMode } from "@/lib/client-styles";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogHosts } from "@mcpjam/sdk/host-compat";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
+import { clientDisplayName } from "@/lib/client-display-name";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 // Quick-add priority. These templates surface first in the Add-host strip;
 // everything else follows in template order and spills into the overflow (⋯).
@@ -47,16 +50,18 @@ const QUICK_ADD_VISIBLE = 6;
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
  * selector's prop shape so the two chips behave the same way, minus a
- * "Multiple hosts" toggle (PUR-11): checking a second row in the list stacks
- * a compare lineup immediately, no switch to find and flip first. Host
- * compare and model compare stay mutually exclusive — that's enforced by the
- * parent's `onMultiHostEnabledChange` / `onMultiModelEnabledChange`, not
- * here; this component still calls `onMultiHostEnabledChange` (kept in sync
- * with the selection count) so the parent's mutual-exclusion logic keeps
- * working unchanged.
+ * "Multiple hosts" toggle (PUR-11): ticking a row's checkbox stacks a compare
+ * lineup immediately, no switch to find and flip first. The row BODY is a
+ * separate gesture (BB-135) that switches the active client and collapses any
+ * lineup, so switching costs one click instead of "tick the new one, untick
+ * the old one". Host compare and model compare stay mutually exclusive —
+ * that's enforced by the parent's `onMultiHostEnabledChange` /
+ * `onMultiModelEnabledChange`, not here; this component still calls
+ * `onMultiHostEnabledChange` (kept in sync with the selection count) so the
+ * parent's mutual-exclusion logic keeps working unchanged.
  */
 export interface ClientSelectorData {
-  hosts: HostListItem[];
+  hosts: Pick<HostListItem, "hostId" | "name" | "displayName">[];
   /** Project the hosts belong to — required to create new hosts. May be a
    *  client-local project id (UUID) before the project is synced to Convex. */
   projectId: string | null;
@@ -82,6 +87,9 @@ export interface ClientSelectorData {
 }
 
 interface ClientSelectorProps extends ClientSelectorData {
+  /** Alternate trigger for embedded surfaces such as eval tables. */
+  trigger?: ReactNode;
+  inModal?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -97,6 +105,8 @@ function compactHostLabel(name: string): string {
 }
 
 export function ClientSelector({
+  trigger,
+  inModal = false,
   hosts,
   projectId,
   currentHostId,
@@ -118,7 +128,7 @@ export function ClientSelector({
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [createTemplateId, setCreateTemplateId] = useState<string | undefined>(
-    undefined
+    undefined,
   );
   const catalogState = useHostCatalog();
   const keepPopoverOpenRef = useRef(false);
@@ -178,7 +188,7 @@ export function ClientSelector({
   };
 
   const hostsById = useMemo(() => {
-    const map = new Map<string, HostListItem>();
+    const map = new Map<string, ClientSelectorData["hosts"][number]>();
     for (const host of hosts) map.set(host.hostId, host);
     return map;
   }, [hosts]);
@@ -204,28 +214,36 @@ export function ClientSelector({
 
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
-    [effectiveSelectedHostIds]
+    [effectiveSelectedHostIds],
   );
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
   const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
-  const leadHostName = leadHost?.name ?? "Select host";
+  const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
   const leadHostLogo = leadHost?.name
-    ? resolveHostLogoByDisplayName(leadHost.name, themeMode)
+    ? resolveHostLogoByName(leadHost.name, themeMode)
     : null;
 
   const isComparing = effectiveSelectedHostIds.length > 1;
   const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
   const triggerLabel = isComparing
     ? effectiveSelectedHostIds
-        .map((hostId) =>
-          compactHostLabel(hostsById.get(hostId)?.name ?? hostId)
-        )
+        .map((hostId) => {
+          const host = hostsById.get(hostId);
+          return compactHostLabel(host ? clientDisplayName(host) : hostId);
+        })
         .join(", ")
     : compactHostLabel(leadHostName);
   const clientListMaxHeight = isComparing ? 160 : 220;
 
-  const handleSingleSelect = (hostId: string) => {
+  const handleSelectLead = (hostId: string) => {
+    // Collapsing the lineup is required, not cosmetic. `usePersistedHost`
+    // preserves the column COUNT when only the lead changes, so changing the
+    // lead alone would swap a compare column rather than leave comparison.
+    if (effectiveSelectedHostIds.length > 1) {
+      onSelectedHostIdsChange([hostId]);
+      onMultiHostEnabledChange(false);
+    }
     if (hostId !== leadHostId) onHostChange(hostId);
     setIsOpen(false);
   };
@@ -254,7 +272,7 @@ export function ClientSelector({
   const orderedCatalogHosts = useMemo(() => {
     if (catalogState.status !== "live") return [];
     const hostsById = new Map(
-      getCatalogHosts(catalogState.catalog).map((host) => [host.id, host])
+      getCatalogHosts(catalogState.catalog).map((host) => [host.id, host]),
     );
     const priority = QUICK_ADD_ORDER.flatMap((id) => {
       const host = hostsById.get(id);
@@ -263,7 +281,7 @@ export function ClientSelector({
       return [host];
     });
     const rest = [...hostsById.values()].sort((a, b) =>
-      a.label.localeCompare(b.label)
+      a.label.localeCompare(b.label),
     );
     return [...priority, ...rest];
   }, [catalogState]);
@@ -280,87 +298,71 @@ export function ClientSelector({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={disabled || isLoading}
-                className={cn(
-                  "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                  isComparing ? "max-w-[280px] gap-1" : "max-w-[170px] gap-1"
-                )}
-                data-testid="client-selector-trigger"
-              >
-                {isComparing ? (
-                  <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
-                    {effectiveSelectedHostIds.map((hostId, index) => {
-                      const host = hostsById.get(hostId);
-                      const name = compactHostLabel(host?.name ?? hostId);
-                      const logo = resolveHostLogoByDisplayName(
-                        name,
-                        themeMode
-                      );
-                      return (
-                        <span
-                          key={hostId}
-                          className={cn(
-                            "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
-                            index === 0
-                              ? "border-primary/25 text-foreground"
-                              : "border-border/50 text-muted-foreground"
-                          )}
-                        >
-                          {logo ? (
-                            <img
-                              src={logo}
-                              alt=""
-                              className="size-3 shrink-0 object-contain"
+              {trigger ?? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={disabled || isLoading}
+                  className={cn(
+                    "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
+                    isComparing ? "max-w-[280px] gap-1" : "max-w-[170px] gap-1",
+                  )}
+                  data-testid="client-selector-trigger"
+                >
+                  {isComparing ? (
+                    <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                      {effectiveSelectedHostIds.map((hostId, index) => {
+                        const host = hostsById.get(hostId);
+                        const name = compactHostLabel(
+                          host ? clientDisplayName(host) : hostId,
+                        );
+                        const logo = resolveHostLogoByName(
+                          host?.name ?? name,
+                          themeMode,
+                        );
+                        return (
+                          <span
+                            key={hostId}
+                            className={cn(
+                              "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+                              index === 0
+                                ? "border-primary/25 text-foreground"
+                                : "border-border/50 text-muted-foreground",
+                            )}
+                          >
+                            <HostChipLogo
+                              logoSrc={logo}
+                              name={name}
+                              size="xs"
                             />
-                          ) : (
-                            <span
-                              aria-hidden
-                              className="size-3 shrink-0 rounded-full bg-muted"
-                            />
-                          )}
-                          <span className="truncate">{name}</span>
-                        </span>
-                      );
-                    })}
-                  </span>
-                ) : (
-                  <>
-                    {leadHostLogo ? (
-                      <img
-                        src={leadHostLogo}
-                        alt=""
-                        className="size-4 shrink-0 rounded-[3px] object-contain"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        className="size-4 shrink-0 rounded-full bg-muted"
-                      />
-                    )}
-                    <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      {triggerLabel}
+                            <span className="truncate">{name}</span>
+                          </span>
+                        );
+                      })}
                     </span>
-                  </>
-                )}
-                {isComparing ? (
-                  leadHostLogo ? (
-                    <img
-                      src={leadHostLogo}
-                      alt=""
-                      className="hidden size-4 shrink-0 rounded-[3px] object-contain @max-2xl/toolbar:block"
-                    />
                   ) : (
-                    <span
-                      aria-hidden
-                      className="hidden size-4 shrink-0 rounded-full bg-muted @max-2xl/toolbar:block"
+                    <>
+                      <HostChipLogo
+                        logoSrc={leadHostLogo}
+                        name={leadHostName}
+                        size="md"
+                      />
+                      <span className="truncate text-[10px] font-medium @max-2xl/toolbar:hidden">
+                        {triggerLabel}
+                      </span>
+                    </>
+                  )}
+                  {isComparing ? (
+                    <HostChipLogo
+                      logoSrc={leadHostLogo}
+                      name={leadHostName}
+                      size="md"
+                      className="hidden @max-2xl/toolbar:block"
                     />
-                  )
-                ) : null}
-              </Button>
+                  ) : null}
+                </Button>
+              )}
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
@@ -369,11 +371,12 @@ export function ClientSelector({
         </Tooltip>
 
         <PopoverContent
+          portalled={!inModal}
           align={align}
           className="max-h-[min(520px,calc(100vh-6rem))] w-[260px] overflow-hidden p-0"
           side="top"
           sideOffset={8}
-          avoidCollisions={false}
+          avoidCollisions={true}
           collisionPadding={8}
         >
           <Command shouldFilter={true}>
@@ -391,10 +394,10 @@ export function ClientSelector({
                 {effectiveSelectedHostIds.map((hostId, index) => {
                   const host = hostsById.get(hostId);
                   const isLead = index === 0;
-                  const name = host?.name ?? hostId;
-                  const logo = resolveHostLogoByDisplayName(
-                    name,
-                    modalThemeMode
+                  const name = host ? clientDisplayName(host) : hostId;
+                  const logo = resolveHostLogoByName(
+                    host?.name ?? name,
+                    modalThemeMode,
                   );
                   return (
                     <span
@@ -403,7 +406,7 @@ export function ClientSelector({
                         "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
                         isLead
                           ? "border-primary/25 bg-primary/5 text-foreground"
-                          : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground"
+                          : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
                       )}
                     >
                       {/* Promotion and removal are separate sibling buttons,
@@ -414,18 +417,7 @@ export function ClientSelector({
                         className="inline-flex min-w-0 items-center gap-1"
                         onClick={() => handlePromoteLeadFromChip(hostId)}
                       >
-                        {logo ? (
-                          <img
-                            src={logo}
-                            alt=""
-                            className="size-3 shrink-0 object-contain"
-                          />
-                        ) : (
-                          <span
-                            aria-hidden
-                            className="size-3 shrink-0 rounded-full bg-muted"
-                          />
-                        )}
+                        <HostChipLogo logoSrc={logo} name={name} size="xs" />
                         <span className="truncate">{name}</span>
                       </button>
                       {!isLead ? (
@@ -464,38 +456,75 @@ export function ClientSelector({
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
                   checklistMode && !isSelected && limitReached;
-                const logo = resolveHostLogoByDisplayName(
-                  host.name,
-                  modalThemeMode
-                );
+                const logo = resolveHostLogoByName(host.name, modalThemeMode);
 
-                const row = (
-                  <CommandItem
-                    key={host.hostId}
-                    value={`${host.name} ${host.hostId}`}
-                    onSelect={() =>
-                      checklistMode
-                        ? handleMultiSelect(host.hostId)
-                        : handleSingleSelect(host.hostId)
+                // A real button, not the row's own click target: the row body
+                // switches clients, the checkbox builds the comparison. Same
+                // stopPropagation pattern the chip strip's remove control uses.
+                const compareToggle = (
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    // `clientDisplayName`, not `host.name`: two clients can
+                    // share a stored name and are told apart only by the
+                    // resolved display name, so the raw one names both rows
+                    // "Compare with Claude".
+                    aria-label={
+                      isSelected
+                        ? `Remove ${clientDisplayName(host)} from comparison`
+                        : `Compare with ${clientDisplayName(host)}`
                     }
                     disabled={isLimitedOut}
-                    className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+                    data-testid={`client-row-compare-${host.hostId}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleMultiSelect(host.hostId);
+                    }}
+                    // cmdk's root keydown claims Enter for the highlighted row
+                    // and preventDefaults it, so Enter on a focused checkbox
+                    // would switch clients instead of toggling compare. Stop it
+                    // reaching the root and the button's own activation stands.
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.stopPropagation();
+                    }}
+                    className={cn(
+                      // `pointer-events-none` when disabled so the wrapper
+                      // below receives the hover instead: Chrome retargets a
+                      // disabled control's pointer events to the parent,
+                      // Firefox and Safari drop them, and the cap tooltip has
+                      // no other hover surface.
+                      "flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] disabled:pointer-events-none disabled:opacity-50",
+                      isSelected
+                        ? "border-primary bg-primary shadow-sm"
+                        : "border-border/60 bg-transparent hover:border-border"
+                    )}
+                  >
+                    {isSelected ? (
+                      <Check
+                        strokeWidth={3}
+                        className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                      />
+                    ) : null}
+                  </button>
+                );
+
+                return (
+                  <CommandItem
+                    key={host.hostId}
+                    value={`${clientDisplayName(host)} ${host.name} ${
+                      host.hostId
+                    }`}
+                    onSelect={() => handleSelectLead(host.hostId)}
+                    className="cursor-pointer rounded-sm px-2 py-1"
                     data-testid={`client-row-${host.hostId}`}
                   >
-                    {logo ? (
-                      <img
-                        src={logo}
-                        alt=""
-                        className="size-3.5 shrink-0 object-contain"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        className="size-3.5 shrink-0 rounded-full bg-muted"
-                      />
-                    )}
+                    <HostChipLogo
+                      logoSrc={logo}
+                      name={clientDisplayName(host)}
+                      size="sm"
+                    />
                     <span className="min-w-0 flex-1 truncate text-sm">
-                      {host.name}
+                      {clientDisplayName(host)}
                     </span>
                     {isComparing && host.hostId === leadHostId ? (
                       <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-primary">
@@ -503,41 +532,34 @@ export function ClientSelector({
                       </span>
                     ) : null}
                     {checklistMode ? (
-                      <div
-                        className={cn(
-                          "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                          isSelected
-                            ? "border-primary bg-primary shadow-sm"
-                            : "border-border/60 bg-transparent hover:border-border"
+                      <div className="ml-auto flex shrink-0 items-center">
+                        {isLimitedOut ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              {/* Holds the cursor the button can no longer
+                                  show, and swallows the click the button no
+                                  longer takes — reaching the row would switch
+                                  the client the user aimed a checkbox at. */}
+                              <span
+                                className="flex cursor-not-allowed"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {compareToggle}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right">
+                              You can compare up to {maxSelectedHosts} clients
+                              at once
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          compareToggle
                         )}
-                        aria-hidden
-                      >
-                        {isSelected ? (
-                          <Check
-                            strokeWidth={3}
-                            className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                          />
-                        ) : null}
                       </div>
                     ) : host.hostId === leadHostId ? (
                       <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
                     ) : null}
                   </CommandItem>
-                );
-
-                return isLimitedOut ? (
-                  <Tooltip key={host.hostId}>
-                    <TooltipTrigger asChild>
-                      <div className="rounded-sm transition-colors hover:bg-accent/60">
-                        {row}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      You can compare up to {maxSelectedHosts} clients at once
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  row
                 );
               })}
             </CommandList>

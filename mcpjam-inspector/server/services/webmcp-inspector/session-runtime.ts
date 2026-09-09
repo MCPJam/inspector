@@ -17,6 +17,8 @@ import {
   WEBMCP_INVOKE_QUEUE_LIMIT,
   WEBMCP_INVOKE_TIMEOUT_MS,
   type WebMcpActivityEntry,
+  type WebMcpFrame,
+  type WebMcpInputEvent,
   type WebMcpInvocationSource,
   type WebMcpInvocationState,
   type WebMcpSessionPublic,
@@ -31,6 +33,7 @@ import {
 } from "@/shared/webmcp-inspector-protocol";
 import {
   WebMcpInvocationCancelledError,
+  WebMcpOutcomeUnknownError,
   WebMcpToolGoneError,
   type ProviderToolDescriptor,
   type WebMcpBrowserSession,
@@ -65,10 +68,76 @@ export interface WebMcpSessionRuntimeOptions {
   queueLimit?: number;
   /** Called whenever anything happens that should postpone idle reaping. */
   onActivity?: () => void;
+  /**
+   * Who this session belongs to. Set for hosted sessions, whose id is derived
+   * from the computer rather than issued — so it is guessable, and every
+   * request for it is checked against this. Absent for local sessions, where
+   * the caller is already sitting at the machine the browser is running on.
+   */
+  ownerId?: string;
+  /**
+   * This runtime is ADOPTING a browser that was already open, on a replica
+   * that did not start it.
+   *
+   * Suppresses the opening timeline entries. A re-hydrated session is the same
+   * session — the client has its history and is re-reading the stream — so
+   * republishing "session started" and "tools added" would write a second
+   * beginning into a timeline that already has one, once per replica that ever
+   * serves a request for it.
+   */
+  rehydrated?: boolean;
 }
 
 interface TrackedTool extends WebMcpToolDescriptor {
   frameId: string;
+}
+
+/**
+ * What an invocation resolves to internally.
+ *
+ * `bytes` is the size BEFORE the cap, carried alongside the (possibly cut)
+ * value so the hosted route can report the same `outputBytes` the timeline
+ * entry reports. Without it the inline answer could say output was truncated
+ * but not by how much, which is the one thing that figure is for.
+ */
+/**
+ * What an `invokeId` was minted for.
+ *
+ * Serialized rather than compared field by field because the input is
+ * arbitrary page-tool JSON; unserializable input degrades to "not equal",
+ * which refuses a reuse rather than allowing one.
+ */
+function invocationIdentity(
+  toolKey: string,
+  input: Record<string, unknown>,
+): string {
+  try {
+    return `${toolKey}\u0000${JSON.stringify(input ?? {})}`;
+  } catch {
+    return `${toolKey}\u0000<unserializable:${Math.random()}>`;
+  }
+}
+
+/** A caller reused an invocation id for a different call. */
+export class WebMcpInvokeIdReusedError extends Error {
+  constructor(invokeId: string) {
+    super(
+      `Invocation id ${invokeId} was already used for a different tool or input. ` +
+        `An id identifies one call; use a fresh one.`,
+    );
+    this.name = "WebMcpInvokeIdReusedError";
+  }
+}
+
+export interface WebMcpSettledOutput {
+  output: unknown;
+  truncated: boolean;
+  /**
+   * Absent when there is no serialized form to measure — cyclic output, say.
+   * `outputBytes` is read as "how much was dropped", so a fabricated zero
+   * there says the result was truncated from nothing.
+   */
+  bytes?: number;
 }
 
 interface QueuedInvocation {
@@ -77,9 +146,19 @@ interface QueuedInvocation {
   input: Record<string, unknown>;
   source: WebMcpInvocationSource;
   controller: AbortController;
-  resolve: (result: { output: unknown; truncated: boolean }) => void;
+  resolve: (result: WebMcpSettledOutput) => void;
   reject: (error: Error) => void;
+  /** Handed to a duplicate so both callers await the one execution. */
+  settled: Promise<WebMcpSettledOutput>;
 }
+
+/**
+ * How long a settled invocation stays answerable by its id, and how many are
+ * kept. Matched to the daemon's own result cache (15 min / 512) so a retry
+ * that this layer can still answer is one the daemon could also still answer.
+ */
+const INVOKE_REPLAY_TTL_MS = 15 * 60_000;
+const INVOKE_REPLAY_MAX = 512;
 
 /**
  * Bound page-authored metadata before it enters the runtime or replay ring.
@@ -150,6 +229,48 @@ export class WebMcpSessionRuntime {
   private readonly invokeTimeoutMs: number;
   private readonly queueLimit: number;
   private readonly onActivity: () => void;
+  private readonly ownerId: string | undefined;
+  private readonly rehydrated: boolean;
+  /**
+   * Outcomes of invocations that have already settled, by their caller-supplied
+   * id, so a retry is answered rather than re-run. See `invoke`.
+   */
+  private readonly settledByInvokeId = new Map<
+    string,
+    {
+      /**
+       * When it SETTLED, not when it was queued — and `Infinity` until it does.
+       *
+       * Anchoring at enqueue made the window expire as a slow tool finished —
+       * a fifteen-minute invocation had no replay window left at the moment a
+       * retry was most likely — and the daemon's own cache, which starts when
+       * IT finishes, would still have answered. The two are matched (15 min /
+       * 512) so they expire together; they only do if both start counting from
+       * the same event.
+       *
+       * `Infinity` while it is still running is what makes that true rather
+       * than merely intended: a re-stamp at settle cannot save an entry the
+       * TTL sweep already deleted, and a still-running invocation is exactly
+       * the one whose id a retry must not be allowed to re-run.
+       */
+      at: number;
+      settled: Promise<WebMcpSettledOutput>;
+      /**
+       * What this id was minted for, so a reused one cannot be answered.
+       *
+       * The IDENTITY STRING, not the raw pair: `invocationIdentity` is the
+       * only serializer that survives cyclic input, and computing it once here
+       * means the replay comparison is a string compare rather than a
+       * `JSON.parse` of something that had to be stringified first.
+       */
+      identity: string;
+    }
+  >();
+  /**
+   * The quality the provider's stream is encoding at, when it has an adaptive
+   * one. Reported, never decided here: the provider owns the ladder.
+   */
+  private streamQuality: number | undefined;
   /** Set by the registry; the runtime reports it but does not own it. */
   expiresAt = 0;
   hardExpiresAt = 0;
@@ -161,12 +282,39 @@ export class WebMcpSessionRuntime {
     this.queueLimit = options.queueLimit ?? WEBMCP_INVOKE_QUEUE_LIMIT;
     this.onActivity = options.onActivity ?? (() => {});
     this.url = startUrl;
+    this.ownerId = options.ownerId;
+    this.rehydrated = options.rehydrated === true;
     this.createdAt = this.now();
     // Recorded at construction, not at `attach`: the browser navigates and
     // registers tools while it is starting, so an entry written afterwards
     // would land behind them and the timeline would read "navigated, tools
     // added, session started".
-    this.pushActivity({ kind: "session_started", url: this.url });
+    if (!this.rehydrated) {
+      this.pushActivity({ kind: "session_started", url: this.url });
+    }
+  }
+
+  /**
+   * The remote machine behind this session, when there is one.
+   *
+   * Undefined for a local session, which has no computer to keep awake. The
+   * ids come from the provider, because the runtime deliberately knows nothing
+   * about browserd — this is the one fact it has to pass along.
+   */
+  hostedTarget(): { computerId: string; sessionId: string } | undefined {
+    return this.session?.hostedTarget?.();
+  }
+
+  /**
+   * Is this session the caller's to drive?
+   *
+   * True when nobody owns it — a local session, where holding the id means
+   * sitting at the machine. Otherwise the ids must match. Callers turn `false`
+   * into a 404, never a 403: a 403 confirms the session exists.
+   */
+  belongsTo(userId: string | undefined): boolean {
+    if (this.ownerId === undefined) return true;
+    return userId !== undefined && userId === this.ownerId;
   }
 
   /** Callbacks handed to the provider at construction. */
@@ -175,6 +323,11 @@ export class WebMcpSessionRuntime {
       onToolsChanged: (tools) => this.applyTools(tools),
       onNavigated: (url, origin) => {
         this.url = url;
+        // The retained frame depicts a page that is gone. Held, it would be
+        // replayed to a reconnecting client as the current one — the same class
+        // of lie as serving the previous page's tools, which is why the
+        // provider drops those here too.
+        this.hub.clearFrame();
         this.setStatus("ready");
         this.pushActivity({ kind: "navigated", url, origin });
       },
@@ -193,6 +346,23 @@ export class WebMcpSessionRuntime {
             : undefined,
         }),
       onActivityObserved: () => this.onActivity(),
+      onFrame: (frame) => this.publishFrame(frame),
+      onStreamQualityChanged: (quality) => {
+        // Republished only on a real change: the provider may re-report the
+        // same rung after a restart, and a session event per frame-rate wobble
+        // would be chatter on a stream the timeline shares.
+        if (this.streamQuality === quality) return;
+        this.streamQuality = quality;
+        // NOT before `attach`, and the ordering is real: an embedded session
+        // starts its screencast inside the provider's own `start()`, which
+        // runs before this runtime has a browser or the registry has adopted
+        // it. Publishing there would put a session event in the replay ring
+        // advertising `native-window` and an expiry at the epoch — the same
+        // reason `attach` sets its status without publishing. The quality is
+        // remembered either way, and rides the first session event the
+        // registry does publish.
+        if (this.session) this.publishSession();
+      },
       onCrashed: (message) => {
         this.setStatus("error", message);
         this.pushActivity({ kind: "session_error", message });
@@ -229,6 +399,11 @@ export class WebMcpSessionRuntime {
       viewportTransport: this.session?.viewportTransport() ?? {
         kind: "native-window",
       },
+      // Spread rather than sent as undefined, so a provider with no adaptive
+      // stream reports a session shaped exactly as it always has been.
+      ...(this.streamQuality !== undefined
+        ? { streamQuality: this.streamQuality }
+        : {}),
       protocolVersion: WEBMCP_INSPECTOR_PROTOCOL_VERSION,
       ...(this.statusDetail ? { detail: this.statusDetail } : {}),
     };
@@ -308,6 +483,49 @@ export class WebMcpSessionRuntime {
     return shot;
   }
 
+  /**
+   * Start or stop the viewport stream, reporting whether frames are flowing.
+   *
+   * `false` is a real answer, not a failure: this browser cannot screencast, or
+   * the provider has no such thing. The caller turns it into the screenshot
+   * fallback, which is the difference between a degraded pane and a pane stuck
+   * on "Waiting for the first frame…".
+   *
+   * Ticks the idle clock only when TURNING IT ON. Asking for frames is a person
+   * opening the pane — interest worth postponing a reap for. Withdrawing them
+   * is the opposite, and since the client withdraws on every visibility change,
+   * ticking there would let a flapping background tab keep an abandoned session
+   * alive indefinitely.
+   */
+  async setScreencast(enabled: boolean): Promise<boolean> {
+    const streaming = await this.requireSession().setScreencast(enabled);
+    if (enabled) this.onActivity();
+    // Nothing is going to replace that retained frame now, and replay promises
+    // a reconnecting client the CURRENT paint rather than the last one before
+    // the stream stopped.
+    if (!streaming) this.hub.clearFrame();
+    return streaming;
+  }
+
+  /**
+   * Drive the page from the pane.
+   *
+   * Ticks the idle clock — a human working the pane is the clearest possible
+   * signal that the session is in use, and reaping it out from under them would
+   * be the worst version of this feature.
+   *
+   * Writes NO timeline entry, mirroring `capture_screenshot`. The timeline
+   * records protocol happenings: tools registering, invocations starting and
+   * settling. Input's consequences already produce entries — a click that
+   * navigates writes `navigated`, one that fires a page tool writes
+   * `external_invocation` — so logging the clicks themselves would bury those
+   * under a mouse trail.
+   */
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    await this.requireSession().dispatchInput(events);
+    this.onActivity();
+  }
+
   private requireSession(): WebMcpBrowserSession {
     if (!this.session) {
       throw new Error("The browser session is not ready.");
@@ -327,24 +545,78 @@ export class WebMcpSessionRuntime {
     toolKey: string,
     input: Record<string, unknown>,
     source: WebMcpInvocationSource,
+    /**
+     * The caller's own id for this invocation, making the call IDEMPOTENT.
+     *
+     * Supplied by a client that may have to retry — a hosted one, whose
+     * request can be dropped mid-flight or land on a different replica than
+     * the last attempt. Without it, "did that go through?" has only two
+     * answers, and one of them charges the card twice. Omitted ⇒ a fresh id,
+     * which is right for a local caller that cannot retry.
+     */
+    requestedInvokeId?: string,
   ): {
     invokeId: string;
-    settled: Promise<{ output: unknown; truncated: boolean }>;
+    settled: Promise<WebMcpSettledOutput>;
   } {
+    // What this id stands for. An id identifies ONE call, so a caller that
+    // reuses one for a different tool or different arguments is not retrying
+    // — and answering it from the first call would hand back a result for
+    // something it never asked to run, while never running what it did.
+    //
+    // Computed for EVERY invocation, reused id or not, because the replay
+    // record needs it too — and computing it here means the one serializer
+    // that tolerates cyclic input is the only one that ever sees the input.
+    const identity = invocationIdentity(toolKey, input);
+    if (requestedInvokeId) {
+      // Already running or queued: hand back the SAME promise, so both callers
+      // watch one execution.
+      const live =
+        this.running?.invokeId === requestedInvokeId
+          ? this.running
+          : this.queue.find((item) => item.invokeId === requestedInvokeId);
+      if (live) {
+        if (invocationIdentity(live.toolKey, live.input) !== identity) {
+          throw new WebMcpInvokeIdReusedError(requestedInvokeId);
+        }
+        return { invokeId: live.invokeId, settled: live.settled };
+      }
+      // Already finished: replay the recorded outcome. The daemon would also
+      // de-duplicate this, but only the execution — a second trip through the
+      // queue would still write a second `invocation_started`/`settled` pair
+      // and a second pair of screenshots into the timeline for one call.
+      // The TTL is enforced HERE as well as in `rememberOutcome`'s sweep,
+      // because that sweep only runs when another invocation settles. A
+      // session that ran one tool and then went quiet keeps its last outcome
+      // forever, and would answer a retry hours later with a stale result for
+      // an id the daemon has long since forgotten — the two are matched (15
+      // min / 512) precisely so they expire together.
+      const done = this.settledByInvokeId.get(requestedInvokeId);
+      if (done) {
+        if (this.now() - done.at < INVOKE_REPLAY_TTL_MS) {
+          if (done.identity !== identity) {
+            throw new WebMcpInvokeIdReusedError(requestedInvokeId);
+          }
+          return { invokeId: requestedInvokeId, settled: done.settled };
+        }
+        this.settledByInvokeId.delete(requestedInvokeId);
+      }
+    }
     if (this.inFlight >= this.queueLimit + 1) {
       throw new WebMcpQueueFullError(
         `Too many invocations are already queued (limit ${this.queueLimit}).`,
       );
     }
-    const invokeId = randomUUID();
-    let resolve!: (result: { output: unknown; truncated: boolean }) => void;
+    const invokeId = requestedInvokeId ?? randomUUID();
+    let resolve!: (result: WebMcpSettledOutput) => void;
     let reject!: (error: Error) => void;
-    const settled = new Promise<{ output: unknown; truncated: boolean }>(
-      (res, rej) => {
-        resolve = res;
-        reject = rej;
-      },
-    );
+    const settled = new Promise<WebMcpSettledOutput>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    // Never rejects unhandled: the map hands this promise to a later retry,
+    // which may attach long after the original caller stopped watching.
+    settled.catch(() => {});
     this.queue.push({
       invokeId,
       toolKey,
@@ -353,10 +625,59 @@ export class WebMcpSessionRuntime {
       controller: new AbortController(),
       resolve,
       reject,
+      settled,
     });
+    // The identity is computed by the same guarded serializer the reuse check
+    // uses, so cyclic input degrades to "not equal" — refusing a later reuse —
+    // rather than throwing here, AFTER the item is already on the queue.
+    this.rememberOutcome(invokeId, settled, identity);
     this.draining_ = this.drain();
     void this.draining_;
     return { invokeId, settled };
+  }
+
+  /**
+   * Retain an invocation's result so a retry can be answered from it.
+   *
+   * Bounded by time and count together: the window has to outlive a client's
+   * own retry horizon, and the map has to not grow for the life of a session
+   * that may be hours old. `INVOKE_REPLAY_TTL_MS` is generous against the
+   * former and `INVOKE_REPLAY_MAX` against the latter; past either, a retry
+   * gets a fresh execution — which is the same answer the daemon gives once
+   * its own cache has evicted the id, so the two degrade together.
+   */
+  private rememberOutcome(
+    invokeId: string,
+    settled: Promise<WebMcpSettledOutput>,
+    identity: string,
+  ): void {
+    // `Infinity`, not `now()`: an entry is exempt from the TTL sweep until it
+    // settles. Stamping the enqueue time made a tool that runs longer than the
+    // window get swept WHILE RUNNING, and the re-stamp below then found
+    // nothing to re-stamp — so a retry of the id sailed past the replay check
+    // and enqueued a second execution of a side-effecting page tool. Which is
+    // the one thing the id exists to prevent.
+    const entry = { at: Number.POSITIVE_INFINITY, settled, identity };
+    this.settledByInvokeId.set(invokeId, entry);
+    // STAMPED when it settles. The window has to start where the daemon's
+    // does — at completion — or a slow invocation's replay expires exactly
+    // when a retry is most likely, and re-runs a tool the daemon would still
+    // have de-duplicated.
+    const restamp = () => {
+      if (this.settledByInvokeId.get(invokeId) === entry) {
+        entry.at = this.now();
+      }
+    };
+    void settled.then(restamp, restamp);
+    const cutoff = this.now() - INVOKE_REPLAY_TTL_MS;
+    for (const [id, entry] of this.settledByInvokeId) {
+      if (entry.at < cutoff) this.settledByInvokeId.delete(id);
+    }
+    while (this.settledByInvokeId.size > INVOKE_REPLAY_MAX) {
+      const oldest = this.settledByInvokeId.keys().next().value;
+      if (oldest === undefined) break;
+      this.settledByInvokeId.delete(oldest);
+    }
   }
 
   /** Cancel a queued or running invocation. Idempotent by design: cancelling
@@ -456,23 +777,40 @@ export class WebMcpSessionRuntime {
         toolName: tool.name,
         input: item.input,
         signal: item.controller.signal,
+        // Carried through so a provider that can de-duplicate does. The hosted
+        // one hands it to the daemon's at-most-once queue.
+        invokeId: item.invokeId,
       });
       const capped = capResult(output);
       await this.settle(item, "succeeded", startedAt, {
         output: capped.value,
         ...(capped.truncated
-          ? { outputTruncated: true, outputBytes: capped.bytes }
+          ? {
+              outputTruncated: true,
+              ...(capped.bytes !== undefined
+                ? { outputBytes: capped.bytes }
+                : {}),
+            }
           : {}),
       });
       this.release(item);
-      item.resolve({ output: capped.value, truncated: capped.truncated });
+      item.resolve({
+        output: capped.value,
+        truncated: capped.truncated,
+        ...(capped.bytes !== undefined ? { bytes: capped.bytes } : {}),
+      });
     } catch (error) {
       const state: WebMcpInvocationState =
-        error instanceof WebMcpInvocationCancelledError
-          ? error.reason === "timeout"
-            ? "timeout"
-            : "cancelled"
-          : "failed";
+        error instanceof WebMcpOutcomeUnknownError
+          ? // It ran; what it did is not establishable. Recorded as its own
+            // state rather than collapsed into "failed", which would tell
+            // someone their payment did not go through when it may well have.
+            "unknown"
+          : error instanceof WebMcpInvocationCancelledError
+            ? error.reason === "timeout"
+              ? "timeout"
+              : "cancelled"
+            : "failed";
       const message =
         error instanceof Error ? error.message : "The tool failed.";
       await this.settle(item, state, startedAt, { errorMessage: message });
@@ -540,6 +878,26 @@ export class WebMcpSessionRuntime {
     });
   }
 
+  /**
+   * A viewer's transport could not take a frame and dropped one.
+   *
+   * Forwarded straight to the provider, which owns the quality ladder, and
+   * NOT treated as activity: a struggling link is not somebody using the
+   * session, and ticking the idle clock from it would keep an abandoned tab
+   * alive for as long as its network stayed bad.
+   *
+   * Every viewer of a session reports into the same funnel, so the WORST
+   * transport governs the quality for all of them. That is the right default
+   * for the case this exists for — one person, one pane, on a link that cannot
+   * keep up — and the wrong one for a session watched from two places at once,
+   * where a slow viewer lowers the picture for a fast one. Accepted: the
+   * alternative is per-subscriber encoding, which is a second encoder per
+   * viewer.
+   */
+  noteFramePressure(): void {
+    this.session?.noteFramePressure?.();
+  }
+
   /** Re-publish the session (used when the registry moves its clocks). */
   publishSession(): void {
     this.publish({
@@ -547,6 +905,22 @@ export class WebMcpSessionRuntime {
       seq: this.nextSeq(),
       session: this.toPublic(),
     });
+  }
+
+  /**
+   * Publish one painted frame.
+   *
+   * Its own path rather than an activity entry, for two independent reasons.
+   * A frame is not a protocol happening, so it does not belong on the timeline
+   * or in an export — and `pushActivity` writes to the replay ring, which a
+   * 10fps stream would empty of everything else within seconds.
+   *
+   * It also does NOT call `onActivity()`. A page with a CSS spinner paints
+   * forever; ticking the idle clock from a paint would make every abandoned
+   * animated page unreapable.
+   */
+  private publishFrame(frame: WebMcpFrame): void {
+    this.publish({ type: "frame", seq: this.nextSeq(), frame });
   }
 
   private pushActivity(entry: WebMcpActivityDraft): void {
@@ -570,9 +944,15 @@ export class WebMcpSessionRuntime {
     return this.seq;
   }
 
-  async close(): Promise<void> {
-    this.failAllPending(new Error("The session was closed."));
-    this.setStatus("closed");
+  async close(reason: "closed" | "detached" = "closed"): Promise<void> {
+    this.failAllPending(
+      new Error(
+        reason === "detached"
+          ? "This server let go of the browser session."
+          : "The session was closed.",
+      ),
+    );
+    this.setStatus(reason);
     await this.session?.dispose().catch(() => {});
     // Awaited BEFORE the hub closes. `failAllPending` aborts the running
     // invocation, but its `settle` still has to publish the terminal entry, and

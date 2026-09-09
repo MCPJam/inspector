@@ -1,0 +1,452 @@
+{
+  "__readme": "Shared fixtures for the eval DESCRIPTION-EXPERIMENT report contract (schemaVersion 1, $id https://mcpjam.com/schemas/eval-description-experiment/v1.json). Loaded by sdk/tests/description-experiment.test.ts. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator. Synthetic tool is tool_a. Interval numbers in accept/roundTrip are schema-valid, not an oracle pin — builder tests pin Newcombe against compare-stats.",
+  "accept": [
+    {
+      "__label": "pooled no_difference, 10 vs 10, interval present",
+      "__why": "Both arms clear the default minimum; the interval includes zero so the verdict is no_difference, not improved.",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 10,
+            "passed": 8,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 10,
+            "passed": 9,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 10,
+            "lowerPoints": -23.6224990908,
+            "upperPoints": 42.0536441641
+          },
+          "verdict": "no_difference",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": [
+          {
+            "aggregationKey": "case_a\u0000",
+            "original": {
+              "eligible": 10,
+              "passed": 8,
+              "failed": 2,
+              "exclusions": {}
+            },
+            "rewrite": {
+              "eligible": 10,
+              "passed": 9,
+              "failed": 1,
+              "exclusions": {}
+            },
+            "interval": {
+              "deltaPoints": 10,
+              "lowerPoints": -23.6224990908,
+              "upperPoints": 42.0536441641
+            },
+            "verdict": "no_difference",
+            "minSampleSize": 5,
+            "minEffectSize": 0.01
+          }
+        ]
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 2,
+          "rewrite": 1
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 3,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["anthropic/claude-haiku-4.5"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": true
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": true
+    }
+  ],
+  "reject": [
+    {
+      "__label": "unknown field on the root",
+      "__why": "Every object is .strict(); a passenger field is an error.",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 5,
+            "passed": 3,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 5,
+            "passed": 4,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": null,
+          "verdict": "insufficient_data",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": []
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": false,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "non_gateable",
+        "reason": "x"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": true,
+      "extra": true
+    },
+    {
+      "__label": "reportOnly is not the literal true",
+      "__why": "The contract is report-only; a false would imply it gates.",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 5,
+            "passed": 3,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 5,
+            "passed": 4,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": null,
+          "verdict": "insufficient_data",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": []
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": false,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "non_gateable",
+        "reason": "x"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": false
+    },
+    {
+      "__label": "unknown exclusion reason",
+      "__why": "Closed vocabulary; a typo'd reason must fail, not ride along.",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 5,
+            "passed": 5,
+            "failed": 0,
+            "exclusions": {
+              "skipped": 1
+            }
+          },
+          "rewrite": {
+            "eligible": 5,
+            "passed": 5,
+            "failed": 0,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 0,
+            "lowerPoints": -1,
+            "upperPoints": 1
+          },
+          "verdict": "no_difference",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": []
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": true
+    },
+    {
+      "__label": "eligible is not passed + failed",
+      "__why": "An ArmSample whose counts disagree is a producer bug.",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 9,
+            "passed": 8,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 10,
+            "passed": 9,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 10,
+            "lowerPoints": -20,
+            "upperPoints": 40
+          },
+          "verdict": "no_difference",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": []
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": true
+    },
+    {
+      "__label": "interval present below minSampleSize",
+      "__why": "A number when either arm is short is the lie the card must not print.",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 3,
+            "passed": 1,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 3,
+            "passed": 2,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 33,
+            "lowerPoints": -20,
+            "upperPoints": 70
+          },
+          "verdict": "insufficient_data",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": []
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": true
+    }
+  ],
+  "roundTrip": [
+    {
+      "__label": "same as accept, byte-stable through parse",
+      "schemaVersion": 1,
+      "toolName": "tool_a",
+      "population": "trial",
+      "primary": {
+        "outcomeSource": "deterministic",
+        "pooled": {
+          "original": {
+            "eligible": 10,
+            "passed": 8,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 10,
+            "passed": 9,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 10,
+            "lowerPoints": -23.6224990908,
+            "upperPoints": 42.0536441641
+          },
+          "verdict": "no_difference",
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
+        },
+        "perCase": [
+          {
+            "aggregationKey": "case_a\u0000",
+            "original": {
+              "eligible": 10,
+              "passed": 8,
+              "failed": 2,
+              "exclusions": {}
+            },
+            "rewrite": {
+              "eligible": 10,
+              "passed": 9,
+              "failed": 1,
+              "exclusions": {}
+            },
+            "interval": {
+              "deltaPoints": 10,
+              "lowerPoints": -23.6224990908,
+              "upperPoints": 42.0536441641
+            },
+            "verdict": "no_difference",
+            "minSampleSize": 5,
+            "minEffectSize": 0.01
+          }
+        ]
+      },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 2,
+          "rewrite": 1
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 3,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["anthropic/claude-haiku-4.5"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": true
+      },
+      "evidenceLabel": "reproducible",
+      "reportOnly": true
+    }
+  ]
+}

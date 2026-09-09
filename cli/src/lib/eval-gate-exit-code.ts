@@ -56,6 +56,14 @@ export function evalGateExitCode(report: GateReport): number {
  * vocabulary, and splitting them across files is how a newly-added terminal
  * status ends up in one set and not the other — making `--wait` poll a finished
  * run until the deadline and then report a wait timeout.
+ *
+ * `grading` IS NOT HERE, and must not be. A run held for its gating judge has
+ * run every trial but has no verdict — `result` is still `pending` — so a gate
+ * that treated it as terminal would decide on the summary written BEFORE the
+ * judge's rows landed. Because it never reaches this set, it never reaches
+ * `NON_VERDICT_STATUSES` or the exit-code mapping either: `--wait` keeps
+ * polling, and a wait that runs out reports an incomplete gate (exit 3) rather
+ * than a verdict.
  */
 export const TERMINAL_RUN_STATUSES = new Set([
   "completed",

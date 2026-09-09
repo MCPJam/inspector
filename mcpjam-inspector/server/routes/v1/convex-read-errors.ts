@@ -34,7 +34,7 @@ import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
  * resource is gone during an outage.
  */
 const MEMBERSHIP_REFUSAL =
-  /not a member of this (?:project|workspace)|insufficient (?:project|workspace) permissions|chatsession not found or unauthorized/i;
+  /not a member of this (?:project|workspace|organization)|insufficient (?:project|workspace|organization) permissions|chatsession not found or unauthorized/i;
 
 /**
  * Convex rejected the ARGUMENTS before the handler ran — a caller-shaped id

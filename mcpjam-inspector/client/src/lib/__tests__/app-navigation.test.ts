@@ -5,6 +5,7 @@ import {
   buildConformanceSharePath,
   buildEvalSharePath,
   buildOrganizationPath,
+  buildOrganizationSwitchTarget,
   buildSessionsPath,
   buildSwarmPath,
   buildUserTestingScenarioEditPath,
@@ -72,9 +73,12 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
   });
 
-  it("omits insights (default) from the query and includes sessions", () => {
-    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
+  it("omits findings (default) from the query and includes other tabs", () => {
+    expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
       "/swarms/wave-1"
+    );
+    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
+      "/swarms/wave-1?tab=insights"
     );
     expect(buildSwarmPath("wave-1", { tab: "sessions" })).toBe(
       "/swarms/wave-1?tab=sessions"
@@ -90,24 +94,59 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     );
   });
 
-  it("parses known tabs, maps legacy aliases to insights, defaults to insights", () => {
+  it("parses known tabs, maps legacy aliases to insights, defaults to findings", () => {
     expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
-    expect(parseSwarmDetailTab("")).toBe("insights");
+    expect(parseSwarmDetailTab("")).toBe("findings");
     expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
-    expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=nope")).toBe("findings");
     expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
+  });
+
+  it("parses the findings tab", () => {
+    expect(parseSwarmDetailTab("?tab=findings")).toBe("findings");
+    expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
+      "/swarms/wave-1"
+    );
   });
 });
 
 describe("User Testing detail / edit navigation", () => {
-  it("defaults to Insights and opens Sessions for a session deep-link", () => {
-    expect(parseUserTestingDetailTab("")).toBe("insights");
-    expect(parseUserTestingDetailTab("?tab=insights")).toBe("insights");
+  it("defaults to Findings and opens Sessions for a session deep-link", () => {
+    expect(parseUserTestingDetailTab("")).toBe("findings");
+    expect(parseUserTestingDetailTab("?tab=findings")).toBe("findings");
     expect(parseUserTestingDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseUserTestingDetailTab("?session=thread-1")).toBe("sessions");
     expect(parseUserTestingDetailTab("?tab=clusters")).toBe("insights");
+  });
+
+  it("still honours an insights link handed out before Findings landed", () => {
+    // Findings took the landing spot, but `?tab=insights` is a real, explicit
+    // choice. Rehoming those links to the new default would break every URL
+    // anyone has already shared.
+    expect(parseUserTestingDetailTab("?tab=insights")).toBe("insights");
+    expect(
+      buildUserTestingScenarioPath("cb-1", { tab: "insights" })
+    ).toBe("/user-testing/cb-1?tab=insights");
+  });
+
+  it("omits the landing tab from the query and names every other one", () => {
+    // The parser's fallback and the builder's omission have to agree, or a
+    // link carries a redundant tab or silently drops the one it meant.
+    expect(buildUserTestingScenarioPath("cb-1", { tab: "findings" })).toBe(
+      "/user-testing/cb-1"
+    );
+    expect(buildUserTestingScenarioPath("cb-1", { tab: "sessions" })).toBe(
+      "/user-testing/cb-1?tab=sessions"
+    );
+    expect(
+      parseUserTestingDetailTab(
+        new URL(
+          `http://x${buildUserTestingScenarioPath("cb-1", { tab: "sessions" })}`
+        ).search
+      )
+    ).toBe("sessions");
   });
 
   it("builds the edit path and recognizes legacy edit/share/preview tabs", () => {
@@ -259,6 +298,53 @@ describe("project switch targets", () => {
 
   it("does not mint a scoped path for a placeholder project id", () => {
     expect(buildProjectSwitchTarget("none")).toBe("/servers");
+  });
+});
+
+describe("organization switch targets", () => {
+  const ORG_A = "org-a";
+  const ORG_B = "org-b";
+  const PROJECT_B1 = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";
+  const PROJECT_B2 = "k57bbbbbbbbbbbbbbbbbbbbbbbb2";
+  const PROJECT_A1 = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
+
+  it("aims at the target org's most recently updated project", () => {
+    // The switcher navigates; the route coordinator reads the new project out
+    // of the URL, notices it belongs to another organization and switches
+    // there. Ordering matches the project list's own (`updatedAt` desc), so
+    // the landing project is the one the user would have picked anyway.
+    expect(
+      buildOrganizationSwitchTarget(ORG_B, [
+        { _id: PROJECT_B1, organizationId: ORG_B, updatedAt: 10 },
+        { _id: PROJECT_B2, organizationId: ORG_B, updatedAt: 99 },
+      ]),
+    ).toBe(`/p/${PROJECT_B2}/servers`);
+  });
+
+  it("ignores projects belonging to another organization", () => {
+    expect(
+      buildOrganizationSwitchTarget(ORG_B, [
+        { _id: PROJECT_A1, organizationId: ORG_A, updatedAt: 99 },
+        { _id: PROJECT_B1, organizationId: ORG_B, updatedAt: 1 },
+      ]),
+    ).toBe(`/p/${PROJECT_B1}/servers`);
+  });
+
+  it("falls back to the organization overview when it owns no project", () => {
+    // A brand-new organization has nothing to aim at. The overview route is
+    // global scope, so it does not re-inherit the project being left, and
+    // `ensureDefaultProject` provisions one once the page mounts.
+    expect(
+      buildOrganizationSwitchTarget(ORG_B, [
+        { _id: PROJECT_A1, organizationId: ORG_A, updatedAt: 99 },
+      ]),
+    ).toBe(`/organizations/${ORG_B}`);
+  });
+
+  it("falls back to the organization overview while memberships are loading", () => {
+    expect(buildOrganizationSwitchTarget(ORG_B, undefined)).toBe(
+      `/organizations/${ORG_B}`,
+    );
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { ToolList } from "../ToolList";
@@ -63,6 +63,10 @@ const defaultProps = {
 };
 
 describe("ToolList", () => {
+  beforeEach(() => {
+    navigate.mockClear();
+  });
+
   // ── Selection behavior ──
 
   it("allows selecting a non-UI tool", () => {
@@ -361,7 +365,23 @@ describe("ToolList", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("routes to Servers from the no-server empty state", () => {
+  it("connects in place when the caller can handle it", () => {
+    const onAddServerRequested = vi.fn();
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        onAddServerRequested={onAddServerRequested}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
+
+    expect(onAddServerRequested).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("routes to Servers when the caller cannot connect in place", () => {
     render(<ToolList {...defaultProps} hasConnectedServer={false} />);
 
     fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));

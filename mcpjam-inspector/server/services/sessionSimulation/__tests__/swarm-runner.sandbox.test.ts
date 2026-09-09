@@ -100,6 +100,47 @@ vi.mock("../../swarm-agent.js", async () => {
   };
 });
 
+// The hosted recording: an attempt's box is the only place its video ever
+// exists, so the collect has to happen while that box is still alive.
+const collectHostedRecordingMock = vi.fn();
+vi.mock("../../browserd/hosted-recording.js", () => ({
+  collectHostedRecordingBeforeRelease: (...args: unknown[]) =>
+    collectHostedRecordingMock(...args),
+}));
+
+// The outbox the collected video is staged on — the SAME one the local
+// harness's replay rides.
+const stageVideoMock = vi.fn();
+const outboxFlushMock = vi.fn();
+vi.mock("../../browser-artifact-outbox.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../browser-artifact-outbox.js")
+  >("../../browser-artifact-outbox.js");
+  return {
+    ...actual,
+    createBrowserArtifactOutbox: (...args: unknown[]) => {
+      const real = (
+        actual.createBrowserArtifactOutbox as never as (
+          ...a: unknown[]
+        ) => Record<string, unknown>
+      )(...args);
+      return {
+        ...real,
+        stageVideo: (...a: unknown[]) => stageVideoMock(...a),
+        flush: (...a: unknown[]) => {
+          // THE SPY'S ANSWER WINS when a test gives it one. Returning the real
+          // flush unconditionally would discard a `mockImplementation`, and a
+          // test that stubs a never-settling flush would silently exercise the
+          // real one instead — passing while testing nothing.
+          const stubbed = outboxFlushMock(...a);
+          if (stubbed !== undefined) return stubbed;
+          return (real.flush as (...b: unknown[]) => unknown)(...a);
+        },
+      };
+    },
+  };
+});
+
 vi.mock("../../../utils/computers/control-plane-client.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/computers/control-plane-client.js")
@@ -139,6 +180,26 @@ vi.mock("../../../utils/built-in-tools/registry.js", async () => {
 // never re-exports it, so mocking that namespace would intercept nothing and
 // this assertion would pass no matter what the runner did — false confidence on
 // exactly the guarantee that matters most here.
+// The approval gate reads the adapter's declared capabilities. One test needs a
+// NATIVE-delivery harness that cannot approve its MCP tools — a combination no
+// registered adapter has anymore — so the flag is overridable here. Everything
+// else on the adapter stays real.
+let forceNoMcpToolApproval = false;
+vi.mock("../../../utils/harness/registry.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/harness/registry.js")
+  >("../../../utils/harness/registry.js");
+  return {
+    ...actual,
+    getHarnessAdapter: (id: Parameters<typeof actual.getHarnessAdapter>[0]) => {
+      const adapter = actual.getHarnessAdapter(id);
+      return forceNoMcpToolApproval
+        ? { ...adapter, supportsMcpToolApproval: false }
+        : adapter;
+    },
+  };
+});
+
 vi.mock("../../../utils/harness/resolve-sandbox.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/harness/resolve-sandbox.js")
@@ -277,19 +338,34 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
+  // A deployment that CAN run hosted browsers. The desktop trigger asks the
+  // same two gates `resolveHostTools` does, so without this every browser
+  // target below would correctly decline to book a box — see the
+  // "declines to book a desktop" case for the other side of it.
+  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
   let seq = 0;
-  provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
+  provisionJourneySandboxMock.mockReset().mockImplementation(async (...args) => {
     seq += 1;
+    const requested = (args[0] as { runtimeKind?: string } | undefined)
+      ?.runtimeKind;
     return {
       ok: true,
       value: {
         sandboxId: `sbx_${seq}`,
         sandboxRowId: `row_${seq}`,
         workdir: "/home/user",
+        // A current control plane answers with the kind it ACTUALLY booted.
+        // Echoing the request is what that looks like; a backend that predates
+        // per-run desktops omits the field, which the runner now refuses
+        // rather than silently accepting a browser-less box.
+        ...(requested ? { runtimeKind: requested } : {}),
       },
     };
   });
   releaseSandboxMock.mockReset().mockResolvedValue(undefined);
+  collectHostedRecordingMock.mockReset().mockResolvedValue(null);
+  stageVideoMock.mockReset().mockResolvedValue(undefined);
+  outboxFlushMock.mockReset();
   dataPlaneConfiguredMock.mockReset().mockReturnValue(true);
   resolveHostToolsMock.mockReset();
   resolveHarnessSandboxMock.mockReset();
@@ -329,6 +405,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Same reasoning as the timers below: reset unconditionally so a capability
+  // override can never leak into the next test's adapter.
+  forceNoMcpToolApproval = false;
   // Unconditionally, so a run that rejects between `useFakeTimers()` and its
   // matching restore can't leak a frozen clock into the next test and produce
   // a confusing cascade. Cheap, and it covers every fake-timer test here.
@@ -384,6 +463,11 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     expect(ctxs).toHaveLength(1);
     expect(ctxs[0]!.sandboxBinding).toEqual({
       sandboxId: "sbx_1",
+      // The control-plane row and the image class ride along: a browser
+      // session is recorded against the row, and a browser on a terminal
+      // image would fail with nothing saying why.
+      sandboxRowId: "row_1",
+      runtimeKind: "terminal",
       workdir: "/home/user",
     });
     expect(ctxs[0]!.isJourneySession).toBe(true);
@@ -429,8 +513,216 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
 
     expect(calls).toBe(2);
     const ctxs = resolverContexts();
-    expect(ctxs[0]!.sandboxBinding).toEqual({ sandboxId: "sbx_9" });
+    expect(ctxs[0]!.sandboxBinding).toEqual({
+      sandboxId: "sbx_9",
+      sandboxRowId: "row_9",
+      runtimeKind: "terminal",
+    });
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("provisions a DESKTOP box for a browser-only target, and binds it", async () => {
+    // A browser target boots the STOCK desktop image, so it needs no
+    // environment pin at all — `pinImage: false` is the normal shape here,
+    // not a degraded one.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).toMatchObject({
+      runtimeKind: "desktop-browser",
+    });
+    expect(resolverContexts()[0]!.sandboxBinding).toMatchObject({
+      sandboxId: "sbx_1",
+      sandboxRowId: "row_1",
+    });
+  });
+
+  it("declines to book a desktop when this replica cannot advertise a browser", async () => {
+    // The box is booked before the tool resolver runs, so without this gate a
+    // replica with the rollout flag off would hold a paid desktop for the
+    // whole attempt and then suppress every tool it exists for. The backend
+    // refuses its own half of this, but cannot see an inspector-side env flag.
+    vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "");
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("FAILS the attempt when the control plane answers with a TERMINAL box", async () => {
+    // Version skew: a backend that predates per-run desktops ignores the
+    // requested kind and answers without one. Accepting it would run the whole
+    // session on a box where the registry suppresses `browser` — no tools, no
+    // error, and an attempt that reads as "the model never chose to browse".
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: true,
+      value: { sandboxId: "sbx_t", sandboxRowId: "row_t", workdir: "/home/user" },
+    }));
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toContain("does not support per-run");
+    // The box we could not use is handed back rather than left to the GC.
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_t" })
+    );
+    // Not retried: the answer cannot change.
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives two SESSIONS of one browser target two DISTINCT desktop boxes", async () => {
+    await startJourneyRun(
+      baseOpts(
+        {
+          builtInToolIds: ["browser"],
+          browserToolPolicy: { mode: "allow_all" },
+          computerEnvironment: undefined,
+          computer: undefined,
+        },
+        2
+      )
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(2);
+    const bindings = resolverContexts().map(
+      (c) => c.sandboxBinding as { sandboxId: string }
+    );
+    // The entire point of per-attempt scoping: two cookie jars, two tabs.
+    expect(bindings[0]!.sandboxId).not.toBe(bindings[1]!.sandboxId);
+  });
+
+  it("provisions NOTHING for a browser target with no policy", async () => {
+    // Nothing in a swarm session can approve a click, so a policy-less
+    // `browser` advertises no tools at all — a box booted for it would be paid
+    // and unused, and refused a moment later as `desktop_not_advertised`.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the attempt with the backend's SENTENCE on a pin conflict", async () => {
+    // The refusal is written for a human and names the fix; a bare 409 tells
+    // the author nothing they can act on.
+    const conflict =
+      "This target uses a custom computer environment AND advertises the " +
+      "browser tool. Browsers run on the stock desktop image today, so a " +
+      "target cannot have both — remove the environment pin, or drop the " +
+      "browser tool from this host config.";
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: false,
+      status: 409,
+      code: "desktop_pin_conflict",
+      error: conflict,
+    }));
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toContain("stock desktop image");
+  });
+
+  it("names the DESKTOP budget when capacity is what it waited on", async () => {
+    // A desktop refusal is a different sentence — and a different remedy —
+    // from "this deployment is full": the message names WHICH budget ran out
+    // and passes the backend's own ceiling through, rather than restating a
+    // number this side does not own.
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: false,
+      status: 503,
+      code: "at_capacity",
+      resource: "desktop",
+      error: "This organization already has 4 desktop (browser) sandboxes in flight.",
+    }));
+
+    vi.useFakeTimers();
+    const run = startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toMatch(/desktop \(browser\) capacity/);
+  });
+
+  it("threads the target's declared browser policy to the tool resolver", async () => {
+    // A swarm session never pauses to ask, so approval — the gate every
+    // interactive surface uses — does not exist here, and this DECLARED policy
+    // is the only thing that can authorize a browser tool. Before it was
+    // threaded, `browser` on a journey target was unreachable no matter what
+    // the host config said: the resolver saw no delivery and advertised
+    // nothing, silently.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["bash", "browser"],
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: ["example.com"],
+        },
+      })
+    );
+
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toEqual({
+      kind: "unattended",
+      policy: { mode: "allowlist", originAllowlist: ["example.com"] },
+    });
+  });
+
+  it("passes NO delivery when the target declares no policy (fail-closed)", async () => {
+    await startJourneyRun(baseOpts({ builtInToolIds: ["bash", "browser"] }));
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
+  });
+
+  it("passes NO delivery for a malformed policy — never a permissive default", async () => {
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        // `allowlist` naming nothing would mean "everything".
+        browserToolPolicy: { mode: "allowlist" },
+      })
+    );
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
   });
 
   it("gives two sessions of ONE target two DISTINCT boxes", async () => {
@@ -648,6 +940,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(turnOpts.harnessSandboxBinding).toEqual({
       sandboxRowId: "row_1",
       sandboxId: "sbx_1",
+      runtimeKind: "terminal",
       workdir: "/home/user",
     });
     expect(turnOpts.harness).toBe("claude-code");
@@ -813,13 +1106,14 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     );
   });
 
-  it("refuses requireToolApproval together with selected MCP servers", async () => {
-    // Claude Code can gate its native and host-executed tools, but tools
-    // delivered through `.mcp.json` run inside the sandbox and never pause —
-    // so this combination advertises an approval gate it cannot enforce.
+  it("refuses requireToolApproval on a harness that cannot pause", async () => {
+    // Codex builds its thread with `approvalPolicy: "never"` hardcoded, so it
+    // is never asked to pause on any surface — the combination advertises an
+    // approval gate it cannot enforce. (Claude Code CAN pause on all three
+    // surfaces and is admitted; asserted below.)
     await startJourneyRun(
       baseOpts({
-        harness: "claude-code",
+        harness: "codex",
         requireToolApproval: true,
         serverIds: ["server-1"],
       })
@@ -829,10 +1123,34 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
   });
 
+  it("admits requireToolApproval with MCP servers on Claude Code", async () => {
+    // The adapter bridge's `canUseTool` gates MCP tool calls under
+    // "allow-reads", so this target is sound and must reach provisioning
+    // rather than being refused at the preflight.
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: ["server-1"],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalled();
+  });
+
   it("counts PLUGIN servers toward the approval gate", async () => {
     // A target whose MCP servers come solely from a plugin has an empty
     // `serverIds`, so a selected-servers-only predicate reads `false` and the
     // target slips the very gate the approval rule exists to close.
+    //
+    // Asserted on Claude Code, and it has to be: Codex refuses on the
+    // native-approval arm BEFORE the server count is ever consulted, so a
+    // Codex fixture here would pass without exercising the counting at all.
+    // Claude Code reaches the MCP arm, so the plugin servers are what decides
+    // — proven by the `supportsMcpToolApproval: false` stub, which turns the
+    // same target into a refusal only because the plugin servers counted.
+    forceNoMcpToolApproval = true;
+
     await startJourneyRun(
       baseOpts({
         harness: "claude-code",
@@ -843,7 +1161,27 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     );
 
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
-    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
+    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
+      /MCP-server tools/i
+    );
+  });
+
+  it("does NOT refuse the same host once the plugin servers are gone", async () => {
+    // The control for the case above: with no servers at all the identical
+    // stubbed host is admitted, so the refusal really did come from counting
+    // the plugin-contributed ones rather than from the stub itself.
+    forceNoMcpToolApproval = true;
+
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        requireToolApproval: true,
+        serverIds: [],
+        pluginServerIds: [],
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalled();
   });
 
   it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {
@@ -1020,5 +1358,157 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
       expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
     }
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * R-3. Video evidence for an unattended attempt.
+ *
+ * The file only ever exists on the attempt's box, so the collect has to run
+ * BEFORE the release — and it must never be able to prevent one. A swarm leaks
+ * money for as long as a box outlives its attempt.
+ */
+describe("swarm runner — the attempt's recording comes off before the box does", () => {
+  const RECORDING = {
+    bytes: Buffer.from("mp4-bytes"),
+    mime: "video/mp4" as const,
+    durationMs: 9_000,
+    distinctFrames: 42,
+    fps: 15,
+    truncated: true,
+    startedAtMs: 1_700_000_000_000,
+  };
+
+  it("collects before the release, and stages it on the outbox", async () => {
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+
+    await startJourneyRun(baseOpts());
+
+    expect(collectHostedRecordingMock).toHaveBeenCalledWith("row_1");
+    // ORDER, not just presence: after the release there is nothing to read.
+    expect(
+      collectHostedRecordingMock.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(releaseSandboxMock.mock.invocationCallOrder[0]!);
+
+    expect(stageVideoMock).toHaveBeenCalledWith(RECORDING.bytes, {
+      mime: "video/mp4",
+      meta: {
+        source: "hosted",
+        fps: 15,
+        durationMs: 9_000,
+        distinctFrames: 42,
+        truncated: true,
+      },
+    });
+    expect(outboxFlushMock).toHaveBeenCalled();
+  });
+
+  it("stages nothing for an attempt that never recorded", async () => {
+    collectHostedRecordingMock.mockResolvedValue(null);
+    await startJourneyRun(baseOpts());
+    expect(stageVideoMock).not.toHaveBeenCalled();
+    expect(releaseSandboxMock).toHaveBeenCalled();
+  });
+
+  it("still releases the box when the collect throws", async () => {
+    // The collector is contractually total, but the release must not DEPEND on
+    // that: a leaked box costs money until the GC cron reaps it.
+    collectHostedRecordingMock.mockRejectedValue(new Error("daemon gone"));
+
+    await startJourneyRun(baseOpts());
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+
+  it("still releases the box when the artifact flush never settles", async () => {
+    // THE MONEY ONE. `ConvexHttpClient.mutation` carries no timeout, and this
+    // flush sits inside the `finally` that must reach `releaseAttemptSandbox`.
+    // Unbounded, a hung attach holds a paid box open for as long as it hangs.
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+    // Releasable, so the cleanup below can let the run finish. A flush that
+    // can only ever hang would strand the run in the FAILING case, which is
+    // exactly the case this test is written to report clearly.
+    let flushReleased = false;
+    const waiting: Array<() => void> = [];
+    outboxFlushMock.mockImplementation(() =>
+      flushReleased
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            waiting.push(resolve);
+          }),
+    );
+    const releaseFlush = () => {
+      flushReleased = true;
+      for (const resolve of waiting.splice(0)) resolve();
+    };
+
+    // CAPTURED BEFORE THE CLOCK IS FAKED. `vi.useFakeTimers()` replaces the
+    // global, so a `setTimeout` called below would be a FAKE timer — and in
+    // the one case this guard exists for (the run never settles) nothing is
+    // left to advance the fake clock, so the guard would never fire and the
+    // test would hang to vitest's own timeout with no useful message.
+    const realSetTimeout = setTimeout;
+    vi.useFakeTimers();
+    // Declared out here so the `finally` can await it.
+    let run: Promise<unknown> = Promise.resolve();
+    try {
+      run = startJourneyRun(baseOpts());
+      // ADVANCED BY A BOUNDED AMOUNT, not drained. `runAllTimersAsync()` walks
+      // the timer chain until it is empty, and an unbounded flush keeps that
+      // chain alive — so it aborts on its own 10k-timer heuristic before the
+      // guard below ever runs, reporting "infinite loop" instead of naming
+      // what broke. This is simply long enough to clear the runner's own
+      // flush deadline.
+      await vi.advanceTimersByTimeAsync(120_000);
+      // RACED, not simply awaited. Without the deadline in the runner, `run`
+      // never settles — and a test that hangs stalls CI with no failure
+      // signal, which is a worse regression report than none.
+      await Promise.race([
+        run,
+        new Promise((_resolve, reject) => {
+          realSetTimeout(
+            () =>
+              reject(
+                new Error(
+                  "the attempt never finished: the artifact flush is unbounded again, so `releaseAttemptSandbox` is unreachable",
+                ),
+              ),
+            2_000,
+          ).unref?.();
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+      // LET THE RUN END EVEN WHEN THE GUARD WON. `startJourneyRun` drops its
+      // entry from the runner's module-level `runningJourneyRuns` only in its
+      // own `finally`, which an unreleased flush never reaches — so a failing
+      // test would leave a live run behind for every test after it, turning
+      // one clear regression report into a cascade of confusing ones. Bounded
+      // on the real clock so cleanup itself can never hang the suite.
+      releaseFlush();
+      await Promise.race([
+        run.catch(() => {}),
+        new Promise((resolve) => {
+          realSetTimeout(resolve, 1_000).unref?.();
+        }),
+      ]);
+    }
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  }, 15_000);
+
+  it("still releases the box when staging the video throws", async () => {
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+    stageVideoMock.mockRejectedValue(new Error("convex down"));
+
+    await startJourneyRun(baseOpts());
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
   });
 });

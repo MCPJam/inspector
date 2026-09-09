@@ -31,11 +31,29 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # Same node_modules cache as test.yml's jobs — the rationale lives on the
+      # `test` job there. Different key prefix: this job runs on a bare
+      # ubuntu-latest rather than the Playwright container, and the tree carries
+      # prebuilt native artifacts that should not be shared across the two.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
-      - name: Verify docs tokens are in sync with design system
-        run: npm run docs:check-tokens
+      - name: Verify DESIGN.md and mirrored token surfaces are in sync
+        run: npm run design:check
+
+      - name: Lint DESIGN.md against the pinned spec
+        run: npm run design:lint
 
       - name: Typecheck releasable packages
         run: npm run typecheck

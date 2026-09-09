@@ -1,5 +1,5 @@
 /**
- * The browser adapter for a suite's stage analytics.
+ * The browser adapter for a RUN's stage analytics.
  *
  * What these pin:
  *
@@ -23,7 +23,7 @@ vi.mock("@/lib/session-token", () => ({ authFetch: authFetchMock }));
 
 import {
   EvalStageAnalyticsError,
-  fetchEvalSuiteStageAnalytics,
+  fetchEvalRunStageAnalytics,
   isEvalStageAnalyticsError,
 } from "../eval-stage-analytics-api";
 import {
@@ -31,7 +31,7 @@ import {
   stageAnalyticsVariation,
 } from "@/test/stage-analytics-fixtures";
 
-const SUITE_ID = GOLDEN_STAGE_ANALYTICS.suiteId;
+const RUN_ID = GOLDEN_STAGE_ANALYTICS.runId;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -52,177 +52,100 @@ beforeEach(() => {
   authFetchMock.mockReset();
 });
 
-describe("fetchEvalSuiteStageAnalytics", () => {
-  it("reads a page and returns the validated documents", async () => {
+
+/**
+ * The suite-scoped listing this file used to cover is gone — the funnel it fed
+ * was removed from the suite page, where a population statistic was the first
+ * thing a reader met under the name "user value chain". The claims below are
+ * the same ones, re-aimed at the run read that survived: they were never about
+ * which resource was fetched, they were about a browser not drawing numbers it
+ * has not checked.
+ */
+describe("fetchEvalRunStageAnalytics", () => {
+  it("lets authFetch own the bearer, and asks for the run it was given", async () => {
+    authFetchMock.mockResolvedValue(jsonResponse(GOLDEN_STAGE_ANALYTICS));
+
+    await fetchEvalRunStageAnalytics({ projectId: "p1", runId: RUN_ID });
+
+    const { url, init } = lastRequest();
+    expect(url.pathname).toContain(`/eval-runs/${RUN_ID}/stage-analytics`);
+    // If the adapter set its own Authorization, `authFetch` would treat the
+    // caller as owning the bearer and skip both its header and its 401 retry.
+    expect(new Headers(init.headers).get("authorization")).toBeNull();
+  });
+
+  it("VALIDATES the document rather than trusting the wire", async () => {
     authFetchMock.mockResolvedValue(
-      jsonResponse({ items: [GOLDEN_STAGE_ANALYTICS], nextCursor: "c2" }),
+      jsonResponse({ ...structuredClone(GOLDEN_STAGE_ANALYTICS), slices: [] }),
     );
 
-    const page = await fetchEvalSuiteStageAnalytics({
+    const error = await fetchEvalRunStageAnalytics({
       projectId: "p1",
-      suiteId: SUITE_ID,
-    });
+      runId: RUN_ID,
+    }).catch((caught: unknown) => caught);
 
-    expect(page.rows).toHaveLength(1);
-    expect(page.rows[0]!.runId).toBe(GOLDEN_STAGE_ANALYTICS.runId);
-    expect(page.nextCursor).toBe("c2");
+    expect(isEvalStageAnalyticsError(error)).toBe(true);
+    expect((error as EvalStageAnalyticsError).kind).toBe("invalidContract");
   });
 
-  it("omits nextCursor on the last page", async () => {
-    authFetchMock.mockResolvedValue(jsonResponse({ items: [] }));
-    const page = await fetchEvalSuiteStageAnalytics({
-      projectId: "p1",
-      suiteId: SUITE_ID,
-    });
-    // Completeness is the ABSENCE of a cursor, not a boolean beside it.
-    expect(page.nextCursor).toBeUndefined();
-    expect(page.rows).toEqual([]);
-  });
-
-  it("leaves the bearer to authFetch", async () => {
-    authFetchMock.mockResolvedValue(jsonResponse({ items: [] }));
-    await fetchEvalSuiteStageAnalytics({ projectId: "p1", suiteId: SUITE_ID });
-
-    const headers = new Headers(lastRequest().init.headers);
-    expect(headers.has("authorization")).toBe(false);
-  });
-
-  it("puts every filter on the wire", async () => {
-    authFetchMock.mockResolvedValue(jsonResponse({ items: [] }));
-    await fetchEvalSuiteStageAnalytics({
-      projectId: "p1",
-      suiteId: SUITE_ID,
-      from: 1700000000000,
-      to: 1700000100000,
-      runGroupId: "grp_1",
-      cursor: "c1",
-      limit: 10,
-    });
-
-    const { url } = lastRequest();
-    expect(url.pathname).toContain("/eval-suites/");
-    expect(url.pathname).toContain("/stage-analytics");
-    expect(url.searchParams.get("from")).toBe("1700000000000");
-    expect(url.searchParams.get("to")).toBe("1700000100000");
-    expect(url.searchParams.get("runGroupId")).toBe("grp_1");
-    expect(url.searchParams.get("cursor")).toBe("c1");
-    expect(url.searchParams.get("limit")).toBe("10");
-  });
-
-  it("forwards the caller's abort signal and rethrows the abort untouched", async () => {
-    const controller = new AbortController();
-    authFetchMock.mockImplementation(
-      (_input: unknown, init?: RequestInit) =>
-        new Promise((_resolve, reject) => {
-          const fail = () => reject(new DOMException("aborted", "AbortError"));
-          if (init?.signal?.aborted) {
-            fail();
-            return;
-          }
-          init?.signal?.addEventListener("abort", fail);
+  it("binds the document to the run asked about — shape is not identity", async () => {
+    // A perfectly valid document for ANOTHER run would otherwise render under
+    // this run's heading as its funnel.
+    authFetchMock.mockResolvedValue(
+      jsonResponse(
+        stageAnalyticsVariation({
+          ...structuredClone(GOLDEN_STAGE_ANALYTICS),
+          runId: "some-other-run",
         }),
+      ),
     );
 
-    const pending = fetchEvalSuiteStageAnalytics(
-      { projectId: "p1", suiteId: SUITE_ID },
-      controller.signal,
-    ).catch((error: unknown) => error);
-    controller.abort();
-
-    const error = await pending;
-    // Not dressed up as an API failure — the caller cancelled this.
-    expect(isEvalStageAnalyticsError(error)).toBe(false);
-    expect((error as DOMException).name).toBe("AbortError");
-  });
-
-  describe("the four failure kinds stay four", () => {
-    it("maps a 404 to notFound", async () => {
-      authFetchMock.mockResolvedValue(
-        jsonResponse(
-          { code: "NOT_FOUND", message: "Eval suite not found" },
-          404,
-        ),
-      );
-      const error = await fetchEvalSuiteStageAnalytics({
-        projectId: "p1",
-        suiteId: SUITE_ID,
-      }).catch((caught: unknown) => caught);
-
-      expect(error).toBeInstanceOf(EvalStageAnalyticsError);
-      expect((error as EvalStageAnalyticsError).kind).toBe("notFound");
-    });
-
-    it("maps a 501 to routeUnavailable", async () => {
-      authFetchMock.mockResolvedValue(
-        jsonResponse({ code: "NOT_IMPLEMENTED", message: "nope" }, 501),
-      );
-      const error = await fetchEvalSuiteStageAnalytics({
-        projectId: "p1",
-        suiteId: SUITE_ID,
-      }).catch((caught: unknown) => caught);
-
-      expect((error as EvalStageAnalyticsError).kind).toBe("routeUnavailable");
-    });
-
-    it("maps a 502 to requestFailed — a service state, never an empty page", async () => {
-      authFetchMock.mockResolvedValue(
-        jsonResponse(
-          {
-            code: "SERVER_UNREACHABLE",
-            message: "Stage analytics payload failed validation",
-          },
-          502,
-        ),
-      );
-      const error = await fetchEvalSuiteStageAnalytics({
-        projectId: "p1",
-        suiteId: SUITE_ID,
-      }).catch((caught: unknown) => caught);
-
-      expect((error as EvalStageAnalyticsError).kind).toBe("requestFailed");
-    });
-
-    it("maps a malformed document to invalidContract", async () => {
-      const broken = structuredClone(GOLDEN_STAGE_ANALYTICS) as any;
-      broken.slices[0].stages[0].passed = 99;
-      authFetchMock.mockResolvedValue(jsonResponse({ items: [broken] }));
-
-      const error = await fetchEvalSuiteStageAnalytics({
-        projectId: "p1",
-        suiteId: SUITE_ID,
-      }).catch((caught: unknown) => caught);
-
-      expect((error as EvalStageAnalyticsError).kind).toBe("invalidContract");
-    });
-
-    it("maps a non-envelope response to invalidContract", async () => {
-      authFetchMock.mockResolvedValue(jsonResponse({ rows: [] }));
-      const error = await fetchEvalSuiteStageAnalytics({
-        projectId: "p1",
-        suiteId: SUITE_ID,
-      }).catch((caught: unknown) => caught);
-
-      expect((error as EvalStageAnalyticsError).kind).toBe("invalidContract");
-    });
-  });
-
-  it("refuses a document for a different suite", async () => {
-    // Shape is not identity: a perfectly valid document for ANOTHER suite would
-    // otherwise render under this suite's heading as its funnel.
-    authFetchMock.mockResolvedValue(
-      jsonResponse({
-        items: [stageAnalyticsVariation({ suiteId: "some-other-suite" })],
-      }),
-    );
-
-    const error = await fetchEvalSuiteStageAnalytics({
+    const error = await fetchEvalRunStageAnalytics({
       projectId: "p1",
-      suiteId: SUITE_ID,
+      runId: RUN_ID,
     }).catch((caught: unknown) => caught);
 
     expect((error as EvalStageAnalyticsError).kind).toBe("invalidContract");
     expect((error as EvalStageAnalyticsError).message).toContain(
-      "different suite",
+      "different run",
     );
+  });
+
+  it("keeps the failure kinds apart — only one of them is a bug report", async () => {
+    // A bare 404 is a deployment without the route…
+    authFetchMock.mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const unavailable = await fetchEvalRunStageAnalytics({
+      projectId: "p1",
+      runId: RUN_ID,
+    }).catch((caught: unknown) => caught);
+    expect((unavailable as EvalStageAnalyticsError).kind).toBe(
+      "routeUnavailable",
+    );
+
+    // …while the route's own answer is a fact about the run.
+    authFetchMock.mockResolvedValue(
+      jsonResponse({ code: "NOT_FOUND", message: "no such run" }, 404),
+    );
+    const missing = await fetchEvalRunStageAnalytics({
+      projectId: "p1",
+      runId: RUN_ID,
+    }).catch((caught: unknown) => caught);
+    expect((missing as EvalStageAnalyticsError).kind).toBe("notFound");
+  });
+
+  it("lets an abort stay an abort", async () => {
+    const controller = new AbortController();
+    authFetchMock.mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException("Aborted", "AbortError"));
+    });
+
+    const error = await fetchEvalRunStageAnalytics(
+      { projectId: "p1", runId: RUN_ID },
+      controller.signal,
+    ).catch((caught: unknown) => caught);
+
+    // Not painted on a surface the reader has already navigated away from.
+    expect(isEvalStageAnalyticsError(error)).toBe(false);
   });
 });

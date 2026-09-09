@@ -12,7 +12,9 @@ import {
   type MetadataAttributionStageDerivationBody,
 } from "../judge-stage-backend.js";
 import {
+  deriveIterationPayload,
   judgeEvidenceFromVerdict,
+  stepErrorFromStoredChain,
   metadataAttributionEvidenceFromVerdict,
   runJudgeSecondPass,
   type JudgeSecondPassPorts,
@@ -61,7 +63,7 @@ const stageCase: StageAuthoredCase = {
 };
 
 function runRow(
-  over: Partial<JudgeSecondPassRunRow> = {}
+  over: Partial<JudgeSecondPassRunRow> = {},
 ): JudgeSecondPassRunRow {
   return {
     runId: "run1",
@@ -116,7 +118,7 @@ function ports(over: Partial<JudgeSecondPassPorts> = {}) {
       async (iterationId: string, body) => {
         appliedMetadataAttribution.push({ iterationId, body });
         return { outcome: "applied" as const };
-      }
+      },
     ),
     markMetadataAttributionFanout: vi.fn(async (report) => {
       metadataAttributionReports.push(report);
@@ -167,7 +169,7 @@ describe("the mode is checked before anything is read or written", () => {
   test("the run's snapshot says shadow: read, then write nothing", async () => {
     const { value } = ports({
       fetchRun: vi.fn(async () =>
-        runRow({ configSnapshot: { gradingEngine: { mode: "shadow" } } })
+        runRow({ configSnapshot: { gradingEngine: { mode: "shadow" } } }),
       ),
     });
     const result = await runJudgeSecondPass("run1", value);
@@ -179,7 +181,7 @@ describe("the mode is checked before anything is read or written", () => {
   test("the run's snapshot wins over env: env dual_write, suite off", async () => {
     const { value } = ports({
       fetchRun: vi.fn(async () =>
-        runRow({ configSnapshot: { gradingEngine: { mode: "off" } } })
+        runRow({ configSnapshot: { gradingEngine: { mode: "off" } } }),
       ),
     });
     expect(await runJudgeSecondPass("run1", value)).toMatchObject({
@@ -203,7 +205,7 @@ describe("what it declines to grade", () => {
               metadata: {},
             },
           ],
-        })
+        }),
       ),
     });
     const result = await runJudgeSecondPass("run1", value);
@@ -218,7 +220,7 @@ describe("what it declines to grade", () => {
       fetchRun: vi.fn(async () =>
         runRow({
           iterations: [{ ...base.iterations[0]!, status: "cancelled" }],
-        })
+        }),
       ),
     });
     expect(await runJudgeSecondPass("run1", value)).toMatchObject({
@@ -305,7 +307,7 @@ describe("the write it does make", () => {
               ],
             },
           ],
-        })
+        }),
       ),
     });
 
@@ -364,7 +366,7 @@ describe("the write it does make", () => {
             // No verdict: graded by nobody, so reported by nobody.
             { iterationId: "iter2", status: "completed", metadata: {} },
           ],
-        })
+        }),
       ),
     });
     await runJudgeSecondPass("run1", value);
@@ -418,7 +420,7 @@ describe("the write it does make", () => {
         throw new JudgeStageBackendError(
           "conflict",
           409,
-          "EVAL_RUN_CONFIG_CONFLICT"
+          "EVAL_RUN_CONFIG_CONFLICT",
         );
       }),
     });
@@ -443,7 +445,7 @@ describe("the write it does make", () => {
       judgeStageDerivedAt: 0,
     });
     expect(strip(second.applied[0]!.body)).toEqual(
-      strip(first.applied[0]!.body)
+      strip(first.applied[0]!.body),
     );
     expect(second.reports).toEqual(first.reports);
   });
@@ -493,6 +495,208 @@ describe("judgeEvidenceFromVerdict", () => {
   test("no verdict at all yields no evidence", () => {
     expect(judgeEvidenceFromVerdict(undefined)).toBeUndefined();
   });
+
+  // ── UVH-IN4: a judged row can say something for itself ────────────────────
+  //
+  // Before this, `reasons` was never populated on this path, so
+  // `boundedJudgeReasons` returned undefined and every judgeObserved /
+  // judgePartial / judgeFailed row reached a reader as a bare verdict.
+
+  test("a scored row carries the numbers it was decided from", () => {
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "partial",
+        score: 0.42,
+        threshold: 0.7,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "partial",
+      reasons: ["LLM judge scored 0.42 against a 0.7 threshold"],
+    });
+  });
+
+  test("names the partial floor when the floor decided the band", () => {
+    // Review finding: with only the threshold shown, 0.5 against 0.7 reads as
+    // a plain miss and says nothing about why it failed rather than landing in
+    // the partial band. The floor is one of the numbers the decision turned
+    // on, so evidence that omits it cannot explain the claim it supports.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.5,
+        threshold: 0.7,
+        partialFloor: 0.6,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "fail",
+      reasons: [
+        "LLM judge scored 0.5 against a 0.7 threshold and a 0.6 partial floor",
+      ],
+    });
+  });
+
+  test("leaves the floor out of a band it did not decide", () => {
+    // A pass is settled by the threshold alone. Naming a floor there would put
+    // a number in front of a reader that had no part in the outcome.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "pass",
+        score: 0.9,
+        threshold: 0.7,
+        partialFloor: 0.6,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "pass",
+      reasons: ["LLM judge scored 0.9 against a 0.7 threshold"],
+    });
+  });
+
+  test("never rounds a score onto the boundary it fell short of", () => {
+    // Review finding: at two decimals, 0.699 against a 0.7 threshold rendered
+    // as "scored 0.7 against a 0.7 threshold" — evidence flatly contradicting
+    // the `fail` band beside it, with no way for a reader to tell which was
+    // wrong. Precision grows only as far as it must to keep the comparison
+    // true.
+    const evidence = judgeEvidenceFromVerdict({
+      status: "scored",
+      verdict: "fail",
+      score: 0.699,
+      threshold: 0.7,
+    });
+    const [line] = (evidence as { reasons: string[] }).reasons;
+    expect(line).toBe("LLM judge scored 0.699 against a 0.7 threshold");
+    expect(line).not.toContain("scored 0.7 against");
+  });
+
+  test("keeps a narrow partial band from collapsing to one number", () => {
+    // Review finding on the first version of the precision fix: it compared
+    // each boundary only with the SCORE, so a 0.7001 threshold and a 0.6999
+    // floor both rendered `0.7` while the score sat far from either. The line
+    // whose whole job is to show the band's width erased it.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.5,
+        threshold: 0.7001,
+        partialFloor: 0.6999,
+      }) as { reasons: string[] }
+    ).reasons;
+    expect(line).toContain("0.7001 threshold");
+    expect(line).toContain("0.6999 partial floor");
+  });
+
+  test("admits the rounding rather than claiming two values are equal", () => {
+    // The cap's own blind spot. Precision stops growing at six decimals — past
+    // that a judge score is float noise — but it used to fall through to the
+    // six-decimal rendering ANYWAY, printing two different numbers identically.
+    // "scored 0.7 against a 0.7 threshold" for values that were never equal is
+    // the exact contradiction the whole function exists to prevent.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.70000001,
+        threshold: 0.70000002,
+      }) as { reasons: string[] }
+    ).reasons;
+
+    // Both are marked, because each is indistinguishable from the other...
+    expect(line).toBe(
+      "LLM judge scored \u22480.7 against a \u22480.7 threshold",
+    );
+    // ...and crucially the line no longer ASSERTS they are the same number.
+    expect(line).not.toBe("LLM judge scored 0.7 against a 0.7 threshold");
+  });
+
+  test("marks only the values that actually collide", () => {
+    // A blanket marker would make a number the reader CAN trust look uncertain.
+    // The floor here is distinguishable at six decimals; the other two are not.
+    const [line] = (
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.70000001,
+        threshold: 0.70000002,
+        partialFloor: 0.5,
+      }) as { reasons: string[] }
+    ).reasons;
+    expect(line).toContain("0.5 partial floor");
+    expect(line).not.toContain("\u22480.5");
+  });
+
+  test("still reads equal when the score IS the threshold", () => {
+    // The other half: growing precision must not manufacture a difference
+    // where none exists. A score exactly on its threshold should say so.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "pass",
+        score: 0.7,
+        threshold: 0.7,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "pass",
+      reasons: ["LLM judge scored 0.7 against a 0.7 threshold"],
+    });
+  });
+
+  test("still trims float noise from a model-supplied score", () => {
+    // The reason rounding existed at all. A judge can return
+    // 0.42000000000000004, and showing that to a person displays precision the
+    // verdict never had.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "partial",
+        score: 0.42000000000000004,
+        threshold: 0.7,
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "partial",
+      reasons: ["LLM judge scored 0.42 against a 0.7 threshold"],
+    });
+  });
+
+  test("the judge's own rationale wins over the numbers", () => {
+    // Not written by the backend today — a scored case's `reason` is dropped
+    // — but read here so the gap closes the moment it is persisted, without
+    // a second change on this side.
+    expect(
+      judgeEvidenceFromVerdict({
+        status: "scored",
+        verdict: "fail",
+        score: 0.1,
+        threshold: 0.7,
+        reason: "the answer never named the order id",
+      }),
+    ).toEqual({
+      status: "scored",
+      verdict: "fail",
+      reasons: ["the answer never named the order id"],
+    });
+  });
+
+  test("an error band carries WHY the judge could not score", () => {
+    // The one rationale the backend does persist.
+    expect(
+      judgeEvidenceFromVerdict({ status: "error", error: "model timed out" }),
+    ).toEqual({ status: "error", reasons: ["model timed out"] });
+  });
+
+  test("a scored row with no numbers stays bare rather than inventing one", () => {
+    expect(
+      judgeEvidenceFromVerdict({ status: "scored", verdict: "pass" }),
+    ).toEqual({ status: "scored", verdict: "pass" });
+  });
 });
 
 describe("metadataAttributionEvidenceFromVerdict", () => {
@@ -502,7 +706,7 @@ describe("metadataAttributionEvidenceFromVerdict", () => {
         status: "scored",
         attributed: true,
         reasons: ["quoted description text"],
-      })
+      }),
     ).toEqual({
       status: "scored",
       attributed: true,
@@ -516,31 +720,31 @@ describe("metadataAttributionEvidenceFromVerdict", () => {
         status: "scored",
         attributed: false,
         reasons: [],
-      })
+      }),
     ).toEqual({ status: "scored", attributed: false });
   });
 
   test("a broken judge is an error, not a failure", () => {
     expect(metadataAttributionEvidenceFromVerdict({ status: "error" })).toEqual(
-      { status: "error" }
+      { status: "error" },
     );
   });
 
   test("a skipped judge falls through to the deterministic evidence", () => {
     expect(
-      metadataAttributionEvidenceFromVerdict({ status: "skipped" })
+      metadataAttributionEvidenceFromVerdict({ status: "skipped" }),
     ).toEqual({ status: "skipped" });
   });
 
   test("an unrecognized status is pending, never a silent unattributed default", () => {
-    expect(
-      metadataAttributionEvidenceFromVerdict({ status: "weird" })
-    ).toEqual({ status: "pending", pendingKind: "scheduled" });
+    expect(metadataAttributionEvidenceFromVerdict({ status: "weird" })).toEqual(
+      { status: "pending", pendingKind: "scheduled" },
+    );
   });
 
   test("not_applicable is its own terminal outcome, never relabeled as pending", () => {
     expect(
-      metadataAttributionEvidenceFromVerdict({ status: "not_applicable" })
+      metadataAttributionEvidenceFromVerdict({ status: "not_applicable" }),
     ).toEqual({ status: "not_applicable" });
   });
 
@@ -596,10 +800,7 @@ describe("D7: metadata-attribution rides the same second pass", () => {
     expect(value.applyDerivation).not.toHaveBeenCalled();
     expect(value.markFanout).not.toHaveBeenCalled();
     expect(appliedMetadataAttribution).toHaveLength(1);
-    const body = appliedMetadataAttribution[0]!.body as Record<
-      string,
-      unknown
-    >;
+    const body = appliedMetadataAttribution[0]!.body as Record<string, unknown>;
     expect(body).not.toHaveProperty("status");
     expect(body).not.toHaveProperty("result");
     expect(body).not.toHaveProperty("scores");
@@ -640,32 +841,34 @@ describe("D7: metadata-attribution rides the same second pass", () => {
               },
             },
           ],
-        })
+        }),
       ),
     });
     await runJudgeSecondPass("run1", value);
-    const body = appliedMetadataAttribution[0]!.body as Record<
-      string,
-      unknown
-    >;
+    const body = appliedMetadataAttribution[0]!.body as Record<string, unknown>;
     expect(body.failureCategory).toBe("selection");
   });
 
   test("both judges fire on the same run independently — one write, one report, per judge", async () => {
-    const { value, applied, appliedMetadataAttribution, reports, metadataAttributionReports } =
-      ports({
-        fetchRun: vi.fn(async () =>
-          runRow({
-            metadataAttributionJobId: "d7-job1",
-            iterations: [
-              // Graded by goal-completion only.
-              runRow().iterations[0]!,
-              // Graded by D7 only.
-              { ...d7Row().iterations[0]!, iterationId: "iter2" },
-            ],
-          })
-        ),
-      });
+    const {
+      value,
+      applied,
+      appliedMetadataAttribution,
+      reports,
+      metadataAttributionReports,
+    } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({
+          metadataAttributionJobId: "d7-job1",
+          iterations: [
+            // Graded by goal-completion only.
+            runRow().iterations[0]!,
+            // Graded by D7 only.
+            { ...d7Row().iterations[0]!, iterationId: "iter2" },
+          ],
+        }),
+      ),
+    });
     const result = await runJudgeSecondPass("run1", value);
 
     expect(result.graded).toBe(2);
@@ -686,13 +889,13 @@ describe("D7: metadata-attribution rides the same second pass", () => {
             runRow().iterations[0]!,
             { ...d7Row().iterations[0]!, iterationId: "iter2" },
           ],
-        })
+        }),
       ),
       applyMetadataAttributionDerivation: vi.fn(async () => {
         throw new JudgeStageBackendError(
           "conflict",
           409,
-          "EVAL_RUN_CONFIG_CONFLICT"
+          "EVAL_RUN_CONFIG_CONFLICT",
         );
       }),
     });
@@ -757,7 +960,7 @@ describe("D7: metadata-attribution rides the same second pass", () => {
           throw new JudgeStageBackendError(
             "stale",
             409,
-            "EVAL_RUN_CONFIG_CONFLICT"
+            "EVAL_RUN_CONFIG_CONFLICT",
           );
         }),
       });
@@ -778,7 +981,7 @@ describe("D7: metadata-attribution rides the same second pass", () => {
     // userValue as a tier-2 row" above) so the userValue row's contents are
     // actually observable in D7's write body.
     const bothVerdictsReachableUserValueRow = (
-      over: Partial<JudgeSecondPassRunRow> = {}
+      over: Partial<JudgeSecondPassRunRow> = {},
     ) =>
       runRow({
         metadataAttributionJobId: "d7-job1",
@@ -799,23 +1002,23 @@ describe("D7: metadata-attribution rides the same second pass", () => {
       });
 
     test("goal-completion's write is rejected as stale: D7's write does not carry the rejected userValue conclusion", async () => {
-      const { value: failValue, appliedMetadataAttribution: failedD7 } =
-        ports({
-          fetchRun: vi.fn(async () => bothVerdictsReachableUserValueRow()),
-          applyDerivation: vi.fn(async () => {
-            throw new JudgeStageBackendError(
-              "stale",
-              409,
-              "EVAL_RUN_CONFIG_CONFLICT"
-            );
-          }),
-        });
+      const { value: failValue, appliedMetadataAttribution: failedD7 } = ports({
+        fetchRun: vi.fn(async () => bothVerdictsReachableUserValueRow()),
+        applyDerivation: vi.fn(async () => {
+          throw new JudgeStageBackendError(
+            "stale",
+            409,
+            "EVAL_RUN_CONFIG_CONFLICT",
+          );
+        }),
+      });
       await runJudgeSecondPass("run1", failValue);
 
-      const { value: okValue, appliedMetadataAttribution: confirmedD7 } =
-        ports({
+      const { value: okValue, appliedMetadataAttribution: confirmedD7 } = ports(
+        {
           fetchRun: vi.fn(async () => bothVerdictsReachableUserValueRow()),
-        });
+        },
+      );
       await runJudgeSecondPass("run1", okValue);
 
       expect(failedD7).toHaveLength(1);
@@ -826,7 +1029,7 @@ describe("D7: metadata-attribution rides the same second pass", () => {
         .stageResults as Array<{ stage: string; state: string }>;
       const failedUserValue = failedRows.find((r) => r.stage === "userValue");
       const confirmedUserValue = confirmedRows.find(
-        (r) => r.stage === "userValue"
+        (r) => r.stage === "userValue",
       );
       // When goal-completion's own write is rejected in this pass, D7's
       // write must NOT carry goal-completion's `judgeFailed` conclusion —
@@ -852,10 +1055,9 @@ describe("D7: metadata-attribution rides the same second pass", () => {
       await runJudgeSecondPass("run1", value);
 
       expect(appliedMetadataAttribution).toHaveLength(1);
-      const rows = (appliedMetadataAttribution[0]!.body as Record<
-        string,
-        unknown
-      >).stageResults as Array<{ stage: string; reason?: string }>;
+      const rows = (
+        appliedMetadataAttribution[0]!.body as Record<string, unknown>
+      ).stageResults as Array<{ stage: string; reason?: string }>;
       const userValueRow = rows.find((r) => r.stage === "userValue");
       expect(userValueRow?.reason).not.toBe("judgeFailed");
     });
@@ -896,10 +1098,12 @@ describe("the second pass keeps its contract with the run and the first pass", (
         const row = runRow();
         return {
           ...row,
-          iterations: row.iterations.map(({ authoredCase: _drop, ...rest }) => ({
-            ...rest,
-            stageCase,
-          })),
+          iterations: row.iterations.map(
+            ({ authoredCase: _drop, ...rest }) => ({
+              ...rest,
+              stageCase,
+            }),
+          ),
         };
       }),
     });
@@ -936,8 +1140,326 @@ describe("the second pass keeps its contract with the run and the first pass", (
     const selection = stages.find((row) => row.stage === "selection");
     // Either absent, or present and explicitly not-applicable — never a real
     // selection verdict the first pass would not have produced.
+    expect(selection === undefined || selection.state === "notApplicable").toBe(
+      true,
+    );
+  });
+});
+
+/**
+ * B10e — the judge's ROLE reaches the score definition this pass projects.
+ *
+ * The pass forwards `metadata.judgeVerdict` whole, so the role rides along
+ * without a second mapping to keep true. What is worth pinning is the
+ * consequence: on a gating run the projected definition gates, and on every
+ * other run — including one whose verdict carries the field explicitly as
+ * advisory — the rows are byte-identical to what this pass has always written.
+ *
+ * It still touches no verdict. This pass posts rows; `finalizeAfterJudge`
+ * applies them, stricter-only, and decides the run once.
+ */
+describe("the projected judge definition carries the run's role", () => {
+  function withRole(role?: string) {
+    return vi.fn(async () => {
+      const row = runRow();
+      return {
+        ...row,
+        iterations: row.iterations.map((iteration) => ({
+          ...iteration,
+          metadata: {
+            judgeVerdict: {
+              ...(iteration.metadata as { judgeVerdict: object }).judgeVerdict,
+              ...(role !== undefined ? { role } : {}),
+            },
+          },
+        })),
+      };
+    });
+  }
+
+  function judgeDefinition(body: JudgeStageDerivationBody) {
+    const config = body.evaluationConfig as
+      { definitions?: Array<Record<string, unknown>> } | undefined;
+    return config?.definitions?.find(
+      (definition) => definition.scorerId === "judge:goalCompletion",
+    );
+  }
+
+  function judgeRow(body: JudgeStageDerivationBody) {
+    return (body.scores as Array<Record<string, unknown>> | undefined)?.find(
+      (row) => row.scorerId === "judge:goalCompletion",
+    );
+  }
+
+  test("a gating verdict projects a gating definition and a failing row", async () => {
+    const { value, applied } = ports({ fetchRun: withRole("gating") });
+    await runJudgeSecondPass("run1", value);
+
+    const body = applied[0]!.body;
+    expect(judgeDefinition(body)?.role).toBe("gating");
+    // The judge scored 0.2 against a 0.8 threshold, so the row fails — and on
+    // a gating definition that row now counts.
+    expect(judgeRow(body)?.passed).toBe(false);
+    // ...while this pass still touches no lifecycle field. The backend refuses
+    // them on this route outright, and the finalizer is what applies the row.
+    expect(body).not.toHaveProperty("status");
+    expect(body).not.toHaveProperty("result");
+    expect(body).not.toHaveProperty("passed");
+  });
+
+  test("an advisory verdict is byte-identical with or without the field", async () => {
+    const absent = ports({ fetchRun: withRole(undefined) });
+    await runJudgeSecondPass("run1", absent.value);
+    const explicit = ports({ fetchRun: withRole("advisory") });
+    await runJudgeSecondPass("run1", explicit.value);
+
+    // `judgeStageDerivedAt` is `Date.now()` at the moment each pass ran, so
+    // the two differ whenever the second pass lands in a later millisecond —
+    // which under a loaded suite it sometimes does. It is asserted as a number
+    // and then set aside, the same way the shape test above treats it; what
+    // this test is about is everything else being identical.
+    const withoutClock = (body: JudgeStageDerivationBody) => {
+      const { judgeStageDerivedAt, ...rest } = body as Record<string, unknown>;
+      expect(typeof judgeStageDerivedAt).toBe("number");
+      return rest;
+    };
+
+    expect(withoutClock(explicit.applied[0]!.body)).toEqual(
+      withoutClock(absent.applied[0]!.body),
+    );
+    expect(judgeDefinition(absent.applied[0]!.body)?.role).toBe("advisory");
+  });
+});
+
+describe("the marker carries what the chain cannot", () => {
+  // The case the chain-scan recovery could never see, and the reason the
+  // classification is now persisted rather than inferred.
+  //
+  // `categoryFor` returns `setup` for a model-call failure where NOTHING
+  // failed — "there was nothing to fail against". On that shape
+  // `applyProviderError` relabels no row, so a recovery that looks for a
+  // `providerError` row finds an empty chain and concludes the provider was
+  // fine. The category then vanishes on the second pass with no missing row to
+  // point at.
+  const reachedAndPassed = {
+    status: "completed",
+    traceComplete: true,
+    stageCase: {
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    },
+    spans: [{ id: "s1", name: "tools/call", category: "tool", status: "ok" }],
+  };
+
+  const derive = (metadata: Record<string, unknown>) =>
+    deriveIterationPayload({
+      iteration: { ...reachedAndPassed, metadata },
+      mode: "advisory",
+      judgeVerdict: { status: "scored", verdict: "pass", score: 0.9 },
+      attributionVerdict: undefined,
+    } as never).stage;
+
+  // Nothing failed, and nothing blamed on the provider — exactly what the
+  // first pass writes for this shape.
+  const CLEAN_CHAIN = [
+    { stage: "connection", state: "passed", reason: "observed" },
+  ];
+
+  it("keeps the setup category when NO row records providerError", () => {
+    const stage = derive({
+      stageResults: CLEAN_CHAIN,
+      stageStepErrorSource: "model",
+    });
+    expect(stage.failureCategory).toBe("setup");
+  });
+
+  it("and the chain alone cannot recover it — the reason the marker exists", () => {
+    // Same chain, marker absent. This is what the second pass saw before, and
+    // it is why the old recovery's "if and only if" premise was false.
+    expect(stepErrorFromStoredChain(CLEAN_CHAIN)).toBeUndefined();
+    const stage = derive({ stageResults: CLEAN_CHAIN });
+    expect(stage.failureCategory).toBeUndefined();
+  });
+
+  it("does not invent a provider failure from a marker saying otherwise", () => {
     expect(
-      selection === undefined || selection.state === "notApplicable"
-    ).toBe(true);
+      derive({ stageResults: CLEAN_CHAIN, stageStepErrorSource: "setup" })
+        .failureCategory,
+    ).toBeUndefined();
+  });
+});
+
+
+describe("stepErrorFromStoredChain", () => {
+  // `stepError` is an INPUT to the first derivation and is never persisted, so
+  // the judge pass re-derived without it and dropped `providerError` and the
+  // `setup` category the moment a verdict landed — a run our own provider
+  // killed went back to being filed against the server.
+
+  it("recovers the model layer from a chain that recorded providerError", () => {
+    expect(
+      stepErrorFromStoredChain([
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "selection", state: "notMeasured", reason: "providerError" },
+      ]),
+    ).toEqual({ source: "model" });
+  });
+
+  it("recovers nothing from a chain that recorded no provider failure", () => {
+    // The witness has to be the reason itself. Inferring a provider error from
+    // any other blank row would re-introduce the guess this reason removed.
+    expect(
+      stepErrorFromStoredChain([
+        { stage: "selection", state: "notMeasured", reason: "noEvidenceCaptured" },
+        { stage: "userValue", state: "failed", reason: "predicateFailed" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("recovers nothing when there is no chain at all", () => {
+    expect(stepErrorFromStoredChain(undefined)).toBeUndefined();
+    expect(stepErrorFromStoredChain([])).toBeUndefined();
+    expect(stepErrorFromStoredChain("not an array")).toBeUndefined();
+  });
+});
+
+describe("the recovery is WIRED into the re-derivation", () => {
+  // Testing `stepErrorFromStoredChain` alone cannot fail when the wire is cut,
+  // and a cut wire is exactly how this attribution kept getting lost. So this
+  // drives the real payload builder and asserts the re-derived chain still
+  // says the model layer failed.
+  //
+  // The fixture is the SHAPE a provider failure actually leaves: the server was
+  // reached (spans exist, so connection and discovery are implied) and then our
+  // model call died, leaving the stages after it blank. An iteration with no
+  // evidence at all derives to `setupAborted`, which is a more specific reason
+  // and correctly outranks `providerError` — so it would prove nothing here.
+  const reachedThenDied = {
+    status: "failed",
+    traceComplete: true,
+    stageCase: {
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    },
+    spans: [{ id: "s1", name: "tools/call", category: "tool", status: "ok" }],
+  };
+
+  const derive = (stageResults: unknown) =>
+    deriveIterationPayload({
+      iteration: { ...reachedThenDied, metadata: { stageResults } },
+      mode: "advisory",
+      judgeVerdict: { status: "scored", verdict: "fail", score: 0.1 },
+      attributionVerdict: undefined,
+    } as never).stage;
+
+  const reasons = (stage: Record<string, unknown>) =>
+    (stage.stageResults as { reason: string }[]).map((r) => r.reason);
+
+  it("keeps providerError and the setup category through a judge pass", () => {
+    const stage = derive([
+      { stage: "selection", state: "notMeasured", reason: "providerError" },
+    ]);
+    expect(reasons(stage)).toContain("providerError");
+    expect(stage.failureCategory).toBe("setup");
+  });
+
+  it("does not invent a provider failure on a run that had none", () => {
+    // The same evidence, a stored chain that never blamed the provider. The
+    // blank stage stays blank rather than acquiring an attribution the first
+    // derivation did not make.
+    const stage = derive([
+      { stage: "selection", state: "notMeasured", reason: "noEvidenceCaptured" },
+    ]);
+    expect(reasons(stage)).not.toContain("providerError");
+  });
+});
+
+describe("stepErrorFromStoredChain", () => {
+  // `stepError` is an INPUT to the first derivation and is never persisted, so
+  // the judge pass re-derived without it and dropped `providerError` and the
+  // `setup` category the moment a verdict landed — a run our own provider
+  // killed went back to being filed against the server.
+
+  it("recovers the model layer from a chain that recorded providerError", () => {
+    expect(
+      stepErrorFromStoredChain([
+        { stage: "connection", state: "passed", reason: "observed" },
+        { stage: "selection", state: "notMeasured", reason: "providerError" },
+      ]),
+    ).toEqual({ source: "model" });
+  });
+
+  it("recovers nothing from a chain that recorded no provider failure", () => {
+    // The witness has to be the reason itself. Inferring a provider error from
+    // any other blank row would re-introduce the guess this reason removed.
+    expect(
+      stepErrorFromStoredChain([
+        { stage: "selection", state: "notMeasured", reason: "noEvidenceCaptured" },
+        { stage: "userValue", state: "failed", reason: "predicateFailed" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("recovers nothing when there is no chain at all", () => {
+    expect(stepErrorFromStoredChain(undefined)).toBeUndefined();
+    expect(stepErrorFromStoredChain([])).toBeUndefined();
+    expect(stepErrorFromStoredChain("not an array")).toBeUndefined();
+  });
+});
+
+describe("the recovery is WIRED into the re-derivation", () => {
+  // Testing `stepErrorFromStoredChain` alone cannot fail when the wire is cut,
+  // and a cut wire is exactly how this attribution kept getting lost. So this
+  // drives the real payload builder and asserts the re-derived chain still
+  // says the model layer failed.
+  //
+  // The fixture is the SHAPE a provider failure actually leaves: the server was
+  // reached (spans exist, so connection and discovery are implied) and then our
+  // model call died, leaving the stages after it blank. An iteration with no
+  // evidence at all derives to `setupAborted`, which is a more specific reason
+  // and correctly outranks `providerError` — so it would prove nothing here.
+  const reachedThenDied = {
+    status: "failed",
+    traceComplete: true,
+    stageCase: {
+      mode: "model_driven",
+      expectsToolCall: false,
+      expectsWidgetRender: false,
+      assertionCount: 0,
+    },
+    spans: [{ id: "s1", name: "tools/call", category: "tool", status: "ok" }],
+  };
+
+  const derive = (stageResults: unknown) =>
+    deriveIterationPayload({
+      iteration: { ...reachedThenDied, metadata: { stageResults } },
+      mode: "advisory",
+      judgeVerdict: { status: "scored", verdict: "fail", score: 0.1 },
+      attributionVerdict: undefined,
+    } as never).stage;
+
+  const reasons = (stage: Record<string, unknown>) =>
+    (stage.stageResults as { reason: string }[]).map((r) => r.reason);
+
+  it("keeps providerError and the setup category through a judge pass", () => {
+    const stage = derive([
+      { stage: "selection", state: "notMeasured", reason: "providerError" },
+    ]);
+    expect(reasons(stage)).toContain("providerError");
+    expect(stage.failureCategory).toBe("setup");
+  });
+
+  it("does not invent a provider failure on a run that had none", () => {
+    // The same evidence, a stored chain that never blamed the provider. The
+    // blank stage stays blank rather than acquiring an attribution the first
+    // derivation did not make.
+    const stage = derive([
+      { stage: "selection", state: "notMeasured", reason: "noEvidenceCaptured" },
+    ]);
+    expect(reasons(stage)).not.toContain("providerError");
   });
 });

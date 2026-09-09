@@ -21,6 +21,7 @@
  * slot in keep today's one-axis compose.
  */
 import type {
+  ProjectEnvironmentSecretSelection,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
@@ -53,6 +54,12 @@ export type EnvironmentStack = {
    * today's behavior. Explicit ids mint override cells.
    */
   modelSelection: ModelSelection;
+  /**
+   * Optional per-client model choices. The shared selection remains the
+   * backwards-compatible fallback for surfaces that intentionally configure a
+   * full client × model matrix.
+   */
+  modelSelectionsByHost?: Record<string, ModelSelection>;
 };
 
 export type EnvironmentComposerState = {
@@ -79,6 +86,18 @@ export function emptyEnvironmentStack(): EnvironmentStack {
     computerEnvironmentId: null,
     modelSelection: emptyModelSelection(),
   };
+}
+
+/** The model choices a particular client runs; falls back to the shared axis. */
+export function modelSelectionForHost(
+  stack: Pick<EnvironmentStack, "modelSelection" | "modelSelectionsByHost">,
+  hostId: string,
+): ModelSelection {
+  return (
+    stack.modelSelectionsByHost?.[hostId] ??
+    stack.modelSelection ??
+    emptyModelSelection()
+  );
 }
 
 export function emptyComposerState(): EnvironmentComposerState {
@@ -431,19 +450,45 @@ export function composerHasTarget(state: EnvironmentComposerState): boolean {
   if (!isComposeMode(state)) return state.environmentIds.length > 0;
   return (
     state.stack.hostIds.length > 0 &&
-    modelChoiceCount(state.stack.modelSelection ?? emptyModelSelection()) > 0
+    state.stack.hostIds.every(
+      (hostId) =>
+        modelChoiceCount(modelSelectionForHost(state.stack, hostId)) > 0,
+    )
   );
 }
 
 /** Count used for intensity / session estimates before resolution. */
 export function composerTargetCount(state: EnvironmentComposerState): number {
   if (isComposeMode(state)) {
-    return (
-      state.stack.hostIds.length *
-      modelChoiceCount(state.stack.modelSelection ?? emptyModelSelection())
+    return state.stack.hostIds.reduce(
+      (total, hostId) =>
+        total + modelChoiceCount(modelSelectionForHost(state.stack, hostId)),
+      0,
     );
   }
   return state.environmentIds.length;
+}
+
+/**
+ * Two secret selections are the same grant.
+ *
+ * ORDER-SENSITIVE, matching `sameSkillSelection` and the backend's own
+ * order-preserving normalization: the stored array is what the fingerprint
+ * hashes, so two orderings are two rows and a comparison that called them equal
+ * would mark a real edit clean.
+ *
+ * Absent and null are the same thing (no grant); there is no empty-array case
+ * to reconcile, because a picker that clears its last row emits `null`.
+ */
+export function sameSecretSelection(
+  a: ProjectEnvironmentSecretSelection | null | undefined,
+  b: ProjectEnvironmentSecretSelection | null | undefined,
+): boolean {
+  const left = a ?? null;
+  const right = b ?? null;
+  if (left === null || right === null) return left === right;
+  if (left.secretIds.length !== right.secretIds.length) return false;
+  return left.secretIds.every((id, index) => id === right.secretIds[index]);
 }
 
 export function sameSkillSelection(

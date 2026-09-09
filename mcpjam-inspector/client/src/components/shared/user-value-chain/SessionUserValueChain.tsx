@@ -32,6 +32,7 @@
 import { AlertTriangle, Check, Circle, Loader2, Minus, X } from "lucide-react";
 import {
   FAILURE_CATEGORY_LABELS,
+  STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
@@ -164,12 +165,37 @@ function ChainNotice({
         "text-[11px] leading-snug",
         tone === "warning"
           ? "text-amber-600 dark:text-amber-400"
-          : "text-muted-foreground"
+          : "text-muted-foreground",
       )}
     >
       {children}
     </p>
   );
+}
+
+/**
+ * Does this derivation come from an analyzer NEWER than the build rendering it?
+ *
+ * DERIVED, not trusted. `analyzerVersionAhead` is stamped by the backend at the
+ * moment a chain arrives, and raising a version constant does not rewrite
+ * stored rows — so a session derived while this build lagged its producer kept
+ * claiming to be newer FOREVER, long after the claim stopped being true.
+ *
+ * The version it was derived at is on the same object, so compare that instead.
+ * Self-healing for any future window and needs no migration: the claim goes
+ * false the moment it stops being true. Mirrors what the SDK's own
+ * `assembleChain` already does for eval runs, down to reporting both numbers.
+ *
+ * The stored boolean survives only as a FALLBACK, for rows written before the
+ * version was recorded — nothing that was flagged loses its warning.
+ */
+export function analyzerVersionAhead(
+  derivation: ChatSessionStageDerivation | null | undefined,
+): boolean {
+  if (!derivation) return false;
+  const reported = derivation.stageAnalyzerVersion;
+  if (typeof reported === "number") return reported > STAGE_ANALYZER_VERSION;
+  return derivation.analyzerVersionAhead === true;
 }
 
 export function SessionUserValueChain({
@@ -186,6 +212,7 @@ export function SessionUserValueChain({
   className?: string;
 }) {
   const presentation = chainPresentation(derivation);
+  const versionAhead = analyzerVersionAhead(derivation);
 
   return (
     <section
@@ -264,7 +291,7 @@ export function SessionUserValueChain({
                 .
               </p>
             ) : null}
-            {derivation.analyzerVersionAhead ? (
+            {versionAhead ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <p className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">

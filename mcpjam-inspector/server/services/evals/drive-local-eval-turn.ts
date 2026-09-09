@@ -45,8 +45,40 @@ export type LocalEvalTurnAcc = {
   activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null;
   iterationError: string | undefined;
   iterationErrorDetails: string | undefined;
+  /**
+   * WHICH LAYER failed, when this driver can tell.
+   *
+   * The hosted path carries this from its catch site; the local one had no
+   * equivalent, so a local-BYOK trial that died on the model call finalized
+   * with blank stage reasons and no failure category — the exact
+   * mis-attribution the provider-error work exists to remove, surviving on the
+   * path the hosted fix never touched.
+   *
+   * Left UNSET whenever the layer is not structurally knowable. An absent
+   * source changes nothing downstream, which is the right floor: no
+   * attribution beats a wrong one.
+   */
+  stepErrorSource: "model" | undefined;
   pinnedSetupFailure: boolean;
 };
+
+/**
+ * Whether an error span means the MODEL-CALL layer failed.
+ *
+ * The branch that finds these spans selects every non-tool error span, and
+ * `connection`, `discovery` and `oauth` spans are all reachable there — so
+ * treating the whole set as the model would blame the provider for a server we
+ * could not reach, which is the mis-attribution this work removes rather than
+ * relocates.
+ *
+ * `undefined` for everything else, deliberately. An absent source attributes
+ * nothing, and no attribution is strictly better than a confident wrong one.
+ */
+export function modelLayerForErrorSpan(
+  span: { category?: string } | undefined,
+): "model" | undefined {
+  return span?.category === "llm" ? "model" : undefined;
+}
 
 export type LocalEvalTurnOutcome =
   | { kind: "completed" }
@@ -391,6 +423,9 @@ export async function driveLocalEvalTurn(
   if (promptResponseMessages.length === 0) {
     acc.iterationError =
       "Stream returned no content (local-BYOK driver failed)";
+    // The model stream itself returned nothing. Unambiguously the model-call
+    // layer — there is no other layer this branch can be reached from.
+    acc.stepErrorSource = "model";
     logger.error(
       "[evals] streamText returned no new messages this turn; treating as cycle failure"
     );
@@ -426,6 +461,7 @@ export async function driveLocalEvalTurn(
   );
   if (stepErrorSpan) {
     acc.iterationError = `Local-BYOK step failed mid-turn: ${stepErrorSpan.name}`;
+    acc.stepErrorSource = modelLayerForErrorSpan(stepErrorSpan);
     logger.error(
       `[evals] streamText recorded non-tool error span; treating as cycle failure (span=${stepErrorSpan.name} category=${stepErrorSpan.category})`
     );

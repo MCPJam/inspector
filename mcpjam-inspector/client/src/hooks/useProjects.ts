@@ -71,9 +71,7 @@ export interface RemoteServer {
   xaaClientAuth?: string;
   xaaDcrClientId?: string;
   xaaDcrTokenEndpointAuthMethod?:
-    | "client_secret_post"
-    | "client_secret_basic"
-    | "none";
+    "client_secret_post" | "client_secret_basic" | "none";
   xaaDcrIssuer?: string;
   xaaDcrClientSecretExpiresAt?: number;
   xaaDcrRegisteredAt?: number;
@@ -124,13 +122,13 @@ export function shouldQueryProjectId(projectId: string | null | undefined) {
   const lower = normalized.toLowerCase();
   return Boolean(
     !INVALID_PROJECT_ID_SENTINELS.has(lower) &&
-      !UUID_PROJECT_ID_PATTERN.test(normalized) &&
-      !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix))
+    !UUID_PROJECT_ID_PATTERN.test(normalized) &&
+    !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix)),
   );
 }
 
 function isProjectMembersQueryResult(
-  value: unknown
+  value: unknown,
 ): value is ProjectMembersQueryResult {
   return (
     typeof value === "object" &&
@@ -140,7 +138,7 @@ function isProjectMembersQueryResult(
 }
 
 export function normalizeProjectMembersResult(
-  value: ProjectMember[] | ProjectMembersQueryResult | undefined
+  value: ProjectMember[] | ProjectMembersQueryResult | undefined,
 ): ProjectMembersQueryResult {
   if (Array.isArray(value)) {
     return { members: value, canManageMembers: false };
@@ -158,12 +156,12 @@ export function normalizeProjectMembersResult(
 
 export function filterProjectsForOrganization(
   projects: RemoteProject[] | undefined,
-  organizationId?: string
+  organizationId?: string,
 ) {
   if (!projects || !organizationId) return projects;
 
   return projects.filter(
-    (project) => project.organizationId === organizationId
+    (project) => project.organizationId === organizationId,
   );
 }
 
@@ -174,16 +172,24 @@ export function useProjectQueries({
   isAuthenticated: boolean;
   organizationId?: string;
 }) {
+  const isUserReady = useDbUserReady();
+  const canQueryProjects = isAuthenticated && isUserReady;
   const queriedProjects = useQuery(
     "projects:getMyProjects" as any,
-    isAuthenticated ? ({} as any) : "skip"
+    canQueryProjects ? ({} as any) : "skip",
   ) as RemoteProject[] | undefined;
 
-  const isLoading = isAuthenticated && queriedProjects === undefined;
+  // `getMyProjects` deliberately returns [] while the actor's database row
+  // does not exist yet. Starting it during bootstrap therefore turns a
+  // temporary signup state into an authoritative "no memberships" answer.
+  // Wait for user setup first; only a response from the post-bootstrap query
+  // may decide that a scoped project is unavailable.
+  const isLoading =
+    isAuthenticated && (!isUserReady || queriedProjects === undefined);
 
   const projects = useMemo(
     () => filterProjectsForOrganization(queriedProjects, organizationId),
-    [queriedProjects, organizationId]
+    [queriedProjects, organizationId],
   );
 
   const sortedProjects = useMemo(() => {
@@ -212,14 +218,14 @@ export function useProjectMembers({
 
   const membersResult = useQuery(
     "projects:getProjectMembers" as any,
-    enableQuery ? ({ projectId } as any) : "skip"
+    enableQuery ? ({ projectId } as any) : "skip",
   ) as ProjectMember[] | ProjectMembersQueryResult | undefined;
 
   const isLoading = enableQuery && membersResult === undefined;
 
   const { members, canManageMembers } = useMemo(
     () => normalizeProjectMembersResult(membersResult),
-    [membersResult]
+    [membersResult],
   );
 
   const activeMembers = useMemo(() => {
@@ -248,7 +254,7 @@ export function useProjectMembers({
 // member-only queries. A viewer may access Swarms only when they hold a
 // resolved member-or-above role; a guest — or any unresolved role — is denied.
 export function canViewSwarms(
-  role: ProjectMembershipRole | undefined
+  role: ProjectMembershipRole | undefined,
 ): boolean {
   return role === "owner" || role === "admin" || role === "member";
 }
@@ -262,7 +268,7 @@ export function canViewSwarms(
 // into a durable suite artifact" are different questions, and collapsing them
 // would make a future divergence silent. An unresolved role denies.
 export function canPromoteSessions(
-  role: ProjectMembershipRole | undefined
+  role: ProjectMembershipRole | undefined,
 ): boolean {
   return role === "owner" || role === "admin" || role === "member";
 }
@@ -273,7 +279,7 @@ export function canPromoteSessions(
 // New/Edit/Apply/Delete affordance that would 403 on click. An unresolved
 // role denies (fail-closed).
 export function canManageHosts(
-  role: ProjectMembershipRole | undefined
+  role: ProjectMembershipRole | undefined,
 ): boolean {
   return role === "owner" || role === "admin";
 }
@@ -384,7 +390,7 @@ export function useViewerProjectRole({
 export function isViewerRolePending(
   membersLoading: boolean,
   identityLoading: boolean,
-  viewerEmail: string | null | undefined
+  viewerEmail: string | null | undefined,
 ): boolean {
   if (identityLoading) return true;
   if (!viewerEmail?.trim()) return false;
@@ -394,7 +400,7 @@ export function isViewerRolePending(
 export function useProjectMutations() {
   const createProject = useMutation("projects:createProject" as any);
   const ensureDefaultProject = useMutation(
-    "projects:ensureDefaultProject" as any
+    "projects:ensureDefaultProject" as any,
   );
   const updateProject = useMutation("projects:updateProject" as any);
   // Phase 4: write the project default's connection portion through the
@@ -402,20 +408,20 @@ export function useProjectMutations() {
   // is still exported by the backend as a compat wrapper but the
   // inspector no longer calls it.
   const patchProjectDefaultConnection = useMutation(
-    "hostConfigsV2:patchProjectDefaultConnection" as any
+    "hostConfigsV2:patchProjectDefaultConnection" as any,
   );
   const deleteProject = useMutation("projects:deleteProject" as any);
   const inviteProjectMember = useMutation(
-    "projects:inviteProjectMember" as any
+    "projects:inviteProjectMember" as any,
   );
   const removeProjectMember = useMutation(
-    "projects:removeProjectMember" as any
+    "projects:removeProjectMember" as any,
   );
   const updateProjectMemberRole = useMutation(
-    "projects:updateProjectMemberRole" as any
+    "projects:updateProjectMemberRole" as any,
   );
   const updateProjectInviteRole = useMutation(
-    "projects:updateProjectInviteRole" as any
+    "projects:updateProjectInviteRole" as any,
   );
 
   return {
@@ -435,16 +441,16 @@ export function useProjectMutations() {
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
   const createServerIfMissing = useMutation(
-    "servers:createServerIfMissing" as any
+    "servers:createServerIfMissing" as any,
   );
   const updateServer = useMutation("servers:updateServer" as any);
   const deleteServer = useMutation("servers:deleteServer" as any);
   const createServerWithClientSecret = useAction(
-    "servers:createServerWithClientSecret" as any
+    "servers:createServerWithClientSecret" as any,
   );
   const moveServerToProject = useAction("servers:moveServerToProject" as any);
   const updateServerWithClientSecret = useAction(
-    "servers:updateServerWithClientSecret" as any
+    "servers:updateServerWithClientSecret" as any,
   );
 
   return {
@@ -472,7 +478,7 @@ export function useProjectServers({
 
   const servers = useQuery(
     "servers:getProjectServers" as any,
-    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip"
+    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as RemoteServer[] | undefined;
 
   const isLoading = shouldQuery && servers === undefined;
@@ -516,7 +522,7 @@ export function useProjectsBulkServers({
     "servers:listForProjects" as any,
     isAuthenticated && stableProjectIds.length > 0
       ? ({ projectIds: stableProjectIds } as any)
-      : "skip"
+      : "skip",
   ) as Record<string, RemoteServer[]> | undefined;
 
   const isLoading =
@@ -524,7 +530,7 @@ export function useProjectsBulkServers({
 
   const serversByProject = useMemo<Record<string, RemoteServer[]>>(
     () => data ?? {},
-    [data]
+    [data],
   );
 
   return {

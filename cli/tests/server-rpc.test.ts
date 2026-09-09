@@ -1,49 +1,10 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { startMockHttpServer } from "../../sdk/tests/mock-servers/index.js";
-
-const CLI_DIR = process.cwd();
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
-
-async function runCli(args: string[]): Promise<{
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}> {
-  return await new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args],
-      {
-        cwd: CLI_DIR,
-        encoding: "utf8",
-        env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
-      },
-      (error, stdout, stderr) => {
-        if (error && typeof (error as NodeJS.ErrnoException).code !== "number") {
-          reject(error);
-          return;
-        }
-
-        resolve({
-          exitCode:
-            typeof (error as NodeJS.ErrnoException | null)?.code === "number"
-              ? Number((error as NodeJS.ErrnoException).code)
-              : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
-  });
-}
+import { runCli } from "./support/task-cli-harness.js";
 
 test("server export keeps raw --rpc output inspectable while stable output stays clean", async () => {
   const server = await startMockHttpServer();

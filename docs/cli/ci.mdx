@@ -412,6 +412,25 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
             eval-report.xml
 ```
 
+<Note>
+**Runs launched from Actions badge as GitHub, and fill the CI column.** The CLI
+declares what it is on every launch, so a run started from a workflow shows
+**GitHub** in the Runs table rather than the generic **API** that every hosted
+launch used to show, and its commit, branch and job appear alongside it. Nothing
+to configure: the declaration is derived from the standard `GITHUB_*`
+environment, exactly as conformance uploads already do it. Outside CI the same
+command declares **CLI**.
+
+That commit is also what `eval compare --baseline-sha` resolves against, so a
+run launched by the CLI in CI can now be compared to a previous commit's run the
+same way an SDK-reported one can.
+
+This is a *declared* label, deliberately: the platform still stamps the run's
+own `source` server-side and records the verified credential separately, so a
+badge can never claim more than "the client said so". No secret that could prove
+it can live in a public npm package.
+</Note>
+
 In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
 
 ```text
@@ -433,6 +452,37 @@ Either `eval run --wait` or `eval gate` already fails the job on its own — the
 <Note>
 `eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
+
+#### Gating on cost
+
+Cost is the question people actually have about a change: *did this make the
+suite more expensive?* Gate it relatively rather than absolutely — an absolute
+ceiling goes stale on every prompt and model change, while a percentage
+against the previous run keeps meaning the same thing.
+
+```bash
+npx -y @mcpjam/cli@latest cloud eval compare --run "$RUN_ID" \
+  --project "My project" \
+  --max-cost-increase-percent 10
+```
+
+With no `--base-run` or `--base-sha`, the baseline is the nearest earlier
+completed run in the same suite — which is what "did my change make this more
+expensive?" usually means.
+
+An absolute ceiling is also available, for a suite whose budget is fixed:
+
+```bash
+npx -y @mcpjam/cli@latest cloud eval gate --run "$RUN_ID" \
+  --project "My project" \
+  --max-cost-usd 0.50
+```
+
+Both report **non-gateable** (exit `3`) rather than passing when the cost is
+unknown or only partly measured — a run on your own API keys, a harness run,
+or a run only some of whose iterations MCPJam priced. Exit `3` is safe to retry
+and safe to treat as "no opinion"; what it never does is let an unpriced run
+through as if it were cheap.
 
 #### Waiving a gate
 
@@ -468,12 +518,22 @@ customer data in it.
 
 #### Decision summary
 
-`eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. In `--format human` it is printed as a block; in `--format json` and in `--out`/`--reporter` artifacts it rides on the report as `decisionSummary`, verbatim.
+`eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. Where each command puts it:
+
+| Command | `--format json` | `--format human` | `--out` / `--reporter` |
+|---|---|---|---|
+| `eval run --wait` | `decisionSummary` on the stdout receipt | block on stdout, after the receipt | `decisionSummary` on the report |
+| `eval status` | `decisionSummary` on the stdout document | block on stdout, above the `View:` line | — |
+| `eval gate` | `decisionSummary` beside `gate` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+| `eval compare` | `decisionSummary` beside `compare` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+
+Two scoping rules that are easy to miss. `eval run --wait` attaches a summary only when the invocation launched **one** run: a fan-out has several, and labelling a receipt about N runs with the decision of one would be a false claim rather than a partial one. `eval compare` reports the **compare side's** decision only — the baseline's failures are a different run's diagnostics, and printing them here would read as this run's.
 
 ```text
 Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 failed
   Why: a case did not meet its pass threshold
-  Diagnostics: 2 non-passing of 9 trials examined (the complete set)
+  Diagnostics: 2 non-passing of 9 iterations examined (the complete set)
+  First break: Tool call — the call arguments did not match what the case expects (1 of 2 measured iterations)
   Fetch order (c_orders, iteration 2) — failed
     First failed stage: Tool call — the call arguments did not match what the case expects
     Failure category: call arguments
@@ -491,19 +551,31 @@ Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 fai
 
 Four things about it are worth knowing before you script against it.
 
-**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *trials inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
+**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *iterations inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
 
-**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-trial diagnostics sit *underneath* that: a case can pass with a failing trial in it, so tallying the diagnostics gives a different answer than the platform reached.
+**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-iteration diagnostics sit *underneath* that: a case can pass with a failing iteration in it, so tallying the diagnostics gives a different answer than the platform reached.
 
 **`notEstablished` is not a failure.** It is a fourth verdict meaning no verdict exists at all — the run is unfinished, it stopped before finishing, or its decision could not be read. `undecided.reason` says which. It is also not `inconclusive`, which *is* a decision: the validity phase ran and withheld a verdict because the run did not measure the server well enough.
 
-**A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed trials are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
+**A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed iterations are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
 
 Evidence is scoped to the claim it supports: for a measured failure the span ids, prompt indexes and reasons come from the first failed stage's row alone, and a setup abort or evaluator error keeps a stage-less pointer rather than naming a stage nothing established.
 
-`eval status` prints the block only when a terminal run did not pass, and `eval gate` and `eval compare` write theirs to stderr alongside the gate report. `--format json` is unaffected in every case: it stays exactly one parseable document. If the summary cannot be fetched, the block is omitted rather than failing the command.
+`eval status` prints the block only when a terminal run did not pass — a clean pass has nothing to diagnose. `--format json` stays exactly one parseable document in every case: the summary rides *inside* it, never as a second block appended after it. If the summary cannot be fetched, it is omitted rather than failing the command.
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
+**The human block leads with where the chain broke.** Under the diagnostics headline, before any per-iteration detail, a non-passing run gets one line naming the earliest stage at which a readable iteration stopped, why, and how many iterations stopped there:
+
+```text
+  First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured iterations)
+```
+
+"First" means earliest in chain order — `connection → discovery → selection → call → response → userValue` — never "most common", so the count beside it is what tells you whether the run had one problem or several. When the breaks are spread the line says so (`earliest of 3 stages that broke`), and when some chains could not be read it says that too (`1 more had no readable chain`), because otherwise the denominator quietly shrinks to the iterations that happened to validate. A run that reached no stage at all — a setup abort, an evaluator error — names its bucket instead of inventing a location.
+
+The line is **not** a diagnosis. A first failed stage is a location and a failure category is a bucket; neither on its own says what to change.
+
+`eval status --stages` expands each failing iteration to all six chain rows with their states and reasons. It is off by default: six rows per iteration is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
+
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval github list/connect` (GitHub checks integration), and more.
 
 ### Upload SDK eval results
 

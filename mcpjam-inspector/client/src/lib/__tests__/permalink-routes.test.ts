@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   PLATFORM_PERMALINK_ROUTES,
   buildAppPermalink,
+  type PlatformResourceParentRef,
   type PlatformResourceType,
 } from "@mcpjam/sdk/platform";
 import { APP_ROUTES } from "../app-routes";
@@ -21,20 +22,46 @@ import {
   buildProjectPluginPath,
   buildProjectServerPath,
 } from "../app-navigation";
+import { parseEvalRouteFromUrl } from "../eval-route-url";
 
 const APP_ORIGIN = "https://app.mcpjam.com";
 const PROJECT = "v977phvmg9dttdemo";
 
+/**
+ * The parent chain a type's route declares, one placeholder id per level
+ * (`parent-id`, then `grandparent-id`), read off the table the way the SDK
+ * builder reads it.
+ */
+function parentChainFor(
+  type: PlatformResourceType,
+): PlatformResourceParentRef | undefined {
+  const labels = ["parent-id", "grandparent-id"];
+  const chain: PlatformResourceType[] = [];
+  let current = (PLATFORM_PERMALINK_ROUTES[type] as { parent?: string })
+    .parent as PlatformResourceType | undefined;
+  while (current) {
+    chain.push(current);
+    current = (PLATFORM_PERMALINK_ROUTES[current] as { parent?: string })
+      .parent as PlatformResourceType | undefined;
+  }
+  return chain.reduceRight<PlatformResourceParentRef | undefined>(
+    (parent, ancestorType, index) => ({
+      type: ancestorType,
+      id: labels[index] ?? `ancestor-${index + 1}`,
+      ...(parent ? { parent } : {}),
+    }),
+    undefined,
+  );
+}
+
 /** The app path one resource type mints, with ids that cannot collide. */
 function pathFor(type: PlatformResourceType): string {
-  const route = PLATFORM_PERMALINK_ROUTES[type] as { parent?: string };
+  const parent = parentChainFor(type);
   return buildAppPermalink(
     {
       type,
       id: "resource-id",
-      ...(route.parent
-        ? { parent: { type: route.parent as PlatformResourceType, id: "parent-id" } }
-        : {}),
+      ...(parent ? { parent } : {}),
       projectId: PROJECT,
     },
     { appOrigin: APP_ORIGIN },
@@ -100,6 +127,37 @@ describe("the SDK permalink registry ↔ the app route table", () => {
     for (const [type, appPath] of cases) {
       expect(new URL(pathFor(type), APP_ORIGIN).pathname, type).toBe(appPath);
     }
+  });
+
+  it("an eval iteration permalink parses as the run page with that iteration selected", () => {
+    // The SDK's `eval_iteration` route is the run's path plus `?iteration=`,
+    // because the run page is what reads that parameter. This is the test
+    // that proves the link WORKS rather than merely looking right: the app's
+    // own eval-route parser gets the minted path and must land on the run
+    // detail with the suite, the run and the iteration all recovered.
+    const permalink = buildAppPermalink(
+      {
+        type: "eval_iteration",
+        id: "it_1",
+        parent: {
+          type: "eval_run",
+          id: "run_1",
+          parent: { type: "eval_suite", id: "s_1" },
+        },
+        projectId: PROJECT,
+      },
+      { appOrigin: APP_ORIGIN },
+    );
+    const url = new URL(permalink.url);
+    expect(url.pathname).toBe("/evals/suite/s_1/runs/run_1");
+    expect(url.search).toBe(`?iteration=it_1&project=${PROJECT}`);
+    expect(parseEvalRouteFromUrl("/evals", url.pathname, url.search)).toEqual({
+      type: "run-detail",
+      suiteId: "s_1",
+      runId: "run_1",
+      iteration: "it_1",
+      testCaseId: undefined,
+    });
   });
 
   it("carries the project scope on every route but organizations", () => {

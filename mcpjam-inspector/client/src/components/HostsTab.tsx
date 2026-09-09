@@ -39,6 +39,15 @@ interface HostsTabProps {
   selectedHostId: string | null;
   onSelectHost: (hostId: string | null) => void;
   serversTabElement: ReactNode;
+  /**
+   * Reconnects one server by name. Threaded from `App` (which owns it) so a
+   * saved setting that only takes effect at connect time can be applied to the
+   * live connection — see the cancellation hook in `handleSave`.
+   */
+  onReconnect?: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean; allowInteractiveOAuthFlow?: boolean }
+  ) => Promise<unknown> | void;
 }
 
 /**
@@ -55,6 +64,7 @@ export function HostsTab({
   selectedHostId,
   onSelectHost,
   serversTabElement,
+  onReconnect,
 }: HostsTabProps) {
   const navigate = useAppNavigate();
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
@@ -455,6 +465,7 @@ export function HostsTab({
                   <HostBuilderView
                     hostId={selectedHostId}
                     projectId={projectId}
+                    onReconnect={onReconnect}
                   />
                 </div>
               </motion.div>

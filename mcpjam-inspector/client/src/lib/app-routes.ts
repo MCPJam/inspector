@@ -374,6 +374,23 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "organizations",
     scope: "global",
   },
+  // Observability — where this organization's traces are streamed. An
+  // `organizations` section on the same terms as the two above: org-scoped
+  // admin configuration, one segment, no `?tab=`.
+  {
+    path: "organizations/:orgId/observability",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  // Spend budget — the org-wide ceiling on MCPJam-billed spend per billing
+  // window. An `organizations` section on the same terms as the three above.
+  {
+    path: "organizations/:orgId/budget",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
   {
     path: "evals/shared/:token",
     kind: "special",
@@ -473,6 +490,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "project",
   },
   {
+    path: "evaluate/eval-server/:serverId",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
+  {
     path: "evaluate/suite/:suiteId",
     kind: "screen",
     surfaceId: "evaluate",
@@ -561,7 +584,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
  */
 function matchSegments(
   pattern: string,
-  segments: readonly string[]
+  segments: readonly string[],
 ): "exact" | "param" | "splat" | null {
   if (pattern === "*") return "splat";
   if (pattern === "/") return segments.length === 0 ? "exact" : null;
@@ -618,7 +641,7 @@ export function matchAppRoute(logicalPathname: string): AppRouteEntry | null {
  * registered), and the caller can see the difference.
  */
 export function getAppRouteScope(
-  logicalPathname: string
+  logicalPathname: string,
 ): AppRouteScope | null {
   return matchAppRoute(logicalPathname)?.scope ?? null;
 }
@@ -629,7 +652,7 @@ export function isProjectScopedRoutePath(logicalPathname: string): boolean {
 }
 
 export function listAppRoutesByScope(
-  scope: AppRouteScope
+  scope: AppRouteScope,
 ): readonly AppRouteEntry[] {
   return APP_ROUTES.filter((route) => route.scope === scope);
 }

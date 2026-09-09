@@ -477,7 +477,7 @@ describe("probeMcpServer", () => {
       const result = await probeMcpServer({ url: serverUrl, fetchFn });
 
       expect(result.status).toBe("oauth_required");
-      expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
+      expect(result.oauth.discoveryError).toMatch(/link-local or cloud-metadata/);
       expect(requestedUrls(fetchFn)).not.toContain(internal);
     });
 
@@ -603,7 +603,7 @@ describe("probeMcpServer", () => {
 
       const result = await probeMcpServer({ url: serverUrl, fetchFn });
 
-      expect(result.oauth.discoveryError).toMatch(/private\/reserved/);
+      expect(result.oauth.discoveryError).toMatch(/link-local or cloud-metadata/);
       expect(bodyWasRead).toBe(false);
     });
 

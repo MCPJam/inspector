@@ -5,6 +5,7 @@ import {
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
+  runEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
 import {
   EXCLUDED_FROM_CATALOG,
@@ -87,6 +88,7 @@ function fakeToolContext(
     bearerToken?: string;
     platformApiUrl?: string;
     appOrigin?: string;
+    callerUserAgent?: string;
   } = {}
 ): PlatformToolContext {
   return {
@@ -98,6 +100,9 @@ function fakeToolContext(
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
       MCPJAM_APP_ORIGIN: overrides.appOrigin ?? "https://staging.example.com",
     },
+    ...(overrides.callerUserAgent
+      ? { callerUserAgent: overrides.callerUserAgent }
+      : {}),
   };
 }
 
@@ -126,6 +131,7 @@ const PLAIN_TOOLS = [
   // Server live operations are agent-oriented payloads with no widget view.
   "connect_project_server",
   "get_project_server_connection_status",
+  "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
   "call_server_tool",
@@ -164,6 +170,7 @@ const PLAIN_TOOLS = [
   "get_eval_suite",
   "get_eval_run_disclosure",
   "update_eval_suite",
+  "list_eval_suite_revisions",
   "delete_eval_suite",
   "set_eval_suite_schedule",
   "list_eval_cases",
@@ -173,6 +180,15 @@ const PLAIN_TOOLS = [
   "update_eval_case",
   "delete_eval_case",
   "generate_eval_cases",
+  // Stage analytics: a measured description with slice arrays and exclusion
+  // tallies. The app renders it as a funnel; a tool result is the numbers.
+  "get_eval_run_stage_analytics",
+  "get_eval_run_gate",
+  "get_eval_run_route_facts",
+  // Server facts: what the run was taken against — a snapshot description, no
+  // widget view, so it belongs with the plain tools.
+  "get_eval_run_server_facts",
+  "list_eval_suite_stage_analytics",
   "set_eval_suite_environments",
   // Project environments: agent-oriented payloads, no widget view.
   "list_project_environments",
@@ -194,7 +210,15 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "request_eval_run_judge",
-  // GitHub Checks: agent-oriented payloads, no widget view.
+  // The description-rewrite experiment: agent-oriented payloads (a diff and
+  // two arm counts), no widget view.
+  "propose_eval_description_rewrite",
+  "start_eval_description_experiment",
+  "get_eval_description_experiment",
+  // GitHub checks: agent-oriented payloads, no widget view. Both spellings —
+  // the `*_check_repo*` pair is the pre-rename one, still advertised.
+  "list_eval_github_repos",
+  "connect_eval_github_repo",
   "list_eval_check_repos",
   "connect_eval_check_repo",
   "list_chat_sessions",
@@ -212,6 +236,9 @@ const PLAIN_TOOLS = [
   "create_persona",
   "update_persona",
   "delete_persona",
+  "list_secrets",
+  "get_secret",
+  "delete_secret",
   "generate_personas",
   "list_journeys",
   "get_journey",
@@ -338,7 +365,9 @@ describe("platform tool registration", () => {
       registrations.map((registration) => [registration.name, registration])
     );
     for (const operation of PLATFORM_CATALOG_OPERATIONS) {
-      const description = String(byName.get(operation.name)?.config.description);
+      const description = String(
+        byName.get(operation.name)?.config.description
+      );
       expect(description.includes("COSTS MONEY")).toBe(
         operation.risk === "spend"
       );
@@ -347,9 +376,9 @@ describe("platform tool registration", () => {
     expect(String(byName.get("run_eval_suite")?.config.description)).toContain(
       "COSTS MONEY"
     );
-    expect(String(byName.get("list_eval_suites")?.config.description)).not.toContain(
-      "COSTS MONEY"
-    );
+    expect(
+      String(byName.get("list_eval_suites")?.config.description)
+    ).not.toContain("COSTS MONEY");
   });
 
   it("registers show_servers with the MCP Apps UI resource", () => {
@@ -387,6 +416,7 @@ describe("platform tool registration", () => {
       "delete_project_server",
       "connect_project_server",
       "get_project_server_connection_status",
+      "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
       "call_server_tool",
@@ -417,6 +447,7 @@ describe("platform tool registration", () => {
       "get_eval_suite",
       "get_eval_run_disclosure",
       "update_eval_suite",
+      "list_eval_suite_revisions",
       "delete_eval_suite",
       "set_eval_suite_schedule",
       "set_eval_suite_environments",
@@ -428,6 +459,11 @@ describe("platform tool registration", () => {
       "delete_eval_case",
       "generate_eval_cases",
       "get_eval_run",
+      "get_eval_run_stage_analytics",
+      "get_eval_run_gate",
+      "get_eval_run_route_facts",
+      "get_eval_run_server_facts",
+      "list_eval_suite_stage_analytics",
       "compare_eval_run",
       "get_eval_gate_waiver",
       "list_eval_run_iterations",
@@ -435,6 +471,11 @@ describe("platform tool registration", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "request_eval_run_judge",
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "get_eval_description_experiment",
+      "list_eval_github_repos",
+      "connect_eval_github_repo",
       "list_eval_check_repos",
       "connect_eval_check_repo",
       "list_project_environments",
@@ -460,6 +501,9 @@ describe("platform tool registration", () => {
       "create_persona",
       "update_persona",
       "delete_persona",
+      "list_secrets",
+      "get_secret",
+      "delete_secret",
       "generate_personas",
       "list_journeys",
       "get_journey",
@@ -560,6 +604,10 @@ describe("platform tool registration", () => {
       fakeToolContext({ bearerToken: "jwt" })
     );
 
+    // Writes whose handler is a no-op when the work is already done, so a
+    // client may safely repeat one after a dropped response.
+    const IDEMPOTENT_WRITES = new Set(["cancel_project_server_connection"]);
+
     const NON_DESTRUCTIVE_WRITES = new Set([
       // Starting dials a third party's server and can spend; cancelling stops
       // one. Neither destroys a record, so both annotate as plain writes.
@@ -580,9 +628,15 @@ describe("platform tool registration", () => {
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
       "request_eval_run_judge",
+      // Proposing SPENDS one model call and starting SPENDS trials, but both
+      // only ever create rows: the proposal and two replay runs. The source
+      // run, its verdict and the developer's server are untouched.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
       // Additive: it creates a repository connection. Its hazard is REACH (a
       // shared repository, everyone's pull requests), not destruction — the
       // annotation says write, and the gated tier is what warns.
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       // Content-addressed mint: repeating the same stack reuses one row.
       // Nothing is destroyed and nothing is named.
@@ -649,6 +703,9 @@ describe("platform tool registration", () => {
       // that running a third party's tool twice is safe.
       "render_server_widget",
       "delete_persona",
+      // A HARD credential revoke: the row and the ciphertext both go, so a
+      // second call cannot find the row to report the same outcome.
+      "delete_secret",
       "archive_journey",
       "archive_swarm",
       "remove_user_testing_member",
@@ -669,6 +726,9 @@ describe("platform tool registration", () => {
       // roster and a second call answers not-found. From the caller's side
       // that is a removal.
       "delete_persona",
+      // Revoking a credential. Unlike the soft deletes around it, this one is
+      // genuinely irreversible — the encrypted value is gone.
+      "delete_secret",
       "archive_journey",
       "archive_swarm",
       "cancel_journey_run",
@@ -692,7 +752,17 @@ describe("platform tool registration", () => {
     ]);
 
     for (const registration of registrations) {
-      if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
+      if (IDEMPOTENT_WRITES.has(registration.name)) {
+        // A write that can be repeated. Cancelling an already-cancelled request
+        // is a no-op on the backend, so a client that retries a dropped
+        // response lands on the state the first call produced — and NOT saying
+        // so would leave a lost cancel holding a connection slot.
+        expect(registration.config.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+        });
+      } else if (NON_DESTRUCTIVE_WRITES.has(registration.name)) {
         expect(registration.config.annotations).toEqual({
           readOnlyHint: false,
           destructiveHint: false,
@@ -1059,5 +1129,98 @@ describe("the permalink envelope", () => {
     expect(permalinks[0]!.url).toBe(
       "http://localhost:6274/servers/srv_1?project=proj_demo"
     );
+  });
+});
+
+/**
+ * What a run launched through this worker calls itself.
+ *
+ * The platform stamps `source: "api"` on everything that arrives over the
+ * public API, so an agent's eval run was indistinguishable from a script's in
+ * the Runs table. The worker declares `mcp` — a display label beside the stamp,
+ * never an authorization input — and names the calling agent when the request
+ * did.
+ */
+describe("the worker's declared launcher", () => {
+  const RUN_LAUNCH_HEADER = "x-mcpjam-launcher";
+
+  /**
+   * A launch makes three requests — resolve the project, resolve the suite,
+   * then POST the run — so the stub answers by path. Returning one shape for
+   * all three would abort at the first resolution and never reach the call
+   * whose headers these tests are about.
+   */
+  function captureHeaders(): {
+    launchHeaders: () => Record<string, string> | undefined;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    let launch: Record<string, string> | undefined;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      const headers = { ...((init?.headers ?? {}) as Record<string, string>) };
+      if (path.endsWith("/eval-runs") && init?.method === "POST") {
+        launch = headers;
+        return Response.json({ runId: "run_1", suiteId: "suite_1" });
+      }
+      if (path.endsWith("/eval-suites")) {
+        return Response.json({
+          items: [{ id: "suite_1", name: "s1", projectId: "proj_1" }],
+        });
+      }
+      return Response.json({
+        items: [{ id: "proj_1", name: "p1", updatedAt: 1 }],
+      });
+    });
+    return { launchHeaders: () => launch, fetchMock };
+  }
+
+  it("declares mcp, and names the agent from the request's user-agent", async () => {
+    const { launchHeaders, fetchMock } = captureHeaders();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runPlatformOperation(
+      fakeToolContext({
+        bearerToken: "user-jwt",
+        callerUserAgent: "claude-code/1.2.3",
+      }),
+      runEvalSuiteOperation,
+      { project: "p1", suite: "s1" } as never
+    );
+
+    const launch = launchHeaders();
+    expect(launch).toBeDefined();
+    expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({
+      kind: "mcp",
+      client: "claude-code/1.2.3",
+    });
+  });
+
+  it("still declares mcp when the request named no agent", async () => {
+    const { launchHeaders, fetchMock } = captureHeaders();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      runEvalSuiteOperation,
+      { project: "p1", suite: "s1" } as never
+    );
+
+    const launch = launchHeaders();
+    // A missing user-agent leaves the launcher UNNAMED, never guessed: the
+    // kind is what the worker knows for itself.
+    expect(JSON.parse(launch![RUN_LAUNCH_HEADER]!)).toEqual({ kind: "mcp" });
+  });
+
+  it("is not a field an agent can set through the tool's own input", async () => {
+    // An operation's `inputSchema` is exposed verbatim as the MCP tool's input.
+    // A launcher field there would let the agent whose run it is pick its own
+    // badge — which is why this is a client option instead.
+    const shape = (
+      runEvalSuiteOperation.inputSchema as unknown as {
+        shape?: Record<string, unknown>;
+      }
+    ).shape;
+    expect(shape).toBeDefined();
+    expect(Object.keys(shape!)).not.toContain("launcher");
   });
 });

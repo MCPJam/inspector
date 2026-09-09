@@ -20,8 +20,26 @@ import { logger } from "../../utils/logger.js";
 
 /** Why the backend refused to hand back an otherwise-existing session. */
 export type BrowserSessionStale =
-  /** The daemon bundle shipped new bytes: the running daemon is old code. */
+  /**
+   * The daemon bundle shipped new bytes: the running daemon is old code.
+   *
+   * NO LONGER GROUNDS FOR A RELAUNCH on its own (V-4a). Every edit anywhere in
+   * the daemon's import graph rotates the hash, so this fired on most deploys
+   * during a wave of daemon work — and each time it killed every live hosted
+   * browser mid-use. The inspector now stops asking the backend this question
+   * and asks `protocol_changed` instead; a hash difference becomes an UPGRADE,
+   * applied the first moment the session is idle. Kept in the union because an
+   * older backend can still answer it.
+   */
   | "bundle_changed"
+  /**
+   * The running daemon speaks a wire this build cannot talk to.
+   *
+   * The only staleness that still means "relaunch now", because it is the only
+   * one where continuing would produce wrong answers rather than merely old
+   * ones.
+   */
+  | "protocol_changed"
   /** The live daemon runs the OTHER profile mode (persistent vs ephemeral). */
   | "context_mode_changed"
   /** The box the session named is gone, hibernating, or never live. */
@@ -29,20 +47,70 @@ export type BrowserSessionStale =
 
 export type BrowserContextMode = "persistent" | "ephemeral";
 
-export interface BrowserSessionRecord {
+/**
+ * WHICH BOX a lookup or a record names.
+ *
+ * A `computerId` is the member's durable per-(project, member) machine — the
+ * Playground's browser, with their logins, a panel that can watch it and a
+ * handoff lease a person can take. A `sandboxRowId` is a per-RUN disposable
+ * desktop: one unattended run owns it, one process drives it, and it dies with
+ * the run.
+ *
+ * Expressed as a union of two mutually-exclusive shapes rather than two
+ * optional ids, so "both" and "neither" are unrepresentable at the call site
+ * instead of being caught on the wire.
+ */
+export type BrowserSessionTargetArgs =
+  | { computerId: string; sandboxRowId?: undefined }
+  | { sandboxRowId: string; computerId?: undefined };
+
+interface BrowserSessionRecordCommon {
   sessionId: string;
-  computerId: string;
   bootId: string;
   browserdToken: string;
   browserdPort: number;
   publicOrigin: string;
-  streamUrl: string;
-  streamPassword: string;
   bundleHash: string;
   contextMode: BrowserContextMode;
+  /**
+   * The wire compatibility number recorded at boot, when the daemon announced
+   * one. Absent for a row written before V-4a, or by a backend that does not
+   * store the column yet — both of which mean "unknown", never "compatible".
+   */
+  protocolVersion?: number;
 }
 
-export interface BrowserSessionLookup {
+/**
+ * A daemon on the member's durable computer. Carries the noVNC stream and the
+ * password it minted — REQUIRED here, because the stream holds that password
+ * only in memory and this row is the only durable copy any replica can recover
+ * it from.
+ */
+export interface ComputerBrowserSessionRecord
+  extends BrowserSessionRecordCommon {
+  target: "computer";
+  computerId: string;
+  streamUrl: string;
+  streamPassword: string;
+}
+
+/**
+ * A daemon on a per-RUN disposable box. NO stream fields at all — nobody is
+ * watching an unattended run, so no stream is started and there is no password
+ * to cache. A UNION member rather than optional fields, so a `streamUrl: ""`
+ * placeholder that some future panel renders into an iframe cannot exist.
+ */
+export interface SandboxBrowserSessionRecord
+  extends BrowserSessionRecordCommon {
+  target: "sandbox";
+  sandboxRowId: string;
+}
+
+export type BrowserSessionRecord =
+  | ComputerBrowserSessionRecord
+  | SandboxBrowserSessionRecord;
+
+interface BrowserSessionLookupCommon {
   /**
    * Did the control plane actually ANSWER? `false` means the question is
    * unanswered (no config, transport failure, non-2xx, unparseable body),
@@ -51,7 +119,19 @@ export interface BrowserSessionLookup {
    * diagnostics.
    */
   reachable: boolean;
-  session: BrowserSessionRecord | null;
+  /**
+   * The control plane REFUSED the shape of this request — it does not know
+   * this kind of target.
+   *
+   * In practice: a deploy where the inspector has learned about per-run boxes
+   * and the backend has not. A TYPED outcome rather than a generic
+   * unreachable, because the two need opposite behaviour: an unreachable
+   * control plane means "relaunch", and relaunching here would connect to a
+   * box and boot a daemon it could never record — paying a cold desktop boot
+   * on every attempt to reach the same dead end. The caller refuses instead,
+   * before it connects.
+   */
+  unsupportedTarget?: true;
   stale?: BrowserSessionStale;
   /**
    * The row id the backend saw for this computer, present even when the row
@@ -60,11 +140,47 @@ export interface BrowserSessionLookup {
    * absence means "no row existed", which is equally load-bearing.
    */
   observedSessionId?: string;
+  /**
+   * Just enough of a STALE row to ask its daemon who is holding it.
+   *
+   * The caller's next move after a stale answer is to `pkill` that daemon, and
+   * the only thing between that and a person mid-login is asking its lease
+   * first — which needs an address. `session: null` alone gave none, and
+   * because the backend checks the bundle hash before anything else, that is
+   * the state EVERY box is in immediately after a deploy.
+   *
+   * Absent means nobody to ask: either the box is not serving, or the backend
+   * predates this field. The caller must treat both the same way it always
+   * did, which is the graceful degradation this rollout needs — the inspector
+   * ships before the control plane does.
+   */
+  staleSession?: {
+    publicOrigin: string;
+    browserdToken: string;
+    bootId: string;
+    contextMode: BrowserContextMode;
+  };
 }
+
+export interface ComputerBrowserSessionLookup
+  extends BrowserSessionLookupCommon {
+  session: ComputerBrowserSessionRecord | null;
+}
+
+export interface SandboxBrowserSessionLookup
+  extends BrowserSessionLookupCommon {
+  session: SandboxBrowserSessionRecord | null;
+}
+
+export type BrowserSessionLookup =
+  | ComputerBrowserSessionLookup
+  | SandboxBrowserSessionLookup;
 
 const LOOKUP_PATH = "/browser-runtime/session/lookup";
 const RECORD_PATH = "/browser-runtime/session/record";
 const TOUCH_PATH = "/browser-runtime/session/touch";
+const RELAUNCH_CLAIM_PATH = "/browser-runtime/relaunch/claim";
+const RELAUNCH_RELEASE_PATH = "/browser-runtime/relaunch/release";
 
 /** Above the backend's own latency and far below any turn deadline. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -72,6 +188,18 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** A lost compare-and-swap on `record` — a normal answer, not a failure. */
 const CONFLICT_STATUS = 409;
 const CONFLICT = Symbol("browser-session-record-conflict");
+
+/**
+ * The control plane rejected the request SHAPE.
+ *
+ * Kept distinct from every other non-answer because for a per-run target it
+ * has exactly one realistic cause — a backend that predates sandbox-target
+ * sessions — and the right response to that is to refuse, not to relaunch.
+ * A generic `null` here would be read as "no session", which on the ensure
+ * path means connect, boot, and only THEN discover the record cannot land.
+ */
+const BAD_REQUEST_STATUS = 400;
+const BAD_REQUEST = Symbol("browser-session-bad-request");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -148,6 +276,7 @@ async function postServiceAuthorized(
       // 409 on `record` is a lost boot race, not a failure — the caller
       // handles it. Keep it out of the warn stream but let the caller see it.
       if (response.status === CONFLICT_STATUS) return CONFLICT;
+      if (response.status === BAD_REQUEST_STATUS) return BAD_REQUEST;
       logger.warn("[browser-runtime] session route rejected the request", {
         path,
         status: response.status,
@@ -167,11 +296,29 @@ async function postServiceAuthorized(
   }
 }
 
-function parseSession(raw: unknown): BrowserSessionRecord | null {
+function parseSession(
+  raw: unknown,
+  /**
+   * The target the CALLER asked about. A row is only a row for the target it
+   * was requested for: the overloads hand a `{ computerId }` lookup back as a
+   * `ComputerBrowserSessionLookup`, so a sandbox-shaped row slipping through
+   * that cast would reach `handleFromRecord` and the stream route as a
+   * computer session with no `computerId`, `streamUrl` or `streamPassword` —
+   * three `undefined`s standing in for a daemon address and a VNC password.
+   *
+   * The control plane keys its lookup by the id it was handed and so should
+   * never answer with the other shape. But this parser already refuses a
+   * computer row carrying no stream and a sandbox row carrying one, on the
+   * principle that the wire is not trusted to be self-consistent; pinning the
+   * target is that same check applied to the field that SELECTS the shape.
+   */
+  expectedTarget: BrowserSessionRecord["target"],
+): BrowserSessionRecord | null {
   if (!isRecord(raw)) return null;
   const {
     sessionId,
     computerId,
+    sandboxRowId,
     bootId,
     browserdToken,
     browserdPort,
@@ -180,11 +327,10 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
     streamPassword,
     bundleHash,
     contextMode,
+    protocolVersion,
   } = raw;
   if (
     typeof sessionId !== "string" ||
-    typeof computerId !== "string" ||
-    computerId.length === 0 ||
     typeof bootId !== "string" ||
     bootId.length === 0 ||
     typeof browserdToken !== "string" ||
@@ -195,30 +341,88 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
     browserdPort > 65535 ||
     typeof publicOrigin !== "string" ||
     publicOrigin.length === 0 ||
-    typeof streamUrl !== "string" ||
-    streamUrl.length === 0 ||
-    typeof streamPassword !== "string" ||
-    streamPassword.length === 0 ||
     typeof bundleHash !== "string" ||
     (contextMode !== "persistent" && contextMode !== "ephemeral")
   ) {
     // A row we cannot fully read is not a row we may reuse: every field above
-    // is load-bearing for reaching the right daemon with the right credential
-    // — or for the panel reaching the right stream with its password.
+    // is load-bearing for reaching the right daemon with the right credential.
     return null;
   }
-  return {
+  const common = {
     sessionId,
-    computerId,
     bootId,
     browserdToken,
     browserdPort,
     publicOrigin,
-    streamUrl,
-    streamPassword,
     bundleHash,
     contextMode,
+    // Dropped rather than coerced when it is the wrong shape: an unreadable
+    // number must read as UNKNOWN, which relaunches, and never as a match.
+    //
+    // On `common` so BOTH targets carry it: a per-run box runs the same daemon
+    // and answers the same wire, so its session is just as capable of being
+    // one version behind.
+    ...(typeof protocolVersion === "number" &&
+    Number.isInteger(protocolVersion) &&
+    protocolVersion >= 1
+      ? { protocolVersion }
+      : {}),
+  } as const;
+  if (typeof sandboxRowId === "string" && sandboxRowId.length > 0) {
+    if (expectedTarget !== "sandbox") return null;
+    // A per-run box. The stream is not merely optional here — its PRESENCE
+    // would mean the backend recorded desktop-control credentials for a box
+    // nobody is watching, which is a row we should not act on.
+    if (streamUrl !== undefined || streamPassword !== undefined) return null;
+    return { ...common, target: "sandbox", sandboxRowId };
+  }
+  if (
+    expectedTarget !== "computer" ||
+    typeof computerId !== "string" ||
+    computerId.length === 0 ||
+    // REQUIRED on a computer: the panel reaches the stream with this password,
+    // and the row is the only durable copy of it.
+    typeof streamUrl !== "string" ||
+    streamUrl.length === 0 ||
+    typeof streamPassword !== "string" ||
+    streamPassword.length === 0
+  ) {
+    return null;
+  }
+  return {
+    ...common,
+    target: "computer",
+    computerId,
+    streamUrl,
+    streamPassword,
   };
+}
+
+/**
+ * The narrow shape the backend returns for a stale row — every field or none.
+ *
+ * A partial answer is refused rather than patched up: the point of these three
+ * is to reach one specific daemon and ask it a question, and two out of three
+ * reaches nothing. Absent is a valid answer (older backend, or a box that is
+ * not serving), and the caller already handles it.
+ */
+function parseStaleSession(
+  raw: unknown,
+): BrowserSessionLookup["staleSession"] | undefined {
+  if (!isRecord(raw)) return undefined;
+  const { publicOrigin, browserdToken, bootId, contextMode } = raw;
+  if (
+    typeof publicOrigin !== "string" ||
+    publicOrigin.length === 0 ||
+    typeof browserdToken !== "string" ||
+    browserdToken.length === 0 ||
+    typeof bootId !== "string" ||
+    bootId.length === 0 ||
+    (contextMode !== "persistent" && contextMode !== "ephemeral")
+  ) {
+    return undefined;
+  }
+  return { publicOrigin, browserdToken, bootId, contextMode };
 }
 
 /**
@@ -226,8 +430,7 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
  * Staleness is the backend's verdict; daemon liveness is then re-verified by
  * the caller against `/v1/status` — the row alone never admits.
  */
-export async function lookupBrowserSession(args: {
-  computerId: string;
+interface LookupOptions {
   expectedBundleHash: string;
   /**
    * The profile mode the caller intends to run in; a row in the other mode
@@ -239,24 +442,69 @@ export async function lookupBrowserSession(args: {
    * persistent daemon carrying someone's live cookies.
    */
   expectedContextMode: BrowserContextMode | "any";
+  /**
+   * The wire this build can talk to.
+   *
+   * When present the backend answers `protocol_changed` instead of
+   * `bundle_changed`, so a deploy that only rotated the bundle hash leaves live
+   * sessions alone. Omitted, the backend behaves exactly as it did before —
+   * which is what a rollback wants, and what an older backend does regardless.
+   */
+  expectedProtocolVersion?: number;
   signal?: AbortSignal;
-}): Promise<BrowserSessionLookup> {
+}
+
+// OVERLOADED so a computer lookup keeps the computer TYPE: its callers (the
+// panel, the frame stream, the noVNC stream) read `computerId` and
+// `streamPassword` straight off the row, and none of them has any business
+// narrowing a union to say "yes, this really is the computer I asked about".
+export async function lookupBrowserSession(
+  args: { computerId: string } & LookupOptions,
+): Promise<ComputerBrowserSessionLookup>;
+export async function lookupBrowserSession(
+  args: { sandboxRowId: string } & LookupOptions,
+): Promise<SandboxBrowserSessionLookup>;
+export async function lookupBrowserSession(
+  args: BrowserSessionTargetArgs & LookupOptions,
+): Promise<BrowserSessionLookup> {
   const raw = await postServiceAuthorized(
     LOOKUP_PATH,
     {
-      computerId: args.computerId,
+      ...targetBody(args),
       expectedBundleHash: args.expectedBundleHash,
       expectedContextMode: args.expectedContextMode,
+      ...(args.expectedProtocolVersion !== undefined
+        ? { expectedProtocolVersion: args.expectedProtocolVersion }
+        : {}),
     },
     args.signal,
   );
+  // A backend that does not know this target shape. Answered as itself, so
+  // the caller can refuse rather than treat it as "no session" and boot.
+  //
+  // ONLY for a sandbox target. A 400 is also how the control plane rejects a
+  // malformed COMPUTER request, and that has nothing to do with a backend
+  // predating per-run boxes — reporting it as an unsupported target would tell
+  // a Playground relaunch failure the wrong story. Every computer caller
+  // predates this branch and read a 400 as unreachable; keep it that way.
+  if (raw === BAD_REQUEST) {
+    return targetsSandbox(args)
+      ? { reachable: true, unsupportedTarget: true, session: null }
+      : { reachable: false, session: null };
+  }
   if (!isRecord(raw)) return { reachable: false, session: null };
   const stale = raw.stale;
   const observedSessionId = raw.observedSessionId;
+  const staleSession = parseStaleSession(raw.staleSession);
   return {
     reachable: true,
-    session: parseSession(raw.session),
+    session: parseSession(
+      raw.session,
+      targetsSandbox(args) ? "sandbox" : "computer",
+    ),
+    ...(staleSession ? { staleSession } : {}),
     ...(stale === "bundle_changed" ||
+    stale === "protocol_changed" ||
     stale === "context_mode_changed" ||
     stale === "box_unavailable"
       ? { stale }
@@ -264,7 +512,25 @@ export async function lookupBrowserSession(args: {
     ...(typeof observedSessionId === "string" && observedSessionId
       ? { observedSessionId }
       : {}),
-  };
+  } as BrowserSessionLookup;
+}
+
+/**
+ * Whether this request addresses a PER-RUN box. Two places client-side care:
+ * reading a 400 — that shape is new, so a refusal of it is evidence about the
+ * backend's version, while the computer shape has been accepted since the
+ * beginning and a refusal there is about the payload — and pinning the shape a
+ * returned row is allowed to have.
+ */
+function targetsSandbox(args: BrowserSessionTargetArgs): boolean {
+  return args.sandboxRowId !== undefined;
+}
+
+/** The one target id a request carries, as the wire spells it. */
+function targetBody(args: BrowserSessionTargetArgs): Record<string, string> {
+  return args.computerId !== undefined
+    ? { computerId: args.computerId }
+    : { sandboxRowId: args.sandboxRowId! };
 }
 
 /**
@@ -278,6 +544,13 @@ export async function lookupBrowserSession(args: {
 export type BrowserSessionRecordResult =
   | { status: "recorded"; sessionId: string }
   | { status: "conflict" }
+  /**
+   * The control plane does not know this kind of target (a backend that
+   * predates per-run boxes). Distinct from `failed` so the caller can say so
+   * plainly instead of reporting a generic write failure — and so it never
+   * retries a shape that will never be accepted.
+   */
+  | { status: "unsupported_target" }
   | { status: "failed" };
 
 /**
@@ -286,31 +559,65 @@ export type BrowserSessionRecordResult =
  * backend refuses the write when the current row disagrees — see
  * `internalRecordSession`'s compare-and-swap.
  */
-export async function recordBrowserSession(args: {
-  computerId: string;
+interface BrowserSessionRecordArgsCommon {
   bootId: string;
   browserdToken: string;
   browserdPort: number;
   publicOrigin: string;
-  streamUrl: string;
-  streamPassword: string;
   bundleHash: string;
   contextMode: BrowserContextMode;
+  /** Announced by the daemon at boot; absent from one that predates V-4a. */
+  protocolVersion?: number;
   replacesSessionId?: string;
   signal?: AbortSignal;
-}): Promise<BrowserSessionRecordResult> {
+}
+
+/**
+ * The two ways to write a row, as a DISCRIMINATED UNION rather than one shape
+ * with an optional `stream`.
+ *
+ * The backend refuses either mistake — a computer record with no stream, a
+ * sandbox record that has one — but an optional field lets both compile, so
+ * the mistake would be found after a daemon had already been booted on a paid
+ * box. Same reason the RECORD types above are a union: a state nothing can
+ * represent needs no runtime check.
+ */
+type ComputerBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
+  computerId: string;
+  sandboxRowId?: undefined;
+  /**
+   * REQUIRED: the stream holds its password only in memory, and this row is
+   * the only durable copy any replica can recover it from.
+   */
+  stream: { url: string; password: string };
+};
+
+type SandboxBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
+  sandboxRowId: string;
+  computerId?: undefined;
+  /** REFUSED: nobody is watching a per-run box, so nothing minted a password. */
+  stream?: undefined;
+};
+
+export async function recordBrowserSession(
+  args: ComputerBrowserSessionRecordArgs | SandboxBrowserSessionRecordArgs,
+): Promise<BrowserSessionRecordResult> {
   const raw = await postServiceAuthorized(
     RECORD_PATH,
     {
-      computerId: args.computerId,
+      ...targetBody(args),
       bootId: args.bootId,
       browserdToken: args.browserdToken,
       browserdPort: args.browserdPort,
       publicOrigin: args.publicOrigin,
-      streamUrl: args.streamUrl,
-      streamPassword: args.streamPassword,
+      ...(args.stream
+        ? { streamUrl: args.stream.url, streamPassword: args.stream.password }
+        : {}),
       bundleHash: args.bundleHash,
       contextMode: args.contextMode,
+      ...(args.protocolVersion !== undefined
+        ? { protocolVersion: args.protocolVersion }
+        : {}),
       ...(args.replacesSessionId
         ? { replacesSessionId: args.replacesSessionId }
         : {}),
@@ -318,6 +625,14 @@ export async function recordBrowserSession(args: {
     args.signal,
   );
   if (raw === CONFLICT) return { status: "conflict" };
+  // Sandbox target only, for the reason spelled out on the lookup path: a
+  // malformed computer record is a plain write failure, and the caller says so
+  // in those words rather than blaming a control plane that is in fact fine.
+  if (raw === BAD_REQUEST) {
+    return targetsSandbox(args)
+      ? { status: "unsupported_target" }
+      : { status: "failed" };
+  }
   // An EMPTY id is a failure, not a record: it would ride out in the handle and
   // then address every later touch and release at nothing, so the session would
   // look alive to us and idle to the sweeper.
@@ -345,4 +660,67 @@ export async function touchBrowserSession(args: {
     args.signal,
   );
   return { counted: isRecord(raw) && raw.counted === true };
+}
+
+/**
+ * How a relaunch claim can fail to be taken.
+ *
+ * `claimed` is an ANSWER: another replica is relaunching this box right now,
+ * and the caller must not proceed. `unavailable` is the absence of one — an
+ * unconfigured deployment, a transport failure, or a control plane that
+ * predates the route — and the caller proceeds exactly as it did before the
+ * claim existed. Collapsing the two would either brick every relaunch on a
+ * backend that has not deployed yet, or let a real conflict through.
+ */
+export type BrowserRelaunchClaim =
+  { ok: true } | { ok: false; reason: "claimed" | "unavailable" };
+
+/**
+ * Take the exclusive right to relaunch this computer's browser.
+ *
+ * Held across the `pkill` and the boot, and given back once the session is
+ * recorded. The lease fence cannot do this job: the race it misses is exactly
+ * the one where there is no daemon yet to hold a lease on, and the record
+ * compare-and-swap cannot either, because it fires long after the kill.
+ */
+export async function claimBrowserRelaunch(args: {
+  computerId: string;
+  /** This attempt's identity; only it may release the claim. */
+  claimId: string;
+  ttlMs?: number;
+  signal?: AbortSignal;
+}): Promise<BrowserRelaunchClaim> {
+  const raw = await postServiceAuthorized(
+    RELAUNCH_CLAIM_PATH,
+    {
+      computerId: args.computerId,
+      claimId: args.claimId,
+      ...(args.ttlMs === undefined ? {} : { ttlMs: args.ttlMs }),
+    },
+    args.signal,
+  );
+  // 409 is the route's "somebody else has it" and arrives as the shared
+  // conflict sentinel; `null` is every other non-answer.
+  if (raw === CONFLICT) return { ok: false, reason: "claimed" };
+  if (!isRecord(raw)) return { ok: false, reason: "unavailable" };
+  return { ok: true };
+}
+
+/**
+ * Give the relaunch claim back.
+ *
+ * Best-effort and never throws: a claim that is not released expires on its
+ * own, which is the whole reason it has a TTL. Refusing to finish a relaunch
+ * because the release call failed would turn a slow network into a wedged box.
+ */
+export async function releaseBrowserRelaunch(args: {
+  computerId: string;
+  claimId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  await postServiceAuthorized(
+    RELAUNCH_RELEASE_PATH,
+    { computerId: args.computerId, claimId: args.claimId },
+    args.signal,
+  ).catch(() => null);
 }

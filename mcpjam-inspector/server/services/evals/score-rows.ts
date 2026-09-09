@@ -39,6 +39,15 @@ export type HostedPredicateResultLike = {
   passed: boolean;
   reason?: string;
   scope?: PredicateScope;
+  /**
+   * `"error"` ⇒ the check could not be scored. Absent ⇒ `"scored"`.
+   *
+   * The row still carries `passed: false` (the field is required on the wire),
+   * so a reader that ignores this projects an unmeasured check as a 0 — a
+   * defect on the dashboard nobody observed, and a failed trial if the check
+   * gates.
+   */
+  status?: "scored" | "error";
 };
 
 /** The tool-call matcher's verdict, as it lands on the evaluation. */
@@ -61,6 +70,12 @@ export type HostedJudgeVerdictLike = {
   judgeTemplateHash?: unknown;
   model?: unknown;
   error?: unknown;
+  /**
+   * Whether this judge was allowed to DECIDE the trial, stamped by the backend
+   * from the run's frozen config. `unknown` because everything on this type is:
+   * these fields arrive from a database document, not from a validator.
+   */
+  role?: unknown;
 };
 
 export type HostedScoreRowInputs = {
@@ -104,8 +119,16 @@ function judgeIsScored(verdict: HostedJudgeVerdictLike): boolean {
  * These are EVIDENCE OF ABSENCE and are projected as such rather than dropped:
  * B4 validity reads a missing row as "this scorer was never measured", which is
  * indistinguishable from "this iteration had no such scorer at all". Writing the
- * row keeps that distinction, and because it carries `error`/`skipped`/
- * `not_applicable` instead of a value, it can never gate anything.
+ * row keeps that distinction.
+ *
+ * WHAT SUCH A ROW DOES NOW DEPENDS ON THE DEFINITION. On an advisory judge it
+ * is inert, as it always was. On a GATING judge it lights `noGatingScoreErrors`
+ * and counts as an evaluator error on the backend — which is the correct
+ * reading, because a gate that cannot be evaluated has not been satisfied. What
+ * it still cannot do, structurally, is fail the trial by itself: the row
+ * carries no `passed`, so `allGatingScorersPassed` reports it as UNRESOLVED
+ * rather than failing, and the backend quarantines the trial instead of
+ * grading it.
  */
 function judgeAbsenceStatus(
   verdict: HostedJudgeVerdictLike
@@ -169,6 +192,11 @@ export function hostedScoreDefinitionInputs(
             ...(isFiniteNumber(inputs.objectiveScoreCap)
               ? { objectiveScoreCap: inputs.objectiveScoreCap }
               : {}),
+            // The LITERAL "gating" and nothing else. Absent, "advisory", a
+            // future spelling, or the wrong case all resolve to advisory: the
+            // default here decides whether a judge may fail somebody's build,
+            // so it fails closed.
+            ...(judge.role === "gating" ? { role: "gating" as const } : {}),
           },
         }
       : {}),
@@ -196,6 +224,19 @@ export function buildHostedScoreRows(
     const criterionId = hostedCriterionId(result.predicate, result.scope);
     const definition = byId.get(`predicate:${criterionId}`);
     if (!definition) continue;
+    // A check with no evidence is an ERROR row, not a 0. The distinction is
+    // load-bearing downstream: an error row carries no value, keeps the
+    // scorer in `unresolvedScorerIds`, and leaves its stage `notMeasured`,
+    // where a 0 would attribute a defect to the server on a measurement we
+    // never took.
+    if (result.status === "error") {
+      rows.push(
+        errorScoreResult(definition, result.reason ?? "no evidence captured", {
+          ...(result.scope ? { scope: result.scope } : {}),
+        })
+      );
+      continue;
+    }
     rows.push(
       fromCriterionResult(definition, {
         criterionId,

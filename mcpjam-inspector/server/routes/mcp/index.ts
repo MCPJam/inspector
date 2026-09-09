@@ -7,6 +7,7 @@ import resourceTemplates from "./resource-templates";
 import prompts from "./prompts";
 import chatV2 from "./chat-v2";
 import computers from "./computers";
+import localHarness from "./local-harness";
 import oauth from "./oauth";
 import exporter from "./export";
 import evals from "./evals";
@@ -50,6 +51,7 @@ mcp.route("/chat-v2", chatV2);
 
 // Local computer engine — consent capability (grant/verify/revoke)
 mcp.route("/computers", computers);
+mcp.route("/local-harness", localHarness);
 
 // Speech-to-text endpoint
 mcp.route("/audio", audioTranscriptions);

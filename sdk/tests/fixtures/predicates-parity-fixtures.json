@@ -1,12 +1,14 @@
 {
-  "__readme": "Shared parity fixtures for the @mcpjam/sdk Zod `predicateSchema` (this repo: mcpjam-inspector) and the Convex hand-mirrored `predicateValidator` v.union (sibling repo: mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json). The two files MUST stay in sync — every accept here must parse on both sides; every reject must fail on both sides. A future PR will publish them as a shared package. When adding a new predicate kind, edit BOTH files in the SAME PR (Phase 2 plan: jaunty-wiggling-lecun.md).",
+  "__readme": "Shared parity fixtures for the predicate wire shape. ONE FILE, byte-identical in both repos: mcpjam-inspector at sdk/tests/fixtures/predicates-parity-fixtures.json (checked by the Zod `predicateSchema`) and mcpjam-backend at tests/convex/fixtures/predicates-parity-fixtures.json (checked by the Convex `predicateValidator` plus `assertValidPredicate`, through the real mutation boundary). Pinned by `predicates-parity-fixtures` in convex/lib/mirrors.json, so editing one side without the other fails CI. Every `accept` row must parse on both sides; every `reject` row must fail on both. When adding a predicate kind, edit BOTH validators and this file in the same PR — a kind with no accept row here has no proof the two validators agree about it.",
   "accept": [
     {
       "label": "toolCalledWith — minimal (only required fields)",
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} }
+        "args": {
+          "args": {}
+        }
       }
     },
     {
@@ -15,7 +17,10 @@
         "type": "toolCalledWith",
         "toolName": "book_flight",
         "args": {
-          "args": { "airline": "DL", "seat": "1A" },
+          "args": {
+            "airline": "DL",
+            "seat": "1A"
+          },
           "argumentMatching": "partial"
         },
         "minCount": 2
@@ -26,7 +31,12 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "echo",
-        "args": { "args": { "msg": "hi" }, "argumentMatching": "exact" }
+        "args": {
+          "args": {
+            "msg": "hi"
+          },
+          "argumentMatching": "exact"
+        }
       }
     },
     {
@@ -34,7 +44,10 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "ping",
-        "args": { "args": {}, "argumentMatching": "ignore" }
+        "args": {
+          "args": {},
+          "argumentMatching": "ignore"
+        }
       }
     },
     {
@@ -43,14 +56,20 @@
         "type": "toolCalledWith",
         "toolName": "fs.read",
         "args": {
-          "args": { "path": "string", "count": "number" },
+          "args": {
+            "path": "string",
+            "count": "number"
+          },
           "argumentMatching": "partial"
         }
       }
     },
     {
       "label": "toolCalledAtLeastOnce — minimal",
-      "value": { "type": "toolCalledAtLeastOnce", "toolName": "search" }
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "search"
+      }
     },
     {
       "label": "toolCalledAtLeastOnce — long tool name",
@@ -61,7 +80,10 @@
     },
     {
       "label": "toolNeverCalled — minimal",
-      "value": { "type": "toolNeverCalled", "toolName": "delete_account" }
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_account"
+      }
     },
     {
       "label": "toolNeverCalled — long tool name",
@@ -72,15 +94,24 @@
     },
     {
       "label": "firstToolWas — minimal",
-      "value": { "type": "firstToolWas", "toolName": "search" }
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "search"
+      }
     },
     {
       "label": "firstToolWas — alternate tool name",
-      "value": { "type": "firstToolWas", "toolName": "list_dir" }
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "list_dir"
+      }
     },
     {
       "label": "responseContains — minimal (no caseSensitive)",
-      "value": { "type": "responseContains", "needle": "refund issued" }
+      "value": {
+        "type": "responseContains",
+        "needle": "refund issued"
+      }
     },
     {
       "label": "responseContains — caseSensitive true",
@@ -92,55 +123,77 @@
     },
     {
       "label": "responseMatches — minimal regex",
-      "value": { "type": "responseMatches", "pattern": "\\d+" }
+      "value": {
+        "type": "responseMatches",
+        "pattern": "\\d+"
+      }
     },
     {
       "label": "responseMatches — anchored regex",
-      "value": { "type": "responseMatches", "pattern": "^Order #\\d{4} confirmed$" }
+      "value": {
+        "type": "responseMatches",
+        "pattern": "^Order #\\d{4} confirmed$"
+      }
     },
     {
       "label": "noToolErrors — no fields beyond type",
-      "value": { "type": "noToolErrors" }
-    },
-    {
-      "label": "noToolErrors — second example (still no fields)",
-      "value": { "type": "noToolErrors" }
+      "value": {
+        "type": "noToolErrors"
+      }
     },
     {
       "label": "finalAssistantMessageNonEmpty — no fields beyond type",
-      "value": { "type": "finalAssistantMessageNonEmpty" }
-    },
-    {
-      "label": "finalAssistantMessageNonEmpty — second example",
-      "value": { "type": "finalAssistantMessageNonEmpty" }
+      "value": {
+        "type": "finalAssistantMessageNonEmpty"
+      }
     },
     {
       "label": "tokenBudgetUnder — minimal",
-      "value": { "type": "tokenBudgetUnder", "tokens": 1000 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000
+      }
     },
     {
       "label": "tokenBudgetUnder — large budget",
-      "value": { "type": "tokenBudgetUnder", "tokens": 100000 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 100000
+      }
     },
     {
       "label": "turnCountUnder — tight budget (strictly fewer than 3 user turns)",
-      "value": { "type": "turnCountUnder", "turns": 3 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 3
+      }
     },
     {
       "label": "turnCountUnder — loose budget",
-      "value": { "type": "turnCountUnder", "turns": 8 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 8
+      }
     },
     {
       "label": "widgetRendered — minimal (no toolName filter)",
-      "value": { "type": "widgetRendered" }
+      "value": {
+        "type": "widgetRendered"
+      }
     },
     {
       "label": "widgetRendered — with toolName filter",
-      "value": { "type": "widgetRendered", "toolName": "show_map" }
+      "value": {
+        "type": "widgetRendered",
+        "toolName": "show_map"
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — minimal",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": 3000 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 3000
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — with toolName filter",
@@ -152,40 +205,554 @@
     },
     {
       "label": "widgetNoConsoleErrors — minimal (no toolName filter)",
-      "value": { "type": "widgetNoConsoleErrors" }
+      "value": {
+        "type": "widgetNoConsoleErrors"
+      }
     },
     {
       "label": "widgetNoConsoleErrors — with toolName filter",
-      "value": { "type": "widgetNoConsoleErrors", "toolName": "show_map" }
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "toolName": "show_map"
+      }
+    },
+    {
+      "label": "toolCalledWith — advisory warn",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": {
+          "args": {}
+        },
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — advisory warn",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "search",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolNeverCalled — advisory warn",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_account",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "firstToolWas — advisory warn",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "search",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseContains — advisory warn",
+      "value": {
+        "type": "responseContains",
+        "needle": "refund issued",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseMatches — advisory warn",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "\\d+",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noToolErrors — advisory warn",
+      "value": {
+        "type": "noToolErrors",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "finalAssistantMessageNonEmpty — advisory warn",
+      "value": {
+        "type": "finalAssistantMessageNonEmpty",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "tokenBudgetUnder — advisory warn",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "turnCountUnder — advisory warn",
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 3,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetRendered — advisory warn",
+      "value": {
+        "type": "widgetRendered",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — advisory warn",
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 3000,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetNoConsoleErrors — advisory warn",
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noEndingQuestion — advisory (the only role an observation may carry)",
+      "value": {
+        "type": "noEndingQuestion",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noEndingQuestion — advisory + warn",
+      "value": {
+        "type": "noEndingQuestion",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolLatencyUnder — all tools",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 3000
+      }
+    },
+    {
+      "label": "toolLatencyUnder — one tool, advisory",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 500,
+        "toolName": "search_issues",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolResultContains — minimal",
+      "value": {
+        "type": "toolResultContains",
+        "needle": "ISS-4412"
+      }
+    },
+    {
+      "label": "toolResultContains — case-sensitive, one tool",
+      "value": {
+        "type": "toolResultContains",
+        "needle": "OK",
+        "caseSensitive": true,
+        "toolName": "ping"
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — object root",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — array root (legal under 2026-07-28)",
+      "value": {
+        "type": "toolResultMatchesSchema",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toolName": "list_regions"
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — all tools",
+      "value": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": 32000
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — one tool, advisory",
+      "value": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": 4096,
+        "toolName": "dump_logs",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "argumentsMatchToolSchema — all tools",
+      "value": {
+        "type": "argumentsMatchToolSchema"
+      }
+    },
+    {
+      "label": "argumentsMatchToolSchema — one tool",
+      "value": {
+        "type": "argumentsMatchToolSchema",
+        "toolName": "search_issues"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — advisory (the only role an observation may carry)",
+      "value": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — advisory, one tool",
+      "value": {
+        "type": "noRepeatedIdenticalCall",
+        "toolName": "get_job",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCallCountUnder — all tools",
+      "value": {
+        "type": "toolCallCountUnder",
+        "count": 10
+      }
+    },
+    {
+      "label": "toolCallCountUnder — one tool",
+      "value": {
+        "type": "toolCallCountUnder",
+        "count": 3,
+        "toolName": "search_issues"
+      }
+    },
+    {
+      "label": "toolCalledBefore — minimal",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "get_issue",
+        "beforeToolName": "add_comment"
+      }
+    },
+    {
+      "label": "toolCalledBefore — advisory",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "list_orders",
+        "beforeToolName": "void_invoice",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noDeprecatedToolCalled — advisory",
+      "value": {
+        "type": "noDeprecatedToolCalled",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "noDeprecatedToolCalled — advisory + warn",
+      "value": {
+        "type": "noDeprecatedToolCalled",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noDestructiveToolCalled — minimal",
+      "value": {
+        "type": "noDestructiveToolCalled"
+      }
+    },
+    {
+      "label": "noDestructiveToolCalled — advisory",
+      "value": {
+        "type": "noDestructiveToolCalled",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolErrorNamesInput — advisory",
+      "value": {
+        "type": "toolErrorNamesInput",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolErrorNamesInput — advisory, one tool",
+      "value": {
+        "type": "toolErrorNamesInput",
+        "toolName": "get_user",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "fullPageHasContinuation — advisory",
+      "value": {
+        "type": "fullPageHasContinuation",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "fullPageHasContinuation — advisory, one tool",
+      "value": {
+        "type": "fullPageHasContinuation",
+        "toolName": "list_orders",
+        "role": "advisory"
+      }
+    },
+    {
+      "label": "toolCalledWith — minimal (no minCount)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "list_files",
+        "args": {
+          "args": {}
+        }
+      }
+    },
+    {
+      "label": "toolCalledWith — full (argumentMatching=partial with placeholder leaves, minCount)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": {
+          "args": {
+            "query": "string",
+            "limit": "number",
+            "filter": {
+              "kind": "any"
+            }
+          },
+          "argumentMatching": "partial"
+        },
+        "minCount": 2
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — minimal (2)",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "fetch"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — dotted tool name",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "files.read"
+      }
+    },
+    {
+      "label": "toolNeverCalled — minimal (2)",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_all"
+      }
+    },
+    {
+      "label": "toolNeverCalled — namespaced",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "admin.shutdown"
+      }
+    },
+    {
+      "label": "firstToolWas — minimal (Phase 2 NEW)",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "list_files"
+      }
+    },
+    {
+      "label": "firstToolWas — namespaced",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "github.search_issues"
+      }
+    },
+    {
+      "label": "responseContains — caseSensitive true (2)",
+      "value": {
+        "type": "responseContains",
+        "needle": "OK",
+        "caseSensitive": true
+      }
+    },
+    {
+      "label": "responseMatches — minimal regex (2)",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "^Done\\."
+      }
+    },
+    {
+      "label": "responseMatches — character class regex",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "[0-9]{4}-[0-9]{2}-[0-9]{2}"
+      }
+    },
+    {
+      "label": "tokenBudgetUnder — large budget (2)",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 250000
+      }
+    },
+    {
+      "label": "toolCalledWith — advisory warn (2)",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "list_files",
+        "args": {
+          "args": {}
+        },
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — advisory warn (2)",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "fetch",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolNeverCalled — advisory warn (2)",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_all",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "firstToolWas — advisory warn (2)",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "list_files",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseMatches — advisory warn (2)",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "^Done\\.",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "onlyToolsCalled — an allow-list of tools",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          "search",
+          "get_order"
+        ]
+      }
+    },
+    {
+      "label": "onlyToolsCalled — EMPTY list means no tool was called (the negative case, as a check)",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": []
+      }
+    },
+    {
+      "label": "onlyToolsCalled — advisory, so a miss is highlighted and does not fail the trial",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          "search"
+        ],
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
     {
       "label": "missing type discriminator",
-      "value": { "toolName": "search" }
+      "value": {
+        "toolName": "search"
+      }
     },
     {
       "label": "unknown predicate kind",
-      "value": { "type": "toolMaybeCalled", "toolName": "search" }
+      "value": {
+        "type": "toolMaybeCalled",
+        "toolName": "search"
+      }
     },
     {
       "label": "toolCalledWith — toolName is a number (wrong field type)",
       "value": {
         "type": "toolCalledWith",
         "toolName": 42,
-        "args": { "args": {} }
+        "args": {
+          "args": {}
+        }
       }
     },
     {
       "label": "toolCalledWith — args is missing",
-      "value": { "type": "toolCalledWith", "toolName": "search" }
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search"
+      }
     },
     {
       "label": "toolCalledWith — illegal argumentMatching enum value",
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {}, "argumentMatching": "fuzzy" }
+        "args": {
+          "args": {},
+          "argumentMatching": "fuzzy"
+        }
       }
     },
     {
@@ -193,7 +760,9 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} },
+        "args": {
+          "args": {}
+        },
         "minCount": -1
       }
     },
@@ -202,7 +771,9 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} },
+        "args": {
+          "args": {}
+        },
         "minCount": 0
       }
     },
@@ -211,29 +782,45 @@
       "value": {
         "type": "toolCalledWith",
         "toolName": "search",
-        "args": { "args": {} },
+        "args": {
+          "args": {}
+        },
         "minCount": 1.5
       }
     },
     {
       "label": "toolCalledAtLeastOnce — empty toolName",
-      "value": { "type": "toolCalledAtLeastOnce", "toolName": "" }
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": ""
+      }
     },
     {
       "label": "toolNeverCalled — toolName is null",
-      "value": { "type": "toolNeverCalled", "toolName": null }
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": null
+      }
     },
     {
       "label": "firstToolWas — missing toolName",
-      "value": { "type": "firstToolWas" }
+      "value": {
+        "type": "firstToolWas"
+      }
     },
     {
       "label": "firstToolWas — empty toolName",
-      "value": { "type": "firstToolWas", "toolName": "" }
+      "value": {
+        "type": "firstToolWas",
+        "toolName": ""
+      }
     },
     {
       "label": "responseContains — empty needle",
-      "value": { "type": "responseContains", "needle": "" }
+      "value": {
+        "type": "responseContains",
+        "needle": ""
+      }
     },
     {
       "label": "responseContains — caseSensitive is a string",
@@ -245,67 +832,112 @@
     },
     {
       "label": "responseMatches — empty pattern",
-      "value": { "type": "responseMatches", "pattern": "" }
+      "value": {
+        "type": "responseMatches",
+        "pattern": ""
+      }
     },
     {
       "label": "responseMatches — non-string pattern (number)",
-      "value": { "type": "responseMatches", "pattern": 42 }
+      "value": {
+        "type": "responseMatches",
+        "pattern": 42
+      }
     },
     {
       "label": "tokenBudgetUnder — negative tokens",
-      "value": { "type": "tokenBudgetUnder", "tokens": -1 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": -1
+      }
     },
     {
       "label": "tokenBudgetUnder — zero tokens (must be positive)",
-      "value": { "type": "tokenBudgetUnder", "tokens": 0 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 0
+      }
     },
     {
       "label": "tokenBudgetUnder — fractional tokens",
-      "value": { "type": "tokenBudgetUnder", "tokens": 100.5 }
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 100.5
+      }
     },
     {
       "label": "tokenBudgetUnder — tokens missing",
-      "value": { "type": "tokenBudgetUnder" }
+      "value": {
+        "type": "tokenBudgetUnder"
+      }
     },
     {
       "label": "turnCountUnder — turns missing",
-      "value": { "type": "turnCountUnder" }
+      "value": {
+        "type": "turnCountUnder"
+      }
     },
     {
       "label": "turnCountUnder — zero turns (must be positive; `< 0` can never pass)",
-      "value": { "type": "turnCountUnder", "turns": 0 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 0
+      }
     },
     {
       "label": "turnCountUnder — negative turns",
-      "value": { "type": "turnCountUnder", "turns": -1 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": -1
+      }
     },
     {
       "label": "turnCountUnder — fractional turns",
-      "value": { "type": "turnCountUnder", "turns": 2.5 }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 2.5
+      }
     },
     {
       "label": "turnCountUnder — numeric string turns",
-      "value": { "type": "turnCountUnder", "turns": "8" }
+      "value": {
+        "type": "turnCountUnder",
+        "turns": "8"
+      }
     },
     {
       "label": "widgetRendered — empty toolName",
-      "value": { "type": "widgetRendered", "toolName": "" }
+      "value": {
+        "type": "widgetRendered",
+        "toolName": ""
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — ms missing",
-      "value": { "type": "widgetRenderLatencyUnder" }
+      "value": {
+        "type": "widgetRenderLatencyUnder"
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — zero ms (must be positive)",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": 0 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 0
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — negative ms",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": -100 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": -100
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — fractional ms",
-      "value": { "type": "widgetRenderLatencyUnder", "ms": 250.5 }
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 250.5
+      }
     },
     {
       "label": "widgetRenderLatencyUnder — empty toolName",
@@ -317,7 +949,292 @@
     },
     {
       "label": "widgetNoConsoleErrors — empty toolName",
-      "value": { "type": "widgetNoConsoleErrors", "toolName": "" }
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "toolName": ""
+      }
+    },
+    {
+      "label": "severity error is not a valid severity",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "role": "advisory",
+        "severity": "error"
+      }
+    },
+    {
+      "label": "severity warn requires role advisory (gating + warn)",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "role": "gating",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "severity warn without role is rejected",
+      "value": {
+        "type": "noToolErrors",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noEndingQuestion — no role (an observation defaults to gating, which it may not be)",
+      "value": {
+        "type": "noEndingQuestion"
+      }
+    },
+    {
+      "label": "noEndingQuestion — role gating (a heuristic must never gate)",
+      "value": {
+        "type": "noEndingQuestion",
+        "role": "gating"
+      }
+    },
+    {
+      "label": "toolLatencyUnder — zero ms (a ceiling nothing can satisfy)",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 0
+      }
+    },
+    {
+      "label": "toolLatencyUnder — fractional ms",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 12.5
+      }
+    },
+    {
+      "label": "toolLatencyUnder — empty toolName (filters to nothing)",
+      "value": {
+        "type": "toolLatencyUnder",
+        "ms": 100,
+        "toolName": ""
+      }
+    },
+    {
+      "label": "toolResultContains — empty needle (would match everything)",
+      "value": {
+        "type": "toolResultContains",
+        "needle": ""
+      }
+    },
+    {
+      "label": "toolResultContains — needle over the 1000-char cap",
+      "value": {
+        "type": "toolResultContains",
+        "needle": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — negative maxBytes",
+      "value": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": -1
+      }
+    },
+    {
+      "label": "toolResultSizeUnder — missing maxBytes",
+      "value": {
+        "type": "toolResultSizeUnder"
+      }
+    },
+    {
+      "label": "toolResultMatchesSchema — missing schema",
+      "value": {
+        "type": "toolResultMatchesSchema"
+      }
+    },
+    {
+      "label": "noRepeatedIdenticalCall — no role (an observation may not gate)",
+      "value": {
+        "type": "noRepeatedIdenticalCall"
+      }
+    },
+    {
+      "label": "noDeprecatedToolCalled — role gating (a description regex must never gate)",
+      "value": {
+        "type": "noDeprecatedToolCalled",
+        "role": "gating"
+      }
+    },
+    {
+      "label": "toolErrorNamesInput — no role",
+      "value": {
+        "type": "toolErrorNamesInput"
+      }
+    },
+    {
+      "label": "fullPageHasContinuation — role gating",
+      "value": {
+        "type": "fullPageHasContinuation",
+        "role": "gating"
+      }
+    },
+    {
+      "label": "toolCallCountUnder — zero count (a ceiling nothing can satisfy)",
+      "value": {
+        "type": "toolCallCountUnder",
+        "count": 0
+      }
+    },
+    {
+      "label": "toolCallCountUnder — missing count",
+      "value": {
+        "type": "toolCallCountUnder"
+      }
+    },
+    {
+      "label": "toolCalledBefore — missing beforeToolName",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "get_issue"
+      }
+    },
+    {
+      "label": "toolCalledBefore — empty toolName",
+      "value": {
+        "type": "toolCalledBefore",
+        "toolName": "",
+        "beforeToolName": "add_comment"
+      }
+    },
+    {
+      "label": "argumentsMatchToolSchema — empty toolName (filters to nothing)",
+      "value": {
+        "type": "argumentsMatchToolSchema",
+        "toolName": ""
+      }
+    },
+    {
+      "label": "missing type discriminator (2)",
+      "value": {
+        "toolName": "anything"
+      },
+      "why": "v.union has no variant to match"
+    },
+    {
+      "label": "unknown type value",
+      "value": {
+        "type": "tooManyTokens",
+        "tokens": 100
+      },
+      "why": "no variant has this type literal"
+    },
+    {
+      "label": "toolCalledAtLeastOnce missing toolName",
+      "value": {
+        "type": "toolCalledAtLeastOnce"
+      },
+      "why": "toolName is required"
+    },
+    {
+      "label": "toolCalledAtLeastOnce with non-string toolName",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": 42
+      },
+      "why": "toolName must be a string"
+    },
+    {
+      "label": "responseContains missing needle",
+      "value": {
+        "type": "responseContains"
+      },
+      "why": "needle is required"
+    },
+    {
+      "label": "responseContains with non-boolean caseSensitive",
+      "value": {
+        "type": "responseContains",
+        "needle": "x",
+        "caseSensitive": "yes"
+      },
+      "why": "caseSensitive must be boolean"
+    },
+    {
+      "label": "responseMatches missing pattern",
+      "value": {
+        "type": "responseMatches"
+      },
+      "why": "pattern is required"
+    },
+    {
+      "label": "responseMatches with non-string pattern",
+      "value": {
+        "type": "responseMatches",
+        "pattern": 123
+      },
+      "why": "pattern must be a string (regex source); non-strings cannot be compiled"
+    },
+    {
+      "label": "tokenBudgetUnder with negative tokens",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": -100
+      },
+      "why": "tokens must be a non-negative integer (caught by assertValidPredicate)"
+    },
+    {
+      "label": "tokenBudgetUnder with non-integer tokens",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000.5
+      },
+      "why": "tokens must be an integer"
+    },
+    {
+      "label": "severity error is not a legal severity",
+      "value": {
+        "type": "noToolErrors",
+        "severity": "error"
+      },
+      "why": "severity is v.literal('warn') — 'error' is not a member"
+    },
+    {
+      "label": "severity warn with role gating is refused",
+      "value": {
+        "type": "noToolErrors",
+        "role": "gating",
+        "severity": "warn"
+      },
+      "why": "severity requires role: 'advisory' (caught by assertValidPredicate)"
+    },
+    {
+      "label": "severity warn without role is refused (absent role is gating)",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "fetch",
+        "severity": "warn"
+      },
+      "why": "severity requires role: 'advisory'; omitted role counts as gating"
+    },
+    {
+      "label": "onlyToolsCalled without toolNames",
+      "value": {
+        "type": "onlyToolsCalled"
+      },
+      "why": "toolNames is required; omitting it would read as 'no restriction' while grading as 'no tool allowed'"
+    },
+    {
+      "label": "onlyToolsCalled with a blank tool name",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": [
+          ""
+        ]
+      },
+      "why": "nothing can equal an empty name, so the entry reads as an allowance and grades as none"
+    },
+    {
+      "label": "onlyToolsCalled with a non-array toolNames",
+      "value": {
+        "type": "onlyToolsCalled",
+        "toolNames": "search"
+      },
+      "why": "a bare string would silently allow only its characters"
     }
   ]
 }

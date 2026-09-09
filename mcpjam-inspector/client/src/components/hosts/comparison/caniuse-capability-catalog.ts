@@ -1,24 +1,33 @@
 import {
   HOST_CONFIG_FIELDS,
+  type HostComparisonSubject,
   type HostConfigFieldDef,
   type SupportLevel,
 } from "@/lib/host-config-field-schema";
 import type { HostListItem } from "@/hooks/useClients";
-import {
-  getSupportLevel,
-  isSupportField,
-} from "./support-level";
+import { getSupportLevel, isSupportField } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
+  // Ranked order for the caniuse chip row. Grouped by vendor — the two
+  // Anthropic siblings follow Claude, Codex follows ChatGPT — with VS Code and
+  // Slackbot pinned rightmost in that order.
+  //
+  // `claude-code` and `codex` appear here but carry no "Verify against your
+  // server" link: that is driven separately by FLAG_GATED_HOST_IDS, because
+  // the link auto-creates a host and the app refuses while the rollout flag is
+  // off. Listing them here changes their position, not their verify state.
   "preset:claude",
+  "preset:claude-desktop",
+  "preset:claude-code",
   "preset:chatgpt",
+  "preset:codex",
   "preset:copilot",
   "preset:cursor",
-  "preset:slack",
   "preset:vscode",
+  "preset:slack",
 ] as const;
 
 const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
@@ -106,6 +115,59 @@ export function isPublicCaniuseCapabilityField(
 export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   HOST_CONFIG_FIELDS.filter(isPublicCaniuseCapabilityField);
 
+/**
+ * Keep the signed-in client comparison focused on the public compatibility
+ * rows too. Protocol version remains temporarily because removing that setting
+ * from Compare is being handled separately.
+ */
+export const CLIENT_COMPARE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  HOST_CONFIG_FIELDS.filter(
+    (field) =>
+      field.id === "mcpProtocolVersion" ||
+      isPublicCaniuseCapabilityField(field),
+  );
+
+/**
+ * Whether any published host actually carries a value for this field.
+ *
+ * A row whose every column reads "Not yet tested" answers nothing — it
+ * advertises a question we have not asked yet. Fields added ahead of their
+ * measurements therefore stay hidden until the first real host value lands,
+ * and appear on their own the moment one does. No allowlist to maintain: the
+ * data decides.
+ *
+ * Only public presets (Claude, ChatGPT, Copilot, Cursor, Slack, VS Code) reach
+ * these surfaces, so "a host that is not MCPJam" holds by construction — the
+ * emulator's own defaults can never light a row on their own.
+ */
+export function caniuseFieldHasPresetData(
+  field: HostConfigFieldDef,
+  subjects: Record<string, HostComparisonSubject>,
+): boolean {
+  return Object.values(subjects).some(
+    (subject) => field.read(subject.config) !== undefined,
+  );
+}
+
+/** {@link PUBLIC_CAN_I_USE_FIELDS} minus the rows nobody has measured yet. */
+export function publicCaniuseFieldsWithData(
+  subjects: Record<string, HostComparisonSubject>,
+): ReadonlyArray<HostConfigFieldDef> {
+  return PUBLIC_CAN_I_USE_FIELDS.filter((field) =>
+    caniuseFieldHasPresetData(field, subjects),
+  );
+}
+
+/** Client Compare uses the measured public rows plus protocol version. */
+export function clientCompareFieldsWithData(
+  subjects: Record<string, HostComparisonSubject>,
+): ReadonlyArray<HostConfigFieldDef> {
+  const publicFields = new Set(publicCaniuseFieldsWithData(subjects));
+  return CLIENT_COMPARE_FIELDS.filter(
+    (field) => field.id === "mcpProtocolVersion" || publicFields.has(field),
+  );
+}
+
 export const CANIUSE_CAPABILITIES: ReadonlyArray<CaniuseCapability> =
   PUBLIC_CAN_I_USE_FIELDS.map((field) => ({
     slug: slugForField(field),
@@ -170,7 +232,12 @@ export function getCaniuseSupportLevel(
       // Enum rather than boolean, so it resolves to "neutral" rather than
       // undefined when unset — and "neutral" renders as "Not supported".
       // Without this an unprobed host publicly claims it cannot paginate.
-      field.id === "paginationTraversal") &&
+      field.id === "paginationTraversal" ||
+      // Same reasoning: once one host is measured the row appears, and the
+      // hosts still queued behind it must read "Not yet tested" rather than
+      // be published as silently abandoning every cancelled call. Per era,
+      // because the two are measured independently.
+      field.id.startsWith("toolCallCancellation.")) &&
     field.read(config) === undefined
   ) {
     return "unknown";

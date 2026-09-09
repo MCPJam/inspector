@@ -34,20 +34,44 @@ const LOCAL_WORKOS_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
  */
 export const WORKOS_DEV_MODE = false;
 
+/**
+ * Where AuthKit should send its requests.
+ *
+ * Precedence: an explicit `VITE_WORKOS_API_HOSTNAME` wins (prod pins
+ * `auth.mcpjam.com`), then the proxy opt-out, then this origin.
+ *
+ * The same-origin default covers hosted deployments as well as localhost,
+ * because the reason is the same in both: AuthKit's `initialize()` short-
+ * circuits — no network call whatsoever — unless the page's OWN cookies carry
+ * `workos-has-session`, and only a first-party response can set it. A client
+ * calling `api.workos.com` direct gets that cookie written on WorkOS's domain,
+ * where the page cannot see it, so every reload reads as signed out and the
+ * app drops to a guest. That was staging's bug.
+ *
+ * Hosted has to be told, not sniffed: the deciding factor is whether this
+ * origin's server mounts the `/user_management` proxy, which a hostname cannot
+ * reveal. Deployments that keep a same-site WorkOS domain simply set the
+ * explicit hostname above and never reach this branch.
+ */
 export function resolveWorkosClientOptions(
   env: WorkosAuthkitEnv,
-  location?: WorkosAuthkitLocation
+  location?: WorkosAuthkitLocation,
+  hostedMode = false
 ): WorkosClientOptions {
   if (env.VITE_WORKOS_API_HOSTNAME) {
     return { apiHostname: env.VITE_WORKOS_API_HOSTNAME };
   }
 
   const disableProxy = env.VITE_WORKOS_DISABLE_LOCAL_PROXY === "true";
-  if (
-    disableProxy ||
-    !location ||
-    !LOCAL_WORKOS_HOSTNAMES.has(location.hostname)
-  ) {
+  if (disableProxy || !location) {
+    return {};
+  }
+
+  // Both branches mean the same thing: this origin's server mounts the
+  // `/user_management` proxy, so AuthKit can be pointed at it.
+  const servesAuthkitProxy =
+    hostedMode || LOCAL_WORKOS_HOSTNAMES.has(location.hostname);
+  if (!servesAuthkitProxy) {
     return {};
   }
 

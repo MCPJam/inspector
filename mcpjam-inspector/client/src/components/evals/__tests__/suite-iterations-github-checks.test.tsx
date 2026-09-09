@@ -1,16 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  withDataRouter,
+} from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 
-/**
- * The GitHub Checks availability read is allowed to THROW.
- *
- * It is a backend-decided gate, and the backend refuses (rather than answers)
- * for a caller who is not a signed-in member of the org — `useQuery` re-throws
- * that during render. These tests pin the consequence: the suite settings sheet
- * loses the GitHub Checks section and nothing else.
- */
+/** Simplified suite settings omit organization-wide GitHub Checks controls. */
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
@@ -32,6 +28,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
   useGithubChecksAvailability: (organizationId: unknown) =>
     mocks.availability(organizationId),
+  useGithubChecksSettings: () => ({
+    availability: { state: "enabled" },
+    repos: [],
+  }),
 }));
 
 vi.mock("../suite-github-checks-section", () => ({
@@ -59,11 +59,33 @@ vi.mock("../suite-header", () => ({
   SuiteHeader: () => <div data-testid="suite-header" />,
 }));
 
+vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
+  SuiteEnvironmentComposerBar: () => (
+    <div data-testid="suite-environment-bar">composer</div>
+  ),
+}));
+
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
 }));
+
+// S3 — capabilities `unavailable` is the "behave exactly as before" case, and
+// it is what these tests want: the GitHub row's own gate is the availability
+// read, not the capabilities query.
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 const noopNav = {
   toSuiteOverview: vi.fn(),
@@ -87,6 +109,7 @@ const baseSuite: EvalSuite = {
 
 function renderSettingsSheet() {
   return render(
+      withDataRouter(
     <SuiteIterationsView
       suite={baseSuite}
       cases={[]}
@@ -111,12 +134,18 @@ function renderSettingsSheet() {
       projectId="project-1"
       route={{ type: "suite-edit", suiteId: "suite-1" }}
       navigation={noopNav}
-    />
-  );
+    />)
+    );
 }
 
 describe("SuiteIterationsView GitHub Checks gate", () => {
   beforeEach(() => {
+    class FakeIntersectionObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
     vi.clearAllMocks();
     mocks.useMutation.mockReturnValue(vi.fn());
     mocks.useQuery.mockImplementation(() => undefined);
@@ -130,52 +159,19 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps the settings sheet up when the availability read throws", () => {
-    mocks.availability.mockImplementation(() => {
-      throw new Error(
-        "[CONVEX Q(github/checkRepoConfigs:getGithubChecksSettingsAvailability)] Server Error"
-      );
-    });
-
-    renderSettingsSheet();
-
-    // The sheet survived: a sibling section still rendered.
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
-    // ...without the section whose gate refused.
-    expect(screen.queryByText("GitHub Checks")).toBeNull();
-    expect(screen.queryByTestId("github-checks-section")).toBeNull();
-  });
-
-  it("still reports the swallowed error to the error sinks", () => {
-    mocks.availability.mockImplementation(() => {
-      throw new Error("Not a member of this organization");
-    });
-
-    renderSettingsSheet();
-
-    // `fallback={null}` is a UI choice, never a telemetry one.
-    expect(mocks.reportBoundaryError).toHaveBeenCalled();
-    expect(mocks.reportBoundaryError.mock.calls[0]?.[2]).toBe(
-      "suite_github_checks"
-    );
-  });
-
-  it("hides the section when the backend answers `disabled`", () => {
-    mocks.availability.mockReturnValue({ state: "disabled" });
-
-    renderSettingsSheet();
-
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
-    expect(screen.queryByTestId("github-checks-section")).toBeNull();
-    expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
-  });
-
-  it("renders the section when the backend answers `enabled`", () => {
-    mocks.availability.mockReturnValue({ state: "enabled" });
-
-    renderSettingsSheet();
-
-    expect(screen.getByText("GitHub Checks")).toBeTruthy();
-    expect(screen.getByTestId("github-checks-section")).toBeTruthy();
-  });
+  it.each(["enabled", "disabled", "throws"])(
+    "keeps organization GitHub controls off the simplified page (%s)",
+    (availability) => {
+      mocks.availability.mockImplementation(() => {
+        if (availability === "throws") throw new Error("Not a member");
+        return { state: availability };
+      });
+      const { container } = renderSettingsSheet();
+      expect(screen.queryByRole("button", { name: "Triggers" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("github-checks-section")).not.toBeInTheDocument();
+      expect(container.querySelector('[data-setting-key="githubChecks"]')).toBeNull();
+      expect(mocks.availability).not.toHaveBeenCalled();
+      expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
+    },
+  );
 });

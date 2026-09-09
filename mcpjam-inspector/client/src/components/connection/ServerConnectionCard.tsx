@@ -5,6 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import { Separator } from "@mcpjam/design-system/separator";
@@ -75,7 +76,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
-import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
+import { ClientSupportPill } from "@/components/compat/ClientSupportPill";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -369,7 +370,7 @@ export function ServerConnectionCard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to reconnect to ${server.name}: ${errorMessage}`);
+      toastServerConnectionFailure(server.name, errorMessage);
     } finally {
       setIsReconnecting(false);
     }
@@ -911,7 +912,7 @@ export function ServerConnectionCard({
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
               {isConnected && (
-                <HostCompatStrip
+                <ClientSupportPill
                   server={server}
                   onOpenDetails={
                     isDetailModalEnabled

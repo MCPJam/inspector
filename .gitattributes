@@ -1,0 +1,26 @@
+# Every text file is stored with LF in the repository and checked out with LF on
+# every platform.
+#
+# Without this, a Windows checkout is a minefield. `core.autocrlf` is unset (so
+# it defaults to false) on most clones here, and git then compares bytes: an
+# editor or tool that rewrites a file with CRLF makes it "modified" against a
+# repository that is 100% LF, with every line changed and no content difference.
+# That is not hypothetical — it produced a 295-file, 225,178-insertion /
+# 225,178-deletion phantom diff, and touching one line of one file staged the
+# whole file's re-ending (a 12-line change reading as 1,038). It also drowns
+# `lint:ci` in `Delete ␍` prettier errors that Linux CI never sees, which makes
+# the local run useless as a preflight signal.
+#
+# `text=auto` keeps git's binary detection; `eol=lf` pins the working-tree
+# ending so the normalization is visible in the editor, not just in the index.
+* text=auto eol=lf
+
+# Declared rather than left to the heuristic: an asset that happens to start
+# with text-looking bytes must never be re-ended.
+*.png binary
+*.ico binary
+
+# A patch's line endings are part of its content — `git apply` rejects a
+# rewritten one. `.release-plan/release.patch` is generated and applied by the
+# release tooling.
+*.patch -text

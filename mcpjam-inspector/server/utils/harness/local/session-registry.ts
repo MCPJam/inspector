@@ -1,0 +1,306 @@
+/**
+ * The live local-harness sessions this process owns, and the one place that
+ * can end all of them.
+ *
+ * ── Why a registry, on top of the supervisor ─────────────────────────────
+ * The supervisor already tracks process trees, and the janitor already reclaims
+ * ones orphaned by a crash. Neither knows about the two things that live
+ * ALONGSIDE a tree and have to die with it: the loopback gateway holding the
+ * session's lease, and the server-side lease itself.
+ *
+ * So a session is not just a tree. It is a tree, a gateway, and a lease, and
+ * "stop this session" has to mean all three or it means nothing — a gateway
+ * left listening with a live lease is a credential nobody is watching.
+ *
+ * The registry is process-local and deliberately not persisted. A crashed
+ * Inspector's gateways die with it (they are listeners in this process), and
+ * its leases expire on their own TTL and are swept by the backend cron. What
+ * survives a crash is the process tree, and the janitor is what reclaims that.
+ */
+import { logger } from "../../logger.js";
+import type { LocalModelGateway } from "./model-gateway.js";
+
+export interface LocalHarnessSessionRecord {
+  sessionId: string;
+  /** Opaque ids only — this record is read by telemetry and a stop-all route. */
+  runtimeId: string;
+  workspaceGrantId: string;
+  /** The broker run id, for revoking the lease server-side. */
+  brokerRunId: string | null;
+  gateway: LocalModelGateway | null;
+  /**
+   * Ends the supervised tree, and says whether it is actually down.
+   *
+   * `stopped: false` means something escaped. The reservation below is only
+   * given up on a proven stop, so this answer has to travel rather than be
+   * assumed from "the call did not throw".
+   */
+  stop: () => Promise<{ stopped: boolean; escaped?: number }>;
+  /** Revokes the lease server-side. Supplied by the turn; best-effort. */
+  revokeLease: (() => Promise<void>) | null;
+  /**
+   * Gives up this session's claim on the runtime version directory.
+   *
+   * Supplied by the turn, and idempotent, because two paths end a session and
+   * both have to release it: the turn's own teardown and this module's
+   * `endLocalHarnessSession` (the stop-all button). Only ever called AFTER
+   * `stop`, since the reservation is what stops another process replacing the
+   * tree these children are executing from — and they are provably gone only
+   * once `stop` has run.
+   */
+  releaseRuntime: (() => Promise<void>) | null;
+  startedAt: number;
+}
+
+const sessions = new Map<string, LocalHarnessSessionRecord>();
+
+/**
+ * Sessions whose tree would not stop.
+ *
+ * The map above holds ONE record per session id, which is the right shape for
+ * live sessions and the wrong shape for this: a tree that escaped its stop is
+ * still running, still holds its runtime reservation, and still needs a handle
+ * — but the id it was registered under may since have been taken by a newer
+ * turn. Re-registering it over that newer record would put a live session
+ * beyond `stop-all`'s reach, and declining to re-register lost the escaped tree
+ * instead. Both are the same harm in opposite directions, and both came from
+ * trying to express two live trees in one map slot.
+ *
+ * So they are kept here as well, by record. `stop-all` drains this on top of
+ * the map, which is what makes its docstring true — every session this process
+ * owns, including the ones a previous stop could not prove down.
+ */
+const unstopped = new Set<LocalHarnessSessionRecord>();
+
+export function registerLocalHarnessSession(
+  record: LocalHarnessSessionRecord,
+): void {
+  sessions.set(record.sessionId, record);
+}
+
+export function getLocalHarnessSession(
+  sessionId: string,
+): LocalHarnessSessionRecord | undefined {
+  return sessions.get(sessionId);
+}
+
+/**
+ * Drop the map entry for this id. The registered LOOKUP, nothing more.
+ *
+ * Deliberately does not touch `unstopped`, which is keyed by record: an id can
+ * name a session this caller knows about while an escaped predecessor is still
+ * held under the same id, and sweeping by id would take the predecessor's only
+ * stop handle with it — the exact loss `unstopped` exists to prevent. The one
+ * production caller is the abandoned-setup path, where the session never
+ * started a tree and so was never in `unstopped` at all.
+ *
+ * A stop that PROVES a tree down clears both; that is
+ * `forgetLocalHarnessSessionRecord`, which can do it because it has the record.
+ */
+export function forgetLocalHarnessSession(sessionId: string): void {
+  sessions.delete(sessionId);
+}
+
+/** Test seam: both collections are module state. */
+export function resetLocalHarnessRegistryForTests(): void {
+  sessions.clear();
+  unstopped.clear();
+}
+
+/**
+ * Drop a session, but only if THIS record is still the one registered.
+ *
+ * By id alone, a teardown that finishes late removes whatever is under that id
+ * now — including a live session a later turn registered while the old tree was
+ * still inside its SIGTERM grace, which would put a running session beyond the
+ * reach of `stop-all`. The turn's teardown gives up the runtime reservation on
+ * a proven stop either way; it is the map entry that has to belong to it.
+ *
+ * Unreachable through `run-harness-turn.ts` today, which mints
+ * `local-<uuid>` per turn — but that invariant lives in another file, and the
+ * cost of not depending on it is this comparison.
+ */
+export function forgetLocalHarnessSessionRecord(
+  record: LocalHarnessSessionRecord,
+): boolean {
+  unstopped.delete(record);
+  if (sessions.get(record.sessionId) !== record) return false;
+  sessions.delete(record.sessionId);
+  return true;
+}
+
+/**
+ * Take a record out of BOTH collections, synchronously, and say whether this
+ * caller is the one that got it.
+ *
+ * The teardown steps — revoking a gateway, revoking a lease, a SIGTERM grace —
+ * must run once per session however many callers ask at once, and the only way
+ * to guarantee that is to claim before the first `await`. The map half of this
+ * was always here as a `delete` up front; the escaped set was not, so two
+ * overlapping presses of `/stop-all` both selected the same escaped record and
+ * both tore it down. A record is claimed when nothing can hand it to a second
+ * caller, which means leaving it in neither collection.
+ */
+function claimRecord(record: LocalHarnessSessionRecord): boolean {
+  const claimed =
+    sessions.get(record.sessionId) === record || unstopped.has(record);
+  if (!claimed) return false;
+  if (sessions.get(record.sessionId) === record) {
+    sessions.delete(record.sessionId);
+  }
+  unstopped.delete(record);
+  return true;
+}
+
+export function listLocalHarnessSessions(): LocalHarnessSessionRecord[] {
+  return [...sessions.values()];
+}
+
+/**
+ * End one session completely: revoke the gateway, revoke the lease, stop the
+ * tree.
+ *
+ * The gateway is revoked FIRST and synchronously, because it is the only step
+ * that takes effect immediately and locally. Revoking the lease is a network
+ * call that can fail, and stopping a tree takes as long as a SIGTERM grace —
+ * during both of those the child must already be unable to spend anything.
+ *
+ * Every step is attempted even if an earlier one throws, because a failure to
+ * revoke a lease is not a reason to leave a process tree running.
+ */
+export async function endLocalHarnessSession(
+  sessionId: string,
+): Promise<{ stopped: boolean; errors: string[] }> {
+  const record = sessions.get(sessionId);
+  if (record === undefined) return { stopped: true, errors: [] };
+  // Claimed, not merely deleted: the record may also be listed as escaped, and
+  // leaving it there would let a concurrent `stop-all` tear the same session
+  // down alongside this call.
+  if (!claimRecord(record)) return { stopped: true, errors: [] };
+  return endRecord(record);
+}
+
+/**
+ * The teardown itself, on a record already taken out of the map.
+ *
+ * Split out so `stop-all` can run it over escaped records too — those have no
+ * map entry to look up, and re-deriving one by id is exactly the confusion this
+ * module keeps paying for.
+ */
+async function endRecord(
+  record: LocalHarnessSessionRecord,
+): Promise<{ stopped: boolean; errors: string[] }> {
+  const sessionId = record.sessionId;
+  const errors: string[] = [];
+
+  try {
+    record.gateway?.revoke();
+  } catch (error) {
+    errors.push(`gateway revoke: ${messageOf(error)}`);
+  }
+  try {
+    await record.gateway?.close();
+  } catch (error) {
+    errors.push(`gateway close: ${messageOf(error)}`);
+  }
+  try {
+    await record.revokeLease?.();
+  } catch (error) {
+    errors.push(`lease revoke: ${messageOf(error)}`);
+  }
+  let stopped = true;
+  try {
+    const outcome = await record.stop();
+    // A resolved call is not a stopped tree. `stopSession` reports escaped
+    // children in its RESULT, and reading only the absence of a throw counted
+    // those as a clean stop.
+    //
+    // Anything that is not an explicit `stopped: true` counts as not stopped.
+    // The type used to permit `void` — widened to fit a test fixture, which is
+    // the wrong direction for a contract — and `undefined` then slipped past
+    // this check as a success, releasing the reservation on the exact evidence
+    // the check exists to demand.
+    if (outcome?.stopped !== true) {
+      stopped = false;
+      errors.push(
+        `stop: ${outcome?.escaped ?? "some"} process(es) escaped the session`,
+      );
+    }
+  } catch (error) {
+    stopped = false;
+    errors.push(`stop: ${messageOf(error)}`);
+  }
+  // AFTER the stop, and only if it worked. Ending a session here used to leave
+  // the runtime reservation held for the life of the process, so the stop-all
+  // button freed every session and still blocked the next reinstall or repair.
+  // But giving it up while something escaped is the worse failure: the
+  // reservation is what stops `activateVerifiedPack` replacing the directory
+  // those children are still executing from.
+  if (stopped) {
+    unstopped.delete(record);
+    try {
+      await record.releaseRuntime?.();
+    } catch (error) {
+      errors.push(`runtime release: ${messageOf(error)}`);
+    }
+  } else {
+    // Kept. The record is taken out of the map up front so two concurrent
+    // callers cannot both run this teardown, but dropping it PERMANENTLY on a
+    // failed stop threw away the only handle this process had on a tree that is
+    // still running — and with it the reservation that tree still holds, which
+    // is what blocks the next reinstall or repair.
+    //
+    // Held by RECORD rather than by map slot, because the slot may belong to a
+    // newer turn by now and only one of them can have it. `stop-all` reads both.
+    unstopped.add(record);
+    // And listed by id as well when nothing newer claims it, so the ordinary
+    // lookups — `stop-all`'s own pass, the telemetry count — see it where they
+    // already look.
+    if (!sessions.has(sessionId)) sessions.set(sessionId, record);
+  }
+  if (errors.length > 0) {
+    logger.warn("[local-harness] session teardown had failures", {
+      sessionId,
+      errors,
+    });
+  }
+  return { stopped, errors };
+}
+
+/**
+ * The local brake: end every session this process owns.
+ *
+ * Sessions are ended in parallel — one that hangs on a SIGTERM grace must not
+ * delay the rest, and the whole point of the button is that it acts now.
+ *
+ * "Every session" includes the ones a previous stop could not prove down. They
+ * are the reason the button gets pressed a second time, and reading only the
+ * map meant the second press did nothing for exactly the tree that needed it.
+ */
+export async function stopAllLocalHarnessSessions(): Promise<{
+  ok: boolean;
+  stopped: number;
+  failed: number;
+}> {
+  // Every candidate is claimed synchronously, BEFORE the first `await`: a
+  // record re-added by its own failed teardown must not be picked up again by
+  // this same pass, and an overlapping press must not tear down a session this
+  // one already holds. The `Set` is because a record can be listed in both
+  // collections at once — escaped, with its id slot still free.
+  const candidates = [...new Set([...sessions.values(), ...unstopped])];
+  const mine = candidates.filter(claimRecord);
+  const results = await Promise.all(
+    mine.map((record) =>
+      endRecord(record).catch(() => ({
+        stopped: false,
+        errors: ["unexpected"],
+      })),
+    ),
+  );
+  const failed = results.filter((result) => !result.stopped).length;
+  return { ok: failed === 0, stopped: results.length - failed, failed };
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

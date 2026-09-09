@@ -49,6 +49,32 @@ function appInventory(): Set<string> {
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
+  // Spend budget — the organization's ceiling on MCPJam-billed spend.
+  "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
+  "put /organizations/{organizationId}/spend-budget": "setSpendBudget",
+  "delete /organizations/{organizationId}/spend-budget": "clearSpendBudget",
+
+  // Trace destinations — where an organization's traces are streamed.
+  "get /organizations/{organizationId}/trace-destinations":
+    "listTraceDestinations",
+  "post /organizations/{organizationId}/trace-destinations":
+    "createTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "getTraceDestination",
+  "patch /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "updateTraceDestination",
+  "delete /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "deleteTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test":
+    "testTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause":
+    "pauseTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume":
+    "resumeTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "backfillTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "listTraceDestinationBackfills",
   "get /me": "getMe",
   "get /models": "listModels",
   "get /organizations": "listOrganizations",
@@ -82,6 +108,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Project servers
   "get /projects/{projectId}/servers": "listProjectServers",
   "post /projects/{projectId}/servers": "createProjectServer",
+  "get /projects/{projectId}/server-groups": "listServerGroups",
+  "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
@@ -186,8 +214,25 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/revisions":
+    "listEvalSuiteRevisions",
   "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
     "listEvalSuiteStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
+    "getEvalRunStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/gate": "getEvalRunGate",
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts":
+    "getEvalRunRouteFacts",
+  "get /projects/{projectId}/eval-runs/{runId}/server-facts":
+    "getEvalRunServerFacts",
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "proposeEvalDescriptionRewrite",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "listEvalDescriptionExperimentsForRun",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start":
+    "startEvalDescriptionExperiment",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}":
+    "getEvalDescriptionExperiment",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":
@@ -247,6 +292,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/personas/{personaId}": "updatePersona",
   "delete /projects/{projectId}/personas/{personaId}": "deletePersona",
   "post /projects/{projectId}/personas/generate": "generatePersonas",
+
+  // Project secrets. Write-only end to end: the two reads return metadata and
+  // the three writes return metadata; no method on either side can produce a
+  // value.
+  "get /projects/{projectId}/secrets": "listSecrets",
+  "get /projects/{projectId}/secrets/{secretId}": "getSecret",
+  "post /projects/{projectId}/secrets": "createSecret",
+  "patch /projects/{projectId}/secrets/{secretId}": "updateSecret",
+  "delete /projects/{projectId}/secrets/{secretId}": "deleteSecret",
   "get /projects/{projectId}/swarms": "listSwarms",
   "get /projects/{projectId}/swarms/{swarmId}": "getSwarm",
   "post /projects/{projectId}/swarms": "createSwarm",
@@ -372,6 +426,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
     "Static published-package metadata about a harness's NATIVE tools, which are not callable through MCPJam. Display-only for the UI; an SDK method would imply they can be invoked.",
+  "get /built-in-tools/{builtInToolId}/definitions":
+    "The `browser_*` tool definitions as the MODEL is shown them, read by the Tools pane and the Raw request preview so neither has to keep a hand-written copy of schemas that are built at turn time. They describe an in-turn capability rather than anything an SDK caller can invoke, and their wording changes with the prompt engineering — an SDK method would publish that as a contract.",
+  "get /harness/{harnessId}/capabilities":
+    "Which runtime surfaces THIS build's harness adapter can pause on, read by the host editor so the approval switch reflects the transport actually installed. It moves with a server flag rather than a release, so an SDK method would publish a value no caller could pin.",
   "get /host-catalog":
     "Unauthenticated static host-compat metadata. The SDK already fetches it through `fetchHostCompatCatalog`, which needs no client and no credential — routing it through the authenticated client would be a step backwards.",
   "get /trace-exports/otlp":
@@ -420,16 +478,16 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       unmapped,
       `/api/v1 routes with no SDK client method — add one, or an EXCLUDED_FROM_SDK reason:\n  ${unmapped.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     const both = [...mapped].filter((route) => excluded.has(route)).sort();
     expect(
       both,
       `Routes claimed by BOTH maps — the partition must be disjoint:\n  ${both.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -440,8 +498,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       stale,
       `Map entries for routes that no longer exist (renamed? removed?):\n  ${stale.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -466,8 +524,8 @@ describe("/api/v1 -> SDK coverage", () => {
     expect(
       missing,
       `ROUTE_TO_SDK names PlatformApiClient methods that do not exist:\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 

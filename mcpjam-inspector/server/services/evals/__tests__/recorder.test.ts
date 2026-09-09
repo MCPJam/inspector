@@ -6,6 +6,34 @@ import {
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it("forwards the GitHub server replacement and omits undefined overrides", async () => {
+    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const githubCheckServerOverride = [
+      { serverName: "gh-check-trigger-1", projectServerId: "server-1" },
+    ];
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation } as any,
+      suiteId: "suite-1",
+      source: "github_check",
+      githubCheckServerOverride,
+    });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      source: "github_check",
+      githubCheckServerOverride,
+    });
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty("environmentOverride");
+
+    mutation.mockClear();
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation } as any,
+      suiteId: "suite-1",
+    });
+    expect(mutation.mock.calls[0][1]).not.toHaveProperty(
+      "githubCheckServerOverride"
+    );
+  });
+
   it("forwards per-run import approvals, and omits the key when there are none", async () => {
     // The mutation args are RECONSTRUCTED field by field in this function, so
     // a field nobody names here never reaches Convex — and an approval that

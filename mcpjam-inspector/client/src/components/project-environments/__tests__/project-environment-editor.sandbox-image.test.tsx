@@ -52,11 +52,7 @@ vi.mock("@/hooks/useSandboxImages", () => ({
 }));
 // Sibling sections are not under test — render inert placeholders.
 vi.mock("@/components/hosts/HostPicker", () => ({
-  HostPicker: ({
-    onChange,
-  }: {
-    onChange: (hostId: string | null) => void;
-  }) => (
+  HostPicker: ({ onChange }: { onChange: (hostId: string | null) => void }) => (
     <button type="button" onClick={() => onChange("host-1")}>
       pick-host
     </button>
@@ -67,6 +63,12 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
 }));
 vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
   ProjectEnvironmentSkillsPicker: () => <div data-testid="skills-picker" />,
+}));
+// The secrets picker is a sibling section, not what these tests are about. It
+// is stubbed rather than mocked at the hook level because it reads a live
+// Convex query, and a real one here would need the whole provider.
+vi.mock("../ProjectEnvironmentSecretsPicker", () => ({
+  ProjectEnvironmentSecretsPicker: () => <div />,
 }));
 vi.mock("@/components/computer/EnvironmentBuildBadge", () => ({
   EnvironmentBuildBadge: ({ build }: { build: unknown }) => (
@@ -110,7 +112,7 @@ const IMAGE_DRAFT = {
 };
 
 function envRow(
-  overrides: Partial<ProjectEnvironmentView> = {}
+  overrides: Partial<ProjectEnvironmentView> = {},
 ): ProjectEnvironmentView {
   return {
     environmentId: "env-1",
@@ -138,7 +140,7 @@ function renderEditor(environment: ProjectEnvironmentView | null) {
       projectId="proj-1"
       environment={environment}
       canManage
-    />
+    />,
   );
 }
 
@@ -169,7 +171,7 @@ describe("flag gating + the omission contract", () => {
     mockComputersEnabled.value = false;
     renderEditor(envRow());
     expect(
-      screen.queryByTestId("project-environment-sandbox-image")
+      screen.queryByTestId("project-environment-sandbox-image"),
     ).not.toBeInTheDocument();
   });
 
@@ -202,14 +204,16 @@ describe("flag gating + the omission contract", () => {
     await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
     expect(
       "computerEnvironmentId" in
-        (mockUpdateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
+        (mockUpdateEnvironment.mock.calls[0]![0] as Record<string, unknown>),
     ).toBe(false);
   });
 });
 
 describe("flag flips false AFTER an edit (review regression)", () => {
   it("omits the pin when the flag turns off between editing and saving", async () => {
-    const { rerender } = renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
+    const { rerender } = renderEditor(
+      envRow({ computerEnvironmentId: "img-ready" }),
+    );
     // Admin clears the pin while the picker is visible…
     await pickImage("None (default image)");
     // …then PostHog re-evaluates the flag to false and the picker unmounts.
@@ -219,10 +223,10 @@ describe("flag flips false AFTER an edit (review regression)", () => {
         projectId="proj-1"
         environment={envRow({ computerEnvironmentId: "img-ready" })}
         canManage
-      />
+      />,
     );
     expect(
-      screen.queryByTestId("project-environment-sandbox-image")
+      screen.queryByTestId("project-environment-sandbox-image"),
     ).not.toBeInTheDocument();
 
     // The diverged draft value must NOT ship: a hidden picker always omits.
@@ -253,13 +257,13 @@ describe("flag flips false AFTER an edit (review regression)", () => {
         projectId="proj-1"
         environment={null}
         canManage
-      />
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(mockCreateEnvironment).toHaveBeenCalled());
     expect(
       "computerEnvironmentId" in
-        (mockCreateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
+        (mockCreateEnvironment.mock.calls[0]![0] as Record<string, unknown>),
     ).toBe(false);
   });
 });
@@ -273,7 +277,9 @@ describe("loading state (review regression)", () => {
     // would make a pinned environment look unpinned mid-load.
     expect(trigger()).toHaveTextContent("Loading image…");
     const options = await openOptions();
-    expect(options.some((o) => o.label.startsWith("Unknown image"))).toBe(false);
+    expect(options.some((o) => o.label.startsWith("Unknown image"))).toBe(
+      false,
+    );
     expect(options).toContainEqual({
       label: "Loading image…",
       disabled: true,
@@ -300,7 +306,7 @@ describe("wire shapes", () => {
     await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
     expect(
       (mockUpdateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
-        .computerEnvironmentId
+        .computerEnvironmentId,
     ).toBeNull();
   });
 
@@ -341,7 +347,7 @@ describe("option list states", () => {
     renderEditor(envRow({ computerEnvironmentId: "img-gone" }));
     expect(trigger()).toHaveTextContent("Unknown image (img-gone)");
     const orphan = (await openOptions()).find((o) =>
-      o.label.startsWith("Unknown image")
+      o.label.startsWith("Unknown image"),
     );
     expect(orphan).toEqual({
       label: "Unknown image (img-gone)",

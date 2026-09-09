@@ -48,6 +48,13 @@ vi.mock("../skills/ServerSkillsSection", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// The tab resolves the publish permission from Convex; these suites are about
+// the tab's chrome, not about that resolution (see SkillsTab.promote-gate).
+vi.mock("convex/react", () => ({ useConvexAuth: () => ({ isAuthenticated: false }) }));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ canManageMembers: false, isLoading: false }),
+}));
+
 import { SkillsTab } from "../SkillsTab";
 
 beforeEach(() => {
@@ -80,7 +87,7 @@ describe("SkillsTab — what the header and the placeholder claim", () => {
     await waitFor(() => expect(listSkills).toHaveBeenCalled());
     expect(screen.queryByText("No skills available")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /upload your first skill/i })
+      screen.queryByRole("button", { name: /add your first skill/i })
     ).not.toBeInTheDocument();
     expect(await screen.findByText("2")).toBeInTheDocument();
   });
@@ -89,7 +96,7 @@ describe("SkillsTab — what the header and the placeholder claim", () => {
     render(<SkillsTab projectId="project-1" cloudSkillsEnabled />);
 
     expect(
-      await screen.findByRole("button", { name: /upload your first skill/i })
+      await screen.findByRole("button", { name: /add your first skill/i })
     ).toBeInTheDocument();
   });
 
@@ -102,7 +109,7 @@ describe("SkillsTab — what the header and the placeholder claim", () => {
     // An unanswered listing is not an empty one — offering to upload here would
     // flash away the moment the rows land.
     expect(
-      screen.queryByRole("button", { name: /upload your first skill/i })
+      screen.queryByRole("button", { name: /add your first skill/i })
     ).not.toBeInTheDocument();
   });
 });

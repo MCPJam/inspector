@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
+import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
@@ -1187,6 +1188,78 @@ describe("useChatSession minimal mode parity", () => {
     });
     expect(result.current.isAuthReady).toBe(true);
     expect(result.current.disableForAuthentication).toBe(false);
+  });
+
+  /**
+   * A RUNTIME-CHOSEN SENTINEL is locked for a different reason than everything
+   * else the placeholder builder produces, and the copy has to say so.
+   *
+   * `cursor/auto` is never in `availableModels` — it is not a selectable entry
+   * — so a Cursor host's pinned model ALWAYS lands on this fallback. Rendering
+   * it the ordinary way got both halves wrong at once: the label showed a raw
+   * id naming a model nothing ran, under a sign-in wall that signing in would
+   * not lift.
+   */
+  it("renders a runtime-chosen sentinel as its display name, locked for the real reason", async () => {
+    mockModelState.availableModels = [baseModel, mcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { systemPrompt: "Prompt", modelId: "cursor/auto" },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("cursor/auto");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      // The id is NEVER rewritten — it is what the trace and eval metadata
+      // record, and the point of the sentinel is that the model is unknown.
+      id: "cursor/auto",
+      name: "Cursor Auto",
+      disabled: true,
+      disabledReason:
+        "This host's runtime chooses its own model on your own account.",
+    });
+  });
+
+  it("keeps the ordinary sign-in copy for a non-sentinel locked model", async () => {
+    // The control: the sentinel branch is an exception, not a replacement. An
+    // ordinary pinned id absent from `availableModels` still gets the raw id as
+    // its label and the guest sign-in reason.
+    mockModelState.availableModels = [baseModel, mcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+          modelId: "anthropic/claude-sonnet-4.5",
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe(
+        "anthropic/claude-sonnet-4.5"
+      );
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      name: "anthropic/claude-sonnet-4.5",
+      disabled: true,
+      disabledReason: GUEST_LOCKED_MODEL_REASON,
+    });
   });
 
   // BACK2-628. `setSelectedModel` already refuses to write when a surface

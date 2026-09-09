@@ -25,6 +25,16 @@ export type ResolvedGoalCompletionConfig = {
   threshold: number;
   /** The flag that makes grading HAPPEN: fire the judge as each run completes. */
   autoRun: boolean;
+  /**
+   * Whether this judge's verdict may DECIDE a trial or only describe it.
+   *
+   * `advisory` is what every suite means unless it has been calibrated and the
+   * deployment allows gating, so it is the default here and in the backend.
+   * `gating` is a different product: the run holds until the judge lands, a
+   * failing judge can only make a trial stricter, and a judge error becomes an
+   * evaluator error.
+   */
+  role: "advisory" | "gating";
 };
 
 export const GOAL_COMPLETION_DEFAULTS: ResolvedGoalCompletionConfig = {
@@ -32,4 +42,5 @@ export const GOAL_COMPLETION_DEFAULTS: ResolvedGoalCompletionConfig = {
   judgeModel: "openai/gpt-5.4-mini",
   threshold: 0.7,
   autoRun: false,
+  role: "advisory",
 };

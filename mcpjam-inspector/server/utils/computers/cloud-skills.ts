@@ -87,12 +87,20 @@ const CODE_STATUS: Record<string, number> = {
   FEATURE_UNAVAILABLE: 403,
 };
 
-/** Read a `ConvexError`'s structured `{ code, message }` payload, if present. */
+/**
+ * Read a `ConvexError`'s structured payload, if present.
+ *
+ * Two shapes, both from the backend and both load-bearing: `code` is the
+ * `projectSkills` / feature-gate taxonomy mapped by `CODE_STATUS`, and `kind` is
+ * the actor-authorization marker (`'forbidden'`) that `requireUserActor` and the
+ * org-membership denials raise.
+ */
 function convexErrorData(
   err: unknown,
-): { code?: string; message?: string } | null {
+): { code?: string; kind?: string; message?: string } | null {
   const data = (err as { data?: unknown })?.data;
-  if (data && typeof data === "object") return data as { code?: string };
+  if (data && typeof data === "object")
+    return data as { code?: string; kind?: string };
   return null;
 }
 
@@ -113,6 +121,19 @@ function mapConvexError(err: unknown): CloudSkillsError {
       data.message ?? "Skill request failed",
       CODE_STATUS[data.code],
     );
+  }
+
+  // `kind: 'forbidden'` is the backend's authorization-refusal marker — a guest
+  // reaching a `signedIn*` function, or a caller who is not a project member.
+  // Without this branch it fell to the regex below, which does not match
+  // "Authenticated user required", so a pure authz refusal was booked as a 500
+  // and captured as an internal error (CONVEX-19R's inspector-side half).
+  //
+  // Requires the backend deploy that makes the refusal a `ConvexError`; until
+  // then the message is redacted to "Server Error" and this stays a 500, which
+  // is exactly today's behavior. No two-deploy hazard in either order.
+  if (data?.kind === "forbidden") {
+    return new CloudSkillsError(data.message ?? "Not authorized", 403);
   }
 
   const message = err instanceof Error ? err.message : String(err);

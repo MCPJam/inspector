@@ -4,9 +4,16 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import { evalStatusLeftBorderClasses } from "./helpers";
+import {
+  costUnavailableReason,
+  evalStatusLeftBorderClasses,
+  formatCostOrDash,
+  isRunnerReportedCost,
+} from "./helpers";
 import { IterationDetails } from "./iteration-details";
+import { summarizeTrialChain } from "@/components/evaluate/stage-trial-model";
 import type { EvalCase, EvalIteration } from "./types";
+import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 
 interface TestCaseIterationsTableProps {
   testCase: EvalCase;
@@ -23,6 +30,18 @@ interface TestCaseIterationsTableProps {
    * primary question.
    */
   sortMode?: "failing-first" | "chronological";
+  /**
+   * Where each trial's chain stopped, by iteration id.
+   *
+   * A LOOKUP the caller supplies, not a read this table performs: the chain is
+   * scoped by RUN, and only the run-scoped host of this table knows which run
+   * its rows belong to. The cross-run view passes nothing rather than issuing
+   * one read per run to fill a column.
+   *
+   * Returning `undefined` means "not loaded", which is not "no chain" — an
+   * unloaded row renders no chip rather than a false absence.
+   */
+  chainFor?: (iterationId: string) => EvalRunDecisionChain | undefined;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -53,6 +72,7 @@ export function TestCaseIterationsTable({
   label = "Iterations",
   emptyState = "No iterations found for this test.",
   sortMode = "failing-first",
+  chainFor,
 }: TestCaseIterationsTableProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
@@ -97,6 +117,7 @@ export function TestCaseIterationsTable({
               <div className="min-w-[120px] text-left">Model</div>
               <div className="min-w-[50px] text-center">Calls</div>
               <div className="min-w-[60px] text-center">Tokens</div>
+              <div className="min-w-[70px] text-right">Cost</div>
               <div className="min-w-[40px] text-right">Time</div>
               <div className="min-w-[80px] text-right">When</div>
               {onViewRun && <div className="min-w-[60px]">Run</div>}
@@ -158,6 +179,26 @@ export function TestCaseIterationsTable({
                       <span className="text-xs font-medium truncate">
                         {snapshot?.title ?? "Iteration"}
                       </span>
+                      {(() => {
+                        // Where value stopped, in one line. Absent for a row
+                        // whose chain has not loaded, and for one the chain
+                        // says nothing about.
+                        const chain = chainFor?.(iteration._id);
+                        const summary = chain
+                          ? summarizeTrialChain(chain)
+                          : null;
+                        return summary ? (
+                          <span
+                            className={cn(
+                              "shrink-0 text-[10px]",
+                              summary.toneClass,
+                            )}
+                            data-testid="iteration-chain-summary"
+                          >
+                            {summary.label}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
@@ -177,10 +218,29 @@ export function TestCaseIterationsTable({
                       <span className="font-mono">
                         {isPending
                           ? "—"
-                          : Number(
-                              iteration.tokensUsed || 0,
-                            ).toLocaleString()}
+                          : Number(iteration.tokensUsed || 0).toLocaleString()}
                       </span>
+                    </div>
+                    <div
+                      className="font-mono min-w-[70px] text-right"
+                      title={
+                        isPending
+                          ? undefined
+                          : (costUnavailableReason(
+                              iteration.usage?.costBasis,
+                              iteration.usage?.estimatedCostUsd,
+                            ) ?? undefined)
+                      }
+                    >
+                      {isPending
+                        ? "—"
+                        : formatCostOrDash(iteration.usage?.estimatedCostUsd)}
+                      {!isPending &&
+                      isRunnerReportedCost(iteration.usage?.costBasis) ? (
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          runner
+                        </span>
+                      ) : null}
                     </div>
                     <div className="font-mono min-w-[40px] text-right">
                       {isPending

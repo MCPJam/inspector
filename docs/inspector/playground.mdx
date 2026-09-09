@@ -130,7 +130,12 @@ Send one prompt to up to 3 models simultaneously. Open the model picker, toggle 
 
 Open the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side — for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
 
-New sessions start with **ChatGPT, Claude, and Cursor** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker and check or uncheck rows — checking a second row immediately adds it to the compare grid; unchecking a row removes it. Your selection is saved per project, so returning users keep whatever lineup they last configured.
+New sessions start with **ChatGPT, Claude, and Cursor** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker:
+
+- **Click a row** to switch to that client immediately. The picker closes and any comparison lineup collapses to a single column.
+- **Click the checkbox** on a row to add or remove that client from the comparison grid without changing the active client. Ticking a second row immediately opens a side-by-side view; unticking removes that column.
+
+The comparison grid is capped at 3 clients. When the cap is reached, the checkboxes for remaining clients are disabled, but you can still click their rows to switch to them. Your selection is saved per project, so returning users keep whatever lineup they last configured.
 
 One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
 
@@ -335,7 +340,19 @@ Supported file types include images, PDFs, text, JSON, CSV, XLSX, and other comm
 Edit the system prompt the model sees before your messages, and adjust the temperature slider (0 = deterministic, higher = more creative).
 
 **Tool Approval**
-When on, pauses the model before each tool call so you can approve or deny it manually.
+When on, pauses the model before tool calls so you can approve or deny each one.
+
+The switch **raises** the bar and never lowers it, so it is not the whole story in either direction.
+
+Some actions pause whether it is on or off:
+
+- anything driving a browser or a third-party web page in a chat you are watching (`browser_*` tools, WebMCP page tools);
+- anything running on your own machine (local `bash`, a local browser);
+- destructive UI actions.
+
+Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, read-only UI actions, and tools an MCP App provided. Everything in between follows the switch, including web search — its query is your text leaving for a third party, and the call spends credits.
+
+Two things sit just outside those lists. An **unattended run** (an eval, a swarm) has nobody to ask, so its browser tools follow the `toolPolicy` it declared up front instead of pausing. And **loading a skill that an MCP server provided** is always tagged as third-party content and always bound to the manifest digest you were shown — but whether it pauses follows the switch.
 
 **Voice input**
 Click the mic button (right side of the input) to record your voice. The audio is transcribed using Whisper and the resulting text is appended to whatever you've already typed in the composer. Recording stops automatically after 3 minutes. The mic is disabled when your daily voice budget is exhausted; a warning appears in the composer when the remaining budget is low. While a recording is in progress, pressing Enter does not submit the draft — use the stop button (arrow-up) to finish recording first, or the ✕ button to cancel without transcribing.
@@ -377,7 +394,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one. Read-only listing and polling tools never require approval. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one — these open a connection to one of your servers or spend credits. Read-only listing and polling tools never require approval, on any model. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
 
 <Note>
   These tools are only available when you are signed in as a project member. They are not shown to guests or in scenario sessions.

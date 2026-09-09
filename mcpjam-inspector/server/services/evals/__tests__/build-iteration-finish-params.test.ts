@@ -482,6 +482,44 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(buildStageMetadata({ status: "failed", error: "boom" })).toEqual({});
   });
 
+  test("records the model-layer classification beside the chain it produced", () => {
+    // The WRITE half of the persisted attribution. Without it the judge second
+    // pass has to infer the classification from the chain, and the chain does
+    // not always carry it: a model-call failure where nothing failed gets a
+    // `setup` category with no row relabelled.
+    //
+    // Asserted here rather than only where it is read, because a test that
+    // hands the reader a hand-built metadata bag passes whether or not this
+    // function ever writes one.
+    const metadata = buildStageMetadata({
+      stageCase: authoredCase,
+      status: "failed",
+      error: "provider outage",
+      stepError: { source: "model" },
+    });
+    expect(metadata.stageStepErrorSource).toBe("model");
+  });
+
+  test("writes no classification marker when the failure was not the model's", () => {
+    // `setup` is our own layer and needs no marker: it changes no derivation
+    // the second pass would otherwise get wrong, and writing it would invite a
+    // reader to treat the absence of a marker as meaningful.
+    expect(
+      buildStageMetadata({
+        stageCase: authoredCase,
+        status: "failed",
+        error: "our own preparation broke",
+        stepError: { source: "setup" },
+      }).stageStepErrorSource,
+    ).toBeUndefined();
+    expect(
+      buildStageMetadata({
+        stageCase: authoredCase,
+        status: "completed",
+      }).stageStepErrorSource,
+    ).toBeUndefined();
+  });
+
   test("an authored case that captured nothing reports a setup abort", () => {
     const metadata = buildStageMetadata({
       stageCase: authoredCase,
@@ -556,5 +594,214 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
       state: "notReached",
       reason: "earlierStageFailed",
     });
+  });
+});
+
+// =============================================================================
+// FRICTION SIGNALS. The producer's whole job is to stamp a report BESIDE the
+// verdict without ever reaching it, so the cases below pin: that the emulated
+// path measures from the transcript, that a harness path measures from the
+// wire (with timing), that a declared evidence hole degrades honestly, and
+// that nothing that produces a verdict is ever handed the document.
+// =============================================================================
+
+describe("buildIterationFinishParams — friction signals", () => {
+  const searchResult = {
+    structuredContent: { results: [{ id: "ISSUE-41" }, { id: "ISSUE-42" }] },
+  };
+
+  const transcript = (): ModelMessage[] =>
+    [
+      { role: "user", content: "find the open issues and open the first" },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_0",
+            toolName: "search_issues",
+            output: { type: "json", value: searchResult },
+            result: searchResult,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "search_issues",
+            output: { type: "json", value: searchResult },
+            result: searchResult,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_2",
+            toolName: "search_issues",
+            output: { type: "json", value: searchResult },
+            result: searchResult,
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+  const threeSearches = {
+    ...evaluation,
+    toolsCalled: [
+      {
+        toolName: "search_issues",
+        toolCallId: "call_0",
+        arguments: { q: "open" },
+      },
+      {
+        toolName: "search_issues",
+        toolCallId: "call_1",
+        arguments: { q: "open bugs" },
+      },
+      {
+        toolName: "search_issues",
+        toolCallId: "call_2",
+        arguments: { q: "bugs" },
+      },
+    ],
+  };
+
+  const frictionOf = (params: ReturnType<typeof build>) =>
+    (params.metadata as Record<string, unknown>).frictionSignals as Record<
+      string,
+      unknown
+    >;
+
+  test("is stamped for an emulated run, measured from the transcript", () => {
+    const friction = frictionOf(
+      build({ evaluation: threeSearches, messages: transcript() }),
+    );
+    expect(friction).toMatchObject({
+      version: 1,
+      state: "measured",
+      callCount: 3,
+      resultAvailableCount: 3,
+      identifierSignals: { state: "measured" },
+    });
+    expect(
+      (friction.signals as { kind: string }[]).map((s) => s.kind),
+    ).toContain("searchRepeatedAfterIdentifier");
+  });
+
+  test("carries key paths and counts, never an identifier value", () => {
+    const friction = frictionOf(
+      build({ evaluation: threeSearches, messages: transcript() }),
+    );
+    expect(JSON.stringify(friction)).toContain("results[].id");
+    expect(JSON.stringify(friction)).not.toContain("ISSUE-41");
+  });
+
+  test("a run with no retained results measures retries and says so", () => {
+    const friction = frictionOf(build({ evaluation: threeSearches }));
+    expect(friction).toMatchObject({
+      state: "measured",
+      resultAvailableCount: 0,
+      identifierSignals: {
+        state: "notMeasured",
+        reason: "resultsUnavailable",
+      },
+    });
+    expect((friction.signals as { kind: string }[]).map((s) => s.kind)).toEqual([
+      "changedRetry",
+      "changedRetry",
+    ]);
+  });
+
+  test("harness evidence supplies the results, and its timing decides order", () => {
+    const friction = frictionOf(
+      build({
+        evaluation: {
+          ...evaluation,
+          toolsCalled: [
+            {
+              toolName: "search_issues",
+              toolCallId: "call_0",
+              arguments: { q: "open" },
+            },
+            {
+              toolName: "get_issue",
+              toolCallId: "call_1",
+              arguments: { title: "x" },
+            },
+            // Appended AFTER the fact by the evidence merge, and settled
+            // BEFORE the search: reading array position would call it a later
+            // call. It is not one.
+            {
+              toolName: "list_pages",
+              toolCallId: "evidence:req-7",
+              arguments: { page: 1 },
+            },
+          ],
+        },
+        frictionEvidence: {
+          kind: "harnessEvidence",
+          resultsByToolCallId: new Map([
+            [
+              "call_0",
+              { raw: searchResult, startedAtMs: 3_000, settledAtMs: 4_000 },
+            ],
+            ["call_1", { raw: {}, startedAtMs: 5_000, settledAtMs: 5_500 }],
+            [
+              "evidence:req-7",
+              { raw: {}, startedAtMs: 1_000, settledAtMs: 1_500 },
+            ],
+          ]),
+        },
+      }),
+    );
+    expect(friction).toMatchObject({
+      state: "measured",
+      timedCallCount: 3,
+      identifierSignals: { state: "measured" },
+    });
+    // One call started after the search settled, so the two-later-calls floor
+    // is not met and no identifier claim is made.
+    expect(friction.signals).toEqual([]);
+  });
+
+  test("a declared evidence hole is notMeasured with honest counts", () => {
+    const friction = frictionOf(
+      build({
+        evaluation: threeSearches,
+        messages: transcript(),
+        frictionEvidence: {
+          kind: "notMeasured",
+          reason: "evidenceIncomplete",
+        },
+      }),
+    );
+    expect(friction).toMatchObject({
+      state: "notMeasured",
+      notMeasuredReason: "evidenceIncomplete",
+      callCount: 3,
+      signals: [],
+    });
+  });
+
+  test("never reaches the verdict, the score rows or the chain", () => {
+    const params = build({
+      evaluation: threeSearches,
+      messages: transcript(),
+      stageCase: authoredCase,
+      spans: [okToolSpan],
+    });
+    const metadata = params.metadata as Record<string, unknown>;
+    expect(metadata.frictionSignals).toBeDefined();
+    // The verdict is the boolean the caller passed, untouched.
+    expect(params.passed).toBe(true);
+    // And nothing the chain or the score rows wrote mentions it.
+    expect(JSON.stringify(metadata.stageResults)).not.toContain("friction");
+    expect(JSON.stringify(metadata.scores ?? null)).not.toContain("friction");
   });
 });

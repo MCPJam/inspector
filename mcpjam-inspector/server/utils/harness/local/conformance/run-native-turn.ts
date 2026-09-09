@@ -1,0 +1,733 @@
+/**
+ * TURN CONFORMANCE RUNNER — drives the merged local-harness foundation end to end on this
+ * machine against a mock Anthropic upstream behind a loopback gateway.
+ *
+ *   HOME=<scratch>/home CONFORMANCE_ROOT=<scratch> npx tsx run-native-turn.ts [full|no-launcher]
+ *
+ * Nothing here is product code. It exists to pin facts for the implementation:
+ * timings, process-tree behaviour, what lands where, and what breaks.
+ */
+import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import net from "node:net";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { HarnessAgent } from "@ai-sdk/harness/agent";
+import { createClaudeCode } from "@ai-sdk/harness-claude-code";
+import { LocalHarnessSupervisor } from "../supervisor.js";
+import {
+  createSupervisedLocalHarnessProvider,
+  sessionStateDirFor,
+} from "../supervised-provider.js";
+import { resolveLocalHarnessAvailability } from "../availability.js";
+import {
+  getLocalMachineId,
+  grantLocalHarnessConsent,
+  localHarnessStateRoot,
+  registerWorkspaceGrant,
+  revokeLocalHarnessGrants,
+} from "../grants.js";
+import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
+import { resolveNodeLauncher } from "../node-launcher.js";
+import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
+import {
+  localPackTarget,
+  LOCAL_HARNESS_POLICY_VERSION,
+  type LocalPlatform,
+} from "../targets.js";
+import { listProcessRecords } from "../process-registry.js";
+import { installedAdapterVersion } from "./adapter-version.js";
+import { probeProcessGroup, probeProcess } from "../process-identity.js";
+
+
+const execFileP = promisify(execFile);
+const ROOT = process.env.CONFORMANCE_ROOT!;
+/** The pack is per platform, and so is the digest that admits it. */
+// `LocalPlatform`, which includes win32 — the windows leg runs this script too,
+// and narrowing the type here was a lie that hid exactly that.
+const PLATFORM = process.platform as LocalPlatform;
+/**
+ * …and per ARCHITECTURE, which is the key the digest table actually uses. The
+ * pack the build step produced is for this machine, so this is the entry the
+ * manifest needs to carry.
+ */
+const PACK_TARGET = (() => {
+  const target = localPackTarget();
+  if (target === null) {
+    throw new Error(
+      `no runtime pack target exists for ${process.platform}-${process.arch}`,
+    );
+  }
+  return target;
+})();
+/** Stamped into the manifest so a run cannot claim evidence it did not
+ *  gather; PR 5's CI job replaces it with the job's own output. */
+const CONFORMANCE_VERSION =
+  process.env.MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION ?? "local-dev";
+
+const MODE = (process.argv[2] ?? "full") as "full" | "no-launcher";
+const RUNTIME_ROOT = join(ROOT, "runtime");
+const BUNDLE = join(RUNTIME_ROOT, "claude-code");
+const WORKSPACE = join(ROOT, "workspace");
+/**
+ * `fileURLToPath`, not `.pathname`. On Windows a `file:///D:/…` URL's pathname
+ * is `/D:/…`, and the leading slash makes it a path node cannot resolve — the
+ * windows leg failed at the first helper spawn with a bare `MODULE_NOT_FOUND`
+ * for three runs. (It also percent-decodes, so a checkout under a path with a
+ * space stops being a `%20` mystery on every platform.)
+ */
+const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
+const UPSTREAM_KEY_CANARY = `upstream-canary-${randomBytes(8).toString("hex")}`;
+const CAPABILITY = `cap_${randomBytes(24).toString("base64url")}`;
+const POP_SECRET = randomBytes(32).toString("hex");
+
+const t0 = performance.now();
+const marks: Record<string, number> = {};
+const mark = (name: string) => {
+  marks[name] = Math.round(performance.now() - t0);
+  console.log(`[conformance] +${marks[name]}ms ${name}`);
+};
+const findings: string[] = [];
+const note = (s: string) => {
+  findings.push(s);
+  console.log(`[finding] ${s}`);
+};
+
+/**
+ * Every helper process this run started, so a FAILURE can take them down too.
+ *
+ * The gateway and the mock are servers bound to loopback ports. They used to
+ * be killed only after the report printed, so any throw between spawning them
+ * and that line left two servers running, holding their ports, for the rest of
+ * the CI job — and left the granted consent in place. The next scenario then
+ * failed for a reason that had nothing to do with it.
+ */
+const helpers: ChildProcess[] = [];
+
+/**
+ * The supervised tree this run owns, so a FAILURE can stop it.
+ *
+ * Set as soon as a supervisor and a session id exist. Without this, a throw
+ * anywhere after `createSession` left a real vendor agent running on the
+ * machine while the runner exited reporting a failure — the one outcome a
+ * suite about lifecycle guarantees must not produce.
+ */
+let owned: { supervisor: LocalHarnessSupervisor; sessionId: string } | null =
+  null;
+
+async function stopOwnedTree(): Promise<void> {
+  const current = owned;
+  owned = null;
+  if (current === null) return;
+  try {
+    await current.supervisor.stopSession(current.sessionId);
+  } catch {
+    /* best effort: the report below says the run failed either way */
+  }
+}
+
+/**
+ * Stop every helper and WAIT for it, with an escalation.
+ *
+ * `process.exit` on the next line does not give a SIGTERM'd child time to run
+ * its handler, so a failing scenario could exit while its gateway was still
+ * listening — and the next scenario would inherit a server on a port it
+ * expects to be free. Bounded, because a helper that ignores SIGTERM must not
+ * hold the run open either: after the grace it gets SIGKILL, which nothing
+ * survives.
+ */
+async function stopHelpers(graceMs = 2_000): Promise<void> {
+  const stopping = helpers.splice(0);
+  await Promise.all(
+    stopping.map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            resolve();
+            return;
+          }
+          const done = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              /* already gone */
+            }
+            resolve();
+          }, graceMs);
+          child.once("exit", done);
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            done();
+          }
+        }),
+    ),
+  );
+}
+
+/**
+ * The environment a conformance helper needs, and nothing else.
+ *
+ * Deliberately narrow — these servers stand in for the gateway and for
+ * Anthropic, and inheriting the runner's whole environment would let a
+ * variable set for something else change what they do. But narrow is not the
+ * same as empty: on Windows a process with no `SystemRoot` cannot initialize
+ * Winsock, so `http.createServer().listen()` fails and the helper exits before
+ * printing its port — which is exactly what the Windows conformance leg has
+ * been doing on every run.
+ */
+function helperEnv(extra: Record<string, string>): Record<string, string> {
+  const base: Record<string, string> = { PATH: process.env.PATH ?? "" };
+  for (const name of ["SystemRoot", "SYSTEMROOT", "windir", "TEMP", "TMP"]) {
+    const value = process.env[name];
+    if (value !== undefined) base[name] = value;
+  }
+  return { ...base, ...extra };
+}
+
+/**
+ * `MOCK_LATENCY_MS`, forwarded explicitly. `helperEnv` is an allowlist on
+ * purpose — the scenario asserts on what a supervised child's environment
+ * contains, so it cannot inherit the parent's — which means a knob that is
+ * only exported by the caller silently does nothing. That is precisely how
+ * this one first went in: set in CI, never delivered, and the run it was
+ * meant to make deterministic stayed a race.
+ */
+function mockLatencyEnv(): Record<string, string> {
+  const raw = process.env.MOCK_LATENCY_MS;
+  return raw === undefined || raw === "" ? {} : { MOCK_LATENCY_MS: raw };
+}
+
+async function startChild(script: string, env: Record<string, string>) {
+  const child = spawn(process.execPath, [join(SCRIPT_DIR, script)], {
+    env: helperEnv(env),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  helpers.push(child);
+  const stderr: string[] = [];
+  // Line-BUFFERED. Splitting each chunk on its own breaks wherever the OS
+  // handed over the pipe, so `[gw] upstream error …` could arrive as
+  // `[gw] upstream er` + `ror …` and neither fragment matches a filter looking
+  // for it. Assertions read this array; one that can silently miss its subject
+  // is worse than none.
+  let stderrTail = "";
+  const onStderr = (chunk: Buffer | string) => {
+    stderrTail += String(chunk);
+    const lines = stderrTail.split("\n");
+    // The last element is whatever came after the final newline: keep it back
+    // until the rest of it arrives.
+    stderrTail = lines.pop() ?? "";
+    for (const line of lines) if (line !== "") stderr.push(line);
+  };
+  child.stderr!.on("data", onStderr);
+  // A helper that dies mid-line still has to be heard: flush what is held.
+  child.stderr!.on("end", () => {
+    if (stderrTail !== "") { stderr.push(stderrTail); stderrTail = ""; }
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    let buf = "";
+    child.stdout!.on("data", (c) => {
+      buf += String(c);
+      // On a COMPLETE line only. A chunk boundary can land mid-JSON — the
+      // partial `{"port":54` already contains "port" — and `JSON.parse` then
+      // threw inside a `data` handler, killing the runner with an error about
+      // the wrong thing entirely.
+      const newline = buf.indexOf("\n");
+      if (newline < 0) return;
+      const line = buf.slice(0, newline);
+      try {
+        resolve(JSON.parse(line).port);
+      } catch (error) {
+        reject(new Error(`${script} printed ${JSON.stringify(line)}: ${error}`));
+      }
+    });
+    // With the child's own stderr, because without it a helper that dies at
+    // startup says only "exited 1" and the next reader has to guess.
+    child.on("exit", (code) =>
+      reject(
+        new Error(
+          `${script} exited ${code}` +
+            (stderr.length > 0 ? `\n${stderr.slice(-10).join("\n")}` : ""),
+        ),
+      ),
+    );
+  });
+  return { child, port, stderr };
+}
+const freePort = () =>
+  new Promise<number>((resolve) => {
+    const s = net.createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const p = (s.address() as net.AddressInfo).port;
+      s.close(() => resolve(p));
+    });
+  });
+/**
+ * Is this pid a process that is still RUNNING?
+ *
+ * Not `kill(pid, 0)`, which answers "the kernel still has a table entry" — and
+ * a zombie has one. A zombie has no address space and executes nothing; it is
+ * a terminated process whose exit status nobody has collected. On a runner
+ * whose PID 1 is not a real init — which is where this suite runs — a process
+ * the supervisor correctly terminated stays visible to `kill(pid, 0)`
+ * indefinitely, so a naive check reports a failure at exactly the job that
+ * just succeeded.
+ *
+ * Deliberately NOT `probeProcess` from the code under test: this suite exists
+ * to check that code, so it reads the state itself. `ps -o stat=` reports `Z`
+ * for a zombie on both macOS and Linux; an empty answer means the pid is gone
+ * outright.
+ */
+/**
+ * Windows has none of `ps`, `pgrep` or `lsof`, and Git Bash's MSYS `ps` only
+ * sees MSYS processes — so on the windows leg these helpers would answer
+ * "nothing running, nothing listening" for a tree that is very much alive,
+ * and the verdicts below would either pass vacuously or fail by construction.
+ * Each helper therefore has a Windows arm that asks the OS directly:
+ * `tasklist` for liveness, `netstat -ano` for listeners, and CIM for the
+ * parent/child tree. Still deliberately NOT the code under test.
+ */
+const WIN = process.platform === "win32";
+const powershell = (script: string) =>
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
+    windowsHide: true,
+  });
+
+async function running(pid: number): Promise<boolean> {
+  if (WIN) {
+    try {
+      const { stdout } = await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"]);
+      return stdout.includes(`"${pid}"`);
+    } catch {
+      return false;
+    }
+  }
+  let state: string;
+  try {
+    state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
+  } catch {
+    return false; // `ps` exits non-zero for a pid that does not exist.
+  }
+  if (state.length === 0) return false;
+  return !state.startsWith("Z");
+}
+
+/** Which of these pids are still running — zombies do not count. */
+async function stillRunning(pids: readonly number[]): Promise<number[]> {
+  const states = await Promise.all(pids.map(running));
+  return pids.filter((_, i) => states[i]);
+}
+async function descendants(pid: number): Promise<number[]> {
+  const out: number[] = [];
+  const walk = async (p: number) => {
+    let kids = "";
+    try {
+      kids = WIN
+        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
+        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
+    } catch {
+      return;
+    }
+    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
+      out.push(k);
+      await walk(k);
+    }
+  };
+  await walk(pid);
+  return out;
+}
+async function psLine(pid: number, withEnv = false) {
+  try {
+    const args = withEnv ? ["-E", "-o", "command=", "-p", String(pid)] : ["-o", "command=", "-p", String(pid)];
+    return (await execFileP("ps", args)).stdout.trim();
+  } catch {
+    return "";
+  }
+}
+async function listeners(pid: number) {
+  if (WIN) {
+    // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
+    // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
+    // loopback verdict's regex reads both.
+    try {
+      return (await execFileP("netstat", ["-ano"])).stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim().split(/\s+/))
+        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
+        .map((f) => `${f[1]} (LISTEN)`);
+    } catch {
+      return [];
+    }
+  }
+  try {
+    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
+      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
+  } catch {
+    return [];
+  }
+}
+
+type TurnResult = { text: string; parts: Record<string, number>; firstPartMs: number; firstTextMs: number; finishMs: number; approvals: number; errors: string[]; tools: string[] };
+async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
+  const start = performance.now();
+  const parts: Record<string, number> = {};
+  const errors: string[] = [];
+  const toolCalls = new Map<string, any>();
+  let text = "";
+  let firstPartMs = -1, firstTextMs = -1, approvals = 0;
+  let res: any = await agent.stream({ session: sessionRef.s, prompt });
+  let stream: AsyncIterable<any> = res.fullStream;
+  for (let round = 0; round < 4; round++) {
+    let paused: any = null;
+    for await (const part of stream) {
+      const type = String(part.type);
+      parts[type] = (parts[type] ?? 0) + 1;
+      if (firstPartMs < 0) firstPartMs = Math.round(performance.now() - start);
+      if (type === "text-delta") {
+        text += part.text ?? part.textDelta ?? part.delta ?? "";
+        if (firstTextMs < 0) firstTextMs = Math.round(performance.now() - start);
+      }
+      if (type === "tool-call") toolCalls.set(part.toolCallId, part);
+      if (type === "tool-approval-request") { paused = part; break; }
+      if (type === "error") {
+        const err: any = part.error;
+        errors.push(String(err?.message ?? err ?? part) + (err?.command ? " || command=" + JSON.stringify(err.command) : ""));
+      }
+    }
+    if (!paused) break;
+    approvals += 1;
+    const tc = toolCalls.get(paused.toolCallId) ?? { toolCallId: paused.toolCallId, toolName: paused.toolName ?? "Bash", input: paused.input ?? {} };
+    console.log(`[conformance] ${label}: approval requested for ${tc.toolName} ${JSON.stringify(tc.input).slice(0, 80)} — suspending + continuing`);
+    const tSusp = performance.now();
+    const cont = await sessionRef.s.suspendTurn();
+    sessionRef.s = await agent.createSession({ sessionId: sessionRef.s.sessionId, continueFrom: cont });
+    res = await agent.continueStream({
+      session: sessionRef.s,
+      toolApprovalContinuations: [{
+        approvalResponse: { type: "tool-approval-response", approvalId: paused.approvalId, approved: true },
+        toolCall: { type: "tool-call", toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.input },
+      }],
+    });
+    console.log(`[conformance] ${label}: suspend+continue took ${Math.round(performance.now() - tSusp)}ms`);
+    stream = res.fullStream;
+  }
+  const finishMs = Math.round(performance.now() - start);
+  const tools = [...toolCalls.values()].map((c: any) => String(c.toolName));
+  console.log(`[conformance] ${label}: ${finishMs}ms parts=${JSON.stringify(parts)} tools=${JSON.stringify(tools)} text=${JSON.stringify(text.slice(0, 120))}`);
+  return { text, parts, firstPartMs, firstTextMs, finishMs, approvals, errors, tools };
+}
+
+async function main() {
+  mark("start");
+  const mock = await startChild("mock-anthropic.mjs", { MOCK_POP_SECRET: POP_SECRET, MOCK_UPSTREAM_KEY: UPSTREAM_KEY_CANARY, ...mockLatencyEnv() });
+  const gw = await startChild("local-gateway.mjs", {
+    GW_UPSTREAM: `http://127.0.0.1:${mock.port}`, GW_SESSION_CAPABILITY: CAPABILITY,
+    GW_UPSTREAM_KEY: UPSTREAM_KEY_CANARY, GW_POP_SECRET: POP_SECRET,
+  });
+  const gatewayUrl = `http://127.0.0.1:${gw.port}`;
+  mark("gateway_ready");
+
+  await mkdir(WORKSPACE, { recursive: true });
+  await writeFile(join(WORKSPACE, "hello.txt"), "hello from the conformance workspace\n");
+  const before = new Set(await readdir(WORKSPACE));
+  const ws = await registerWorkspaceGrant(WORKSPACE);
+  if (!ws.ok) throw new Error(ws.message);
+
+  const tDigest = performance.now();
+  const digest = await computeTreeDigest(BUNDLE);
+  marks.bundle_digest_ms = Math.round(performance.now() - tDigest);
+  const bridgeBytes = await readFile(join(BUNDLE, "bridge.mjs"));
+  const base = LOCAL_HARNESS_MANIFEST["claude-code"];
+  const manifest = {
+    ...base,
+    runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest }, launcherRelativePath: MODE === "no-launcher" ? "bridge.mjs" : "launcher.mjs" },
+    lifecycleConformanceVersion: CONFORMANCE_VERSION,
+    // THIS scenario's manifest, not the shipped one. `compatibility.ts` still
+    // lists only darwin and linux, and that is what a user meets — nothing here
+    // changes it.
+    //
+    // But a job whose entire purpose is to find out whether Windows WORKS
+    // cannot be gated on Windows already being declared to work. It was: the
+    // windows leg stopped at `native-not-eligible` without ever reaching the
+    // machinery it exists to exercise, so it could never produce the evidence
+    // that would earn the flip. The scenario declares the platform it is
+    // running on eligible for itself; the shipped manifest keeps refusing until
+    // a human moves it on the strength of a green run.
+    nativePlatforms: [
+      ...new Set([...base.nativePlatforms, process.platform as LocalPlatform]),
+    ],
+    bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}`,
+  } as typeof base;
+  const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM });
+  if (!rt.ok) throw new Error(`${rt.status}: ${rt.message}`);
+  const machineId = await getLocalMachineId();
+  const target = {
+    kind: "local-native" as const, machineId, workspaceGrantId: ws.grant.workspaceGrantId, harnessId: "claude-code" as const,
+    runtimeId: rt.runtime.runtimeId, permissionProfile: "workspace-edits" as const, policyVersion: LOCAL_HARNESS_POLICY_VERSION,
+  };
+  const grant = await grantLocalHarnessConsent({
+    userId: "conformance-user", machineId, projectId: "conformance-project", workspaceGrantId: target.workspaceGrantId,
+    harnessId: "claude-code", targetKind: "local-native", runtimeId: target.runtimeId,
+    permissionProfile: target.permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION,
+  });
+  mark("consent_granted");
+
+  const adapterVersion = await installedAdapterVersion();
+  const tAvail = performance.now();
+  const availability = await resolveLocalHarnessAvailability({
+    target, actor: { isGuest: false, isScenarioSession: false, isJourneySession: false }, userId: "conformance-user", projectId: "conformance-project",
+    grantToken: grant.token, runtimeRoot: RUNTIME_ROOT, installedAdapterVersion: adapterVersion,
+    manifests: { "claude-code": manifest }, killSwitchEnabled: true, hosted: false,
+  });
+  marks.availability_ms = Math.round(performance.now() - tAvail);
+  if (!availability.available) throw new Error(`availability: ${availability.status}: ${availability.message}`);
+  const plan = availability.plan;
+  mark("availability_ok");
+  console.log(`[conformance] permissionMode=${plan.permissionMode} runtimeId=${plan.runtime.runtimeId} workspace=${plan.workspacePath}`);
+
+  const supervisor = new LocalHarnessSupervisor();
+  const janitor = await supervisor.reclaimOrphans();
+  console.log(`[conformance] janitor: ${JSON.stringify(janitor).slice(0, 200)}`);
+  const launcher = resolveNodeLauncher({ bundledNodePath: plan.runtime.nodePath! });
+  const bridgePort = await freePort();
+  const sessionId = `conformance-${Date.now()}`;
+  owned = { supervisor, sessionId };
+  const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);
+  let bridgePid = -1;
+  const provider = createSupervisedLocalHarnessProvider({
+    harnessId: "claude-code", manifest: plan.manifest, runtime: plan.runtime, supervisor, launcher,
+    workspacePath: plan.workspacePath, workspaceGrantId: target.workspaceGrantId, sessionStateDir,
+    targetKind: "local-native", bridgePort, bridgeReadinessTimeoutMs: 30_000,
+    onBridgeStarted: async ({ pid }) => { bridgePid = pid; mark("bridge_listening_verified_loopback"); },
+  });
+  const harness = createClaudeCode({
+    model: "haiku",
+    auth: { ANTHROPIC_API_KEY: CAPABILITY, ANTHROPIC_BASE_URL: gatewayUrl },
+    thinking: { type: "disabled" },
+    env: {
+      CLAUDE_CODE_EFFORT_LEVEL: "unset", DISABLE_TELEMETRY: "1", DISABLE_AUTOUPDATER: "1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_TMPDIR: join(sessionStateDir, "home", "tmp"),
+    },
+    startupTimeoutMs: 90_000,
+  });
+  const agent: any = new HarnessAgent({
+    harness: harness as any, sandbox: provider, permissionMode: plan.permissionMode, instructions: "You are running a conformance check.",
+    // Work-dir layout: "project" is the symlink to the granted workspace inside
+    // session state, so Claude Code's cwd resolves to the user's checkout.
+    sandboxConfig: { workDir: "project" },
+  });
+
+  mark("create_session_start");
+
+  if (MODE === "no-launcher") {
+    // The negative that makes the loopback guarantee enforceable rather than
+    // aspirational. This pack's `launcherRelativePath` points at the adapter's
+    // bridge directly, so nothing constrains the listener — and the exposure
+    // probe has to REFUSE the session.
+    //
+    // Refusal is the PASS here. A session that starts is the failure, and the
+    // dangerous one: it would mean the guarantee rests on our having shipped a
+    // launcher that usually works rather than on a check that fails when it
+    // does not. A different error is also a failure, because then the run has
+    // not exercised the probe at all.
+    let refusal: unknown;
+    try {
+      await agent.createSession({ sessionId });
+    } catch (error) {
+      refusal = error;
+    }
+    // Nothing should be running — the probe refuses before the provider hands
+    // the session back — but a stranded bridge would make the workflow's
+    // "no supervised process survived" step fail for the wrong reason.
+    await supervisor.stopSession(sessionId);
+    mock.child.kill("SIGTERM");
+    gw.child.kill("SIGTERM");
+    await revokeLocalHarnessGrants();
+
+    if (refusal === undefined) {
+      console.error(
+        "[conformance] FAILED: a pack with no loopback launcher started a " +
+          "session; the exposure probe did not refuse it",
+      );
+      process.exit(1);
+    }
+    const message = refusal instanceof Error ? refusal.message : String(refusal);
+    if (!/non-loopback address/.test(message)) {
+      console.error(
+        `[conformance] FAILED: refused, but not by the exposure probe: ${message}`,
+      );
+      process.exit(1);
+    }
+    console.log(`[conformance] refused as required: ${message}`);
+    console.log(
+      "\n=====REPORT=====\n" +
+        JSON.stringify({ mode: MODE, marks, refusedBy: "exposure-probe" }, null, 2),
+    );
+    return;
+  }
+
+  const sessionRef = { s: await agent.createSession({ sessionId }) };
+  mark("session_ready");
+  console.log(`[conformance] sessionWorkDir=${sessionRef.s.sessionWorkDir ?? "(n/a)"} bridgePid=${bridgePid}`);
+
+  const turn1 = await runTurn("turn1-read", agent, sessionRef, `READFILE ${join(plan.workspacePath, "hello.txt")}`);
+  mark("turn1_done");
+
+  // Process-tree + hygiene inspection while the session is live.
+  const kids = await descendants(bridgePid);
+  console.log(`[conformance] tree: bridge ${bridgePid} -> ${JSON.stringify(kids)}`);
+  for (const pid of [bridgePid, ...kids]) console.log(`  ${pid}: ${(await psLine(pid)).slice(0, 160)}`);
+  const envDump = (await Promise.all([bridgePid, ...kids].map((p) => psLine(p, true)))).join("\n");
+  const upstreamKeyInEnv = envDump.includes(UPSTREAM_KEY_CANARY);
+  note(`upstream key in any child env: ${upstreamKeyInEnv ? "LEAKED" : "absent (good)"}`);
+  note(`session capability in child env: ${envDump.includes(CAPABILITY) ? "present (env delivery fallback, as designed)" : "absent"}`);
+  // The whole supervised tree, not the root alone. On Windows the root is the
+  // Job Object launcher and the socket belongs to the node process under it;
+  // on POSIX the union is a superset of the old check and stricter for it —
+  // any listener anywhere in the tree that is off loopback fails the run.
+  const bridgeListeners = (await Promise.all([bridgePid, ...kids].map(listeners))).flat();
+  note(`bridge listeners: ${JSON.stringify(bridgeListeners)}`);
+  const homeLeak = envDump.match(/HOME=([^\s]+)/g)?.slice(0, 2);
+  note(`child HOME values: ${JSON.stringify(homeLeak)}`);
+  const stateFiles = await execFileP("find", [sessionStateDir, "-type", "f"]).then((r) => r.stdout.split("\n").filter(Boolean));
+  const stateBlob = (await Promise.all(stateFiles.map((f) => readFile(f, "utf8").catch(() => "")))).join("\n");
+  const upstreamKeyInState = stateBlob.includes(UPSTREAM_KEY_CANARY);
+  note(`upstream key in session state files: ${upstreamKeyInState ? "LEAKED" : "absent (good)"}; capability persisted in state: ${stateBlob.includes(CAPABILITY) ? "yes" : "no"} (${stateFiles.length} files)`);
+
+  const turn2 = await runTurn("turn2-bash-approval", agent, sessionRef, "BASH pwd");
+  mark("turn2_done");
+
+  const tDetach = performance.now();
+  const resumeState = await sessionRef.s.detach();
+  marks.detach_ms = Math.round(performance.now() - tDetach);
+  note(`after detach: bridge running=${await running(bridgePid)} descendants=${JSON.stringify(await descendants(bridgePid))}`);
+  const tResume = performance.now();
+  const s2 = await agent.createSession({ sessionId, resumeFrom: resumeState });
+  marks.resume_session_ms = Math.round(performance.now() - tResume);
+  const ref2 = { s: s2 };
+  const turn3 = await runTurn("turn3-count-after-resume", agent, ref2, "COUNT");
+  mark("turn3_done");
+  const m = /USER_TURNS=(\d+)/.exec(turn3.text);
+  note(`continuity: model saw ${m?.[1] ?? "?"} user turns after detach+resume (expect >= 3)`);
+
+  const treeBefore = [bridgePid, ...(await descendants(bridgePid))];
+  const groupPs = async (pgid: number) => execFileP("ps", ["-o", "pid=,pgid=,stat=,command=", "-ax"]).then((r) => r.stdout.split("\n").filter((l) => l.split(/\s+/).filter(Boolean)[1] === String(pgid)).map((l) => l.trim().slice(0, 100)), () => []);
+  note(`pre-stop: root probe=${JSON.stringify(await probeProcess(bridgePid))} group=${await probeProcessGroup(bridgePid)} members=${JSON.stringify(await groupPs(bridgePid))}`);
+  const tStop = performance.now();
+  let stopError: string | undefined;
+  try { await ref2.s.stop(); } catch (e: any) { stopError = String(e?.message ?? e); }
+  marks.stop_ms = Math.round(performance.now() - tStop);
+  note(`stop() ${stopError ? "THREW: " + stopError : "resolved"}; root running=${await running(bridgePid)} group=${await probeProcessGroup(bridgePid)} members=${JSON.stringify(await groupPs(bridgePid))}`);
+  await new Promise((r) => setTimeout(r, 300));
+  note(`second supervisor.stopSession: ${JSON.stringify(await supervisor.stopSession(sessionId))}`);
+  const survivors = await stillRunning(treeBefore);
+  note(`after stop: surviving pids=${JSON.stringify(survivors)} (expect [])`);
+  const recordsAfterStop = (await listProcessRecords()).length;
+  note(`registry records after stop: ${recordsAfterStop}`);
+
+  const after = (await readdir(WORKSPACE)).filter((e) => !before.has(e));
+  note(`new entries in workspace after session: ${JSON.stringify(after)}`);
+  note(`.harness-bootstrap in workspace: ${(await stat(join(WORKSPACE, ".harness-bootstrap")).then(() => "PRESENT (bad)", () => "absent (good)"))}`);
+
+  // The findings above are a log; these are the run's verdict. A conformance
+  // scenario that observes a leaked key and exits 0 is worse than no scenario,
+  // because a green job is then evidence of nothing. Everything asserted here
+  // is a claim `docs/local-harness.md` makes to a user deciding whether to
+  // click Allow.
+  const failures: string[] = [];
+  if (upstreamKeyInEnv) failures.push("the upstream model key reached a child process's environment");
+  if (upstreamKeyInState) failures.push("the upstream model key was written to session state on disk");
+  const offLoopback = bridgeListeners.filter((l) => !/^(127\.|\[?::1\]?:)/.test(l));
+  if (offLoopback.length > 0) failures.push(`the bridge listened off loopback: ${JSON.stringify(offLoopback)}`);
+  if (bridgeListeners.length === 0) failures.push("no bridge listener was observed, so the loopback check proved nothing");
+  if (survivors.length > 0) failures.push(`stop() left ${survivors.length} process(es) running: ${survivors}`);
+  if (recordsAfterStop !== 0) failures.push(`${recordsAfterStop} process registry record(s) survived stop()`);
+  if (after.length > 0) failures.push(`the session left ${after.length} new entr(ies) in the workspace: ${JSON.stringify(after)}`);
+  if (Number(m?.[1] ?? 0) < 3) failures.push(`the model saw ${m?.[1] ?? "?"} user turns after resume, expected >= 3`);
+  // The turns themselves, not just their side effects. A conformance run once
+  // went red only on the continuity probe while ALL THREE turns had finished
+  // empty — every upstream call had come back 502 and the vendor CLI had spent
+  // ~180s exhausting its retries. Every other assertion above still passed,
+  // because a session that never ran a tool also leaks nothing, writes nothing
+  // to the workspace and leaves no process behind. Nothing that reaches this
+  // point may be silent about a turn that did not happen.
+  for (const [label, turn] of [["turn1-read", turn1], ["turn2-bash-approval", turn2], ["turn3-count-after-resume", turn3]] as const) {
+    if (turn.errors.length > 0) failures.push(`${label} reported ${turn.errors.length} stream error(s): ${JSON.stringify(turn.errors.slice(0, 3))}`);
+    if (turn.text.trim() === "") failures.push(`${label} produced no assistant text, so the turn proved nothing`);
+  }
+  // The read tool ran, and its RESULT came back through the model: the mock
+  // answers a tool_result with `TOOL RESULT RECEIVED: <content>`, so the
+  // workspace file's own bytes are what close the loop here.
+  // Compared case-insensitively: the adapter reports `read`/`bash` on the
+  // tool-call part and `Bash` on the approval request. Which tool ran is the
+  // claim; how the adapter cases it is not, and pinning that here would make
+  // the suite fail on a cosmetic upstream change.
+  const ranTool = (turn: TurnResult, name: string) => turn.tools.some((t) => t.toLowerCase() === name);
+  if (!ranTool(turn1, "read")) failures.push(`turn1 never called Read (tools=${JSON.stringify(turn1.tools)})`);
+  if (!turn1.text.includes("hello from the conformance workspace")) failures.push("turn1 did not read the workspace file back through the model");
+  // Bash is the approval-gated tool; a run where it executed WITHOUT pausing
+  // would mean the permission profile was not applied, which is the opposite
+  // of what this scenario claims to prove.
+  if (!ranTool(turn2, "bash")) failures.push(`turn2 never called Bash (tools=${JSON.stringify(turn2.tools)})`);
+  // Nothing in this scenario cancels a request, so every upstream call should
+  // have completed. The gateway logging even one failure means the turns above
+  // were reached through the vendor CLI's retry path, which is not the thing
+  // being measured.
+  const gatewayErrors = gw.stderr.filter((l) => l.includes("upstream error") || l.includes("upstream timeout"));
+  if (gatewayErrors.length > 0) failures.push(`the gateway failed ${gatewayErrors.length} upstream call(s): ${JSON.stringify(gatewayErrors.slice(0, 3))}`);
+  if (turn2.approvals < 1) failures.push("turn2 ran Bash without ever requesting approval");
+  // EXECUTED, not merely requested. A tool-call part says the model asked for
+  // Bash; approving it and having nothing run would satisfy every check above.
+  // The mock answers a tool_result with `TOOL RESULT RECEIVED: <output>`, so
+  // the workspace path coming back is `pwd`'s own output making the whole round
+  // trip — request, approval, execution, result, model.
+  if ((turn2.parts["tool-result"] ?? 0) < 1) failures.push(`turn2 produced no tool-result, so the approved Bash never ran (parts=${JSON.stringify(turn2.parts)})`);
+  // Where `pwd` ran, in every spelling it can legitimately come back in. On
+  // POSIX the CLI's cwd resolves through the `project` symlink to the
+  // canonical workspace and that is what `pwd` prints. Windows resolves no
+  // junction in a cwd, and Git Bash prints `/d/a/…` — so there the answer is
+  // the workspace or the session's `work\project` junction, in native or
+  // MSYS form. All four name the granted directory and nothing else.
+  const pwdSpellings = [plan.workspacePath];
+  if (WIN) {
+    const { toAdapterPath } = await import("../adapter-path.js");
+    const link = join(sessionStateDir, "work", "project");
+    pwdSpellings.push(toAdapterPath(plan.workspacePath, "win32"), link, toAdapterPath(link, "win32"));
+  }
+  // Windows paths are case-insensitive and the vendor CLI's shell tool hands
+  // back a MIXED spelling (`D:\a/_temp/…` — a drive-native prefix with the
+  // shell's forward slashes after it), so there the comparison folds case and
+  // separators. POSIX stays exact.
+  const foldWin = (s: string) => s.toLowerCase().replace(/\//g, "\\");
+  const pwdText = WIN ? foldWin(turn2.text) : turn2.text;
+  if (!pwdSpellings.some((p) => pwdText.includes(WIN ? foldWin(p) : p))) failures.push(`turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model; accepted ${JSON.stringify(pwdSpellings)})`);
+
+  gw.child.kill("SIGTERM");
+  await new Promise((r) => setTimeout(r, 200));
+  mock.child.kill("SIGTERM");
+  await revokeLocalHarnessGrants();
+  const report = { mode: MODE, marks, turn1, turn2, turn3, findings, gateway: gw.stderr.slice(-8), mock: mock.stderr.slice(-12) };
+  console.log("\n=====REPORT=====\n" + JSON.stringify(report, null, 2));
+  if (failures.length > 0) {
+    throw new Error(`conformance assertions failed:\n  - ${failures.join("\n  - ")}`);
+  }
+}
+
+main().catch(async (e) => {
+  // Cleanup FIRST: a failed run must not leave a gateway, a mock, a supervised
+  // bridge tree or a live consent grant behind. The report below is what a
+  // human reads; this is what the next scenario depends on.
+  await stopOwnedTree();
+  await stopHelpers();
+  await revokeLocalHarnessGrants().catch(() => {});
+  console.error("[conformance] FAILED:", e?.stack ?? e);
+  console.error("[conformance] marks:", JSON.stringify(marks));
+  console.error("[conformance] findings:", JSON.stringify(findings, null, 1));
+  process.exit(1);
+});

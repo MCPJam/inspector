@@ -40,6 +40,11 @@ export interface InProcessXaaExecutorOptions {
   issuerBaseUrl: string;
   /** Reject non-HTTPS / private targets. Default false (local dev). */
   httpsOnly?: boolean;
+  /**
+   * Permit private destinations on the outbound proxy calls. Default false.
+   * Never relaxes `enforcePublicHost` below, which is about the CIMD document.
+   */
+  allowPrivateNetwork?: boolean;
   /** Per-request timeout (ms) applied to every outbound proxy request. */
   timeoutMs?: number;
   /** Node-side confidential-CIMD credential capability. Defaults to the local
@@ -115,6 +120,7 @@ export function createInProcessXaaExecutor(
   options: InProcessXaaExecutorOptions
 ): XAARequestExecutor {
   const httpsOnly = options.httpsOnly ?? false;
+  const allowPrivateNetwork = options.allowPrivateNetwork ?? false;
   const timeoutMs = options.timeoutMs;
   const confidentialCimdProvider =
     options.confidentialCimdProvider ?? getLocalConfidentialCimdProvider();
@@ -297,6 +303,7 @@ export function createInProcessXaaExecutor(
         },
         body: form,
         httpsOnly,
+        allowPrivateNetwork,
         timeoutMs,
       });
       return jsonResult(200, { status: upstream.status, body: upstream.body });
@@ -343,6 +350,7 @@ export function createInProcessXaaExecutor(
       headers: normalizeHeaders(init?.headers),
       body: init?.body ?? undefined,
       httpsOnly,
+      allowPrivateNetwork,
       ...(redirect ? { redirect } : {}),
       timeoutMs,
     });

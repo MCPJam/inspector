@@ -37,6 +37,7 @@ so results respect the caller's project access.
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
+| `cancel_project_server_connection` | Cancel a pending connection request, releasing the concurrent-connection slot it holds. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
@@ -67,6 +68,7 @@ so results respect the caller's project access.
 | `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
 | `get_eval_run_disclosure` | What a suite run would disclose before you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Keyed by the same target a launch selects — pass `environment` or `host` to disclose for that plan. Read-only, never launches or gates a run. | — |
 | `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
+| `list_eval_suite_revisions` | List a suite's settings history, newest first: who committed each edit, which stored fields moved, the note they left, and how many runs were launched against it. | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
 | `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |
 | `set_eval_suite_environments` | Attach project environments to an eval suite, replacing whatever it had. | — |
@@ -78,6 +80,11 @@ so results respect the caller's project access.
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
+| `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
+| `get_eval_run_gate` | Get one run's stored suite quality-gate report: passed, failed, non_gateable, or not_configured. `not_configured` is a real report, never an absent route. A deployment that does not serve the route is a different fact — do not report it as no policy. A run waiver never covers this report. | — |
+| `get_eval_run_route_facts` | Get one run's tool routes and expected-versus-observed facts per case: which tool sequence each trial took, how many called nothing or looped, and for each expected tool how many trials never called it — with denominators, never a verdict. A run that exists but has no persisted document reads as `routeFactsState: "unmeasured"` — permanently, there is no backfill and nothing is computed locally; a run that cannot be retrieved is a run-not-found error. | — |
+| `get_eval_run_server_facts` | Get one run's server facts: per server the tool count, the catalog's measured size and its basis, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what connect and discovery observed, and any conformance or readiness runs for the same servers. Facts, never a verdict: only a precheck with `class: "spec_required"` names a violation, tokens are an estimate against a reference window, and related assessments are joined by server id alone. Computed on read, so there is no backfill window; a run with nothing to describe answers `state: "unavailable"` with a reason. | — |
+| `list_eval_suite_stage_analytics` | List a suite's chain funnels newest-first, one document per run — a trend series, never an aggregate. Partition on the parity fields before claiming a trend; runs that do not share them are separate observations. | — |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |
@@ -85,8 +92,13 @@ so results respect the caller's project access.
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
-| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
-| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
+| `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
+| `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
+| `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
+| `list_eval_github_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_github_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
+| `list_eval_check_repos` | Deprecated spelling of `list_eval_github_repos` — a `check` here is a GITHUB check, never a case's grading check. | — |
+| `connect_eval_check_repo` | Deprecated spelling of `connect_eval_github_repo`. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
@@ -110,6 +122,9 @@ so results respect the caller's project access.
 | `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
 | `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
 | `delete_persona` | Remove a persona from the roster. Soft: history keeps resolving it. | — |
+| `list_secrets` | List the project's credentials as metadata only — name, delivery mode, host binding, sharing. No value is ever returned. | — |
+| `get_secret` | One secret's metadata: how it is delivered, where it is bound, when it was last handed to a run. Never its value. | — |
+| `delete_secret` | Delete a stored credential. Hard: the row and the encrypted value both go, and delivery stops. Does not revoke the key at its provider. | — |
 | `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
 | `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
 | `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |
@@ -292,6 +307,32 @@ The verified bearer token is forwarded to the Platform API
 (`PLATFORM_API_URL`, the Inspector `/api/v1` surface) on every tool call, so
 the API sees the same WorkOS identity the main app does and applies its own
 per-project authorization to listings, probes, and eval runs.
+
+### How a run this worker starts is attributed
+
+Every eval run started through a tool here lands on the Platform API, which
+stamps its `source` as `api` — the same stamp a curl script gets, because from
+the API's side that is what this is. So a Runs table could not tell an agent's
+run from anyone else's.
+
+The worker closes that gap by DECLARING itself: each Platform API client it
+builds carries `launcher: { kind: "mcp", client: <the request's user-agent> }`,
+which the platform stores beside the stamp and the Runs table renders as
+**MCP**, naming the calling agent.
+
+Three things about that are deliberate:
+
+- **It is a label, not a claim of authority.** `source` is still stamped
+  server-side, and the platform separately records the verified credential the
+  request authenticated with. Nothing reads the declaration to decide access.
+- **It is set on the client, not on the tool's input.** An operation's input
+  schema is exposed verbatim as the MCP tool's own input, so a `launcher` field
+  there would let the agent whose run it is choose its own badge.
+- **`client` comes from the request's `user-agent`, not from `initialize`.**
+  `createMcpHandler` builds a fresh `McpServer` per HTTP request, so by the time
+  a tool call runs there is no session that remembers the handshake's
+  `clientInfo`. An absent header leaves the launcher unnamed rather than
+  guessed.
 
 ### AuthKit domains
 

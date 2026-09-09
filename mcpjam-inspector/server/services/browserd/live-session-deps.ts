@@ -25,25 +25,33 @@
  */
 import { createHash } from "node:crypto";
 import type { Sandbox } from "e2b";
+import { logger } from "../../utils/logger.js";
 import {
   ensureComputerReady,
   getComputerSandboxInfo,
+  touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
 import { bootBrowserd, type BrowserdSandbox } from "./boot-browserd.js";
 import { BrowserdClient } from "./browserd-client.js";
+import { HostedReserveError } from "./hosted-reserve-error.js";
 import {
+  claimBrowserRelaunch,
   lookupBrowserSession,
   recordBrowserSession,
+  releaseBrowserRelaunch,
   touchBrowserSession,
 } from "./browser-sessions-client.js";
 import {
   ensureBrowserSession,
   type BrowserSessionDeps,
-  type BrowserSessionHandle,
+  type ComputerHostedBrowserSessionHandle,
+  type HostedBrowserSessionHandle,
+  type SandboxHostedBrowserSessionHandle,
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
 import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "./dist/mcpjam-browserd-bundle.generated.js";
+import { startHostedRecording } from "./hosted-recording.js";
 
 /**
  * The daemon bundle bytes. Decoded from the const the bundler embeds INTO the
@@ -89,6 +97,23 @@ export interface ConnectedSandboxLike {
   files: {
     write(path: string, data: ArrayBuffer): Promise<unknown>;
     makeDir(path: string): Promise<unknown>;
+    /**
+     * Optional because an older `@e2b/desktop` may not expose it, and because
+     * every failure to read means the same thing to the caller: boot a daemon
+     * yourself.
+     */
+    read?(path: string): Promise<string | Uint8Array>;
+    /**
+     * The BYTES overload (SDK 2.39). Declared as a second signature rather
+     * than folded into the one above so a caller asking for bytes cannot be
+     * handed a string it would then have to guess the encoding of — a
+     * recording read as UTF-8 is a corrupt file, and nothing downstream can
+     * tell that apart from a corrupt recording.
+     */
+    read?(
+      path: string,
+      options: { format: "bytes" },
+    ): Promise<Uint8Array>;
   };
   getHost(port: number): string;
 }
@@ -105,8 +130,86 @@ export function adaptSandbox(sandbox: ConnectedSandboxLike): BrowserdSandbox {
       });
       return { kill: () => handle.kill(), wait: () => handle.wait() };
     },
+    async run(command, options) {
+      try {
+        const result = await sandbox.commands.run(command, {
+          envs: options?.envs,
+          timeoutMs: 30_000,
+        });
+        return { exitCode: Number(result?.exitCode ?? 0) };
+      } catch (error) {
+        // The E2B SDK rejects on a non-zero exit. The caller asked for the
+        // exit CODE — a failing probe is an answer, not an error — so recover
+        // it when the SDK carried one, and read anything else as a failure.
+        const code = (error as { exitCode?: unknown })?.exitCode;
+        return { exitCode: typeof code === "number" ? code : 1 };
+      }
+    },
     getHost: (port) => sandbox.getHost(port),
   };
+}
+
+/**
+ * Read a small text file out of the sandbox.
+ *
+ * The prelaunch token's channel. A daemon baked into the image mints its own
+ * bearer into a 0600 file, and this is how the inspector learns it — over the
+ * SAME API-key-authenticated files API that already writes the daemon's bytes
+ * (`writeBundleInto`), so no new trust relationship is created. The agent's own
+ * shell runs on a different box (a different `runtimeKind`), so nothing the
+ * model drives can reach the file.
+ *
+ * `undefined` for "not there", which is the ordinary answer on an image that
+ * predates prelaunch, and the answer the caller treats as "boot one yourself".
+ */
+export async function readTextFileFrom(
+  sandbox: ConnectedSandboxLike,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    if (!sandbox.files.read) return undefined;
+    const raw = await sandbox.files.read(path);
+    const text =
+      typeof raw === "string" ? raw : new TextDecoder().decode(raw as never);
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } catch {
+    // A missing file, an unreadable one, an SDK that does not have `read`:
+    // every one of them means the same thing to the caller.
+    return undefined;
+  }
+}
+
+/**
+ * Read a BINARY file out of the sandbox — a recording, today.
+ *
+ * THROWS, unlike `readTextFileFrom` above, and the difference is what the
+ * caller does with the answer. A missing token file means "boot a daemon
+ * yourself", a fine outcome the caller handles. A recording that cannot be
+ * read is a run that has lost its evidence, and swallowing that into
+ * `undefined` would make it indistinguishable from a run that was never
+ * recorded — so it is raised, and the ONE caller decides (it logs, returns
+ * null, and releases the box regardless).
+ *
+ * `format: "bytes"` is not optional-in-practice: without it the SDK decodes as
+ * text, and an MP4 through a UTF-8 decoder is a corrupt file that still looks
+ * like a successful read.
+ */
+export async function readBinaryFileFrom(
+  sandbox: ConnectedSandboxLike,
+  path: string,
+): Promise<Uint8Array> {
+  if (!sandbox.files.read) {
+    throw new Error("sandbox files API cannot read");
+  }
+  const raw = await sandbox.files.read(path, { format: "bytes" });
+  if (typeof raw === "string") {
+    // An older SDK that ignored the format. Refused rather than re-encoded:
+    // guessing an encoding for video bytes produces a plausible-looking file
+    // that will not play, which is worse than no file at all.
+    throw new Error("sandbox files API returned text for a binary read");
+  }
+  return raw;
 }
 
 /** Write `content` at `path`, creating the parent directory idempotently. */
@@ -149,13 +252,42 @@ function streamOf(sandbox: unknown): DesktopStreamLike | null {
 }
 
 /**
+ * Reset a stream this process cannot speak for.
+ *
+ * `x11vnc` holds the password and the noVNC proxy in front of it serves the
+ * page. Both are sandbox processes that outlive whichever inspector replica
+ * started them, and `@e2b/desktop`'s own `stop()` only kills the proxy handle
+ * ITS instance owns — which a fresh `connect` does not have. So the reset is
+ * done here, by name, and covers both.
+ */
+const STREAM_RESET_COMMAND =
+  "pkill x11vnc || true; pkill -f novnc_proxy || true";
+
+/**
  * Ensure the desktop stream is up with auth required and return its URL +
  * minted password. `MCPJAM_BROWSER_STREAM_DISABLED=1` is a staging bring-up
  * hatch: it records a well-formed but deliberately unusable stream so the
  * command path can be validated before the stream seam is.
+ *
+ * THE PASSWORD IS NOT RETRIEVABLE, only mintable. `stream.start()` generates it
+ * and keeps it in memory on that `VNCServer` instance; `getAuthKey()` reads
+ * that field and nothing else. A stream left running by an earlier session —
+ * another replica, or this box's WebMCP Inspector session an hour ago — makes
+ * `start()` throw "Stream is already running", and the fresh instance then has
+ * no password to report:
+ *
+ *     Unable to retrieve stream auth key, check if requireAuth is enabled
+ *
+ * which is what reached the model as a failed `browser_navigate`. Swallowing
+ * "already running" was only ever safe for a stream THIS instance had started.
+ *
+ * So an already-running stream is reset and restarted, minting a key we hold.
+ * That rotates the password, which is what a relaunch does anyway (see the
+ * comment on the relaunch path in `browser-session.ts`) — and it is the only
+ * outcome that leaves the row's durable copy actually matching the box.
  */
-async function ensureStreamOn(
-  sandbox: unknown,
+export async function ensureStreamOn(
+  sandbox: ConnectedSandboxLike,
 ): Promise<{ streamUrl: string; streamPassword: string }> {
   if (process.env.MCPJAM_BROWSER_STREAM_DISABLED === "1") {
     return {
@@ -172,10 +304,19 @@ async function ensureStreamOn(
   try {
     await stream.start({ requireAuth: true });
   } catch (error) {
-    // An already-running stream is fine — its auth key is still readable.
-    // Anything else is a real failure the caller must surface.
     const message = error instanceof Error ? error.message : String(error);
+    // Anything but "already running" is a real failure the caller must surface.
     if (!/already/i.test(message)) throw error;
+    logger.info(
+      "[browserd] desktop stream was already running; restarting it to mint a key this process holds",
+    );
+    await sandbox.commands
+      .run(STREAM_RESET_COMMAND, { timeoutMs: 15_000 })
+      .catch(() => {
+        // Best-effort: if the reset could not run, the restart below fails
+        // with the SDK's own error, which says more than this would.
+      });
+    await stream.start({ requireAuth: true });
   }
   const streamPassword = String(await stream.getAuthKey());
   if (!streamPassword) {
@@ -205,6 +346,8 @@ export function connectSessionSandbox(
 ): SessionSandbox {
   return {
     writeBundle: (path, content) => writeBundleInto(sandbox, path, content),
+    readTextFile: (path) => readTextFileFrom(sandbox, path),
+    readBinaryFile: (path) => readBinaryFileFrom(sandbox, path),
     browserd: adaptSandbox(sandbox),
     killBrowserd: () => killBrowserdIn(sandbox),
     ensureStream: () => ensureStreamOn(sandbox),
@@ -237,8 +380,15 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
         signal,
       });
       if (!reserved.ok) {
-        throw new Error(
-          `desktop reserve failed (${reserved.status}): ${reserved.error}`,
+        // The STATUS is kept, not folded into a message. Most of these are
+        // refusals a person can act on — the plan does not include Computers,
+        // the daily start cap is spent, the vendor account is full — and a
+        // caller that cannot tell them apart can only say "something went
+        // wrong" and page an engineer for a quota working as designed.
+        throw new HostedReserveError(
+          reserved.error,
+          reserved.status,
+          reserved.code,
         );
       }
       return { computerId: reserved.value.computerId };
@@ -246,9 +396,19 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
     resolveSandboxId: async (computerId) => {
       const info = await getComputerSandboxInfo({ computerId });
       if (!info.ok) {
-        throw new Error(
-          `sandbox-info failed (${info.status}): ${info.error}`,
-        );
+        // This call authenticates with the INSPECTOR SERVICE TOKEN, not the
+        // member's bearer — so an auth rejection here is our deployment being
+        // wrong, never theirs. Classified as a refusal it would reach them as
+        // `hosted-auth-required` ("sign in again"), asking them to fix
+        // something they cannot see, and would swallow the 500 that pages us
+        // about a token that has stopped working. Thrown bare so it lands on
+        // the 500-and-report path where it belongs.
+        if (info.status === 401 || info.status === 403) {
+          throw new Error(
+            `sandbox-info rejected the inspector service token (${info.status}): ${info.error}`,
+          );
+        }
+        throw new HostedReserveError(info.error, info.status, info.code);
       }
       if (!info.value.providerComputerId) {
         throw new Error("computer has no vendor sandbox id yet");
@@ -263,15 +423,68 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
       lookup: lookupBrowserSession,
       record: recordBrowserSession,
       touch: touchBrowserSession,
+      claimRelaunch: claimBrowserRelaunch,
+      releaseRelaunch: releaseBrowserRelaunch,
     },
+    touchActivity: (args) => touchComputerActivity(args),
     bundle: loadBrowserdBundle,
     bundleHash: browserdBundleHash,
   };
 }
 
-/** Ensure a live browser session with the production seams. */
+/**
+ * Ensure a live HOSTED browser session with the production seams.
+ *
+ * Narrower than `BrowserSessionHandle` on purpose: this door only ever reaches
+ * the E2B desktop, so widening it to the union told every caller to handle a
+ * local handle that cannot arrive — and cost the WebMCP inspector, which needs
+ * the hosted fields, the type that says so.
+ */
+// OVERLOADED, so the three computer callers (the WebMCP inspector route, the
+// Browser Panel, the hosted session resolver) keep the COMPUTER type and stay
+// unedited: they read `computerId` and `streamUrl` straight off the handle,
+// and none of them should have to narrow a union to say "yes, the member's own
+// machine is the member's own machine".
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & { target?: { kind: "computer" } },
+): Promise<ComputerHostedBrowserSessionHandle>;
+export function ensureLiveBrowserSession(
+  args: EnsureBrowserSessionArgs & {
+    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+  },
+): Promise<SandboxHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs,
-): Promise<BrowserSessionHandle> {
-  return ensureBrowserSession(liveBrowserSessionDeps(), args);
+): Promise<HostedBrowserSessionHandle> {
+  // Dispatched rather than cast: the two overloads above are the checked
+  // surface, and narrowing here is what makes the implementation satisfy both
+  // without an `as` that a later edit could quietly widen.
+  const { target, ...rest } = args;
+  if (target?.kind === "sandbox") {
+    return ensureBrowserSession(liveBrowserSessionDeps(), {
+      ...rest,
+      target,
+    }).then(async (handle) => {
+      // RECORDING STARTS HERE, and only here. A per-run box is the unattended
+      // case — nobody is watching it, so the file is the only account of what
+      // the agent saw — and this door is the one every hosted `browser_*` call
+      // comes through, LAZILY: a run that never touches a browser tool never
+      // reaches this line and never records. Put in `browser-session.ts`
+      // instead it would fire for the member's own Playground computer too,
+      // which has a person watching it and no run to be evidence for.
+      //
+      // Awaited but total: `startHostedRecording` swallows everything, so the
+      // handle is returned on exactly the same schedule whether or not the box
+      // could record.
+      await startHostedRecording(handle, {
+        connect: async (sandboxId) =>
+          connectSessionSandbox(await connectDesktopSandbox(sandboxId)),
+      });
+      return handle;
+    });
+  }
+  return ensureBrowserSession(liveBrowserSessionDeps(), {
+    ...rest,
+    ...(target ? { target } : {}),
+  });
 }

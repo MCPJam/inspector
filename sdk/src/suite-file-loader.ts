@@ -160,8 +160,11 @@ export type ResolvedEvalSuiteFileCase = {
   title: string;
   /** Authored analytics grouping label; absent remains unlabelled. */
   intent?: string;
+  /** Authored case kind; absent means derive from matchOptions. */
+  kind?: "capability" | "regression";
   steps: EvalSuiteFileCase["steps"];
-  assertions: NonNullable<EvalSuiteFileCase["assertions"]>;
+  /** The case's checks, from `cases[].checks` or its `assertions` alias. */
+  assertions: NonNullable<EvalSuiteFileCase["checks"]>;
   expectedOutput?: string;
   isNegativeTest: boolean;
   /** Resolved from `cases[].model`, else `defaults.model`. */
@@ -553,8 +556,14 @@ function resolveCase(
     ...(typeof authoredCase.intent === "string"
       ? { intent: authoredCase.intent }
       : {}),
+    ...(authoredCase.kind === "capability" || authoredCase.kind === "regression"
+      ? { kind: authoredCase.kind }
+      : {}),
     steps: authoredCase.steps,
-    assertions: authoredCase.assertions ?? [],
+    // One list, either spelling. `checks` is canonical; `assertions` is the
+    // original name and still loads. The schema refuses both at once, so this
+    // never has to choose between two lists.
+    assertions: authoredCase.checks ?? authoredCase.assertions ?? [],
     ...(authoredCase.expectedOutput === undefined
       ? {}
       : { expectedOutput: authoredCase.expectedOutput }),
@@ -624,6 +633,7 @@ const CASE_KEY_ORDER = [
   "id",
   "title",
   "intent",
+  "kind",
   "disabled",
   "model",
   "repetitions",
@@ -631,6 +641,10 @@ const CASE_KEY_ORDER = [
   "isNegativeTest",
   "expectedOutput",
   "steps",
+  "checks",
+  // Beside `checks`, its deprecated spelling. A key missing from this list
+  // serializes into the remainder AFTER `import`, so an authored `checks`
+  // would move on the first write-back and churn the diff.
   "assertions",
   "import",
 ] as const;

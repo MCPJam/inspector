@@ -38,6 +38,17 @@ vi.mock("../skills/ServerSkillsSection", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
+// The tab resolves the publish permission from Convex; these suites are about
+// the tab's chrome, not about that resolution (see SkillsTab.promote-gate).
+vi.mock("convex/react", () => ({ useConvexAuth: () => ({ isAuthenticated: true }) }));
+const useProjectMembersMock = vi.fn(() => ({
+  canManageMembers: false,
+  isLoading: false,
+}));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: (...args: unknown[]) => useProjectMembersMock(...args),
+}));
+
 import { SkillsTab } from "../SkillsTab";
 
 beforeEach(() => {
@@ -55,13 +66,29 @@ describe("SkillsTab — cloud store gate", () => {
     expect(screen.getByTestId("server-skills")).toBeInTheDocument();
     expect(screen.queryByText("No skills available")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /upload your first skill/i })
+      screen.queryByRole("button", { name: /add your first skill/i })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /upload skill/i })
+      screen.queryByRole("button", { name: /add to library/i })
     ).not.toBeInTheDocument();
     // A list behind the flag is a request the backend gates anyway.
     expect(listSkills).not.toHaveBeenCalled();
+    // Same rule, other API: with no library on the surface there is no Publish
+    // button and nothing this answer could change, so the tab must not hold a
+    // standing project-members subscription for it either.
+    expect(useProjectMembersMock).toHaveBeenCalledWith({
+      isAuthenticated: false,
+      projectId: null,
+    });
+  });
+
+  it("does ask who the viewer is once the store is on the surface", async () => {
+    render(<SkillsTab projectId="project-1" cloudSkillsEnabled />);
+
+    expect(useProjectMembersMock).toHaveBeenCalledWith({
+      isAuthenticated: true,
+      projectId: "project-1",
+    });
   });
 
   it("shows the project store and lists it when enabled", async () => {
@@ -69,7 +96,7 @@ describe("SkillsTab — cloud store gate", () => {
 
     expect(screen.getByTestId("server-skills")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /upload skill/i })
+      screen.getByRole("button", { name: /add to library/i })
     ).toBeInTheDocument();
     expect(listSkills).toHaveBeenCalled();
   });

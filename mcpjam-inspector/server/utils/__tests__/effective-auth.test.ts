@@ -264,6 +264,7 @@ describe("applyHostConformanceKnobs — toolListChanged", () => {
     supportsMrtr: undefined,
     suppressListenChannel: undefined,
     dropToolListChanged: undefined,
+    toolCallCancellation: undefined,
   } as const;
 
   it("adds the host's knobs to a body that carried none", () => {
@@ -299,6 +300,7 @@ describe("conformanceKnobsFromMcpProfile", () => {
       supportsMrtr: false,
       suppressListenChannel: undefined,
       dropToolListChanged: undefined,
+      toolCallCancellation: undefined,
     });
   });
 
@@ -317,57 +319,73 @@ describe("conformanceKnobsFromMcpProfile", () => {
         supportsMrtr: undefined,
         suppressListenChannel: undefined,
         dropToolListChanged: undefined,
+        toolCallCancellation: undefined,
       });
     }
   });
 });
 
-describe("applyHostConformanceKnobs", () => {
-  const off = { firstPageOnly: undefined, supportsMrtr: undefined } as const;
+describe("conformanceKnobsFromMcpProfile — toolCallCancellation", () => {
+  it("forwards only the degraded leaves", () => {
+    // Both eras travel; the SDK picks which one applies once the connection
+    // has negotiated. Resolving here cannot work for an unpinned host.
+    expect(
+      conformanceKnobsFromMcpProfile({
+        toolCallCancellation: { legacy: false },
+      }).toolCallCancellation
+    ).toEqual({ legacy: false });
 
-  it("forces the pins on when the host asks for the degraded client", () => {
+    expect(
+      conformanceKnobsFromMcpProfile({
+        toolCallCancellation: { legacy: true, modern: false },
+      }).toolCallCancellation
+    ).toEqual({ modern: false });
+  });
+
+  it("treats `true`, junk and a non-record as the conforming client", () => {
+    for (const value of [
+      { legacy: true, modern: true },
+      { modern: "false" },
+      {},
+      "nope",
+      null,
+      undefined,
+    ]) {
+      expect(
+        conformanceKnobsFromMcpProfile({ toolCallCancellation: value })
+          .toolCallCancellation
+      ).toBeUndefined();
+    }
+  });
+});
+
+describe("applyHostConformanceKnobs — toolCallCancellation", () => {
+  const conforming = {
+    firstPageOnly: undefined,
+    supportsMrtr: undefined,
+    suppressListenChannel: undefined,
+    dropToolListChanged: undefined,
+    toolCallCancellation: undefined,
+  } as const;
+
+  it("adds the host's leaves to a body that carried none", () => {
     expect(
       applyHostConformanceKnobs(undefined, {
-        firstPageOnly: true,
-        supportsMrtr: false,
+        ...conforming,
+        toolCallCancellation: { modern: false },
       })
-    ).toEqual({ firstPageOnly: true, supportsMrtr: false });
-    expect(
-      applyHostConformanceKnobs(
-        { protocolVersion: "2026-07-28" } as Record<string, unknown>,
-        { firstPageOnly: true, supportsMrtr: undefined }
-      )
-    ).toEqual({ protocolVersion: "2026-07-28", firstPageOnly: true });
+    ).toEqual({ toolCallCancellation: { modern: false } });
   });
 
-  it("strips caller pins when the host wants the full behavior", () => {
-    // The security-relevant direction: a share-link body must not be able to
-    // degrade a conforming host into one that hides tools from the model or
-    // silently drops MRTR rounds.
+  it("REMOVES body-supplied leaves when the host cancels normally", () => {
+    // Same security property as the sibling knobs: a share-link body must not
+    // be able to make a conforming host silently abandon cancelled calls,
+    // leaving servers running tools nobody wants.
     expect(
       applyHostConformanceKnobs(
-        {
-          protocolVersion: "2026-07-28",
-          firstPageOnly: true,
-          supportsMrtr: false,
-        } as Record<string, unknown>,
-        off
+        { toolCallCancellation: { legacy: false } },
+        conforming
       )
-    ).toEqual({ protocolVersion: "2026-07-28" });
-  });
-
-  it("strips only the knob the host reclaims, keeping the other", () => {
-    expect(
-      applyHostConformanceKnobs(
-        { firstPageOnly: true, supportsMrtr: false } as Record<string, unknown>,
-        { firstPageOnly: undefined, supportsMrtr: false }
-      )
-    ).toEqual({ supportsMrtr: false });
-  });
-
-  it("leaves untouched pins alone", () => {
-    const pins = { protocolVersion: "2026-07-28" };
-    expect(applyHostConformanceKnobs(pins, off)).toBe(pins);
-    expect(applyHostConformanceKnobs(undefined, off)).toBeUndefined();
+    ).toEqual({});
   });
 });

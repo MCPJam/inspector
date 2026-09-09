@@ -32,9 +32,11 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
+import { resolvePageToolAttribution } from "@/lib/webmcp-page-tools/attribution";
 import {
   getToolNameFromType,
   getToolStateMeta,
+  readTraceDisplayText,
   type ToolState,
   isDynamicTool,
 } from "../thread-helpers";
@@ -48,7 +50,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
-import { CspWorkbench } from "../csp-workbench";
+import { CspWorkbench, type RecordedWidgetPolicy } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import {
@@ -64,7 +66,6 @@ import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-t
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
-type TraceDisplayMode = "markdown" | "json-markdown";
 
 export function ToolPart({
   part,
@@ -101,6 +102,7 @@ export function ToolPart({
   serverId,
   mcpToolResultImageRendering,
   rawOutput,
+  recordedWidgetDiagnostics,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -152,6 +154,7 @@ export function ToolPart({
   serverId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
+  recordedWidgetDiagnostics?: RecordedWidgetPolicy;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -163,7 +166,16 @@ export function ToolPart({
   // through the shared app-tool registry/log helper so UI never leaks the
   // model-facing alias when a human-readable tool name is available.
   const appToolAttribution = useAppToolAttribution(label, chatSessionId);
-  const displayLabel = appToolAttribution?.rawName ?? label;
+  // WebMCP page tools: read from the RESULT, never from a live store. A store
+  // answers for the browser as it is now, so a card scrolled back after the
+  // model navigated elsewhere would be attributed to whatever tool happens to
+  // carry that name today — the card would change its own history.
+  const pageToolAttribution = resolvePageToolAttribution({
+    toolName: label,
+    output: (part as any).output,
+  });
+  const displayLabel =
+    pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
@@ -204,7 +216,7 @@ export function ToolPart({
     "data" | "state" | "sandbox" | "context" | null
   >("data");
   const [resultImageMode, setResultImageMode] = useState<"images" | "raw">(
-    "images"
+    "images",
   );
 
   const inputData = (part as any).input;
@@ -225,7 +237,7 @@ export function ToolPart({
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
-    mcpToolResultImageRendering
+    mcpToolResultImageRendering,
   );
   const showInlineImagePreview = imageRenderPlacement === "inline";
   const showPanelImagePreview = imageRenderPlacement === "collapsed";
@@ -233,7 +245,7 @@ export function ToolPart({
     showInlineImagePreview || (showPanelImagePreview && isExpanded);
   const resultImageState = useMcpToolResultImagePreviews(
     canRenderToolImages ? imagePreviewData : undefined,
-    { serverId, renderingPolicy: mcpToolResultImageRendering }
+    { serverId, renderingPolicy: mcpToolResultImageRendering },
   );
   // Editors render the effective values (what the widget sees) when the parent
   // supplies them; fall back to the raw part data otherwise (non-widget branch).
@@ -241,17 +253,14 @@ export function ToolPart({
   const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
-  const traceDisplayText =
-    typeof (part as unknown as { traceDisplayText?: unknown })
-      .traceDisplayText === "string"
-      ? (part as unknown as { traceDisplayText: string }).traceDisplayText
-      : undefined;
-  const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
-    .traceDisplayMode;
-  const hasAttachedTraceDisplay = Boolean(
-    traceDisplayText &&
-      (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown")
-  );
+  // Through the package's shared reader rather than a local copy of the same
+  // field test. This channel had three hand-rolled readers with three
+  // different gates — this one required a recognised mode, `PartSwitch`
+  // ignored the mode and accepted whitespace, `ToolCallPart` rejected it —
+  // which is how BB-198 stayed open on one surface while this one rendered
+  // the same field fine.
+  const traceDisplayText = readTraceDisplayText(part);
+  const hasAttachedTraceDisplay = traceDisplayText !== undefined;
   const hasInput = inputData !== undefined && inputData !== null;
   const paramCount = useMemo(() => {
     if (!hasInput) return 0;
@@ -266,16 +275,34 @@ export function ToolPart({
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
-  const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined
+  const storedWidgetDebugInfo = useWidgetDebugStore((s) =>
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
+  // A completed eval can retain live store data from the streaming phase.
+  // Once its widget becomes a frozen screenshot, the recorded snapshot is the
+  // source of truth and stale live diagnostics must not leak into the card.
+  const widgetDebugInfo = recordedWidgetDiagnostics
+    ? undefined
+    : storedWidgetDebugInfo;
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
-    [hostContext]
+    [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
-  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
+  const hasRecordedWidgetDebug = !!recordedWidgetDiagnostics;
+  const hasWidgetDebugData = hasWidgetDebug || hasRecordedWidgetDebug;
+  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebugData;
+
+  useEffect(() => {
+    if (
+      hasRecordedWidgetDebug &&
+      activeDebugTab !== "data" &&
+      activeDebugTab !== "sandbox"
+    ) {
+      setActiveDebugTab("data");
+    }
+  }, [activeDebugTab, hasRecordedWidgetDebug]);
 
   const showDisplayModeControls =
     displayMode !== undefined &&
@@ -305,12 +332,16 @@ export function ToolPart({
       badge?: number;
     }[] = [{ tab: "data", icon: Database, label: "Data" }];
 
-    if (uiType === UIType.OPENAI_SDK) {
+    if (hasWidgetDebug && uiType === UIType.OPENAI_SDK) {
       options.push({ tab: "state", icon: Box, label: "Widget State" });
     }
 
     // Add model context tab for MCP Apps
-    if (uiType === UIType.MCP_APPS && widgetDebugInfo?.modelContext) {
+    if (
+      hasWidgetDebug &&
+      uiType === UIType.MCP_APPS &&
+      widgetDebugInfo?.modelContext
+    ) {
       options.push({
         tab: "context",
         icon: MessageCircle,
@@ -328,6 +359,7 @@ export function ToolPart({
     return options;
   }, [
     uiType,
+    hasWidgetDebug,
     widgetDebugInfo?.csp?.violations?.length,
     widgetDebugInfo?.modelContext,
   ]);
@@ -396,8 +428,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                  ? "bg-background text-foreground shadow-sm cursor-pointer"
-                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                    ? "bg-background text-foreground shadow-sm cursor-pointer"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -419,18 +451,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-          ? "State"
-          : tab === "sandbox"
-          ? "Sandbox"
-          : "Context";
+            ? "State"
+            : tab === "sandbox"
+              ? "Sandbox"
+              : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-          ? "Widget State"
-          : tab === "sandbox"
-          ? "Sandbox"
-          : "Model Context";
+            ? "Widget State"
+            : tab === "sandbox"
+              ? "Sandbox"
+              : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -446,8 +478,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -534,7 +566,7 @@ export function ToolPart({
               <p className="font-medium">
                 {canRun
                   ? "Re-run tool with edited input"
-                  : runDisabledReason ?? "Re-run tool with edited input"}
+                  : (runDisabledReason ?? "Re-run tool with edited input")}
               </p>
             </TooltipContent>
           </Tooltip>
@@ -755,7 +787,7 @@ export function ToolPart({
   // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
     const urls = filterSafeExternalLinkUrls(
-      (resultDisplayData as { authUrls?: unknown })?.authUrls
+      (resultDisplayData as { authUrls?: unknown })?.authUrls,
     );
     if (urls.length === 0) return null;
     return (
@@ -823,8 +855,8 @@ export function ToolPart({
               approvalVisualState === "approved"
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
-                ? "border-destructive/40 bg-destructive/10"
-                : "border-border/60 bg-muted/30"
+                  ? "border-destructive/40 bg-destructive/10"
+                  : "border-border/60 bg-muted/30",
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
@@ -837,6 +869,11 @@ export function ToolPart({
             {appToolAttribution && (
               <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
                 from {appToolAttribution.appName}
+              </span>
+            )}
+            {pageToolAttribution?.origin && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                from {pageToolAttribution.origin.replace(/^https?:\/\//, "")}
               </span>
             )}
 
@@ -853,7 +890,7 @@ export function ToolPart({
                     <ChevronDown
                       className={cn(
                         "h-3 w-3 transition-transform",
-                        paramsExpanded && "rotate-180"
+                        paramsExpanded && "rotate-180",
                       )}
                     />
                   </button>
@@ -947,6 +984,15 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            {pageToolAttribution?.origin && (
+              <span
+                data-testid="page-tool-origin"
+                title="This tool was declared by the page the browser had open."
+                className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0"
+              >
+                from {pageToolAttribution.origin.replace(/^https?:\/\//, "")}
+              </span>
+            )}
             {runLocation && (
               <span
                 data-testid="tool-run-location"
@@ -1020,7 +1066,16 @@ export function ToolPart({
         <div className="border-t border-border/40 px-3 py-3">
           {!hideDiagnosticsUI && (
             <>
-              {hasWidgetDebug && activeDebugTab === "data" && renderToolData()}
+              {hasWidgetDebugData && activeDebugTab === "data" && (
+                <div className="space-y-2">
+                  {hasRecordedWidgetDebug && !hasWidgetDebug && (
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Recorded tool data
+                    </div>
+                  )}
+                  {renderToolData()}
+                </div>
+              )}
               {hasWidgetDebug && activeDebugTab === "state" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1070,6 +1125,14 @@ export function ToolPart({
                   protocol={widgetDebugInfo.protocol}
                 />
               )}
+              {!hasWidgetDebug &&
+                hasRecordedWidgetDebug &&
+                activeDebugTab === "sandbox" && (
+                  <CspWorkbench
+                    protocol="mcp-apps"
+                    recordedPolicy={recordedWidgetDiagnostics}
+                  />
+                )}
               {hasWidgetDebug && activeDebugTab === "context" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1080,7 +1143,7 @@ export function ToolPart({
                       <div className="text-[9px] text-muted-foreground/50">
                         Updated:{" "}
                         {new Date(
-                          widgetDebugInfo.modelContext.updatedAt
+                          widgetDebugInfo.modelContext.updatedAt,
                         ).toLocaleTimeString()}
                       </div>
                     )}
@@ -1139,7 +1202,7 @@ export function ToolPart({
                   )}
                 </div>
               )}
-              {!hasWidgetDebug && renderToolData()}
+              {!hasWidgetDebugData && renderToolData()}
             </>
           )}
         </div>

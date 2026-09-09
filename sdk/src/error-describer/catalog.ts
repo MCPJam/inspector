@@ -115,6 +115,10 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
+  // The MCP server under test throttled US. That is the server's own
+  // behaviour, so it belongs to the server being inspected — not to the
+  // user's provider settings, which is what `provider/quota` claims.
+  "server/rate_limited": "user_server",
   // "Enable the required client capability in the connection's Client
   // settings" — a toggle the user owns.
   "jsonrpc/missing_required_client_capability": "user_config",
@@ -731,6 +735,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Switch to a different provider in Settings.",
     ],
     "provider-quota",
+    "warning",
+  ),
+  "server/rate_limited": entry(
+    "server/rate_limited",
+    "MCP server rate limit",
+    "The MCP server rejected the request with HTTP 429 (too many requests).",
+    [
+      "The server enforces its own per-client rate limit.",
+      "An upstream API the server calls is throttling it.",
+      "A burst of tool calls exceeded what the server allows.",
+    ],
+    [
+      "Wait for the server's limit window to reset, then retry.",
+      "Reduce concurrency or the number of tool calls in the run.",
+      "Check the server's own rate-limit documentation or logs.",
+    ],
+    "server-rate-limited",
     "warning",
   ),
 

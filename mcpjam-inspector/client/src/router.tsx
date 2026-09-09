@@ -129,11 +129,12 @@ const ROUTE_ELEMENTS: Record<
   // state Connect has already built.
   "servers/plugins/:pluginId": { element: <ServersRoute /> },
   "servers/:serverId": { element: <ServersRoute /> },
-  // Legacy `/clients` URLs redirect to canonical `/hosts` (the tab was
-  // renamed Client → Host). Route through `buildHostsPath` so the
-  // `:hostId` deep-link is re-encoded exactly like canonical links
-  // (router params arrive decoded; ids with reserved chars would
-  // otherwise split into extra path segments and fail to match).
+  // `/clients` URLs redirect to `/hosts`, which is where the tab still lives.
+  // The product noun went the OTHER way — Host → Client — so this points at
+  // the spelling the rename left behind, not at a canonical one. Route
+  // through `buildHostsPath` so the `:hostId` deep-link is re-encoded exactly
+  // like canonical links (router params arrive decoded; ids with reserved
+  // chars would otherwise split into extra path segments and fail to match).
   clients: { loader: () => redirect(buildHostsPath()) },
   "clients/:hostId": {
     loader: ({ params }: any) => redirect(buildHostsPath(params.hostId)),
@@ -250,6 +251,8 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
   "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/observability": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/budget": { element: <OrganizationsRoute /> },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
@@ -279,6 +282,7 @@ const ROUTE_ELEMENTS: Record<
   // routes above changes while the redesign is behind a flag.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
+  "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/test/:testId": { element: <EvaluateRoute /> },
@@ -335,7 +339,7 @@ const ROUTE_ELEMENTS: Record<
  * what the router matched, and it keeps the wrapper callable without a Request.
  */
 function withProjectScopedLoader(
-  loader: (args: any) => unknown
+  loader: (args: any) => unknown,
 ): (args: any) => unknown {
   return async (args: any) => {
     const projectId = String(args.params?.projectId ?? "");
@@ -359,7 +363,7 @@ function withProjectScopedLoader(
  */
 function routeChildFor(
   route: AppRouteEntry,
-  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown }
+  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown },
 ) {
   const isIndex = route.path === "/";
   return {
@@ -383,7 +387,7 @@ function buildRouteChildren() {
   for (const path of Object.keys(ROUTE_ELEMENTS)) {
     if (!tablePaths.has(path)) {
       throw new Error(
-        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`
+        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`,
       );
     }
   }
@@ -394,7 +398,7 @@ function buildRouteChildren() {
       // A route table entry with nothing to render is a first-party bug —
       // the coverage test catches it, but fail loudly if one slips through.
       throw new Error(
-        `[router] no element registered for route "${route.path}"`
+        `[router] no element registered for route "${route.path}"`,
       );
     }
     return rendered;
@@ -419,9 +423,9 @@ function buildRouteChildren() {
           redirect(
             buildProjectPath(
               String(params.projectId),
-              PROJECT_HOME_RELATIVE_PATH
-            )
-          )
+              PROJECT_HOME_RELATIVE_PATH,
+            ),
+          ),
         ),
       };
     }
@@ -455,7 +459,7 @@ function buildRouteChildren() {
   });
 
   const unscopedChildren = APP_ROUTES.filter(
-    (route) => route.scope !== "project"
+    (route) => route.scope !== "project",
   ).map((route) => routeChildFor(route, elementFor(route)));
 
   return [
@@ -497,9 +501,8 @@ export function createAppRouter(): AppRouter {
           {
             path: "__e2e/oauth-debugger",
             lazy: async () => {
-              const { OAuthDebuggerE2EHarness } = await import(
-                "./components/e2e/OAuthDebuggerE2EHarness"
-              );
+              const { OAuthDebuggerE2EHarness } =
+                await import("./components/e2e/OAuthDebuggerE2EHarness");
               return { Component: OAuthDebuggerE2EHarness };
             },
           },

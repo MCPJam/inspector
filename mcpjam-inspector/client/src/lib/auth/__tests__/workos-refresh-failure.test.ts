@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleWorkosRefreshFailure } from "../workos-refresh-failure";
+import {
+  markSignOutInProgress,
+  resetSignOutLatchForTests,
+  SIGN_OUT_SUPPRESSION_WINDOW_MS,
+} from "../sign-out-latch";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const mockState = vi.hoisted(() => ({
@@ -23,6 +28,7 @@ vi.mock("@/lib/permalink-signin-return", () => ({
 describe("handleWorkosRefreshFailure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetSignOutLatchForTests();
     useSessionRefreshStore.setState({
       status: "idle",
       kind: null,
@@ -73,5 +79,34 @@ describe("handleWorkosRefreshFailure", () => {
 
     expect(() => handleWorkosRefreshFailure({ signIn })).not.toThrow();
     expect(signIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the refresh failure a sign-out causes itself", () => {
+    // Signing out revokes the session, and authkit's refresh timer keeps
+    // ticking through the logout navigation — so it reports the revocation we
+    // asked for. Redirecting on it would `location.assign` to the hosted login
+    // page over the still-pending logout, which is what put the user on a sign
+    // in screen when they pressed Log out.
+    const signIn = vi.fn();
+    markSignOutInProgress();
+
+    handleWorkosRefreshFailure({ signIn });
+
+    expect(signIn).not.toHaveBeenCalled();
+    expect(mockState.captureAppSignInReturnPath).not.toHaveBeenCalled();
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+    expect(useSessionRefreshStore.getState().status).toBe("idle");
+  });
+
+  it("resumes redirecting once the sign-out window lapses", () => {
+    // A sign-out on an already-dead session never navigates, so the tab lives
+    // on. It must go back to handling real session failures.
+    const signIn = vi.fn();
+    markSignOutInProgress(Date.now() - SIGN_OUT_SUPPRESSION_WINDOW_MS - 1);
+
+    handleWorkosRefreshFailure({ signIn });
+
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
   });
 });

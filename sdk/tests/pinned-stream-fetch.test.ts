@@ -157,7 +157,7 @@ describe("a redirect is re-validated at the hop that names it", () => {
     });
 
     await expect(loopbackFetch()(`${origin}/start`)).rejects.toThrow(
-      /private\/reserved/i,
+      /link-local or cloud-metadata/i,
     );
     // The target answered once; the metadata hop was refused before a socket
     // to it existed.

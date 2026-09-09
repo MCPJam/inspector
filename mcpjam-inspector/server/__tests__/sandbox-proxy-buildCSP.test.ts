@@ -662,8 +662,26 @@ describe("sandbox-proxy connect guard — CSP source matching", () => {
     return nativeFetch.mock.calls.length === 1;
   }
 
-  describe("srcdoc base URL", () => {
-    it("resolves relative requests against document.baseURI", async () => {
+  describe("document base URL", () => {
+    // The view is written into a same-origin frame, so its document URL is
+    // the proxy URL (the srcdoc fallback inherits the same baseURI). Both
+    // shapes must resolve relative requests and 'self' the same way.
+    const PROXY_URL =
+      "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1";
+
+    it("resolves relative requests against the proxy URL", async () => {
+      await expect(
+        fetchAllowed(["http://127.0.0.1:6274"], "/api/data", PROXY_URL),
+      ).resolves.toBe(true);
+    });
+
+    it("matches 'self' against the proxy origin", async () => {
+      await expect(
+        fetchAllowed(["'self'"], "http://127.0.0.1:6274/api/data", PROXY_URL),
+      ).resolves.toBe(true);
+    });
+
+    it("resolves relative requests against document.baseURI (srcdoc fallback)", async () => {
       await expect(
         fetchAllowed(
           ["https://widget.example.test"],
@@ -674,7 +692,7 @@ describe("sandbox-proxy connect guard — CSP source matching", () => {
       ).resolves.toBe(true);
     });
 
-    it("matches 'self' against document.baseURI origin", async () => {
+    it("matches 'self' against document.baseURI origin (srcdoc fallback)", async () => {
       await expect(
         fetchAllowed(
           ["'self'"],

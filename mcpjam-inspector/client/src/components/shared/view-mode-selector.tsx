@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +31,17 @@ export function ViewModeSelector<T extends string>({
 }) {
   const reduceMotion = useReducedMotion();
   const layoutId = `view-mode-indicator-${indicatorId ?? ariaLabel}`;
+  const activeRef = useRef<HTMLButtonElement>(null);
+
+  // The strip scrolls on narrow viewports, so selecting an off-screen tab
+  // would otherwise leave it — and the sliding indicator — past the edge.
+  useEffect(() => {
+    activeRef.current?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [value]);
+
   return (
     <nav
       className={cn(
@@ -43,6 +55,7 @@ export function ViewModeSelector<T extends string>({
         return (
           <button
             key={option.value}
+            ref={active ? activeRef : undefined}
             type="button"
             disabled={option.disabled}
             aria-current={active ? "page" : undefined}

@@ -57,6 +57,12 @@ const LOCAL_MODEL: ModelDefinition = {
   name: "Llama3 local",
   provider: "ollama",
 };
+/** The Cursor CLI host template's neutral sentinel — no provider serves it. */
+const CURSOR_SENTINEL_MODEL: ModelDefinition = {
+  id: "cursor/auto",
+  name: "Cursor Auto",
+  provider: "cursor",
+};
 
 const baseArgs = (overrides: Record<string, unknown> = {}) => ({
   modelDefinition: MCPJAM_MODEL,
@@ -142,6 +148,57 @@ describe("resolveTurnRuntime — runtime shape", () => {
       extraBodyFields: { foo: "bar" },
       harness: "claude-code",
     });
+  });
+
+  it("external account WITH a harness is refused here — this surface cannot deliver the credential", async () => {
+    // The host's model id names no provider model, so there is no org provider
+    // to resolve and no MCPJam credential to spend — and the resolver no longer
+    // ships `providerKey: "cursor"` to `/stream/org`, which Convex answered
+    // with `provider_not_configured: cursor`.
+    //
+    // But "not a provider question" is not the same as "runnable". An
+    // external-account runtime authenticates with the customer's own vendor
+    // credential, which `runHarnessTurn` takes ONLY from the caller's
+    // materialized project secrets — and `runUnifiedAssistantTurn`, the facade
+    // every caller of this resolver drives, has no `runtimeSecrets` seam at
+    // all. Handing back a runnable "hosted + harness" runtime advertised a turn
+    // that then died inside the harness telling the user to add a
+    // `CURSOR_API_KEY` secret they may already have set. Refuse instead, with
+    // the real reason, before the caller marks the turn as possibly-spent.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "external-account",
+    });
+
+    await expect(
+      resolveTurnRuntime(
+        baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL, harness: "cursor" }),
+      ),
+    ).rejects.toThrow(/cursor\/auto[\s\S]*your own account/);
+    // Not "add a secret" — the diagnosis names the surface, not the customer.
+    await expect(
+      resolveTurnRuntime(
+        baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL, harness: "cursor" }),
+      ),
+    ).rejects.toThrow(/cannot deliver that credential/);
+    // And no round-trip that could answer `provider_not_configured`.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("external account without a harness is refused, not routed to a provider", async () => {
+    // A sentinel on a turn with no harness selected cannot run at all. Saying
+    // so here — before the caller marks the turn as possibly-spent — is what
+    // replaces `provider_not_configured: cursor`, which read as "go configure
+    // a key" for a provider that has no keys.
+    resolveSyntheticModelSourceMock.mockResolvedValue({
+      source: "external-account",
+    });
+
+    // The OTHER refusal sentence: this one is about the sentinel itself, not
+    // about what this surface can deliver, so the two arms stay legible apart.
+    await expect(
+      resolveTurnRuntime(baseArgs({ modelDefinition: CURSOR_SENTINEL_MODEL })),
+    ).rejects.toThrow(/cursor\/auto[\s\S]*not a model MCPJam can run/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("cloud BYOK → hosted /stream/org with providerKey + serverIds (byte-parity body)", async () => {
@@ -321,6 +378,35 @@ describe("classifyTurnFailure (exported single source of truth)", () => {
     expect(classifyTurnFailure("monthly budget exhausted")).toBe(
       "rate_limited",
     );
+  });
+
+  it("folds a bare 429 / 'too many requests' into rate_limited", () => {
+    // The local-BYOK path re-throws the provider's sentence with no code and
+    // no HTTP status appended, so a throttled user key arrives as prose only.
+    expect(classifyTurnFailure("429 Too Many Requests")).toBe("rate_limited");
+    expect(classifyTurnFailure("Anthropic returned Too Many Requests")).toBe(
+      "rate_limited",
+    );
+    // The wording a real throttle produces: the AI SDK retries three times and
+    // wraps the last provider error in a `RetryError`.
+    expect(
+      classifyTurnFailure(
+        "Failed after 3 attempts. Last error: Too Many Requests",
+      ),
+    ).toBe("rate_limited");
+  });
+
+  it("does NOT read a port or id that merely contains 429 as rate_limited", () => {
+    expect(classifyTurnFailure("connect ECONNREFUSED 127.0.0.1:4291")).toBe(
+      "failed",
+    );
+    expect(classifyTurnFailure("run 14290 aborted")).toBe("failed");
+    // The exact port, not just a longer one: `:429` is the whole number.
+    expect(classifyTurnFailure("connect ECONNREFUSED 127.0.0.1:429")).toBe(
+      "failed",
+    );
+    expect(classifyTurnFailure("listen EADDRINUSE 0.0.0.0:429")).toBe("failed");
+    expect(classifyTurnFailure("turn took 1.429 seconds")).toBe("failed");
   });
 
   it("does NOT over-match 'capacity'/'recap'/'escape' as rate_limited", () => {
