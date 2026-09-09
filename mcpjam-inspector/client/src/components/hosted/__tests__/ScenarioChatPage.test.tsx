@@ -2249,6 +2249,12 @@ describe("ScenarioChatPage", () => {
     // every row — so the composer showed a green dot for a server nothing had
     // ever reached, and the first real connection attempt happened inside a
     // chat turn.
+
+    // Every case here is about reachability, so the tester has consented —
+    // the recording notice blocks the composer first and would otherwise be
+    // the reason under assertion.
+    beforeEach(() => consentAlreadyGiven());
+
     function writeDrawingScenario() {
       writeScenarioSession({
         scenarioId: "sbx_1",
