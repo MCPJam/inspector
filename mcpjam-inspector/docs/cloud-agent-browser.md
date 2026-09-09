@@ -16,6 +16,8 @@ mcpjam browser navigate https://example.com --cloud --project PROJECT_ID --comma
 mcpjam browser observe --cloud --project PROJECT_ID --mode a11y
 mcpjam browser act --cloud --project PROJECT_ID --verb click --ref e3 --command-id click-one
 mcpjam browser observe --cloud --project PROJECT_ID --mode screenshot
+mcpjam browser observe --cloud --project PROJECT_ID --mode page_tools
+mcpjam browser invoke TOOL_KEY --input '{}' --cloud --project PROJECT_ID --command-id tool-call-one
 mcpjam browser trace --cloud --project PROJECT_ID
 mcpjam browser sessions --cloud --project PROJECT_ID
 mcpjam browser close --cloud --project PROJECT_ID
@@ -59,7 +61,8 @@ fetched separately and are not embedded in trace listings.
 `POST /api/v1/browser-sessions/{session,sessions,command,trace,note,artifact,close}`
 uses the existing public bearer authentication. Requests include `projectId`, and
 all operations other than open/list include `sessionId`. Command bodies use the
-existing browser agent contract (`navigate`, `act`, `observe`); outcomes are
+existing browser agent contract (`navigate`, `back`, `forward`, `reload`, `act`, `observe`,
+`invoke_page_tool`, `cancel_page_tool`); outcomes are
 `executed`, `refused`, or `unknown`, returned in-band with HTTP 200. Protocol and
 authorization failures use the standard v1 error envelope.
 

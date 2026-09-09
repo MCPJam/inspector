@@ -677,6 +677,91 @@ export function registerBrowserCommands(program: Command): void {
       });
     });
 
+  for (const op of ["back", "forward", "reload"] as const) {
+    addCommonOptions(
+      browser.command(op).description(`${op} the current browser tab`),
+    )
+      .option("--tab <id>", "Tab to drive")
+      .option("--command-id <id>", "Idempotency key for this command")
+      .action(async (options, command) => {
+        const global = getGlobalOptions(
+          command,
+          options.cloud ? 120_000 : 30_000,
+        );
+        const projectId = projectOf(options);
+        const sessionId = sessionOf(options, projectId);
+        const result = await post(
+          options,
+          "/command",
+          {
+            projectId,
+            sessionId,
+            command: { op, observeAfter: "a11y" },
+            ...identity(options),
+            ...(options.tab ? { tabId: options.tab } : {}),
+            ...(options.commandId ? { commandId: options.commandId } : {}),
+          },
+          global.timeout,
+        );
+        await emit(result, {
+          options,
+          projectId,
+          sessionId,
+          format: global.format,
+          saveScreenshots: false,
+        });
+      });
+  }
+
+  addCommonOptions(
+    browser
+      .command("invoke <toolKey>")
+      .description("Invoke a WebMCP tool listed by observe --mode page_tools"),
+  )
+    .option("--input <json>", "Tool arguments as JSON", "{}")
+    .option("--frame <id>", "Frame declaring the tool")
+    .option("--tab <id>", "Tab declaring the tool")
+    .option("--command-id <id>", "Idempotency key for this invocation")
+    .action(async (toolKey, options, command) => {
+      let input: unknown;
+      try {
+        input = JSON.parse(options.input);
+      } catch {
+        throw usageError("--input must be valid JSON");
+      }
+      const global = getGlobalOptions(
+        command,
+        options.cloud ? 120_000 : 30_000,
+      );
+      const projectId = projectOf(options);
+      const sessionId = sessionOf(options, projectId);
+      const result = await post(
+        options,
+        "/command",
+        {
+          projectId,
+          sessionId,
+          command: {
+            op: "invoke_page_tool",
+            toolKey,
+            input,
+            ...(options.frame ? { frameId: options.frame } : {}),
+          },
+          ...identity(options),
+          ...(options.tab ? { tabId: options.tab } : {}),
+          ...(options.commandId ? { commandId: options.commandId } : {}),
+        },
+        global.timeout,
+      );
+      await emit(result, {
+        options,
+        projectId,
+        sessionId,
+        format: global.format,
+        saveScreenshots: false,
+      });
+    });
+
   // ---- note -------------------------------------------------------------
   addCommonOptions(
     browser

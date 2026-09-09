@@ -196,6 +196,28 @@ describe("cloud agent browser route", () => {
     expect(mocks.fetch.mock.calls).toHaveLength(1);
     expect(mocks.ensure).not.toHaveBeenCalled();
   });
+  it("maps a WebMCP invocation through the same agent command boundary", async () => {
+    const response = await request("command", {
+      sessionId: "s1",
+      command: {
+        op: "invoke_page_tool",
+        toolKey: "getAvailability",
+        input: { day: "Monday" },
+      },
+    });
+    expect((await response.json()).status).toBe("executed");
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "agent",
+        action: {
+          kind: "webmcp_invoke",
+          toolKey: "getAvailability",
+          input: { day: "Monday" },
+        },
+      }),
+      "boot",
+    );
+  });
   it("maps handoff refusal without capturing a page", async () => {
     mocks.send.mockResolvedValue({ status: "lease_blocked", lease: "parked" });
     const response = await request("command", {

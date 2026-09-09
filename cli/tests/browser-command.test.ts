@@ -38,6 +38,10 @@ test("browser commands are registered and documented", async () => {
     "trace",
     "close",
     "consent",
+    "invoke",
+    "back",
+    "forward",
+    "reload",
   ]) {
     assert.match(result.stdout, new RegExp(`\\b${verb}\\b`));
   }
@@ -415,12 +419,33 @@ test("cloud uses bearer auth and deployment-scoped session storage without local
       { env: env(file) },
     );
     assert.equal(observed.exitCode, 0, observed.stderr);
+    const invoked = await runCli(
+      [
+        "--format",
+        "json",
+        "browser",
+        "invoke",
+        "getAvailability",
+        "--input",
+        '{"day":"Monday"}',
+        ...flags,
+      ],
+      undefined,
+      { env: env(file) },
+    );
+    assert.equal(invoked.exitCode, 0, invoked.stderr);
+    assert.deepEqual(calls[3].body.command, {
+      op: "invoke_page_tool",
+      toolKey: "getAvailability",
+      input: { day: "Monday" },
+    });
     assert.deepEqual(
       calls.map((c) => c.url),
       [
         "/api/v1/browser-sessions/session",
         "/api/v1/browser-sessions/command",
         "/api/v1/browser-sessions/artifact",
+        "/api/v1/browser-sessions/command",
       ],
     );
     assert.ok(
