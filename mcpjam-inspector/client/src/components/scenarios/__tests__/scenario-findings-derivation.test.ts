@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveScenarioFindingsFootnotes,
   deriveScenarioFindingsModel,
   type ScenarioFindingsSession,
 } from "../findings/scenario-findings-derivation";
@@ -174,5 +175,85 @@ describe("deriveScenarioFindingsModel", () => {
     expect(model.personas).toEqual([]);
     expect(model.sessionCount).toBe(0);
     expect(model.unanalyzedCount).toBe(0);
+  });
+});
+
+/**
+ * The grid is tallied from sessions, and the drilldown that supplies them pages
+ * against a cap. A partial grid can drop a goal from a persona entirely, so the
+ * shortfall is reported rather than absorbed.
+ */
+describe("coverage", () => {
+  it("marks the grid partial when it saw fewer sessions than the study has", () => {
+    const model = deriveScenarioFindingsModel({
+      sessions: [session({ _id: "a" }), session({ _id: "b" })],
+      sessionCount: 900,
+    });
+
+    expect(model.coverage).toEqual({
+      scanned: 2,
+      total: 900,
+      truncated: true,
+    });
+  });
+
+  it("marks the grid complete when it saw the whole study", () => {
+    const model = deriveScenarioFindingsModel({
+      sessions: [session({ _id: "a" }), session({ _id: "b" })],
+      sessionCount: 2,
+    });
+    expect(model.coverage.truncated).toBe(false);
+  });
+
+  it("believes the fetch over the arithmetic when it reports a cap", () => {
+    // The drilldown knows it stopped short even when the counts happen to
+    // line up, so an explicit `totalTruncated` wins.
+    const model = deriveScenarioFindingsModel({
+      sessions: [session({ _id: "a" })],
+      sessionCount: 1,
+      truncated: true,
+    });
+    expect(model.coverage.truncated).toBe(true);
+  });
+});
+
+describe("deriveScenarioFindingsFootnotes", () => {
+  it("says the scan hit its cap, in the words the swarm card already uses", () => {
+    const model = deriveScenarioFindingsModel({
+      sessions: [session()],
+      sessionCount: 900,
+    });
+    expect(deriveScenarioFindingsFootnotes(model)).toContain(
+      "Session scan hit its cap — counts cover a subset"
+    );
+  });
+
+  it("counts the sessions no persona speaks for", () => {
+    const one = deriveScenarioFindingsModel({
+      sessions: [session({ _id: "a" }), session({ _id: "b", sentiment: undefined })],
+      sessionCount: 2,
+    });
+    expect(deriveScenarioFindingsFootnotes(one)).toContain(
+      "1 session not analyzed yet — in no persona above"
+    );
+
+    const many = deriveScenarioFindingsModel({
+      sessions: [
+        session({ _id: "a", sentiment: undefined }),
+        session({ _id: "b", sentiment: undefined }),
+      ],
+      sessionCount: 2,
+    });
+    expect(deriveScenarioFindingsFootnotes(many)).toContain(
+      "2 sessions not analyzed yet — in no persona above"
+    );
+  });
+
+  it("stays silent on a complete, fully analyzed study", () => {
+    const model = deriveScenarioFindingsModel({
+      sessions: [session({ _id: "a" }), session({ _id: "b" })],
+      sessionCount: 2,
+    });
+    expect(deriveScenarioFindingsFootnotes(model)).toEqual([]);
   });
 });

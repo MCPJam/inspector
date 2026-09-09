@@ -63,6 +63,24 @@ export interface ScenarioFindingsModel extends SwarmFindingsModel {
    * understate the study.
    */
   unanalyzedCount: number;
+  /**
+   * How much of the study the persona × goal grid was actually built from.
+   *
+   * Nothing stores that grid, so it is tallied from sessions, and the drilldown
+   * that supplies them pages against a server-side cap. On a large study the
+   * grid is therefore a SUBSET, and a goal can be missing from a persona
+   * entirely because its sessions were never scanned. That is not a rounding
+   * error, so it is reported rather than absorbed — see
+   * {@link deriveScenarioFindingsFootnotes}.
+   */
+  coverage: {
+    /** Rows the grid was built from. */
+    scanned: number;
+    /** The study's real total, as Insights reports it. */
+    total: number;
+    /** The grid is a subset: some sessions were never looked at. */
+    truncated: boolean;
+  };
 }
 
 /**
@@ -182,8 +200,16 @@ export function deriveScenarioFindingsModel(args: {
    * thing BB-145 asks for. Defaults to the rows handed in.
    */
   sessionCount?: number;
+  /**
+   * Whether the fetch that produced `sessions` stopped short — the drilldown's
+   * `totalTruncated`. Omit and it is inferred from the counts, which is the
+   * conservative read: fewer rows than the study has means the grid is partial.
+   */
+  truncated?: boolean;
 }): ScenarioFindingsModel {
   const { sessions, sessionCount } = args;
+  const total = sessionCount ?? sessions.length;
+  const truncated = args.truncated ?? sessions.length < total;
 
   const bySentiment = new Map<SessionSentiment, ScenarioFindingsSession[]>();
   let unanalyzedCount = 0;
@@ -220,10 +246,36 @@ export function deriveScenarioFindingsModel(args: {
 
   return {
     personas,
-    sessionCount: sessionCount ?? sessions.length,
+    sessionCount: total,
     // SENTIMENT_ORDER is worst-first, so the first tab is already the one worth
     // reading.
     defaultPersonaIndex: 0,
     unanalyzedCount,
+    coverage: { scanned: sessions.length, total, truncated },
   };
+}
+
+/**
+ * Honesty footnotes for the summary card — chips, never a rubric row. Each one
+ * names a way the strip above could understate the study.
+ *
+ * The truncation note reuses the swarm wording verbatim: the two surfaces hit
+ * the same cap for the same reason, and a reader who has seen one should not
+ * have to work out that the other means the same thing.
+ */
+export function deriveScenarioFindingsFootnotes(
+  model: ScenarioFindingsModel
+): string[] {
+  const notes: string[] = [];
+  if (model.coverage.truncated) {
+    notes.push("Session scan hit its cap — counts cover a subset");
+  }
+  if (model.unanalyzedCount > 0) {
+    notes.push(
+      `${model.unanalyzedCount} session${
+        model.unanalyzedCount === 1 ? "" : "s"
+      } not analyzed yet — in no persona above`
+    );
+  }
+  return notes;
 }
