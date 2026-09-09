@@ -38,6 +38,10 @@ test("browser commands are registered and documented", async () => {
     "trace",
     "close",
     "consent",
+    "invoke",
+    "back",
+    "forward",
+    "reload",
   ]) {
     assert.match(result.stdout, new RegExp(`\\b${verb}\\b`));
   }
@@ -66,9 +70,8 @@ test("`browser consent` stores what a person granted in the UI", async () => {
     { env: env(file) },
   );
   assert.equal(result.exitCode, 0);
-  const { readBrowserState } = await import(
-    "../src/lib/browser-session-store.js"
-  );
+  const { readBrowserState } =
+    await import("../src/lib/browser-session-store.js");
   assert.equal(readBrowserState(file).consent, "cap-xyz");
 });
 
@@ -139,7 +142,10 @@ test("coordinates must both be numbers", async () => {
     { env: env(file) },
   );
   assert.notEqual(result.exitCode, 0);
-  assert.match(result.stderr + result.stdout, /--x and --y must both be numbers/);
+  assert.match(
+    result.stderr + result.stdout,
+    /--x and --y must both be numbers/,
+  );
 });
 
 test("an executed-but-failed command is not reported as a success", async () => {
@@ -282,9 +288,8 @@ test("a REFUSED command is a structured result, not a thrown error", async () =>
   // transport throws those away, `refused` (nothing ran, retry is safe) and
   // `unknown` (it may have run, do NOT retry) become one generic failure — and
   // a script that retries on error re-submits a command that already happened.
-  const { isContractResultForTests } = await import(
-    "../src/commands/browser.js"
-  );
+  const { isContractResultForTests } =
+    await import("../src/commands/browser.js");
   // THE SHAPE THE DOOR ACTUALLY SENDS. `/local-browser/command` answers
   // `c.json(ran.result, ran.status)`, so the contract result is the whole body
   // — not nested under `result`. Asserting the nested shape is what let this
@@ -331,5 +336,131 @@ test("act and navigate expose an idempotency key for a safe retry", async () => 
   for (const verb of ["act", "navigate"]) {
     const help = await runCli(["browser", verb, "--help"]);
     assert.match(help.stdout, /--command-id/);
+  }
+});
+
+test("cloud uses bearer auth and deployment-scoped session storage without local consent", async () => {
+  const { createServer } = await import("node:http");
+  const { readFile } = await import("node:fs/promises");
+  const calls: Array<{
+    url: string | undefined;
+    auth: string | undefined;
+    consent: string | string[] | undefined;
+    body: Record<string, unknown>;
+  }> = [];
+  const server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    calls.push({
+      url: req.url,
+      auth: req.headers.authorization,
+      consent: req.headers["x-mcpjam-local-consent"],
+      body: JSON.parse(raw),
+    });
+    res.setHeader("content-type", "application/json");
+    res.end(
+      JSON.stringify(
+        req.url?.endsWith("/session")
+          ? { session: { sessionId: "cloud-session" } }
+          : req.url?.endsWith("/artifact")
+            ? { screenshot: "aGVsbG8=" }
+            : {
+                status: "executed",
+                ok: true,
+                commandId: "cmd",
+                page: {
+                  artifacts: {
+                    screenshot: { id: "cmd", mediaType: "image/jpeg" },
+                  },
+                },
+              },
+      ),
+    );
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const apiUrl = `http://127.0.0.1:${
+    (server.address() as { port: number }).port
+  }/api/v1`;
+  const file = await stateFile({
+    version: 1,
+    consent: "NEVER-SEND",
+    sessions: { p: "local-session" },
+  });
+  const flags = [
+    "--cloud",
+    "--api-url",
+    apiUrl,
+    "--api-key",
+    "sk_test",
+    "--project",
+    "p",
+  ];
+  try {
+    const opened = await runCli(
+      ["--format", "json", "browser", "open", ...flags],
+      undefined,
+      { env: env(file) },
+    );
+    assert.equal(opened.exitCode, 0, opened.stderr);
+    const observed = await runCli(
+      [
+        "--format",
+        "json",
+        "browser",
+        "observe",
+        "--mode",
+        "screenshot",
+        ...flags,
+      ],
+      undefined,
+      { env: env(file) },
+    );
+    assert.equal(observed.exitCode, 0, observed.stderr);
+    const invoked = await runCli(
+      [
+        "--format",
+        "json",
+        "browser",
+        "invoke",
+        "getAvailability",
+        "--input",
+        '{"day":"Monday"}',
+        ...flags,
+      ],
+      undefined,
+      { env: env(file) },
+    );
+    assert.equal(invoked.exitCode, 0, invoked.stderr);
+    assert.deepEqual(calls[3].body.command, {
+      op: "invoke_page_tool",
+      toolKey: "getAvailability",
+      input: { day: "Monday" },
+    });
+    assert.deepEqual(
+      calls.map((c) => c.url),
+      [
+        "/api/v1/browser-sessions/session",
+        "/api/v1/browser-sessions/command",
+        "/api/v1/browser-sessions/artifact",
+        "/api/v1/browser-sessions/command",
+      ],
+    );
+    assert.ok(
+      calls.every(
+        (c) => c.auth === "Bearer sk_test" && c.consent === undefined,
+      ),
+    );
+    assert.equal(calls[1].body.sessionId, "cloud-session");
+    const state = JSON.parse(await readFile(file, "utf8"));
+    assert.equal(state.sessions.p, "local-session");
+    assert.equal(state.sessions[`cloud:${apiUrl}:p`], "cloud-session");
+    const output = JSON.parse(observed.stdout);
+    assert.equal(await readFile(output.screenshotPath, "utf8"), "hello");
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

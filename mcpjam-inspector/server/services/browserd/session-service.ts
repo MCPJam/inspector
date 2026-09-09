@@ -232,6 +232,24 @@ export class BrowserSessionService {
     return (await response.json()) as T;
   }
 
+  /** The external-agent door uses the same authenticated control-plane transport. */
+  async agentRequest<T>(
+    operation:
+      | "open"
+      | "get"
+      | "list"
+      | "claim"
+      | "finish"
+      | "trace"
+      | "artifact"
+      | "close",
+    args: RequestArgs,
+  ): Promise<T> {
+    const result = await this.post<T>(`/agent-browser/${operation}`, args);
+    if (result === null) throw new Error("Browser sessions are not configured");
+    return result;
+  }
+
   async resolveSession(args: {
     owner: BrowserSessionOwner;
     projectId: string;

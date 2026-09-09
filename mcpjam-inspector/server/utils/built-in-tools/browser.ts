@@ -2467,7 +2467,7 @@ function defaultEnsureSession(
  * desktop. Opening a chat advertises browser tools but does not spend a
  * sandbox; the first browser command is the provisioning boundary.
  */
-async function ensureHostedConversationSession(args: {
+export async function ensureHostedConversationSession(args: {
   bearer: string;
   projectId: string;
   contextMode: BrowserContextMode;
