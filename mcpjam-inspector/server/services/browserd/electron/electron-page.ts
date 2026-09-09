@@ -27,6 +27,7 @@
 
 import type { ConsoleEntry } from "../daemon/observation-budget";
 import type { PendingDialog } from "../daemon/dialogs";
+import { NetworkRing } from "../daemon/network";
 import type { ActPoint, DriverPage } from "../daemon/browser-page";
 import type { CdpLike, WebMcpBridge } from "../daemon/webmcp-bridge";
 import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";
@@ -283,6 +284,7 @@ export function createElectronPage(
    * its life — a hang, not a wrong answer.
    */
   /** The dialog this page is blocked on, if any. See the CDP handlers below. */
+  const network = new NetworkRing();
   let pendingDialog: PendingDialog | null = null;
   const inFlightRequests = new Set<string>();
   /** Resolvers waiting for the page to go quiet. */
@@ -359,6 +361,54 @@ export function createElectronPage(
         // without another domain enable. Captured and not answered, for the
         // same reason as the Playwright engine: who answers depends on the
         // lease, which the driver holds and this file cannot see.
+        // THE NETWORK RING, fed from the events this session already takes for
+        // settle detection. `requestWillBeSent` fires again per redirect hop
+        // under the same id, which the ring folds rather than splitting.
+        adapter.on("Network.requestWillBeSent", (payload) => {
+          const p = payload as {
+            requestId?: string;
+            type?: string;
+            request?: { url?: string; method?: string };
+          };
+          if (!p?.requestId) return;
+          network.started({
+            requestId: p.requestId,
+            method: p.request?.method ?? "GET",
+            url: p.request?.url ?? "",
+            ...(p.type ? { resourceType: p.type } : {}),
+          });
+        });
+        adapter.on("Network.responseReceived", (payload) => {
+          const p = payload as {
+            requestId?: string;
+            response?: {
+              status?: number;
+              statusText?: string;
+              mimeType?: string;
+              headers?: Record<string, string>;
+            };
+          };
+          if (!p?.requestId) return;
+          network.finished({
+            requestId: p.requestId,
+            ...(p.response?.status !== undefined
+              ? { status: p.response.status }
+              : {}),
+            ...(p.response?.statusText
+              ? { statusText: p.response.statusText }
+              : {}),
+            ...(p.response?.mimeType ? { mimeType: p.response.mimeType } : {}),
+            ...(p.response?.headers ? { headers: p.response.headers } : {}),
+          });
+        });
+        adapter.on("Network.loadingFailed", (payload) => {
+          const p = payload as { requestId?: string; errorText?: string };
+          if (!p?.requestId) return;
+          network.finished({
+            requestId: p.requestId,
+            failure: p.errorText ?? "request failed",
+          });
+        });
         adapter.on("Page.javascriptDialogOpening", (payload) => {
           const p = payload as {
             type?: string;
@@ -1156,6 +1206,9 @@ export function createElectronPage(
         return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since: number) => network.dropSince(since),
+    networkCursor: () => network.count(),
     pendingDialog: () => pendingDialog,
     async resolveDialog(accept: boolean, promptText?: string) {
       const open = pendingDialog;

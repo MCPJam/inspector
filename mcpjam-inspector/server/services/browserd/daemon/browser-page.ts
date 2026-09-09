@@ -12,6 +12,7 @@
 
 import type { ConsoleEntry } from "./observation-budget";
 import type { PendingDialog } from "./dialogs";
+import type { NetworkEntry } from "./network";
 import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
 
 /**
@@ -130,6 +131,19 @@ export interface DriverPage {
    * omits it, and the driver behaves exactly as it did before rather than
    * refusing everything.
    */
+  /**
+   * What this page asked the network for, oldest first.
+   *
+   * Optional for the same reason `consoleCursor` is: an engine that does not
+   * track requests omits it, and the observe mode reports that this browser
+   * cannot answer rather than that the page made no requests. Those are very
+   * different facts and a model acts differently on each.
+   */
+  networkEntries?(): readonly NetworkEntry[];
+  /** Discard requests captured at or after `since` — the handoff purge. */
+  dropNetworkSince?(since: number): void;
+  /** How many requests this page has EVER captured. Monotonic, like console. */
+  networkCursor?(): number;
   pendingDialog?(): PendingDialog | null;
   /**
    * Answer the pending dialog, unblocking the renderer.

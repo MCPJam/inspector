@@ -76,6 +76,7 @@ const OBSERVATION_KEYS = [
   "text",
   "dom",
   "console",
+  "network",
   "tools",
   "screenshot",
   "result",
@@ -249,6 +250,7 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         action: {
           kind: "observe",
           mode: daemonObserveMode(command.mode),
+          ...(command.requestId ? { requestId: command.requestId } : {}),
           ...(command.rootSelector ? { rootSelector: command.rootSelector } : {}),
           ...(command.rootRef ? { rootRef: command.rootRef } : {}),
           ...(command.filter ? { filter: command.filter } : {}),
@@ -359,6 +361,9 @@ export function toAgentPage(
   if (typeof output?.dom === "string") pageContent.dom = output.dom;
   if (Array.isArray(output?.console)) {
     pageContent.console = output.console as BrowserAgentPageContent["console"];
+  }
+  if (Array.isArray(output?.network)) {
+    pageContent.network = output.network as BrowserAgentPageContent["network"];
   }
   if (output?.tools !== undefined) pageContent.pageTools = output.tools;
   if (output?.result !== undefined) pageContent.invocation = output.result;

@@ -29,6 +29,11 @@ import {
   type ActObserve,
 } from "../protocol";
 import {
+  capNetwork,
+  DEFAULT_NETWORK_BUDGET,
+  type NetworkBudget,
+} from "./network";
+import {
   agentDefaultAccepts,
   dialogRefusal,
   safeUnderDialog,
@@ -275,6 +280,8 @@ export interface ChromiumDriverOptions {
   >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
+  /** How many network rows one observation returns. */
+  network?: NetworkBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
   /** Byte budget for one `observe {mode:"text"}` (L9). */
@@ -368,6 +375,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly settleOptions: SettleOptions;
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
+  private readonly networkBudget: NetworkBudget;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly pageTextMaxBytes: number;
   private readonly lease:
@@ -473,6 +481,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes =
@@ -487,7 +496,7 @@ export class ChromiumDriver implements BrowserDriver {
     // leases, so a token or a form value the page logged while someone signed
     // in would otherwise be readable the instant they hand back. Doing it here
     // rather than in the console branch covers every future reader too.
-    this.purgeHandoffConsole();
+    this.purgeHandoffRings();
     // The third and last gate (handler → dequeue → here). A command that got
     // this far while a person holds the browser must not run: `execute` is
     // where the page is actually touched.
@@ -1543,6 +1552,51 @@ export class ChromiumDriver implements BrowserDriver {
         this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
+      case "network": {
+        const all = entry.page.networkEntries?.();
+        if (!all) {
+          // "This browser cannot tell you" and "this page made no requests"
+          // are different facts, and a model acts differently on each — an
+          // empty array for the first would send it looking for a cause that
+          // was never captured.
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "a11y_unavailable",
+              "this browser build does not record network requests",
+            ),
+          };
+        }
+        if (action.requestId) {
+          const one = entry.page
+            .networkEntries?.()
+            .find((row) => row.requestId === action.requestId);
+          const frame = await this.snapshot(entry.page);
+          return this.observation(
+            tabId,
+            entry,
+            one
+              ? { network: [one] }
+              : {
+                  network: [],
+                  // Named rather than left as an empty list: the ring is
+                  // bounded, and "it scrolled off" is the answer.
+                  omitted: 1,
+                },
+            frame,
+            permit,
+          );
+        }
+        const { entries: rows, omitted } = capNetwork(all, this.networkBudget);
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { network: rows, ...(omitted > 0 ? { omitted } : {}) },
+          frame,
+          permit,
+        );
+      }
       case "console": {
         const { entries, omitted } = capConsole(
           entry.page.consoleEntries(),
@@ -2086,16 +2140,22 @@ export class ChromiumDriver implements BrowserDriver {
    * they may have opened one, and a leak in a tab nobody was watching is
    * still a leak. Consumed once per handoff.
    */
-  private purgeHandoffConsole(): void {
+  private purgeHandoffRings(): void {
     const since = this.lease?.consumeResumedHeldSince?.();
     if (since === undefined) return;
     for (const entry of this.tabs.values()) {
       if (entry.page.isClosed()) continue;
       try {
         entry.page.dropConsoleSince(since);
+        // THE NETWORK RING TOO, and for a stronger reason than the console:
+        // it records the URLs a person visited while they held the browser and
+        // the requests their signing-in produced. Purging one ring and not the
+        // other would make the lease's promise "you must wait to read it"
+        // rather than "it is private".
+        entry.page.dropNetworkSince?.(since);
       } catch {
         // A page that cannot be purged must not take the command down; the
-        // budgeted console read that follows is capped either way.
+        // budgeted reads that follow are capped either way.
       }
     }
   }

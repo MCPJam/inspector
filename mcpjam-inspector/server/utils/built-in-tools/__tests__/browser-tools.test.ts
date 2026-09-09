@@ -1910,10 +1910,16 @@ describe("the toolset's context footprint is pinned", () => {
     // rather than resolved against a stranger. Both of those are wrong clicks
     // the model could not previously even detect, and a wrong click costs far
     // more than 292 bytes to discover and undo.
+    // Raised to 5_400 for the `network` observe mode (+152 bytes, 5164 →
+    // 5316): the enum member and the sentence saying what it is for. It buys
+    // the one question the other four modes cannot answer — a page whose
+    // layout is right, whose list is empty, and whose console is silent, where
+    // the cause is a 401 on the fetch behind the list. Without it a model can
+    // only re-read a page that will keep looking the same.
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(5_200);
+    ).toBeLessThanOrEqual(5_400);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {

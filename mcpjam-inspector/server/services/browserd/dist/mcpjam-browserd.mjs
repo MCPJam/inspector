@@ -2990,6 +2990,127 @@ function createVideoEncoder(options) {
   };
 }
 
+// server/services/browserd/daemon/network.ts
+var RETAINED_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "cache-control",
+  "location",
+  "date",
+  "server",
+  "via",
+  "retry-after",
+  "x-request-id",
+  "x-trace-id",
+  "traceparent"
+];
+var RETAINED = new Set(RETAINED_HEADERS);
+function retainHeaders(headers) {
+  if (!headers) return void 0;
+  const kept = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (RETAINED.has(lower)) kept[lower] = String(value).slice(0, 512);
+  }
+  return Object.keys(kept).length > 0 ? kept : void 0;
+}
+function sanitizeNetworkUrl(raw) {
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "data:" || url.protocol === "blob:") {
+      return `${url.protocol}\u2026`;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return raw.slice(0, 200);
+  }
+}
+var NETWORK_RING_SIZE = 200;
+var DEFAULT_NETWORK_BUDGET = { maxEntries: 50 };
+function capNetwork(entries, budget = DEFAULT_NETWORK_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
+  return {
+    entries: kept.map((entry) => ({ ...entry })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+var NetworkRing = class {
+  constructor(size = NETWORK_RING_SIZE) {
+    this.size = size;
+  }
+  order = [];
+  byId = /* @__PURE__ */ new Map();
+  total = 0;
+  started(entry) {
+    const existing = this.byId.get(entry.requestId);
+    if (existing) {
+      existing.url = sanitizeNetworkUrl(entry.url);
+      existing.method = entry.method;
+      return;
+    }
+    const row = {
+      requestId: entry.requestId,
+      method: entry.method,
+      url: sanitizeNetworkUrl(entry.url),
+      ...entry.resourceType ? { resourceType: entry.resourceType } : {},
+      at: Date.now()
+    };
+    this.byId.set(row.requestId, row);
+    this.order.push(row.requestId);
+    this.total += 1;
+    while (this.order.length > this.size) {
+      const evicted = this.order.shift();
+      if (evicted !== void 0) this.byId.delete(evicted);
+    }
+  }
+  finished(update) {
+    const row = this.byId.get(update.requestId);
+    if (!row) return;
+    if (update.status !== void 0) row.status = update.status;
+    if (update.statusText) row.statusText = update.statusText;
+    if (update.mimeType) row.mimeType = update.mimeType;
+    if (update.bytes !== void 0) row.bytes = update.bytes;
+    if (update.failure) row.failure = update.failure;
+    const headers = retainHeaders(update.headers);
+    if (headers) row.headers = headers;
+    row.durationMs = Math.max(0, Date.now() - row.at);
+  }
+  entries() {
+    return this.order.map((id) => this.byId.get(id)).filter((row) => row !== void 0);
+  }
+  get(requestId) {
+    return this.byId.get(requestId);
+  }
+  /** Monotonic across eviction AND purge, exactly like the console cursor. */
+  count() {
+    return this.total;
+  }
+  /**
+   * Drop everything captured at or after `since`.
+   *
+   * The handoff purge. The ring fills from an eager listener that knows
+   * nothing about the lease, so the requests a person's own signing-in
+   * produced — the login POST, the token refresh, the URLs they visited —
+   * would otherwise be readable by the agent the instant they hand back. The
+   * console has had this from the start; a ring of URLs needs it at least as
+   * much.
+   */
+  dropSince(since) {
+    for (const id of [...this.order]) {
+      const row = this.byId.get(id);
+      if (row && row.at >= since) {
+        this.byId.delete(id);
+        this.order.splice(this.order.indexOf(id), 1);
+      }
+    }
+  }
+};
+
 // server/services/browserd/daemon/dialogs.ts
 function agentDefaultAccepts(kind) {
   return kind === "beforeunload";
@@ -4826,6 +4947,7 @@ var ChromiumDriver = class {
   settleOptions;
   a11yBudget;
   consoleBudget;
+  networkBudget;
   webmcpOutputBudgetBytes;
   pageTextMaxBytes;
   lease;
@@ -4920,12 +5042,13 @@ var ChromiumDriver = class {
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
   async execute(command) {
-    this.purgeHandoffConsole();
+    this.purgeHandoffRings();
     const permit = this.permitFor(command);
     if (!permit()) {
       return this.leaseBlockedResult(
@@ -5624,6 +5747,43 @@ var ChromiumDriver = class {
         this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
+      case "network": {
+        const all = entry.page.networkEntries?.();
+        if (!all) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "a11y_unavailable",
+              "this browser build does not record network requests"
+            )
+          };
+        }
+        if (action.requestId) {
+          const one = entry.page.networkEntries?.().find((row) => row.requestId === action.requestId);
+          const frame2 = await this.snapshot(entry.page);
+          return this.observation(
+            tabId,
+            entry,
+            one ? { network: [one] } : {
+              network: [],
+              // Named rather than left as an empty list: the ring is
+              // bounded, and "it scrolled off" is the answer.
+              omitted: 1
+            },
+            frame2,
+            permit
+          );
+        }
+        const { entries: rows, omitted } = capNetwork(all, this.networkBudget);
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { network: rows, ...omitted > 0 ? { omitted } : {} },
+          frame,
+          permit
+        );
+      }
       case "console": {
         const { entries, omitted } = capConsole(
           entry.page.consoleEntries(),
@@ -6012,13 +6172,14 @@ var ChromiumDriver = class {
    * they may have opened one, and a leak in a tab nobody was watching is
    * still a leak. Consumed once per handoff.
    */
-  purgeHandoffConsole() {
+  purgeHandoffRings() {
     const since = this.lease?.consumeResumedHeldSince?.();
     if (since === void 0) return;
     for (const entry of this.tabs.values()) {
       if (entry.page.isClosed()) continue;
       try {
         entry.page.dropConsoleSince(since);
+        entry.page.dropNetworkSince?.(since);
       } catch {
       }
     }
@@ -6661,6 +6822,53 @@ function wrapPage(page) {
     } catch {
     }
   });
+  const network = new NetworkRing();
+  const requestIds = /* @__PURE__ */ new WeakMap();
+  let nextRequestId = 0;
+  const idFor = (request) => {
+    const known = requestIds.get(request);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request, minted);
+    return minted;
+  };
+  page.on("request", (request) => {
+    try {
+      network.started({
+        requestId: idFor(request),
+        method: request.method?.() ?? "GET",
+        url: request.url?.() ?? "",
+        ...request.resourceType?.() ? { resourceType: request.resourceType() } : {}
+      });
+    } catch {
+    }
+  });
+  page.on("response", (response) => {
+    try {
+      const request = response.request?.();
+      if (!request) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request),
+        ...response.status ? { status: response.status() } : {},
+        ...response.statusText?.() ? { statusText: response.statusText() } : {},
+        ...Number.isFinite(length) ? { bytes: length } : {},
+        ...headers ? { headers } : {}
+      });
+    } catch {
+    }
+  });
+  page.on("requestfailed", (request) => {
+    try {
+      network.finished({
+        requestId: idFor(request),
+        failure: request.failure?.()?.errorText ?? "request failed"
+      });
+    } catch {
+    }
+  });
   let pending = null;
   page.on("dialog", (dialog) => {
     try {
@@ -6776,6 +6984,9 @@ function wrapPage(page) {
         return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since) => network.dropSince(since),
+    networkCursor: () => network.count(),
     pendingDialog: () => pending?.dialog ?? null,
     async resolveDialog(accept, promptText) {
       const open = pending;

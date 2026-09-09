@@ -345,6 +345,15 @@ export type BrowserAction =
         | "dom"
         | "a11y"
         | "console"
+        /**
+         * What the page asked the network for, and what came back.
+         *
+         * Metadata only: URLs with the query and fragment stripped, an
+         * allowlisted subset of response headers, statuses, sizes and timing.
+         * Bodies are never retained — `daemon/network.ts` says why — and
+         * `requestId` reads ONE exchange rather than the tail.
+         */
+        | "network"
         | "url"
         | "webmcp_tools"
         /**
@@ -356,6 +365,8 @@ export type BrowserAction =
          * step and would itself change what it was measuring.
          */
         | "webmcp_revision";
+      /** `network` only: read this one exchange in full, not the tail. */
+      requestId?: string;
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.

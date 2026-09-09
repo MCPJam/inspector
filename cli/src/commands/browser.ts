@@ -428,8 +428,12 @@ export function registerBrowserCommands(program: Command): void {
   )
     .option(
       "--mode <mode>",
-      "a11y | screenshot | text | dom | console | url | page_tools",
+      "a11y | screenshot | text | dom | console | network | url | page_tools",
       "a11y",
+    )
+    .option(
+      "--request <id>",
+      "With --mode network: read one exchange instead of the tail"
     )
     .option("--root-ref <ref>", "Scope an a11y tree to a ref")
     .option("--root-selector <selector>", "Scope an a11y tree to a selector")
@@ -451,6 +455,7 @@ export function registerBrowserCommands(program: Command): void {
           command: {
             op: "observe",
             mode: options.mode,
+            ...(options.request ? { requestId: options.request } : {}),
             ...(options.rootRef ? { rootRef: options.rootRef } : {}),
             ...(options.rootSelector
               ? { rootSelector: options.rootSelector }

@@ -100,6 +100,15 @@ export type BrowserAgentObserveMode =
   | "text"
   | "dom"
   | "console"
+  /**
+   * What the page asked the network for, and what came back.
+   *
+   * Metadata only — URLs with the query and fragment stripped, an allowlisted
+   * subset of response headers, statuses, sizes and timing. Bodies are never
+   * retained. Usually the only way to explain a page that rendered wrong and
+   * logged nothing.
+   */
+  | "network"
   | "url"
   /** WebMCP tools the page offers. Named for what it is to a caller. */
   | "page_tools";
@@ -158,6 +167,8 @@ export type BrowserAgentCommand =
   | {
       op: "observe";
       mode: BrowserAgentObserveMode;
+      /** `network` only: read one exchange in full rather than the tail. */
+      requestId?: string;
       /** `a11y` only: scope the tree to this CSS selector's element. */
       rootSelector?: string;
       /** `a11y` only: scope the tree to a ref from this tab's last observation. */
@@ -201,6 +212,14 @@ export interface BrowserAgentPageContent {
   /** A structural digest of the DOM, not its markup. */
   dom?: string;
   console?: Array<{ type: string; text: string; at?: number }>;
+  /**
+   * What the page requested, and what came back. Metadata only — never bodies,
+   * and never a URL's query or fragment.
+   *
+   * Inside the fence because every row carries a URL the page chose, and a
+   * path is as good a place to address a model as a tool description is.
+   */
+  network?: Array<Record<string, unknown>>;
   /** WebMCP tools this page offers. */
   pageTools?: unknown;
   /** A WebMCP invocation's own result. */

@@ -20,6 +20,7 @@ import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
 import { PAGE_TEXT_FN } from "./page-text";
 import type { PendingDialog } from "./dialogs";
+import { NetworkRing } from "./network";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -118,6 +119,20 @@ const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
  */
 const DIALOG_MESSAGE_BYTES = 2_000;
 
+/** The shapes Playwright's `Request`/`Response` give us. Structural, like `AnyPage`. */
+interface PlaywrightRequest {
+  url?(): string;
+  method?(): string;
+  resourceType?(): string;
+  failure?(): { errorText?: string } | null;
+}
+interface PlaywrightResponse {
+  status?(): number;
+  statusText?(): string;
+  headers?(): Record<string, string>;
+  request?(): PlaywrightRequest;
+}
+
 /** The shape Playwright's `Dialog` gives us. Structural, like `AnyPage`. */
 interface PlaywrightDialog {
   type?(): string;
@@ -162,6 +177,66 @@ export function wrapPage(page: AnyPage): DriverPage {
       // A console listener must never take the page down.
     }
   });
+  // THE NETWORK RING. Playwright hands back objects rather than CDP ids, so
+  // the ring's own id is minted here and remembered against the Request — the
+  // same object the response reports, which is what folds the two events into
+  // one row. A WeakMap so a page that runs for hours does not accumulate ids
+  // for requests nobody will ask about again.
+  const network = new NetworkRing();
+  const requestIds = new WeakMap<object, string>();
+  let nextRequestId = 0;
+  const idFor = (request: object): string => {
+    const known = requestIds.get(request);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request, minted);
+    return minted;
+  };
+  page.on("request", (request: PlaywrightRequest) => {
+    try {
+      network.started({
+        requestId: idFor(request as unknown as object),
+        method: request.method?.() ?? "GET",
+        url: request.url?.() ?? "",
+        ...(request.resourceType?.()
+          ? { resourceType: request.resourceType() }
+          : {}),
+      });
+    } catch {
+      // A network listener must never take the page down.
+    }
+  });
+  page.on("response", (response: PlaywrightResponse) => {
+    try {
+      const request = response.request?.();
+      if (!request) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        ...(response.status ? { status: response.status() } : {}),
+        ...(response.statusText?.()
+          ? { statusText: response.statusText() }
+          : {}),
+        ...(Number.isFinite(length) ? { bytes: length } : {}),
+        ...(headers ? { headers } : {}),
+      });
+    } catch {
+      // As above.
+    }
+  });
+  page.on("requestfailed", (request: PlaywrightRequest) => {
+    try {
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        failure: request.failure?.()?.errorText ?? "request failed",
+      });
+    } catch {
+      // As above.
+    }
+  });
+
   // DIALOGS ARE CAPTURED, NOT ANSWERED HERE.
   //
   // Registering any `dialog` listener turns OFF Playwright's own auto-dismiss,
@@ -332,6 +407,9 @@ export function wrapPage(page: AnyPage): DriverPage {
         return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since: number) => network.dropSince(since),
+    networkCursor: () => network.count(),
     pendingDialog: () => pending?.dialog ?? null,
     async resolveDialog(accept: boolean, promptText?: string) {
       const open = pending;

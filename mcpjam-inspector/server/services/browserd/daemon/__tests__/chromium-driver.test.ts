@@ -4090,3 +4090,116 @@ describe("ChromiumDriver — JavaScript dialogs", () => {
     expect(res.output).not.toHaveProperty("dialog");
   });
 });
+
+/**
+ * `observe {mode:"network"}` — the question the other modes cannot answer.
+ *
+ * A page whose layout is right, whose list is empty and whose console is
+ * silent. The cause is on the wire, and until this existed a model could only
+ * re-read a page that would keep looking exactly the same.
+ */
+describe("ChromiumDriver — observing the network", () => {
+  const ROWS = [
+    {
+      requestId: "r1",
+      method: "GET",
+      url: "https://x.test/api/items",
+      status: 401,
+      at: 10,
+    },
+    {
+      requestId: "r2",
+      method: "GET",
+      url: "https://x.test/logo.png",
+      status: 200,
+      at: 20,
+    },
+  ];
+
+  it("lists what the page requested and what came back", async () => {
+    const page = fakePage({ url: "https://x.test/", network: ROWS });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(true);
+    expect((res.output as { network: unknown[] }).network).toHaveLength(2);
+    expect(
+      (res.output as { network: Array<{ status?: number }> }).network[0],
+    ).toMatchObject({ status: 401 });
+  });
+
+  it("reads ONE exchange when asked for a request id", async () => {
+    const page = fakePage({ url: "https://x.test/", network: ROWS });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "network", requestId: "r1" }),
+    );
+    const rows = (res.output as { network: Array<{ requestId: string }> })
+      .network;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.requestId).toBe("r1");
+  });
+
+  it("says the row has scrolled off rather than reporting no such request", async () => {
+    const page = fakePage({ url: "https://x.test/", network: ROWS });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "network", requestId: "gone" }),
+    );
+    expect((res.output as { network: unknown[] }).network).toHaveLength(0);
+    expect(res.output).toMatchObject({ omitted: 1 });
+  });
+
+  it("distinguishes 'this browser cannot tell you' from 'no requests'", async () => {
+    // Two very different facts. An empty list for the first sends a model
+    // looking for a cause that was never captured in the first place.
+    const page = fakePage({ url: "https://x.test/", network: null });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("does not record network requests");
+  });
+
+  it("answers an empty list for a page that genuinely requested nothing", async () => {
+    const page = fakePage({ url: "https://x.test/", network: [] });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(true);
+    expect((res.output as { network: unknown[] }).network).toEqual([]);
+  });
+
+  it("PURGES what a person's session requested when they hand the browser back", async () => {
+    // The same guarantee the console ring has, and this ring needs it more: it
+    // records the URLs someone visited and the requests their signing-in
+    // produced. Purging one and not the other would make the lease's promise
+    // "you must wait to read it" rather than "it is private".
+    const page = fakePage({ url: "https://x.test/", network: [] });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    lease.acquire("someone");
+    page.pushNetwork({
+      requestId: "login",
+      method: "POST",
+      url: "https://x.test/session",
+      at: Date.now() + 5,
+    });
+    lease.release("someone");
+    lease.resume("someone");
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(true);
+    expect((res.output as { network: unknown[] }).network).toEqual([]);
+  });
+});
