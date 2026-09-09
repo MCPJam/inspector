@@ -265,6 +265,53 @@ export function EditServerFormContent({
         )}
       </div>
 
+      {formState.pendingCredentialClear && (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-2"
+        >
+          <p className="font-medium">
+            Saving this URL will clear this server's saved credentials
+          </p>
+          <p className="text-muted-foreground">
+            It currently points at{" "}
+            <span className="font-mono">
+              {formState.pendingCredentialClear.previousOrigin}
+            </span>
+            , and everything saved against that host goes: request headers,
+            environment variables, the bearer token, any OAuth access and
+            refresh tokens, and the OAuth client secret. Moving it to{" "}
+            <span className="font-mono">
+              {formState.pendingCredentialClear.nextOrigin}
+            </span>{" "}
+            removes all of them, and they will need re-entering. This affects
+            credentials other project members may have added, and which you may
+            not be able to see.
+          </p>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={
+                formState.credentialClearAcknowledgedFor ===
+                formState.pendingCredentialClear.nextOrigin
+              }
+              onChange={(e) =>
+                formState.acknowledgeCredentialClear(
+                  e.target.checked
+                    ? formState.pendingCredentialClear?.nextOrigin ?? null
+                    : null
+                )
+              }
+            />
+            <span>
+              I understand the saved credentials for this server will be
+              cleared.
+            </span>
+          </label>
+        </div>
+      )}
+
       {formState.type === "http" && (
         <div className="space-y-3 pt-2">
           <AuthenticationSection

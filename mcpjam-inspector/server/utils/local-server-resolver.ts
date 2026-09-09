@@ -39,6 +39,7 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -74,6 +75,12 @@ type LocalAuthorizeServerConfig =
       httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
+      /**
+       * The origin this row's stored credentials were bound to (MJ-003). See
+       * `secret-origin-binding.ts`; absence on a credential-bearing row is a
+       * refusal, not permission.
+       */
+      secretsBoundOrigin?: string;
       timeout?: number;
       clientCapabilities?: unknown;
       useOAuth?: boolean;
@@ -913,6 +920,27 @@ async function applyLocalRuntimeResolution<
     (result.serverConfig.transportType === "http" &&
       result.serverConfig.hasHeaders === true &&
       !hasNonEmptyStringRecord(result.serverConfig.headers));
+  // MJ-003, the same gate the hosted path applies at its own merge — this
+  // resolver is the OTHER place a stored credential is composed onto a target,
+  // and a fix that touched only `auth.ts` would leave the desktop and
+  // `/api/mcp` surfaces open.
+  //
+  // HTTP only. A stdio row has no url, so it has no origin to bind and none is
+  // written; its `env` reaches a locally-spawned child rather than a remote
+  // host, so there is no repoint that redirects it. The stdio exposure is a
+  // TRANSPORT FLIP to http, and that is covered write-side by the backend's
+  // clear, which treats "no origin" to "an origin" as a change.
+  if (
+    result.serverConfig.transportType === "http" &&
+    result.serverConfig.hasHeaders === true
+  ) {
+    assertSecretsOriginMatches({
+      boundOrigin: result.serverConfig.secretsBoundOrigin,
+      targetUrl: result.serverConfig.url,
+      serverName: args.serverDisplayName ?? args.managerKey,
+    });
+  }
+
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
       bearerToken,
@@ -1253,6 +1281,48 @@ export async function resolveLocalServerForConnect(
     );
   }
   const useOAuth = effectiveAuth === "oauth";
+
+  // MJ-003, the OAuth half of the gate. The check further up fires on
+  // `hasHeaders`, which is false for a row whose only credential is an OAuth
+  // token — and this resolver then hands that token to `toMCPServerConfig`,
+  // which puts it straight into `Authorization`. So an OAuth-only row bypassed
+  // the binding entirely on the desktop and `/api/mcp` surfaces.
+  //
+  // Before the refresh below, not after: a refresh spends the row's stored
+  // refresh material against whatever authorization server the CURRENT url
+  // advertises, so a repointed row must not reach it.
+  //
+  // `useOAuth` and not just "a token came back", because a row configured for
+  // OAuth with an expired token refreshes into one — both are row-derived.
+  // XAA is excluded: it mints per connect with `resource` set to the row's
+  // current url, so it is bound by construction, and a stale binding left over
+  // from a converted OAuth server must not block it.
+  if (result.serverConfig.transportType === "http") {
+    const httpConfig = result.serverConfig;
+    const willMintXaa = effectiveAuth === "xaa";
+    // The XAA exemption above covers the STALE BEARER only. The mint itself is
+    // not credential-free: `preregistered` and `dcr` reveal the row's stored
+    // client secret and post it to a token endpoint discovered from the row's
+    // CURRENT url (`xaa-mint.ts` `resolveServerTarget` ->
+    // `resolveAuthorizedServerTarget`, which falls back to the resource URL
+    // when no issuer is stored), which is the repoint this gate exists to
+    // refuse. `cimd` sends no row secret: public client, or an org-level key
+    // whose assertion is audience-bound to the endpoint it goes to.
+    const xaaMintSendsRowSecret =
+      willMintXaa &&
+      resolveXaaConnectRegistrationMode(httpConfig.registrationMode) !== "cimd";
+    if (
+      xaaMintSendsRowSecret ||
+      (!willMintXaa && (useOAuth || result.oauthAccessToken != null))
+    ) {
+      assertSecretsOriginMatches({
+        boundOrigin: httpConfig.secretsBoundOrigin,
+        targetUrl: httpConfig.url,
+        serverName: options?.serverDisplayName ?? serverId,
+      });
+    }
+  }
+
   // Track the access token we'll hand to `toMCPServerConfig`. Starts from
   // whatever `authorize-batch-local` returned, but for hosted-OAuth servers
   // we fall back to a server-side refresh — same `force-refresh` endpoint
@@ -1329,6 +1399,22 @@ export async function resolveLocalServerForConnect(
           error: error instanceof Error ? error.message : String(error),
         }
       );
+    }
+    // MJ-003, the discover rung. The gate above could not fire for this row —
+    // it had no token to bind — but the refresh just spent the row's stored
+    // material and produced one, and `toMCPServerConfig` puts it straight into
+    // `Authorization`. Re-check before it goes out, and only when a token
+    // actually came back, so a discover row holding nothing still connects
+    // bare.
+    if (
+      resolvedOauthAccessToken &&
+      result.serverConfig.transportType === "http"
+    ) {
+      assertSecretsOriginMatches({
+        boundOrigin: result.serverConfig.secretsBoundOrigin,
+        targetUrl: result.serverConfig.url,
+        serverName: options?.serverDisplayName ?? serverId,
+      });
     }
   }
 
