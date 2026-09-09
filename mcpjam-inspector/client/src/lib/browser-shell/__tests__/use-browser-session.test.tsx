@@ -240,4 +240,25 @@ describe("an engine that cannot answer pane commands", () => {
     rerender({ transport: fresh });
     await waitFor(() => expect(result.current.supported).toBe(true));
   });
+
+  it("keeps the latch across a re-render of the same browser", async () => {
+    // The mirror of the test above, and the half every caller leans on. The
+    // reset is keyed on the transport IDENTITY, so this is what says a
+    // re-render alone does not clear it — a caller that rebuilt its transport
+    // inline would un-latch on every render and bring the controls back to
+    // life against an engine that still refuses. Both bodies memoize
+    // `shellTransport` precisely so that cannot happen.
+    const { transport } = harness({
+      sendCommand: async () => ({ ok: false, reason: "unsupported" }) as const,
+    });
+    const { result, rerender } = renderHook(
+      ({ transport: t }: { transport: BrowserSessionTransport }) =>
+        useBrowserSession({ transport: t, holderId: "pane-1", active: true }),
+      { initialProps: { transport } },
+    );
+    act(() => result.current.run({ op: "reload" }));
+    await waitFor(() => expect(result.current.supported).toBe(false));
+    rerender({ transport });
+    expect(result.current.supported).toBe(false);
+  });
 });
