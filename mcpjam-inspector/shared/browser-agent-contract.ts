@@ -68,11 +68,17 @@ export type BrowserAgentTarget =
   /**
    * A `ref` from this tab's last a11y observation, e.g. `e7`.
    *
-   * NOT YET ACTIONABLE. The daemon has no ref→node resolution (that is the
-   * unlanded ref-targeting work), so an act aimed at a ref is refused with
-   * `unsupported_target` rather than dispatched. It is in the union because
-   * the observation already hands refs out and the shape is settled; use
-   * `selector` or `coordinates` to act until resolution lands.
+   * THE PREFERRED TARGET. It is the only one that does not ask the caller to
+   * invent something: the observation named the element and handed back this
+   * handle, where a coordinate is read off a picture and a selector is CSS
+   * written for a page seen only as a tree.
+   *
+   * Refs are fresh per observation and bound to the page that issued them. A
+   * ref from a page the tab has since left is refused (`stale_ref`) rather
+   * than resolved against the new one; a ref whose element was re-rendered is
+   * recovered by its exact role and name. Before a click, hover or drag, the
+   * daemon checks that nothing is on top of the element and refuses with
+   * `target_covered` — naming the covering element — rather than clicking it.
    */
   | { ref: string };
 
@@ -108,8 +114,7 @@ export type BrowserAgentObserveMode =
  * the window in which the page moves between an act and the separate
  * observation that was supposed to describe it.
  *
- * The refs it carries are not yet act-able targets; see `BrowserAgentTarget`.
- * The tree's value here is reading the page and building a `selector`.
+ * The refs it carries ARE act-able targets; see `BrowserAgentTarget`.
  */
 export type BrowserAgentObserveAfter = "a11y" | "screenshot" | "none";
 

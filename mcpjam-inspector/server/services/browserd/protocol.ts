@@ -694,6 +694,17 @@ export const BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /**
+   * Something is on top of the target at its click point, so the input would
+   * land on that element instead. The detail names the covering element.
+   *
+   * Its own code because the recovery is specific and the model can perform
+   * it: dismiss the banner or the modal, then retry the original target. A
+   * click that silently hit the overlay reports success, and a bare
+   * `act_failed` sends the model back to re-observe a page that has not
+   * changed.
+   */
+  "target_covered",
   /** A ref this tab's last observation never issued. */
   "unknown_ref",
   /** The page could not answer an accessibility tree at all. */

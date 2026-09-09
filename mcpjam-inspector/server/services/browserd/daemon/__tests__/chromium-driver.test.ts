@@ -1594,14 +1594,18 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     }
   });
 
-  it("refuses a11yRef targeting explicitly rather than silently mis-clicking", async () => {
+  it("refuses a ref this tab never issued, naming the recovery", async () => {
+    // `node-7` is not even ref-shaped, which is the shape of the real mistake:
+    // a model quoting an id it read somewhere else. The refusal must send it
+    // to a fresh observation rather than to a selector.
     const { res } = await acted({
       kind: "act",
       verb: "click",
       target: { a11yRef: "node-7" },
     });
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("unsupported_target");
+    expect(res.error).toContain("unknown_ref");
+    expect(res.error).toContain("observe again");
   });
 
   it("refuses verbs that are missing what they need", async () => {
@@ -3661,5 +3665,292 @@ describe("ChromiumDriver — the page-tool revision on the heartbeat", () => {
     expect(snapshot).toBeDefined();
     expect(snapshot!.url!.length).toBeLessThanOrEqual(256);
     expect(long.length).toBeGreaterThan(256);
+  });
+});
+
+/**
+ * Acting on a ref — the target a model can produce without reading pixels.
+ *
+ * The whole point of these is the difference between a click that lands where
+ * the model looked and one that lands where it guessed. So they pin the two
+ * halves that make that true: the node is the one the tree named (identity,
+ * and recovery when the id dies under a re-render), and nothing is on top of
+ * it when the click goes out.
+ */
+describe("ChromiumDriver — acting on a ref", () => {
+  /** A box whose centre is (100, 50). */
+  const BOX = { model: { content: [80, 40, 120, 40, 120, 60, 80, 60] } };
+
+  /**
+   * Observe, then act — the real sequence, and the only one that mints a ref.
+   *
+   * `acted` cannot express it: a ref exists only because an observation put it
+   * in the tab's map, so the act has to follow one in the same driver.
+   */
+  async function observedThenActed(
+    action: Extract<Parameters<typeof cmd>[0], { kind: "act" }>,
+    replies: Record<string, unknown> = {},
+    opts: { navigateBetween?: string } = {},
+  ) {
+    // Replies go through `cdpReplies` rather than a hand-built session: the
+    // fake's default session carries the baseline every observation needs, and
+    // replacing it wholesale leaves the a11y read with nothing to answer from.
+    // The calls a test asserts on are recorded by wrapping those replies.
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> =
+      [];
+    const base: Record<string, unknown> = {
+      "Accessibility.getFullAXTree": axTree({
+        role: "RootWebArea",
+        children: [
+          { role: "button", name: "Sign in", id: 41 },
+          { role: "textbox", name: "Email", id: 42 },
+        ],
+      }),
+      "DOM.getBoxModel": BOX,
+      "DOM.resolveNode": { object: { objectId: "obj-1" } },
+      ...replies,
+    };
+    const recorded: Record<string, unknown> = { ...base };
+    for (const method of [
+      "DOM.scrollIntoViewIfNeeded",
+      "DOM.getBoxModel",
+      "DOM.focus",
+      "Input.insertText",
+      "Runtime.callFunctionOn",
+    ]) {
+      const reply = base[method] ?? {};
+      recorded[method] = (params?: Record<string, unknown>) => {
+        sent.push({ method, ...(params ? { params } : {}) });
+        return typeof reply === "function"
+          ? (reply as (p?: Record<string, unknown>) => unknown)(params)
+          : reply;
+      };
+    }
+    const page = fakePage({ url: "https://x.test/", cdpReplies: recorded });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y" }),
+    );
+    if (opts.navigateBetween) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: opts.navigateBetween }),
+      );
+    }
+    const res = await driver.execute(cmd(action));
+    return { res, page, driver, observed, sent };
+  }
+
+  it("clicks the centre of the node the tree named", async () => {
+    const { res, page, observed } = await observedThenActed({
+      kind: "act",
+      verb: "click",
+      target: { a11yRef: "e1" },
+    });
+    // e1 is the button, so the ref the model read is the node that got clicked.
+    expect(
+      (observed.output as { refs: Record<string, { name: string }> }).refs.e1,
+    ).toMatchObject({ role: "button", name: "Sign in" });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:100,50");
+  });
+
+  it("aims at the node's box, not at the coordinates of anything else", async () => {
+    const { page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e2" } },
+      {
+        // The textbox sits somewhere else on the page; a ref that ignored the
+        // box model would still click the first element's centre.
+        "DOM.getBoxModel": (params?: Record<string, unknown>) =>
+          params?.backendNodeId === 42
+            ? { model: { content: [10, 200, 30, 200, 30, 220, 10, 220] } }
+            : BOX,
+      },
+    );
+    expect(page.calls.acts).toContain("click:20,210");
+  });
+
+  it("scrolls the target into view before measuring it", async () => {
+    const { sent } = await observedThenActed({
+      kind: "act",
+      verb: "click",
+      target: { a11yRef: "e1" },
+    });
+    // Off-screen is the common case on a real page, and a click at unscrolled
+    // coordinates lands on whatever is actually at those pixels.
+    const order = sent.map((call) => call.method);
+    expect(order).toContain("DOM.scrollIntoViewIfNeeded");
+    expect(order.indexOf("DOM.scrollIntoViewIfNeeded")).toBeLessThan(
+      order.lastIndexOf("DOM.getBoxModel"),
+    );
+  });
+
+  it("RECOVERS by exact role and name when the node id died under a re-render", async () => {
+    // The React case: same button, same label, new backend id. Refusing here
+    // would cost the model an observe/act round trip to arrive at the element
+    // it already named.
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      {
+        "DOM.describeNode": (params?: Record<string, unknown>) => {
+          if (params?.backendNodeId === 41) throw new Error("no node with id");
+          return {};
+        },
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            { role: "button", name: "Sign in", id: 91 },
+            { role: "textbox", name: "Email", id: 92 },
+          ],
+        }),
+        "DOM.getBoxModel": (params?: Record<string, unknown>) =>
+          params?.backendNodeId === 91 ? BOX : {},
+      },
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:100,50");
+  });
+
+  it("REFUSES rather than recovering when the page itself has changed", async () => {
+    // A backend node id is only unique within a document, and a new page can
+    // reuse the number. Recovering by name across a navigation would click a
+    // same-labelled control on a page the model never asked about.
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      {},
+      { navigateBetween: "https://y.test/" },
+    );
+    expect(res.ok).toBe(false);
+    // Either refusal is correct and both send the model to a fresh
+    // observation: a navigation drops the tab's ref map outright, and the
+    // token check behind it catches a map that somehow outlived its page.
+    expect(res.error).toMatch(/stale_ref|unknown_ref/);
+    expect(res.error).toContain("observe again");
+    expect(page.calls.acts).not.toContain("click:100,50");
+  });
+
+  it("refuses when neither the id nor the role and name are still there", async () => {
+    const { res } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      (() => {
+        // First read mints the refs; the second is the recovery's, against a
+        // page that has replaced the button with a confirmation.
+        let reads = 0;
+        return {
+          "DOM.describeNode": () => {
+            throw new Error("no node with id");
+          },
+          "Accessibility.getFullAXTree": () => {
+            reads += 1;
+            return reads === 1
+              ? axTree({
+                  role: "RootWebArea",
+                  children: [{ role: "button", name: "Sign in", id: 41 }],
+                })
+              : axTree({
+                  role: "RootWebArea",
+                  children: [{ role: "heading", name: "Signed in", id: 99 }],
+                });
+          },
+        };
+      })(),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("stale_ref");
+    expect(res.error).toContain("Sign in");
+  });
+
+  it("REFUSES a click on a covered target, naming what is on top", async () => {
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      {
+        "Runtime.callFunctionOn": {
+          result: { value: "div.cookie-bar inside div#consent" },
+        },
+      },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("target_covered");
+    expect(res.error).toContain("div.cookie-bar inside div#consent");
+    // Named the recovery, and did not click.
+    expect(res.error).toMatch(/Dismiss or interact/);
+    expect(page.calls.acts).not.toContain("click:100,50");
+  });
+
+  it("never runs the occlusion check on a coordinate target", async () => {
+    // Coordinates are the model's own claim about where to click. There is no
+    // element to ask about, and refusing a bare point would be inventing one.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Runtime.callFunctionOn": { result: { value: "div.overlay" } },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [7, 9] } }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:7,9");
+  });
+
+  it("REPLACES a field's contents when typing at a ref", async () => {
+    // The same meaning `type` already has at a selector. A ref that appended
+    // would make one verb mean two things depending on how the target was named.
+    const { res, sent } = await observedThenActed({
+      kind: "act",
+      verb: "type",
+      target: { a11yRef: "e2" },
+      value: "someone@example.com",
+    });
+    expect(res.ok).toBe(true);
+    expect(sent.map((c) => c.method)).toContain("DOM.focus");
+    const inserted = sent.find((c) => c.method === "Input.insertText");
+    expect(inserted?.params).toMatchObject({ text: "someone@example.com" });
+  });
+
+  it("focuses the ref before pressing a key, so Enter lands where it was aimed", async () => {
+    const { res, page, sent } = await observedThenActed({
+      kind: "act",
+      verb: "press",
+      target: { a11yRef: "e2" },
+      value: "Enter",
+    });
+    expect(res.ok).toBe(true);
+    expect(sent.map((c) => c.method)).toContain("DOM.focus");
+    expect(page.calls.acts).toContain("press:Enter");
+  });
+
+  it("names the page's own options when a select has no such value", async () => {
+    // Recoverable in one turn: a model told only "no such option" guesses
+    // again; told what the control offers, it picks.
+    const { res } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "select",
+        target: { a11yRef: "e1" },
+        value: "XL",
+      },
+      { "Runtime.callFunctionOn": { result: { value: "no_option:S, M, L" } } },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("S, M, L");
+  });
+
+  it("answers unsupported_target when the engine has no CDP session at all", async () => {
+    // An engine that cannot resolve nodes can still be driven by selector and
+    // coordinates, so this is a capability answer rather than a fault.
+    const page = fakePage({ url: "https://x.test/", cdpSession: null });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: "e1" } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unknown_ref|unsupported_target/);
   });
 });

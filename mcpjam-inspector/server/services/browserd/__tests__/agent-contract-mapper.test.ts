@@ -67,23 +67,19 @@ describe("toDaemonAction", () => {
     );
   });
 
-  it("REFUSES a ref target, because the daemon cannot resolve one yet", () => {
-    // The tree hands out refs and the daemon has no ref→node resolution, so an
-    // act aimed at one would come back `unsupported_target` after a round trip.
-    // Saying so here names the alternative in one hop — and keeps the contract
-    // from promising something the code does not do.
+  it("maps a ref target through to the daemon rather than second-guessing it", () => {
+    // Refusing here would be this layer deciding a question it cannot see: a
+    // ref is scoped to the tab that issued it and checked against that
+    // observation's state token, and only the daemon holds either.
     const mapped = toDaemonAction({
       op: "act",
       verb: "click",
       target: { ref: "e7" },
     });
-    expect(mapped.ok).toBe(false);
-    expect(!mapped.ok && mapped.refusal.code).toBe("unsupported_target");
-    expect(!mapped.ok && mapped.refusal.message).toMatch(/selector|coordinates/);
-    // The action it WOULD have been still comes back, so the refusal is
-    // recorded as what was attempted rather than as a placeholder.
-    expect(!mapped.ok && mapped.action).toMatchObject({
+    expect(mapped.ok).toBe(true);
+    expect(mapped.ok && mapped.action).toMatchObject({
       kind: "act",
+      verb: "click",
       target: { a11yRef: "e7" },
     });
   });

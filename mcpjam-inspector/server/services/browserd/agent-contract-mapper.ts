@@ -215,23 +215,12 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         ...(expectedState ? { expectedState } : {}),
         observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
       };
-      if (target && "ref" in target) {
-        // Refused HERE rather than at the browser, so the caller learns why in
-        // one hop and with the alternative named. The daemon would answer
-        // `unsupported_target` anyway — ref→node resolution is not built — and
-        // a round trip to be told so is a round trip wasted.
-        return {
-          ok: false,
-          action,
-          refusal: {
-            code: "unsupported_target",
-            message:
-              `ref targeting (\`${target.ref}\`) is not available yet; the ` +
-              "accessibility tree names the control, but acting on it needs a " +
-              "`selector` or `coordinates`",
-          },
-        };
-      }
+      // NO PRE-EMPTIVE REFUSAL FOR REFS. The daemon resolves them now, and it
+      // is the only layer that can: a ref is scoped to the tab that issued it
+      // and validated against that observation's state token. A daemon too old
+      // to resolve one still answers `unsupported_target` itself, which is the
+      // same answer this used to give without the round trip — and the wrong
+      // answer to give on a daemon that can.
       if (target && "coordinates" in target) {
         const [x, y] = target.coordinates;
         // REFUSED, never clamped and never dispatched. Chromium happily

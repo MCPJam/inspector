@@ -22,11 +22,21 @@ import {
   isPointInViewport,
   wantsFor,
   type BrowserAction,
+  type BrowserActTarget,
   type BrowserCommand,
   type BrowserCommandResult,
   type BrowserdErrorCode,
   type ActObserve,
 } from "../protocol";
+import {
+  coveringElementAt,
+  focusBackendNodeId,
+  pointForBackendNodeId,
+  replaceTextInNode,
+  resolveRefNode,
+  selectOptionOnNode,
+  type ResolvedRefNode,
+} from "./node-target";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
 import { computeStateToken, shortHash } from "./state-token";
@@ -603,7 +613,13 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     try {
-      await this.dispatchVerb(page, action, permit);
+      // RESOLVED HERE, not in `dispatchVerb`, because a ref is only meaningful
+      // against the tab that issued it: the token check needs `tabId` and the
+      // live entry, and `dispatchVerb` is handed a page. Throws `ActError`, so
+      // the classifier below reports `stale_ref` / `unknown_ref` as themselves
+      // rather than matching prose and landing on `act_failed`.
+      const refNode = await this.resolveActRef(tabId, entry, action.target);
+      await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
       // A target that cannot be resolved is a NORMAL answer the model must be
       // able to act on ("the button isn't there"), not a daemon fault — and
@@ -691,10 +707,121 @@ export class ChromiumDriver implements BrowserDriver {
    * typed into it. The check is between steps because there is no way to take
    * back the ones already made.
    */
+  /**
+   * Turn an `a11yRef` target into a live node, or refuse in the model's terms.
+   *
+   * Three refusals, and they send the model three different places:
+   *
+   *   - `stale_ref` for a ref minted against a page this tab has since left.
+   *     Checked against the state token BEFORE anything is resolved, because a
+   *     backend node id is only unique within a document: a new page can reuse
+   *     the number, and resolving it would click a stranger with confidence.
+   *   - `unknown_ref` for a ref this tab's last observation never issued —
+   *     a model quoting a ref from an older turn, or inventing one.
+   *   - `stale_ref` again when the id is dead AND no node still carries that
+   *     exact role and name (`resolveRefNode` does the recovery).
+   */
+  private async resolveActRef(
+    tabId: string,
+    entry: TabEntry,
+    target: BrowserActTarget | undefined,
+  ): Promise<ResolvedRefNode | undefined> {
+    if (!target || !("a11yRef" in target)) return undefined;
+    const raw = target.a11yRef;
+    const map = this.refs.get(tabId);
+    if (map && !this.refsStillDescribe(tabId, entry, map)) {
+      this.refs.delete(tabId);
+      throw new ActError(
+        "stale_ref",
+        `${raw} was issued for a page this tab has since left; observe again ` +
+          "and use a ref from the new page",
+      );
+    }
+    const parsed = parseRef(raw);
+    const known = parsed ? map?.entries.get(parsed) : undefined;
+    if (!known) {
+      throw new ActError(
+        "unknown_ref",
+        `${raw} is not a ref from this tab's last observation; observe again ` +
+          "and use a ref it names",
+      );
+    }
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      // An engine with no CDP session can still be driven by selector and
+      // coordinates, so this is a capability answer rather than a fault.
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates",
+      );
+    }
+    try {
+      return await resolveRefNode(cdp, parsed!, known);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
+    }
+  }
+
+  /**
+   * Where to aim for a resolved ref, refusing when something is on top of it.
+   *
+   * The occlusion check is HERE and not on the selector path because the two
+   * are not in the same position: Playwright's own actionability already
+   * refuses a selector click whose element cannot receive the event, which is
+   * why those fail as timeouts rather than landing somewhere else. A ref is
+   * clicked by coordinate, so nothing else is checking — and a coordinate that
+   * lands on a consent banner reports a click that "worked".
+   */
+  private async pointForRef(
+    page: DriverPage,
+    refNode: ResolvedRefNode,
+    label: string,
+    check: "occlusion" | "none",
+  ): Promise<ActPoint> {
+    const cdp = await page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates",
+      );
+    }
+    const point = await pointForBackendNodeId(
+      cdp,
+      refNode.backendNodeId,
+      label,
+    );
+    if (!isPointInViewport(point.x, point.y)) {
+      // Scrolled and still outside: a fixed-position element parked off-screen,
+      // or a box the layout put beyond the viewport. Clicking those pixels
+      // would hit nothing.
+      throw new ActError(
+        "target_not_found",
+        `${label} is at (${point.x}, ${point.y}), outside the ` +
+          `${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} ` +
+          "viewport even after scrolling; observe again to see where it is now",
+      );
+    }
+    if (check === "occlusion") {
+      const covering = await coveringElementAt(cdp, refNode.backendNodeId);
+      if (covering) {
+        throw new ActError(
+          "target_covered",
+          `${label} is covered by ${covering} at its click point, so the ` +
+            "input would land on that element instead. Dismiss or interact " +
+            "with the covering element first (it is often a dialog, banner, " +
+            "or sticky header).",
+        );
+      }
+    }
+    return point;
+  }
+
   private async dispatchVerb(
     page: DriverPage,
     action: Extract<BrowserAction, { kind: "act" }>,
     permit: () => boolean = () => true,
+    refNode?: ResolvedRefNode,
   ): Promise<void> {
     /** Refuse the NEXT page write when the browser changed hands. */
     const stillOurs = () => {
@@ -720,28 +847,51 @@ export class ChromiumDriver implements BrowserDriver {
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
-    if (target && "a11yRef" in target) {
-      // Deferred deliberately: a ref that silently drifts across a re-render
-      // is worse than one the model cannot use at all.
-      throw new Error(
-        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector",
-      );
-    }
+    // Resolved by the caller (`resolveActRef`), which is the only place with
+    // the tab identity a ref is scoped to. Here it is just a live node id.
+    const refLabel =
+      target && "a11yRef" in target ? target.a11yRef : "the target";
+    const needCdp = async () => {
+      const cdp = await page.cdp();
+      if (!cdp) {
+        throw new ActError(
+          "unsupported_target",
+          "this browser cannot resolve refs; use a selector or coordinates",
+        );
+      }
+      return cdp;
+    };
 
     switch (action.verb) {
       case "click":
+        if (refNode) {
+          return page.clickAt(
+            await this.pointForRef(page, refNode, refLabel, "occlusion"),
+          );
+        }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
-        throw new Error("no element: click needs coordinates or a selector");
+        throw new Error(
+          "no element: click needs a ref, coordinates or a selector",
+        );
       case "hover":
+        if (refNode) {
+          return page.hoverAt(
+            await this.pointForRef(page, refNode, refLabel, "occlusion"),
+          );
+        }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
-        throw new Error("no element: hover needs coordinates or a selector");
+        throw new Error(
+          "no element: hover needs a ref, coordinates or a selector",
+        );
       case "type": {
         const text = action.value ?? "";
-        // With a selector, REPLACE the field's value; without one, type into
-        // whatever has focus (the model's previous click).
-        if (selector) await page.fillSelector(selector, text);
+        // With a ref or a selector, REPLACE the field's value; without either,
+        // type into whatever has focus (the model's previous click).
+        if (refNode) {
+          await replaceTextInNode(await needCdp(), refNode.backendNodeId, text);
+        } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         // ONE settle and ONE observation for what was two commands. The submit
         // is also the half a model most often cannot pin: it acts on the page
@@ -785,6 +935,12 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
+        // A ref makes the key land somewhere named rather than wherever focus
+        // happened to be — the difference between Enter submitting the form
+        // the model meant and Enter submitting whatever it clicked last.
+        if (refNode) {
+          await focusBackendNodeId(await needCdp(), refNode.backendNodeId);
+        }
         return page.press(action.value);
       case "scroll": {
         // Default to one viewport-ish step down, the overwhelmingly common
@@ -793,7 +949,10 @@ export class ChromiumDriver implements BrowserDriver {
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
-        if (!point) throw new Error("drag needs start coordinates");
+        const from = refNode
+          ? await this.pointForRef(page, refNode, refLabel, "occlusion")
+          : point;
+        if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
           throw new Error(
@@ -809,13 +968,21 @@ export class ChromiumDriver implements BrowserDriver {
               "observation viewport",
           );
         }
-        return page.dragTo(point, to);
+        return page.dragTo(from, to);
       }
       case "select":
-        if (!selector) throw new Error("select needs a selector");
         if (action.value === undefined) {
           throw new Error("select needs the option value in `value`");
         }
+        if (refNode) {
+          return selectOptionOnNode(
+            await needCdp(),
+            refNode.backendNodeId,
+            action.value,
+            refLabel,
+          );
+        }
+        if (!selector) throw new Error("select needs a ref or a selector");
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":

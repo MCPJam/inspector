@@ -1899,10 +1899,21 @@ describe("the toolset's context footprint is pinned", () => {
     // gated calls — type, type, press — is now ONE. That is two fewer
     // approvals for the person watching and two fewer observations for the
     // model, on the single most common thing a browser agent does.
+    //
+    // Raised to 5_200 for `ref` (+292 bytes, 4872 → 5164): the field itself,
+    // its sentence about refs being fresh per observation, and the rewritten
+    // `browser_act` description that puts refs ahead of coordinates. What the
+    // bytes buy is the only target the model does not have to invent — the
+    // tree it just read names the element and hands back the handle — and the
+    // refusals that come with it: a covered target is named rather than
+    // clicked through, and a ref from a page the tab has left is refused
+    // rather than resolved against a stranger. Both of those are wrong clicks
+    // the model could not previously even detect, and a wrong click costs far
+    // more than 292 bytes to discover and undo.
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(4_900);
+    ).toBeLessThanOrEqual(5_200);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {

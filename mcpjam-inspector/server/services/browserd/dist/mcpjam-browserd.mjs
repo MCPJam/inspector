@@ -68,6 +68,17 @@ var BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /**
+   * Something is on top of the target at its click point, so the input would
+   * land on that element instead. The detail names the covering element.
+   *
+   * Its own code because the recovery is specific and the model can perform
+   * it: dismiss the banner or the modal, then retry the original target. A
+   * click that silently hit the overlay reports success, and a bare
+   * `act_failed` sends the model back to re-observe a page that has not
+   * changed.
+   */
+  "target_covered",
   /** A ref this tab's last observation never issued. */
   "unknown_ref",
   /** The page could not answer an accessibility tree at all. */
@@ -2979,6 +2990,323 @@ function createVideoEncoder(options) {
   };
 }
 
+// server/services/browserd/daemon/cdp-a11y.ts
+var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
+  "generic",
+  "none",
+  "presentation",
+  "InlineTextBox",
+  "LineBreak",
+  "StaticText"
+]);
+var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
+var CARRIED_PROPERTIES = {
+  checked: "checked",
+  disabled: "disabled",
+  expanded: "expanded",
+  focused: "focused",
+  level: "level",
+  pressed: "pressed",
+  readonly: "readonly",
+  required: "required",
+  selected: "selected",
+  url: "url",
+  valuemin: "valueMin",
+  valuemax: "valueMax",
+  valuetext: "valueText"
+};
+function scalar(value) {
+  const raw = value?.value;
+  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
+  if (typeof raw === "number") return raw;
+  return void 0;
+}
+async function readAxTree(cdp, rootBackendNodeId) {
+  try {
+    await cdp.send("Accessibility.enable");
+    const response = await cdp.send("Accessibility.getFullAXTree");
+    const nodes = response?.nodes;
+    if (!nodes || nodes.length === 0) return { ok: false };
+    const byId = /* @__PURE__ */ new Map();
+    for (const node of nodes) byId.set(node.nodeId, node);
+    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
+    if (!root) return { ok: true, tree: null };
+    const seen = /* @__PURE__ */ new Set();
+    const built = build(root, byId, seen);
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+function build(node, byId, seen) {
+  if (seen.has(node.nodeId)) return [];
+  seen.add(node.nodeId);
+  const children = [];
+  for (const childId of node.childIds ?? []) {
+    const child = byId.get(childId);
+    if (child) children.push(...build(child, byId, seen));
+  }
+  const role = scalar(node.role);
+  const name = scalar(node.name);
+  if (node.ignored) return children;
+  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
+    if (role === "StaticText" && typeof name === "string") {
+      return [{ role: "text", name }];
+    }
+    return children;
+  }
+  const built = {};
+  if (typeof role === "string") built.role = role;
+  if (typeof node.backendDOMNodeId === "number") {
+    built.backendDOMNodeId = node.backendDOMNodeId;
+  }
+  if (name !== void 0) built.name = String(name);
+  const value = scalar(node.value);
+  if (value !== void 0) built.value = value;
+  const description = scalar(node.description);
+  if (description !== void 0) built.description = String(description);
+  for (const property of node.properties ?? []) {
+    const key = property.name && CARRIED_PROPERTIES[property.name];
+    if (!key) continue;
+    const raw = property.value?.value;
+    if (raw === void 0 || raw === null || raw === "") continue;
+    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
+  }
+  if (children.length > 0) built.children = children;
+  return [built];
+}
+async function resolveBackendNodeId(cdp, selector) {
+  try {
+    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
+    const rootNodeId = doc?.root?.nodeId;
+    if (rootNodeId === void 0) return null;
+    const found = await cdp.send("DOM.querySelector", {
+      nodeId: rootNodeId,
+      selector
+    });
+    if (!found?.nodeId) return null;
+    const described = await cdp.send("DOM.describeNode", {
+      nodeId: found.nodeId
+    });
+    return described?.node?.backendNodeId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// server/services/browserd/daemon/node-target.ts
+async function pointForBackendNodeId(cdp, backendNodeId, label) {
+  await cdp.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => {
+  });
+  const box = await cdp.send("DOM.getBoxModel", { backendNodeId }).catch(() => void 0);
+  const quad = box?.model?.content;
+  if (!quad || quad.length < 8) {
+    throw new Error(
+      `target_not_found: ${label} is on the page but has no visible box to aim at (it may be hidden or collapsed); observe again and pick a target that is showing`
+    );
+  }
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  return {
+    x: Math.round(xs.reduce((a, b) => a + b, 0) / 4),
+    y: Math.round(ys.reduce((a, b) => a + b, 0) / 4)
+  };
+}
+async function resolveRefNode(cdp, ref, entry) {
+  const known = entry.backendDOMNodeId;
+  if (known !== void 0 && await nodeResolves(cdp, known)) {
+    return { backendNodeId: known, recovered: false };
+  }
+  const recovered = await findByRoleAndName(cdp, entry);
+  if (recovered !== void 0) {
+    return { backendNodeId: recovered, recovered: true };
+  }
+  throw new Error(
+    `stale_ref: ${ref} pointed at ${describeEntry(entry)}, which is no longer on this page; observe again and use a ref from the new tree`
+  );
+}
+async function nodeResolves(cdp, backendNodeId) {
+  return cdp.send("DOM.describeNode", { backendNodeId }).then(
+    () => true,
+    () => false
+  );
+}
+async function findByRoleAndName(cdp, entry) {
+  const read = await readAxTree(cdp);
+  if (!read.ok || !read.tree) return void 0;
+  const wanted = entry.nth ?? 0;
+  let seen = 0;
+  let found;
+  const stack = [read.tree];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node.role === entry.role && (typeof node.name === "string" ? node.name : "") === entry.name && typeof node.backendDOMNodeId === "number") {
+      if (seen === wanted) {
+        found = node.backendDOMNodeId;
+        break;
+      }
+      seen += 1;
+    }
+    const children = node.children ?? [];
+    for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
+  }
+  return found;
+}
+function describeEntry(entry) {
+  const name = entry.name ? ` "${entry.name}"` : "";
+  return `${entry.role}${name}`;
+}
+async function focusBackendNodeId(cdp, backendNodeId) {
+  await cdp.send("DOM.focus", { backendNodeId });
+}
+async function replaceTextInNode(cdp, backendNodeId, text) {
+  await focusBackendNodeId(cdp, backendNodeId);
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (objectId) {
+    await cdp.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function () {
+          if (typeof this.select === "function") { this.select(); return; }
+          const doc = this.ownerDocument;
+          const view = doc && doc.defaultView;
+          if (!view || !doc.createRange) return;
+          const range = doc.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (!selection) return;
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }`
+    }).catch(() => {
+    });
+  }
+  await cdp.send("Input.insertText", { text });
+}
+async function selectOptionOnNode(cdp, backendNodeId, value, label) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) {
+    throw new Error(
+      `target_not_found: ${label} could not be resolved to select an option`
+    );
+  }
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value }],
+    functionDeclaration: `function (wanted) {
+      if (this.tagName !== "SELECT") return "not_select";
+      const options = Array.from(this.options || []);
+      const match =
+        options.find((o) => o.value === wanted) ||
+        options.find((o) => (o.label || o.textContent || "").trim() === wanted);
+      if (!match) {
+        return "no_option:" + options
+          .slice(0, 12)
+          .map((o) => (o.label || o.textContent || "").trim())
+          .join(", ");
+      }
+      this.value = match.value;
+      this.dispatchEvent(new Event("input", { bubbles: true }));
+      this.dispatchEvent(new Event("change", { bubbles: true }));
+      return "ok";
+    }`
+  });
+  const answer = outcome?.result?.value ?? "";
+  if (answer === "ok") return;
+  if (answer === "not_select") {
+    throw new Error(
+      `target_not_found: ${label} is not a <select>; use click or type instead`
+    );
+  }
+  const offered = answer.startsWith("no_option:") ? answer.slice(10) : "";
+  throw new Error(
+    `target_not_found: ${label} has no option matching "${value}"` + (offered ? `; it offers: ${offered}` : "")
+  );
+}
+async function coveringElementAt(cdp, backendNodeId) {
+  const objectId = await resolveObjectId(cdp, backendNodeId);
+  if (!objectId) return null;
+  const outcome = await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    functionDeclaration: `function () {
+        const el = this;
+        const doc = el.ownerDocument;
+        if (!doc || typeof doc.elementFromPoint !== "function") return null;
+        const rect = el.getBoundingClientRect();
+        if (!rect || rect.width === 0 || rect.height === 0) return null;
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        let hit = doc.elementFromPoint(x, y);
+        if (!hit) return null;
+        // Shadow roots answer for their host, so descend to what a click
+        // would really reach.
+        let guard = 0;
+        while (hit.shadowRoot && guard < 32) {
+          const inner = hit.shadowRoot.elementFromPoint(x, y);
+          if (!inner || inner === hit) break;
+          hit = inner;
+          guard += 1;
+        }
+        // Walk upward THROUGH shadow boundaries: a node inside a shadow root
+        // has the root as its parent, and the root's host is the next element.
+        const up = (n) => {
+          const p = n.parentNode;
+          if (!p) return null;
+          return p.nodeType === 11 && p.host ? p.host : p;
+        };
+        const reaches = (from, to) => {
+          let n = from;
+          let steps = 0;
+          while (n && steps < 256) {
+            if (n === to) return true;
+            n = up(n);
+            steps += 1;
+          }
+          return false;
+        };
+        // The element itself, anything inside it, or anything it sits inside:
+        // in all three the click reaches the node the model named.
+        if (hit === el || reaches(hit, el) || reaches(el, hit)) return null;
+        // A label drives its own control, so a click on it is a click on this.
+        try {
+          if (hit.control === el || (hit.tagName === "LABEL" && reaches(el, hit))) return null;
+          const labels = el.labels ? Array.from(el.labels) : [];
+          if (labels.some((l) => l === hit || reaches(hit, l))) return null;
+        } catch (_) {}
+        const describe = (n) => {
+          if (!n || !n.tagName) return "another element";
+          const tag = n.tagName.toLowerCase();
+          if (n.id) return tag + "#" + n.id;
+          const cls = (n.className && typeof n.className === "string" ? n.className : "")
+            .trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          return cls.length ? tag + "." + cls.join(".") : tag;
+        };
+        let named = describe(hit);
+        // The nearest identified ancestor, which is usually what a person
+        // would call the thing ("inside div#cookie-banner").
+        let owner = up(hit);
+        let steps = 0;
+        while (owner && steps < 32) {
+          if (owner.id) { named += " inside " + describe(owner); break; }
+          owner = up(owner);
+          steps += 1;
+        }
+        return named.slice(0, 120);
+      }`
+  }).catch(() => void 0);
+  const value = outcome?.result?.value;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+async function resolveObjectId(cdp, backendNodeId) {
+  const resolved = await cdp.send("DOM.resolveNode", { backendNodeId }).catch(() => void 0);
+  return resolved?.object?.objectId;
+}
+
 // server/services/browserd/daemon/state-token.ts
 import { createHash } from "node:crypto";
 function shortHash(value) {
@@ -3234,114 +3562,6 @@ var PAGE_TEXT_FN = `() => {
 }`;
 var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
 var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
-
-// server/services/browserd/daemon/cdp-a11y.ts
-var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
-  "generic",
-  "none",
-  "presentation",
-  "InlineTextBox",
-  "LineBreak",
-  "StaticText"
-]);
-var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
-var CARRIED_PROPERTIES = {
-  checked: "checked",
-  disabled: "disabled",
-  expanded: "expanded",
-  focused: "focused",
-  level: "level",
-  pressed: "pressed",
-  readonly: "readonly",
-  required: "required",
-  selected: "selected",
-  url: "url",
-  valuemin: "valueMin",
-  valuemax: "valueMax",
-  valuetext: "valueText"
-};
-function scalar(value) {
-  const raw = value?.value;
-  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
-  if (typeof raw === "number") return raw;
-  return void 0;
-}
-async function readAxTree(cdp, rootBackendNodeId) {
-  try {
-    await cdp.send("Accessibility.enable");
-    const response = await cdp.send("Accessibility.getFullAXTree");
-    const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return { ok: false };
-    const byId = /* @__PURE__ */ new Map();
-    for (const node of nodes) byId.set(node.nodeId, node);
-    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
-    if (!root) return { ok: true, tree: null };
-    const seen = /* @__PURE__ */ new Set();
-    const built = build(root, byId, seen);
-    if (built.length === 0) return { ok: true, tree: null };
-    return {
-      ok: true,
-      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
-    };
-  } catch {
-    return { ok: false };
-  }
-}
-function build(node, byId, seen) {
-  if (seen.has(node.nodeId)) return [];
-  seen.add(node.nodeId);
-  const children = [];
-  for (const childId of node.childIds ?? []) {
-    const child = byId.get(childId);
-    if (child) children.push(...build(child, byId, seen));
-  }
-  const role = scalar(node.role);
-  const name = scalar(node.name);
-  if (node.ignored) return children;
-  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
-    if (role === "StaticText" && typeof name === "string") {
-      return [{ role: "text", name }];
-    }
-    return children;
-  }
-  const built = {};
-  if (typeof role === "string") built.role = role;
-  if (typeof node.backendDOMNodeId === "number") {
-    built.backendDOMNodeId = node.backendDOMNodeId;
-  }
-  if (name !== void 0) built.name = String(name);
-  const value = scalar(node.value);
-  if (value !== void 0) built.value = value;
-  const description = scalar(node.description);
-  if (description !== void 0) built.description = String(description);
-  for (const property of node.properties ?? []) {
-    const key = property.name && CARRIED_PROPERTIES[property.name];
-    if (!key) continue;
-    const raw = property.value?.value;
-    if (raw === void 0 || raw === null || raw === "") continue;
-    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
-  }
-  if (children.length > 0) built.children = children;
-  return [built];
-}
-async function resolveBackendNodeId(cdp, selector) {
-  try {
-    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
-    const rootNodeId = doc?.root?.nodeId;
-    if (rootNodeId === void 0) return null;
-    const found = await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector
-    });
-    if (!found?.nodeId) return null;
-    const described = await cdp.send("DOM.describeNode", {
-      nodeId: found.nodeId
-    });
-    return described?.node?.backendNodeId ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // server/services/browserd/daemon/a11y-refs.ts
 var INTERACTIVE_ROLES = /* @__PURE__ */ new Set([
@@ -4789,7 +5009,8 @@ var ChromiumDriver = class {
       );
     }
     try {
-      await this.dispatchVerb(page, action, permit);
+      const refNode = await this.resolveActRef(tabId, entry, action.target);
+      await this.dispatchVerb(page, action, permit, refNode);
     } catch (error) {
       if (error instanceof LeaseTakenMidAct) {
         return this.leaseBlockedResult(
@@ -4835,7 +5056,90 @@ var ChromiumDriver = class {
    * typed into it. The check is between steps because there is no way to take
    * back the ones already made.
    */
-  async dispatchVerb(page, action, permit = () => true) {
+  /**
+   * Turn an `a11yRef` target into a live node, or refuse in the model's terms.
+   *
+   * Three refusals, and they send the model three different places:
+   *
+   *   - `stale_ref` for a ref minted against a page this tab has since left.
+   *     Checked against the state token BEFORE anything is resolved, because a
+   *     backend node id is only unique within a document: a new page can reuse
+   *     the number, and resolving it would click a stranger with confidence.
+   *   - `unknown_ref` for a ref this tab's last observation never issued —
+   *     a model quoting a ref from an older turn, or inventing one.
+   *   - `stale_ref` again when the id is dead AND no node still carries that
+   *     exact role and name (`resolveRefNode` does the recovery).
+   */
+  async resolveActRef(tabId, entry, target) {
+    if (!target || !("a11yRef" in target)) return void 0;
+    const raw = target.a11yRef;
+    const map = this.refs.get(tabId);
+    if (map && !this.refsStillDescribe(tabId, entry, map)) {
+      this.refs.delete(tabId);
+      throw new ActError(
+        "stale_ref",
+        `${raw} was issued for a page this tab has since left; observe again and use a ref from the new page`
+      );
+    }
+    const parsed = parseRef(raw);
+    const known = parsed ? map?.entries.get(parsed) : void 0;
+    if (!known) {
+      throw new ActError(
+        "unknown_ref",
+        `${raw} is not a ref from this tab's last observation; observe again and use a ref it names`
+      );
+    }
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates"
+      );
+    }
+    try {
+      return await resolveRefNode(cdp, parsed, known);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ActError("stale_ref", message.replace(/^stale_ref:\s*/, ""));
+    }
+  }
+  /**
+   * Where to aim for a resolved ref, refusing when something is on top of it.
+   *
+   * The occlusion check is HERE and not on the selector path because the two
+   * are not in the same position: Playwright's own actionability already
+   * refuses a selector click whose element cannot receive the event, which is
+   * why those fail as timeouts rather than landing somewhere else. A ref is
+   * clicked by coordinate, so nothing else is checking — and a coordinate that
+   * lands on a consent banner reports a click that "worked".
+   */
+  async pointForRef(page, refNode, label, check) {
+    const cdp = await page.cdp();
+    if (!cdp) {
+      throw new ActError(
+        "unsupported_target",
+        "this browser cannot resolve refs; use a selector or coordinates"
+      );
+    }
+    const point = await pointForBackendNodeId(cdp, refNode.backendNodeId, label);
+    if (!isPointInViewport(point.x, point.y)) {
+      throw new ActError(
+        "target_not_found",
+        `${label} is at (${point.x}, ${point.y}), outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} viewport even after scrolling; observe again to see where it is now`
+      );
+    }
+    if (check === "occlusion") {
+      const covering = await coveringElementAt(cdp, refNode.backendNodeId);
+      if (covering) {
+        throw new ActError(
+          "target_covered",
+          `${label} is covered by ${covering} at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header).`
+        );
+      }
+    }
+    return point;
+  }
+  async dispatchVerb(page, action, permit = () => true, refNode) {
     const stillOurs = () => {
       if (!permit()) throw new LeaseTakenMidAct("lease taken mid-act");
     };
@@ -4847,23 +5151,45 @@ var ChromiumDriver = class {
       );
     }
     const selector = target && "selector" in target ? target.selector : null;
-    if (target && "a11yRef" in target) {
-      throw new Error(
-        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector"
-      );
-    }
+    const refLabel = target && "a11yRef" in target ? target.a11yRef : "the target";
+    const needCdp = async () => {
+      const cdp = await page.cdp();
+      if (!cdp) {
+        throw new ActError(
+          "unsupported_target",
+          "this browser cannot resolve refs; use a selector or coordinates"
+        );
+      }
+      return cdp;
+    };
     switch (action.verb) {
       case "click":
+        if (refNode) {
+          return page.clickAt(
+            await this.pointForRef(page, refNode, refLabel, "occlusion")
+          );
+        }
         if (point) return page.clickAt(point);
         if (selector) return page.clickSelector(selector);
-        throw new Error("no element: click needs coordinates or a selector");
+        throw new Error("no element: click needs a ref, coordinates or a selector");
       case "hover":
+        if (refNode) {
+          return page.hoverAt(
+            await this.pointForRef(page, refNode, refLabel, "occlusion")
+          );
+        }
         if (point) return page.hoverAt(point);
         if (selector) return page.hoverSelector(selector);
-        throw new Error("no element: hover needs coordinates or a selector");
+        throw new Error("no element: hover needs a ref, coordinates or a selector");
       case "type": {
         const text = action.value ?? "";
-        if (selector) await page.fillSelector(selector, text);
+        if (refNode) {
+          await replaceTextInNode(
+            await needCdp(),
+            refNode.backendNodeId,
+            text
+          );
+        } else if (selector) await page.fillSelector(selector, text);
         else await page.typeText(text);
         if (action.submit) {
           stillOurs();
@@ -4893,13 +5219,17 @@ var ChromiumDriver = class {
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
+        if (refNode) {
+          await focusBackendNodeId(await needCdp(), refNode.backendNodeId);
+        }
         return page.press(action.value);
       case "scroll": {
         const [dx, dy] = parseScrollDelta(action.value);
         return page.scrollBy({ dx, dy });
       }
       case "drag": {
-        if (!point) throw new Error("drag needs start coordinates");
+        const from = refNode ? await this.pointForRef(page, refNode, refLabel, "occlusion") : point;
+        if (!from) throw new Error("drag needs a ref or start coordinates");
         const to = parsePoint(action.value);
         if (!to) {
           throw new Error(
@@ -4911,13 +5241,21 @@ var ChromiumDriver = class {
             `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
           );
         }
-        return page.dragTo(point, to);
+        return page.dragTo(from, to);
       }
       case "select":
-        if (!selector) throw new Error("select needs a selector");
         if (action.value === void 0) {
           throw new Error("select needs the option value in `value`");
         }
+        if (refNode) {
+          return selectOptionOnNode(
+            await needCdp(),
+            refNode.backendNodeId,
+            action.value,
+            refLabel
+          );
+        }
+        if (!selector) throw new Error("select needs a ref or a selector");
         return page.selectOption(selector, action.value);
       case "close_tab":
       case "activate_tab":

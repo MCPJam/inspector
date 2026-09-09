@@ -1256,7 +1256,7 @@ export function buildBrowserTools(
       description:
         "Interact with the page: click, type, press a key, scroll, hover, drag or select. " +
         "fill_form fills several fields in one call. " +
-        "Target by coordinates from the last screenshot, or by CSS selector. Returns the " +
+        "Target by `ref` from the last a11y observation (best: it is the element you read, and a covered one is refused rather than mis-clicked), or by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
         "screenshot. Coordinates are CSS pixels in a " +
         `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
@@ -1298,6 +1298,13 @@ export function buildBrowserTools(
               'drag destination ("x,y" in the same viewport coordinates), or option ' +
               "value to select.",
           ),
+        ref: z
+          .string()
+          .optional()
+          .describe(
+            'A ref from this tab\'s last a11y observation, e.g. "e7". Refs are ' +
+              "fresh per observation; re-observe before using one.",
+          ),
         fields: z
           .array(z.object({ selector: z.string(), value: z.string() }))
           .optional()
@@ -1314,7 +1321,7 @@ export function buildBrowserTools(
       }),
       needsApproval,
       execute: async (
-        { verb, selector, x, y, value, fields, submit, observe, tabId },
+        { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
         { abortSignal },
       ) => {
         if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
@@ -1330,8 +1337,13 @@ export function buildBrowserTools(
               "(0, 0) at the top-left — re-read the screenshot and pick a point inside it.",
           };
         }
-        const target: BrowserActTarget | undefined =
-          x !== undefined && y !== undefined
+        // REF FIRST. It is the only target the model did not have to invent:
+        // the tree it just read named the element and handed it this handle,
+        // where a coordinate is a guess off a picture and a selector is CSS
+        // written for a page seen only as a tree.
+        const target: BrowserActTarget | undefined = ref
+          ? { a11yRef: ref }
+          : x !== undefined && y !== undefined
             ? { coordinates: [x, y] }
             : selector
               ? { selector }
