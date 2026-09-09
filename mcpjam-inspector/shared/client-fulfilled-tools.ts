@@ -21,8 +21,10 @@
  * WebMCP-*shaped* but deliberately never exposed to browser-native agents
  * (`document.modelContext` / `navigator.modelContext`). Tools that ARE
  * browser-native WebMCP live under `page_` instead, and the two must not be
- * confused: `ui_` is first-party and curated, `page_` is third-party and
- * always gated. The prefixes are load bearing precisely because they are this
+ * confused: `ui_` is first-party and curated, `page_` is third-party — and
+ * never trusted to describe itself, whatever its annotations claim, though
+ * whether a call pauses is the user's Tool Approval switch to decide (see
+ * `pageToolCallNeedsApproval`). The prefixes are load bearing because they are this
  * narrow: they are the token the server's skip gate and pause predicate key
  * on, so a browser-fulfilled tool named anything else would either be executed
  * server-side or leave the stream waiting on a result nobody will send.

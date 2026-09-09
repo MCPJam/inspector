@@ -2521,10 +2521,10 @@ async function handlePendingApprovals(
   //     so a result for that sibling is written whether or not anyone approved
   //     anything.
   //
-  // The mixed step is now the ordinary case rather than a corner. A page tool
-  // always pauses while the `browser_*` verbs follow their own floor, so one
-  // "add pepperoni" emits a `webmcp_*` call and a `browser_observe` in a
-  // single step, approves one, and resumes into exactly this.
+  // A MIXED STEP IS ORDINARY, and does not need two families on two floors to
+  // happen: the model emits several calls in one assistant message all the
+  // time, an `app_*` or read-only `ui_*` among them never pauses, and one
+  // gated call is enough to park every sibling here.
   //
   // Idempotent by construction: the helper skips any call that already has a
   // result, so a second pass over the same history emits nothing.

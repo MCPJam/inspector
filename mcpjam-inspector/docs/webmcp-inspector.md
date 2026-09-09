@@ -624,12 +624,18 @@ names are arbitrary while a model-facing name must satisfy
 Manual invocation from the tab is **not** gated. A person clicking Invoke on a
 tool they can see, on a page they opened, has already made the decision.
 
-Every model-driven page call **is** gated, unconditionally — not via
-`requireToolApproval`. A page tool runs code on a third-party site, the only
-claims about what it does come from that site, and Chromium does not carry those
-claims through anyway. The sanctioned way to relax this later is an explicit,
-per-session "trust this page's read-only claims" choice, never a flag that
-quietly turns every page tool into an auto-run.
+Every model-driven page call follows **Tool Approval**, the host's one approval
+switch, exactly like an MCP server's tool or a browser verb. It used to gate
+unconditionally, on the reasoning that a page tool runs code on a third-party
+site and the only claims about what it does come from that site. That reasoning
+still holds and still decides one thing: the page's own annotations are **never**
+read, so nothing the site says can lower the gate. What it no longer decides is
+whether to overrule the person who set the switch — a family that answers "not
+you" teaches people the setting is decorative, which costs more than the pill
+was worth.
+
+So: switch on, every page call pauses; switch off, none do. The page never gets
+a vote either way.
 
 Page tools are a third client-fulfilled namespace beside `app_` and `ui_`.
 Adding the alias to `isClientFulfilledToolName` is what wires the server's pause
