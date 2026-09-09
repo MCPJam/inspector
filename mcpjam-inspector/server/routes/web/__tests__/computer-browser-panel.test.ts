@@ -703,16 +703,45 @@ describe("POST /profile/export", () => {
     }
     const panel = build({
       createClient: (() => new FakeBrowserdClient()) as never,
+      lookupSession: (async () => ({
+        reachable: true,
+        session: { ...SESSION, logicalSessionId: "logical_1" },
+      })) as never,
     });
 
     const res = await panel.call("/profile/export", { method: "POST" });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/gzip");
-    expect(res.headers.get("x-browser-session-id")).toBe(SESSION.sessionId);
+    // The DURABLE identity, not `SESSION.sessionId`. The boot row's id is
+    // replaced on every relaunch, so provenance recorded against it points at
+    // a row that disappears — and it would disagree with what the local export
+    // path reports for the same browser.
+    expect(res.headers.get("x-browser-session-id")).toBe("logical_1");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(
       new Uint8Array([1, 2, 3]),
     );
+  });
+
+  it("sends no session header when the browser has no durable identity", async () => {
+    // Omitted rather than falling back to the boot row: absent means "this
+    // archive is not tied to a conversation", which is true, and which the
+    // boot row's id would misstate.
+    class FakeBrowserdClient {
+      readonly marker = "bound";
+      async exportProfile(): Promise<Uint8Array> {
+        if (this.marker !== "bound") throw new Error("wrong receiver");
+        return new Uint8Array([1]);
+      }
+    }
+    const panel = build({
+      createClient: (() => new FakeBrowserdClient()) as never,
+    });
+
+    const res = await panel.call("/profile/export", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-browser-session-id")).toBeNull();
   });
 
   it("answers 409 when the daemon cannot export a profile", async () => {
