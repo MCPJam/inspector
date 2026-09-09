@@ -15,6 +15,7 @@ import {
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
 import {
+  useEnsureFirstAnalysis,
   useInsightsFlowController,
   useInsightsRebuild,
   type InsightsView,
@@ -211,6 +212,30 @@ export function InsightsWorkbench({
     rebuild,
     cohortKey,
   );
+
+  /**
+   * User Testing analyzes itself (BB-196): a scenario with sessions and no
+   * analysis starts one on open, so the surface never asks for a click it
+   * could make itself.
+   *
+   * Keyed on the scope rather than taken as a prop because the client rule
+   * MIRRORS a backend one — `scenarioWindowFreshness`'s first-analysis fast
+   * path — and the scope is the same fact both are keyed on. Two ways to say
+   * it would let a caller turn off half of a guarantee.
+   *
+   * The other two scopes are deliberately excluded. Swarms already auto-queue
+   * when a run settles (`journeyRuns.recomputeRunSummaries`), so a swarm with
+   * no run has a different story than an unanalyzed scenario. And the
+   * benchmark flow is the one PAID analysis here — an action, not a mutation —
+   * whose whole design is to wait to be asked.
+   */
+  const analysisIsAutomatic = scope?.kind === "scenario";
+  useEnsureFirstAnalysis({
+    enabled: analysisIsAutomatic,
+    cohortKey,
+    breakdown,
+    rebuild,
+  });
 
   const { setView } = flow;
   const handleViewChange = useCallback(
@@ -409,6 +434,7 @@ export function InsightsWorkbench({
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           onApplyTuning={handleApplyTuning}
+          analysisIsAutomatic={analysisIsAutomatic}
           showLinkThreshold
           fillHeight={fillBody}
           scrollLayout={!fillBody}

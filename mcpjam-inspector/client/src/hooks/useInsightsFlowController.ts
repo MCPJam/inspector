@@ -19,7 +19,7 @@ import {
   type UsageFilterChip,
   type UsageFilterState,
 } from "@/hooks/scenario-usage-filters";
-import type { RebuildResult } from "@/hooks/useUsageInsights";
+import type { RebuildResult, UsageBreakdown } from "@/hooks/useUsageInsights";
 import { rebuildFeedback } from "@/components/shared/usage-insights/rebuild-feedback";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
 
@@ -251,4 +251,63 @@ export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
   );
 
   return { rebuildBusy, handleRebuild, handleApplyTuning };
+}
+
+/**
+ * Start the first analysis of a cohort that has sessions and has never been
+ * analyzed, so no surface presents "analyze this" as a required first step
+ * (BB-196).
+ *
+ * ONE SHOT PER COHORT, and only from a standing start: it fires when there is
+ * NO analysis at all and never to refresh one that exists. Staleness is the
+ * backend's to judge — its idle rebuild runs on a clock that knows when a
+ * session's outcome became assertable, which a mount cannot know. Same
+ * discipline as the workbench's topic-map backfill.
+ *
+ * Racing is fine and expected. The scenario's own backend fast path queues the
+ * same analysis minutes after its testers stop, and two tabs may mount at
+ * once; the rebuild mutation's in-flight guard coalesces all of them into a
+ * single job. The ref is hygiene for the window before Convex reflects the
+ * queued run.
+ *
+ * Deliberately NOT routed through {@link useInsightsRebuild}: that hook toasts
+ * the result, and nobody asked for this one — a toast would report an outcome
+ * for an action the user did not take. Failures release the ref so a later
+ * breakdown update can try again, and the panel's own copy is what tells the
+ * user where the analysis stands.
+ *
+ * Shared rather than inlined in the workbench so a second User Testing surface
+ * — the Findings tab — can adopt the same rule with one call.
+ */
+export function useEnsureFirstAnalysis({
+  enabled,
+  cohortKey,
+  breakdown,
+  rebuild,
+}: {
+  /** False on surfaces whose analysis must stay explicitly requested. */
+  enabled: boolean;
+  /** Identity of the cohort; the one-shot latch is per cohort. */
+  cohortKey: string;
+  breakdown: UsageBreakdown | null | undefined;
+  rebuild: RebuildFn;
+}) {
+  const startedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    // `undefined` is the first subscription, not an answer. Acting on it would
+    // queue an analysis for every cohort the user merely passes through.
+    if (!breakdown) return;
+    // Absent is not zero — a backend that does not report the count is not a
+    // cohort with no sessions. Only an explicit zero means there is nothing
+    // here to analyze.
+    if (breakdown.totalSessions === 0) return;
+    if (breakdown.latestRun) return;
+    if (startedKeyRef.current === cohortKey) return;
+    startedKeyRef.current = cohortKey;
+    void rebuild().catch(() => {
+      startedKeyRef.current = null;
+    });
+  }, [enabled, breakdown, cohortKey, rebuild]);
 }

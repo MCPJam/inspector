@@ -39,6 +39,17 @@ interface SessionFlowSankeyProps {
     tuning: ClusterTuning,
     opts?: { force?: boolean },
   ) => void;
+  /**
+   * This surface starts its own analysis, so the ABSENCE of a run is a run
+   * being arranged rather than a request waiting to be made (BB-196). It
+   * changes what "no analysis yet" is allowed to say: a working state, never
+   * an "Analyze sessions" button the user has to find.
+   *
+   * Off by default, because it is a promise the OWNER has to keep — the
+   * benchmark diagram deliberately waits to be asked, and a surface that
+   * claimed this without queueing anything would show a spinner forever.
+   */
+  analysisIsAutomatic?: boolean;
   /** False for scopes with no topic map, where link distance means nothing. */
   showLinkThreshold?: boolean;
   /**
@@ -117,6 +128,7 @@ export function SessionFlowSankey({
   onRebuild,
   rebuildBusy,
   onApplyTuning,
+  analysisIsAutomatic = false,
   showLinkThreshold,
   stageTitles,
   headerActions,
@@ -127,6 +139,20 @@ export function SessionFlowSankey({
   const scan = breakdown?.scan;
   const signalsVersion = breakdown?.latestRun?.signalsVersion ?? null;
   const latestRun = breakdown?.latestRun ?? null;
+
+  /**
+   * Hoisted above the early returns: the empty-flow branch below needs it too.
+   * Offering "Rebuild clusters" while a rebuild is already running was always
+   * wrong there, and on a self-analyzing surface it is the whole bug.
+   */
+  const analysisInFlight =
+    latestRun?.status === "queued" ||
+    latestRun?.status === "running" ||
+    // No run at all, on a surface that starts its own: one is being arranged.
+    (analysisIsAutomatic && latestRun === null);
+  // What the first column is called on this surface, for banner copy —
+  // "journeys" on the swarm panel, "goals" on the scenario one.
+  const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
 
   const titles = useMemo(
     () => ({ ...STAGE_TITLES, ...stageTitles }),
@@ -185,20 +211,34 @@ export function SessionFlowSankey({
               : "px-5 py-10",
         )}
       >
-        <Target className="h-6 w-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No session flow yet</p>
+        {analysisInFlight ? (
+          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground/60" />
+        ) : (
+          <Target className="h-6 w-6 text-muted-foreground/60" />
+        )}
+        <p className="text-sm font-medium">
+          {analysisInFlight ? "Analyzing sessions…" : "No session flow yet"}
+        </p>
         <p className="max-w-md text-xs text-muted-foreground">
-          {signalsVersion === null
-            ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
-            : "Rebuild clusters once there are enough sessions to cluster."}
+          {analysisInFlight
+            ? `Grouping ${goalNoun}s, behaviors, outcomes, and sentiment. This can take a few minutes.`
+            : signalsVersion === null
+              ? "The last rebuild ran before session signals existed. Rebuild clusters to extract and group goals, behaviors, outcomes, and sentiment."
+              : "Rebuild clusters once there are enough sessions to cluster."}
         </p>
         <div className="flex items-center gap-2">
           {headerActions}
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Rebuild clusters"
-          />
+          {/* An analysis already on its way needs no button to start it — and
+              on a self-analyzing surface there is never a resting state where
+              one is required. The tuning control stays: choosing HOW to
+              cluster is still a thing to ask for. */}
+          {analysisInFlight ? null : (
+            <RebuildButton
+              onRebuild={onRebuild}
+              busy={rebuildBusy}
+              label="Rebuild clusters"
+            />
+          )}
           {tuningControl}
         </div>
       </div>
@@ -207,11 +247,6 @@ export function SessionFlowSankey({
 
   const needsThemeRebuild =
     signalsVersion !== null && signalsVersion < SIGNALS_VERSION_WITH_THEMES;
-  const analysisInFlight =
-    latestRun?.status === "queued" || latestRun?.status === "running";
-  // What the first column is called on this surface, for banner copy —
-  // "journeys" on the swarm panel, "goals" on the scenario one.
-  const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
   const selectedKeys = new Set(
     (selection?.themes ?? []).map(
       (theme) => `${theme.dimension}:${theme.clusterId}`,
@@ -291,7 +326,11 @@ export function SessionFlowSankey({
       {/* One analysis banner at a time, most-live state first: a rebuild in
           flight beats advertising the button that starts one, and
           never-analyzed beats the old-signals nudge (which requires a run to
-          exist at all). */}
+          exist at all).
+          On a self-analyzing surface the never-analyzed branch below is
+          unreachable — `analysisInFlight` absorbs a missing run — which is
+          how the Analyze sessions button stops being a required first step
+          without being deleted from the surfaces that still need it. */}
       {analysisInFlight ? (
         <div
           role="status"
