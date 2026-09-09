@@ -13,6 +13,8 @@
  * can, because a pane that had to branch on more than that would be two panes.
  */
 
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
+
 export const HOSTED_BROWSER_BASE = "/api/web/computers/browser";
 
 /** Loopback is fine unencrypted; nothing leaves the machine. */
@@ -274,7 +276,7 @@ export async function fetchHostedBrowserProfileArchive(
       res.status,
     );
   }
-  const savedFrom = res.headers.get("x-browser-session-id") ?? undefined;
+  const savedFrom = res.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
   return { archive: await res.blob(), ...(savedFrom ? { savedFrom } : {}) };
 }
 

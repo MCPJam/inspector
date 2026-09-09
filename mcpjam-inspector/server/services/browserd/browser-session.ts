@@ -58,7 +58,10 @@ import type {
 import { withKeyedLock } from "./probe-lock";
 // The same once-a-minute throttle the panel and the page tools use, so one
 // computer is never told it is busy by three callers in the same minute.
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import type { BrowserSessionService } from "./session-service.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
@@ -923,27 +926,40 @@ function withActivityTouches(
   client: SessionClient,
   logicalContext?: LogicalSessionContext,
 ): SessionClient {
-  let commandCount = 0;
   // Rebuilt method by method rather than spread: `client` is usually a
   // `BrowserdClient` INSTANCE, whose methods live on the prototype and would
   // not survive `{ ...client }`.
   return {
     status: () => client.status(),
     sendCommand: (command, expectedBootId) => {
+      // UNTHROTTLED on purpose: this one is load-bearing. It advances the
+      // browser session's own clock and, for a sandbox box, that box's
+      // `lastUsedAt` in the SAME backend transaction — which is what keeps the
+      // sleep sweep and the reaper from taking a box out from under a run.
       void deps.store
         .touch({ sessionId: session.sessionId, kind: "command" })
         .catch(() => {});
       if (deps.sessionService && logicalContext) {
-        void deps.sessionService
-          .touch({
-            sessionId: logicalContext.sessionId,
-            projectId: logicalContext.projectId,
-            bearer: logicalContext.bearer,
-            kind: "command",
-          })
-          .catch(() => {});
-        commandCount += 1;
-        if (commandCount % 5 === 0) {
+        // THROTTLED, unlike the store touch above: this is a SECOND
+        // control-plane round-trip to a different row, and nothing reads its
+        // clock to make a decision — the logical session's `lastActiveAt` is
+        // display only. Once a minute keeps it honest for a fraction of the
+        // writes. Revisit the moment a sweep is wired onto that column.
+        if (shouldTouchSessionCommand(`logical:${logicalContext.sessionId}`)) {
+          void deps.sessionService
+            .touch({
+              sessionId: logicalContext.sessionId,
+              projectId: logicalContext.projectId,
+              bearer: logicalContext.bearer,
+              kind: "command",
+            })
+            .catch(() => {});
+        }
+        // Tabs used to refresh on every 5th command, which on an agent run is
+        // a daemon round-trip plus a POST every few seconds. Nothing consumes
+        // this list live — it is surfaced for display — so it rides the same
+        // once-a-minute window on its own key.
+        if (shouldTouchSessionCommand(`tabs:${logicalContext.sessionId}`)) {
           void client
             .status()
             .then((status) => {

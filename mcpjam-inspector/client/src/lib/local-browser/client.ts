@@ -10,6 +10,7 @@
  */
 import { authFetch } from "@/lib/session-token";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /**
  * Refuse to hand the device-consent capability to a page that is not on this
@@ -347,7 +348,7 @@ export async function fetchLocalBrowserProfileArchive(args: {
       response.status,
     );
   }
-  const savedFrom = response.headers.get("x-browser-session-id") ?? undefined;
+  const savedFrom = response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
   return {
     archive: await response.blob(),
     ...(savedFrom ? { savedFrom } : {}),

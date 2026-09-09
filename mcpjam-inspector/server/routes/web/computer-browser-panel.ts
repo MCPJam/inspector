@@ -66,9 +66,13 @@ import {
   BROWSER_INPUT_BATCH_LIMIT,
   isBrowserPaneInputEvent,
 } from "../../../shared/browser-pane-input.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
 
 /** How long a panel's lease lives without a heartbeat. The panel beats every
  *  ~30s while visible; this is generous enough to survive a slow tab wake but
@@ -522,29 +526,31 @@ export function createComputerBrowserPanelRoutes(
       // solve a CAPTCHA issues no agent commands at all. Left as a panel
       // touch, their box would hibernate while they were typing into it.
       //
-      // Throttled through the shared per-computer window: input arrives twenty
-      // times a second and a touch is a control-plane write. Only on a
-      // dispatch that actually landed — refused input reached no page, and
-      // must not hold a machine awake.
-      if (auth.claims.computerId) {
-        if (!shouldTouchActivity(auth.claims.computerId)) {
-          return c.json({ ok: true });
-        }
+      // BOTH touches are throttled, each on its OWN key, and only on a
+      // dispatch that actually landed — refused input reached no page and must
+      // not hold a machine awake. Input arrives twenty times a second and every
+      // touch is a control-plane write, so an ungated one is tens of writes a
+      // second per viewer.
+      //
+      // Separate keys because they are separate clocks: the session touch
+      // patches the browser session row (and, for a sandbox box, that box's
+      // `lastUsedAt` in the same transaction) and a watched Playground box has
+      // no computer id at all, so keying it by computer would leave the
+      // sandbox branch ungated — which is exactly what it used to be. Both are
+      // leading-edge, so the first input after a pause still writes at once.
+      if (shouldTouchSessionCommand(session.sessionId)) {
         void touchSession({
           sessionId: session.sessionId,
           kind: "command",
         }).catch(() => {});
+      }
+      if (
+        auth.claims.computerId &&
+        shouldTouchActivity(auth.claims.computerId)
+      ) {
         void touchActivity({ computerId: auth.claims.computerId }).catch(
           () => {},
         );
-      } else {
-        // Playground sandboxes have no project-computer clock. Their session
-        // touch is the idle-sweep clock, so keep it separate from the
-        // computer-only throttle above.
-        void touchSession({
-          sessionId: session.sessionId,
-          kind: "command",
-        }).catch(() => {});
       }
       return c.json({ ok: true });
     } catch (error) {
@@ -620,14 +626,7 @@ export function createComputerBrowserPanelRoutes(
         return c.json({ ok: false, error: "profile_export_unavailable" }, 409);
       }
       const archive = await exportProfile();
-      return new Response(Buffer.from(archive), {
-        status: 200,
-        headers: {
-          "content-type": "application/gzip",
-          "content-disposition": "attachment; filename=browser-profile.tar.gz",
-          "x-browser-session-id": session.sessionId,
-        },
-      });
+      return browserProfileArchiveResponse(archive, session.sessionId);
     } catch (error) {
       reportRouteFailure("browser profile export failed", error, {
         source: "computer-browser-panel.profile-export",

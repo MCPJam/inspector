@@ -7591,16 +7591,26 @@ async function exportBrowserProfileArchive(profileDir) {
   }
   return new Uint8Array(archive);
 }
-async function importBrowserProfileArchive(profileDir, archive) {
+async function importBrowserProfileArchive(profileDir, archive, options = {}) {
+  const maxUncompressed = options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
   if (archive.byteLength <= 0) {
     throw new Error("browser profile archive is empty");
   }
   if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
     throw new Error("browser profile archive exceeds the 256 MB limit");
   }
-  const tarball = gunzipSync(Buffer.from(archive));
-  if (tarball.byteLength > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-    throw new Error("browser profile archive exceeds the expanded size limit");
+  let tarball;
+  try {
+    tarball = gunzipSync(Buffer.from(archive), {
+      maxOutputLength: maxUncompressed
+    });
+  } catch (error) {
+    if (error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+    throw error;
   }
   await mkdir(profileDir, { recursive: true, mode: 448 });
   await ensureSafeDirectory(profileDir, profileDir);

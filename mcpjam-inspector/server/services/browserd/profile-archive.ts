@@ -14,7 +14,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 export const MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
-const MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES =
+export const MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES =
   MAX_BROWSER_PROFILE_ARCHIVE_BYTES * 4;
 const TAR_BLOCK_BYTES = 512;
 
@@ -283,7 +283,10 @@ export async function exportBrowserProfileArchive(
 export async function importBrowserProfileArchive(
   profileDir: string,
   archive: Uint8Array,
+  options: { maxUncompressedBytes?: number } = {},
 ): Promise<void> {
+  const maxUncompressed =
+    options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
   if (archive.byteLength <= 0) {
     throw new Error("browser profile archive is empty");
   }
@@ -291,9 +294,29 @@ export async function importBrowserProfileArchive(
     throw new Error("browser profile archive exceeds the 256 MB limit");
   }
 
-  const tarball = gunzipSync(Buffer.from(archive));
-  if (tarball.byteLength > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-    throw new Error("browser profile archive exceeds the expanded size limit");
+  // BOUND THE INFLATE, not its result. Checking the expanded size after
+  // `gunzipSync` returns is too late: the allocation has already happened, so
+  // 256 MB of gzipped zeros (~1000:1) asks for ~256 GB and takes the process
+  // with it — and on hosted that process is a shared multi-tenant replica that
+  // any signed-in user can reach by uploading an archive. `maxOutputLength`
+  // makes zlib stop and throw as soon as the output WOULD exceed the bound, so
+  // peak allocation is the bound plus one chunk. Its boundary is the same
+  // strict `>` the old post-hoc check used, so no archive changes verdict.
+  let tarball: Buffer;
+  try {
+    tarball = gunzipSync(Buffer.from(archive), {
+      maxOutputLength: maxUncompressed,
+    });
+  } catch (error) {
+    // Narrowed by code deliberately: a corrupt archive throws Z_DATA_ERROR and
+    // must not be relabelled as a size problem, or an operator goes hunting for
+    // a limit that was never the cause.
+    if ((error as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit",
+      );
+    }
+    throw error;
   }
   await mkdir(profileDir, { recursive: true, mode: 0o700 });
   await ensureSafeDirectory(profileDir, profileDir);

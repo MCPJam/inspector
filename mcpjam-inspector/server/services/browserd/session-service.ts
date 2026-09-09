@@ -55,6 +55,22 @@ type RequestArgs = {
   signal?: AbortSignal;
 };
 
+/**
+ * A refusal from the browser-session control plane, carrying the backend's own
+ * message. Typed so a caller can tell a 409 "this identity is closed" from a
+ * transport failure instead of string-matching a thrown message.
+ */
+export class BrowserSessionServiceError extends Error {
+  readonly status: number;
+  readonly detail: string;
+  constructor(message: string, status: number, detail: string) {
+    super(message);
+    this.name = "BrowserSessionServiceError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 function bearerHeader(value: string): string {
   return /^Bearer\s/i.test(value) ? value : `Bearer ${value}`;
 }
@@ -149,8 +165,29 @@ export class BrowserSessionService {
       signal: args.signal,
     });
     if (!response.ok) {
-      throw new Error(
-        `browser session route ${path} returned ${response.status}`,
+      // The backend's own message is the ONLY useful part of a refusal here —
+      // "profile is not owned" tells a user what to change; "route returned
+      // 400" tells them nothing and sends whoever is on call reading Convex
+      // logs. Body first, status only as the fallback when there is no body.
+      const detail = await response
+        .text()
+        .then((text) => {
+          if (!text) return "";
+          try {
+            const parsed: unknown = JSON.parse(text);
+            const message = isRecord(parsed) ? parsed.error : undefined;
+            return typeof message === "string" && message ? message : text;
+          } catch {
+            return text;
+          }
+        })
+        .catch(() => "");
+      throw new BrowserSessionServiceError(
+        detail
+          ? `browser session route ${path} failed: ${detail}`
+          : `browser session route ${path} returned ${response.status}`,
+        response.status,
+        detail,
       );
     }
     return (await response.json()) as T;
@@ -294,12 +331,6 @@ export class BrowserSessionService {
     }
     return new Uint8Array(await response.arrayBuffer());
   }
-}
-
-export function createBrowserSessionService(
-  options: BrowserSessionServiceOptions = {},
-): BrowserSessionService {
-  return new BrowserSessionService(options);
 }
 
 export type { BrowserContextMode };

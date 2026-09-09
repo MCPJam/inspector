@@ -30,6 +30,7 @@ import {
   useMintConversationBrowserToken,
 } from "@/hooks/useProjectComputer";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /** Heartbeat cadence while holding the lease (the daemon TTL is 2 minutes). */
 const LEASE_HEARTBEAT_MS = 30_000;
@@ -117,7 +118,7 @@ export function BrowserPanel({
           : "The hosted browser profile could not be exported.",
       );
     }
-    const savedFrom = response.headers.get("x-browser-session-id") ?? undefined;
+    const savedFrom = response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
     return {
       archive: await response.blob(),
       ...(savedFrom ? { savedFrom } : {}),

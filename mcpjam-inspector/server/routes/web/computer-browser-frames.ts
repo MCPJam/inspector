@@ -42,7 +42,10 @@ import {
   isComputersDataPlaneConfigured,
   touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -465,14 +468,23 @@ export function createComputerBrowserFramesWsHandler(
             // enough, which is exactly the case for somebody who took control
             // to solve a CAPTCHA and issues no agent commands at all.
             //
-            // Throttled through the shared per-computer window — input arrives
-            // twenty times a second and a touch is a control-plane write — and
-            // only on a dispatch that actually landed.
+            // BOTH touches are throttled, each on its OWN key, and only on a
+            // dispatch that actually landed. `onDispatched` fires per landed
+            // flush — tens a second through a drag — and every touch is a
+            // control-plane write.
+            //
+            // The session touch is keyed by SESSION because that is the row it
+            // patches, and because a sandbox target has no computer id to key
+            // on; the computer touch stays keyed by COMPUTER. Both are
+            // leading-edge, so the first input after a pause writes at once and
+            // nothing is slept out from under somebody who just came back.
             if (closed) return;
-            void touchSession({
-              sessionId: live.sessionId,
-              kind: "command",
-            }).catch(() => {});
+            if (shouldTouchSessionCommand(live.sessionId)) {
+              void touchSession({
+                sessionId: live.sessionId,
+                kind: "command",
+              }).catch(() => {});
+            }
             const computerId =
               live.target === "sandbox" ? undefined : live.computerId;
             if (computerId && shouldTouchActivity(computerId)) {

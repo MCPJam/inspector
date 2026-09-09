@@ -88,6 +88,7 @@ import {
   type AgentSessionRecord,
 } from "../../services/browserd/local/agent-session-store.js";
 import type { BrowserAgentCommand } from "../../../shared/browser-agent-contract.js";
+import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
 
 const computers = new Hono();
 
@@ -431,14 +432,7 @@ computers.post("/local-browser/profile/export", async (c) => {
       });
       savedFrom = logical?.sessionId;
     }
-    return new Response(Buffer.from(archive), {
-      status: 200,
-      headers: {
-        "content-type": "application/gzip",
-        "content-disposition": "attachment; filename=browser-profile.tar.gz",
-        ...(savedFrom ? { "x-browser-session-id": savedFrom } : {}),
-      },
-    });
+    return browserProfileArchiveResponse(archive, savedFrom);
   } catch (error) {
     return c.json(
       {
