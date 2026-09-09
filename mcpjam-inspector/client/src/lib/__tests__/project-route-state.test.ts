@@ -12,28 +12,78 @@ const base = {
   activeProjectId: null as string | null,
   activeOrgProjectIds: new Set<string>(),
   allProjects: undefined as
-    | ReadonlyArray<{ _id: string; organizationId?: string }>
-    | undefined,
+    ReadonlyArray<{ _id: string; organizationId?: string }> | undefined,
   activeOrganizationId: "org_a" as string | undefined,
 };
 
 describe("resolveProjectRouteState", () => {
   it("reports unscoped for a route with no project segment", () => {
     expect(
-      resolveProjectRouteState({ ...base, requestedProjectId: null }).state
+      resolveProjectRouteState({ ...base, requestedProjectId: null }).state,
     ).toEqual({ status: "unscoped" });
   });
 
-  it("is ready when the URL and the active project already agree", () => {
-    // Checked before any loading gate, so a refresh on the project you are
-    // already in renders without a spinner.
+  it("waits for membership even when a cached active project matches", () => {
     expect(
       resolveProjectRouteState({
         ...base,
         activeProjectId: A,
         isLoadingRemoteProjects: true,
-      }).state
+      }).state,
+    ).toEqual({ status: "resolving", requestedProjectId: A });
+
+    expect(
+      resolveProjectRouteState({
+        ...base,
+        activeProjectId: A,
+        allProjects: undefined,
+      }).state,
+    ).toEqual({ status: "resolving", requestedProjectId: A });
+  });
+
+  it("is ready when loaded membership confirms the active project", () => {
+    expect(
+      resolveProjectRouteState({
+        ...base,
+        activeProjectId: A,
+        allProjects: [{ _id: A, organizationId: "org_a" }],
+      }).state,
     ).toEqual({ status: "ready", projectId: A });
+  });
+
+  it("keeps an unauthenticated local active project ready after auth settles", () => {
+    expect(
+      resolveProjectRouteState({
+        ...base,
+        isAuthenticated: false,
+        activeProjectId: A,
+        allProjects: undefined,
+      }).state,
+    ).toEqual({ status: "ready", projectId: A });
+
+    expect(
+      resolveProjectRouteState({
+        ...base,
+        isAuthLoading: true,
+        isAuthenticated: false,
+        activeProjectId: A,
+        allProjects: undefined,
+      }).state,
+    ).toEqual({ status: "resolving", requestedProjectId: A });
+  });
+
+  it("rejects a cached active project missing from loaded membership", () => {
+    expect(
+      resolveProjectRouteState({
+        ...base,
+        activeProjectId: A,
+        allProjects: [{ _id: B, organizationId: "org_a" }],
+      }).state,
+    ).toEqual({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "not-a-member",
+    });
   });
 
   it("answers a malformed id immediately, without waiting for auth", () => {
@@ -44,20 +94,25 @@ describe("resolveProjectRouteState", () => {
         ...base,
         requestedProjectId: "none",
         isAuthLoading: true,
-      }).state
-    ).toEqual({ status: "inaccessible", requestedProjectId: "none" });
+      }).state,
+    ).toEqual({
+      status: "inaccessible",
+      requestedProjectId: "none",
+      reason: "malformed",
+    });
   });
 
   it("waits for auth and for the project list", () => {
     expect(
-      resolveProjectRouteState({ ...base, isAuthLoading: true }).state.status
+      resolveProjectRouteState({ ...base, isAuthLoading: true }).state.status,
     ).toBe("resolving");
     expect(
-      resolveProjectRouteState({ ...base, isAuthenticated: false }).state.status
+      resolveProjectRouteState({ ...base, isAuthenticated: false }).state
+        .status,
     ).toBe("resolving");
     expect(
       resolveProjectRouteState({ ...base, isLoadingRemoteProjects: true }).state
-        .status
+        .status,
     ).toBe("resolving");
   });
 
@@ -65,6 +120,7 @@ describe("resolveProjectRouteState", () => {
     const { state, effect } = resolveProjectRouteState({
       ...base,
       activeOrgProjectIds: new Set([A]),
+      allProjects: [{ _id: A, organizationId: "org_a" }],
     });
     expect(state).toEqual({ status: "resolving", requestedProjectId: A });
     expect(effect).toEqual({ kind: "switch-project", projectId: A });
@@ -84,10 +140,11 @@ describe("resolveProjectRouteState", () => {
 
   it("waits while the membership list is still loading", () => {
     expect(
-      resolveProjectRouteState({ ...base, allProjects: undefined }).effect
+      resolveProjectRouteState({ ...base, allProjects: undefined }).effect,
     ).toEqual({ kind: "none" });
     expect(
-      resolveProjectRouteState({ ...base, allProjects: undefined }).state.status
+      resolveProjectRouteState({ ...base, allProjects: undefined }).state
+        .status,
     ).toBe("resolving");
   });
 
@@ -107,8 +164,12 @@ describe("resolveProjectRouteState", () => {
       resolveProjectRouteState({
         ...base,
         allProjects: [{ _id: B, organizationId: "org_a" }],
-      }).state
-    ).toEqual({ status: "inaccessible", requestedProjectId: A });
+      }).state,
+    ).toEqual({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "not-a-member",
+    });
   });
 
   it("handles an organization-less project on both sides of the filter", () => {
@@ -118,14 +179,14 @@ describe("resolveProjectRouteState", () => {
       resolveProjectRouteState({
         ...base,
         allProjects: [{ _id: A }],
-      }).state.status
+      }).state.status,
     ).toBe("inaccessible");
     expect(
       resolveProjectRouteState({
         ...base,
         activeOrganizationId: undefined,
         allProjects: [{ _id: A }],
-      }).state.status
+      }).state.status,
     ).toBe("resolving");
   });
 
@@ -138,7 +199,11 @@ describe("resolveProjectRouteState", () => {
       activeOrgProjectIds: new Set([B]),
       allProjects: [{ _id: B, organizationId: "org_a" }],
     });
-    expect(state).toEqual({ status: "inaccessible", requestedProjectId: A });
+    expect(state).toEqual({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "not-a-member",
+    });
   });
 
   it("gives up once the resolve budget is spent", () => {
@@ -147,8 +212,26 @@ describe("resolveProjectRouteState", () => {
         ...base,
         allProjects: [{ _id: A, organizationId: "org_a" }],
         hasExceededResolveBudget: true,
-      }).state
-    ).toEqual({ status: "inaccessible", requestedProjectId: A });
+      }).state,
+    ).toEqual({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "timed-out",
+    });
+
+    expect(
+      resolveProjectRouteState({
+        ...base,
+        activeProjectId: A,
+        isLoadingRemoteProjects: true,
+        allProjects: undefined,
+        hasExceededResolveBudget: true,
+      }).state,
+    ).toEqual({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "timed-out",
+    });
   });
 
   it("still reports ready after the budget is spent if the app caught up", () => {
@@ -157,8 +240,9 @@ describe("resolveProjectRouteState", () => {
       resolveProjectRouteState({
         ...base,
         activeProjectId: A,
+        allProjects: [{ _id: A, organizationId: "org_a" }],
         hasExceededResolveBudget: true,
-      }).state
+      }).state,
     ).toEqual({ status: "ready", projectId: A });
   });
 });

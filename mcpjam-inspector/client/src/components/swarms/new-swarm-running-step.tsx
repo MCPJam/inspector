@@ -34,13 +34,19 @@ import {
   type SwarmCellLiveStatus,
 } from "@/components/swarms/use-journey-run-stream";
 import {
+  attemptTargetKey,
   buildSwarmRunTargets,
+  findAttemptForSelection,
   findTargetCellForChatSessionId,
   summaryTargetKey,
   type SwarmTargetColumn,
 } from "@/components/swarms/swarm-targets";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
-import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import { providerLabelForModelId } from "./session-rate-limit";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
@@ -50,6 +56,8 @@ import {
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
+import type { HostListItem } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 export type SwarmLaunchedRun = {
   runId: string;
@@ -66,6 +74,7 @@ export type SwarmLaunchedRun = {
 
 export type SwarmRunningColumn = {
   key: string;
+  hostId?: string;
   label: string;
 };
 
@@ -214,6 +223,7 @@ function columnsFromRun(
       });
       return {
         key,
+        hostId: host.hostId,
         label:
           hostName(host.hostId) ??
           host.environmentRef?.name ??
@@ -226,7 +236,11 @@ function columnsFromRun(
     hostSummaries: run.hostSummaries ?? [],
     snapshotHosts: run.snapshot?.hosts,
     hostName,
-  }).map((target) => ({ key: target.key, label: target.label }));
+  }).map((target) => ({
+    key: target.key,
+    hostId: target.hostId,
+    label: target.label,
+  }));
 }
 
 function attributeSessions(
@@ -274,6 +288,7 @@ function attributeSessions(
     return {
       columns: fallbackTargets.map((target) => ({
         key: target.key,
+        hostId: target.hostId,
         label: target.label,
       })),
       targets: fallbackTargets,
@@ -517,15 +532,19 @@ function collectSessionSlots(args: {
   const slots: SessionSlot[] = [];
 
   // Attempts are claimed with the SAME id the client mints below, so the
-  // chatSessionId join is exact. `(hostId, sessionIdx)` is the fallback for
-  // an attempt that failed before it could claim one.
+  // chatSessionId join is exact. The target slot is the fallback for an attempt
+  // that failed before it could claim one — keyed by target rather than host,
+  // or two environments sharing a host would read each other's outcome.
   const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
-  const attemptByHostSlot = new Map<string, JourneyRunAttempt>();
+  const attemptByTargetSlot = new Map<string, JourneyRunAttempt>();
   for (const attempt of snap.attempts) {
     if (attempt.chatSessionId) {
       attemptByChatSessionId.set(attempt.chatSessionId, attempt);
     }
-    attemptByHostSlot.set(`${attempt.hostId}#${attempt.sessionIdx}`, attempt);
+    attemptByTargetSlot.set(
+      `${attemptTargetKey(attempt)}#${attempt.sessionIdx}`,
+      attempt
+    );
   }
 
   for (let index = 0; index < snap.sessionsPerTarget; index++) {
@@ -555,7 +574,7 @@ function collectSessionSlots(args: {
       (fromEnvelope?.envelope.chatSessionId
         ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
         : undefined) ??
-      attemptByHostSlot.get(`${target.hostId}#${index}`) ??
+      attemptByTargetSlot.get(`${columnKey}#${index}`) ??
       null;
 
     slots.push({
@@ -659,10 +678,10 @@ function FirstFindingPing({
 }
 
 export function NewSwarmRunningStep({
-  projectId,
   runs,
   fallbackColumns,
   environments = [],
+  hosts = [],
   onLeave,
   onOpenSession,
 }: {
@@ -672,6 +691,7 @@ export function NewSwarmRunningStep({
   fallbackColumns: SwarmRunningColumn[];
   /** Used to label columns by client (host) instead of env nickname. */
   environments?: ProjectEnvironmentView[];
+  hosts?: HostListItem[];
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
    * the run — "Stop" used to imply that and was a lie.
@@ -683,19 +703,16 @@ export function NewSwarmRunningStep({
    */
   onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
-  const hosts = useQuery(
-    SWARM_QUERIES.listHosts as any,
-    {
-      projectId,
-    } as any
-  ) as { hostId: string; name: string }[] | undefined;
-
-  const hostName = useMemo(() => {
-    const map = new Map(
-      (hosts ?? []).map((host) => [host.hostId, host.name] as const)
-    );
-    return (hostId: string) => map.get(hostId);
+  const hostById = useMemo(() => {
+    return new Map(hosts.map((host) => [host.hostId, host] as const));
   }, [hosts]);
+  const hostName = useMemo(
+    () => (hostId: string) => {
+      const host = hostById.get(hostId);
+      return host ? clientDisplayName(host) : undefined;
+    },
+    [hostById]
+  );
 
   const clientLabel = useMemo(() => {
     const envById = new Map(
@@ -705,12 +722,13 @@ export function NewSwarmRunningStep({
       if (key.startsWith("environment:")) {
         const env = envById.get(key.slice("environment:".length));
         if (env) {
-          return hostName(env.hostId) ?? env.name ?? fallback;
+          const host = hostById.get(env.hostId);
+          return (host ? clientDisplayName(host) : null) ?? env.name ?? fallback;
         }
       }
       return hostName(key) ?? fallback;
     };
-  }, [environments, hostName]);
+  }, [environments, hostById, hostName]);
 
   const [snapshots, setSnapshots] = useState<Record<string, RunLiveSnapshot>>(
     {}
@@ -740,6 +758,7 @@ export function NewSwarmRunningStep({
           prev.columns.every(
             (column, index) =>
               column.key === snapshot.columns[index]?.key &&
+              column.hostId === snapshot.columns[index]?.hostId &&
               column.label === snapshot.columns[index]?.label
           ) &&
           prev.targets.length === snapshot.targets.length &&
@@ -770,20 +789,26 @@ export function NewSwarmRunningStep({
   // placeholder — keeping them after load made Cursor look "queued" when the
   // journeys were still single-client.
   const columns = useMemo((): SwarmRunningColumn[] => {
-    const seen = new Map<string, string>();
+    const seen = new Map<string, SwarmRunningColumn>();
+    const addColumn = (column: SwarmRunningColumn) => {
+      seen.set(column.key, {
+        ...column,
+        label: clientLabel(column.key, column.label),
+      });
+    };
     const snapList = Object.values(snapshots);
     if (snapList.length === 0) {
       for (const column of fallbackColumns) {
-        seen.set(column.key, clientLabel(column.key, column.label));
+        addColumn(column);
       }
     } else {
       for (const snap of snapList) {
         for (const column of snap.columns) {
-          seen.set(column.key, clientLabel(column.key, column.label));
+          addColumn(column);
         }
       }
     }
-    return Array.from(seen.entries()).map(([key, label]) => ({ key, label }));
+    return Array.from(seen.values());
   }, [clientLabel, fallbackColumns, snapshots]);
 
   const missingPlannedClients = useMemo(() => {
@@ -838,7 +863,12 @@ export function NewSwarmRunningStep({
    * envelope.
    */
   const runFailure = useMemo(() => {
-    if (!allTerminal || rateLimited + failed === 0) return null;
+    // Every line of the banner asserts that nothing ran, so one success
+    // silences it: on a mixed run it contradicted the title above it, which
+    // counts the run as finished. Those sessions speak through their own chips.
+    if (!allTerminal || succeeded > 0 || rateLimited + failed === 0) {
+      return null;
+    }
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
@@ -857,7 +887,7 @@ export function NewSwarmRunningStep({
       }
     }
     return null;
-  }, [allTerminal, failed, rateLimited, snapshots]);
+  }, [allTerminal, failed, rateLimited, snapshots, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
   const finding = useMemo(() => findFirstFinding(snapshots), [snapshots]);
@@ -873,6 +903,57 @@ export function NewSwarmRunningStep({
       ) ?? null
     );
   }, [selection, snapshots]);
+
+  // The pane resolves its own outcome, so it needs the attempt row for the same
+  // reason the chip does: the chat-session lifecycle can complete while the
+  // attempt holds a refusal. Same join order as the cells.
+  const selectedAttempt = useMemo(() => {
+    if (!selection) return null;
+    const snap = snapshots[selection.runId];
+    if (!snap) return null;
+    return findAttemptForSelection(snap.attempts, selection);
+  }, [selection, snapshots]);
+
+  // Three of twelve sessions can be throttled while the swarm keeps working.
+  // The chips go amber, but nobody finds the reason by clicking each one, and
+  // the run banner below only speaks when NO session ran at all.
+  const providerRateLimit = useMemo(() => {
+    let count = 0;
+    const labels = new Set<string>();
+    for (const snap of Object.values(snapshots)) {
+      for (const attempt of snap.attempts) {
+        if (attempt.status !== "rate_limited") continue;
+        const info = humanizeSwarmAttemptError(
+          attempt.errorMessage,
+          attempt.errorCode,
+        );
+        // The code comes off the attempt, not the humanized info: that only
+        // carries a code through for the codes it words itself, so the
+        // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
+        if (isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
+        count += 1;
+        // "The host's configured provider", per the ticket — joined on the
+        // attempt's own chatSessionId. Two environments can share a host and
+        // pin different models, so matching on hostId would let the banner name
+        // a provider that throttled nothing. An attempt we cannot tie to a
+        // session row has no model we can trust, and falls back to the generic
+        // label rather than a guess.
+        const session = attempt.chatSessionId
+          ? snap.sessions.find(
+              (row) => row.chatSessionId === attempt.chatSessionId,
+            )
+          : undefined;
+        labels.add(providerLabelForModelId(session?.modelId));
+      }
+    }
+    if (count === 0) return null;
+    // Two providers throttling in the same run name neither: the banner would
+    // otherwise blame whichever attempt was read first for both.
+    const [only] = labels;
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
+  }, [snapshots]);
 
   const selectedRunStatus = selection
     ? snapshots[selection.runId]?.status ?? "running"
@@ -972,6 +1053,26 @@ export function NewSwarmRunningStep({
                 launch the swarm again to include it.
               </p>
             ) : null}
+            {providerRateLimit ? (
+              <div
+                className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
+                data-testid="new-swarm-running-rate-limit"
+                role="status"
+              >
+                <p className="font-medium">
+                  {providerRateLimit.label
+                    ? `${providerRateLimit.label} rate-limited this key.`
+                    : "Your providers rate-limited these keys."}
+                </p>
+                <p className="mt-0.5">
+                  {providerRateLimit.count === 1
+                    ? "1 session stopped."
+                    : `${providerRateLimit.count} sessions stopped.`}{" "}
+                  Retry again later or switch models.
+                </p>
+              </div>
+            ) : null}
+
             {runFailure ? (
               <div
                 className={cn(
@@ -1044,7 +1145,13 @@ export function NewSwarmRunningStep({
                       className="min-w-[7.5rem] px-2 py-2.5 text-center text-xs font-medium text-muted-foreground"
                     >
                       <span className="inline-flex items-center justify-center gap-1.5">
-                        <JourneyHostLogoMark label={column.label} />
+                        <JourneyHostLogoMark
+                          label={
+                            (column.hostId
+                              ? hostById.get(column.hostId)?.name
+                              : undefined) ?? column.label
+                          }
+                        />
                         <span className="truncate">{column.label}</span>
                       </span>
                     </th>
@@ -1175,6 +1282,7 @@ export function NewSwarmRunningStep({
           selection={selection}
           stream={mergedStream}
           convexSession={selectedConvex}
+          attempt={selectedAttempt}
           fallbackTrace={fallbackTrace}
           runStatus={selectedRunStatus}
           // The session, not just "somewhere else". This used to hand the pane

@@ -21,6 +21,10 @@ import {
   useLayoutEffect,
   useSyncExternalStore,
 } from "react";
+import {
+  pageToolRowsFromRecords,
+  type MintedPageToolRecord,
+} from "@/shared/declared-tools";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
 import {
@@ -78,7 +82,10 @@ import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+import {
+  withBuiltInToolDefinitions,
+  type SerializedModelRequestTool,
+} from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
 import {
@@ -96,12 +103,20 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
-import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
-import { useLocalHarnessTarget } from "@/hooks/useLocalHarnessTarget";
+import {
+  prepareLocalHarnessSendRequest,
+  type ChatSendRequestOptions,
+} from "@/lib/chat-send-request";
+import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import {
   preserveHydratedMessageIds,
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
+import {
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestampMetadata,
+} from "@mcpjam/chat-ui";
 import {
   getCachedBlobJson,
   invalidateChatHistoryPrefetch,
@@ -349,6 +364,30 @@ export interface UseChatSessionOptions {
     engine: "local" | "cloud";
     consentToken: string | null;
   };
+  /**
+   * Local Claude Code execution for THIS send, provided by the caller
+   * (Playground) for the same reason `personalComputerEngine` is: the central
+   * chat hook must not run the availability fetch, the install poll or the
+   * consent lifecycle — every chat surface in the app mounts it.
+   *
+   * `requested` is the caller's answer to the shared host/surface scope
+   * predicate (`lib/local-harness-scope.ts`) AND the user's explicit target
+   * choice. It is deliberately NOT "is a grant present": a request that cannot
+   * be satisfied must FAIL, not quietly become a hosted turn, which is what
+   * the backstop in the transport enforces.
+   *
+   * `resolveSendTarget` is called once per send and re-derives everything from
+   * current state. A transport built before Allow, before a sign-out or before
+   * an expiry holds values that were true then; the send needs what is true
+   * now.
+   */
+  localHarnessExecution?: {
+    requested: boolean;
+    resolveSendTarget: () => {
+      target: LocalHarnessTargetIds;
+      token: string;
+    } | null;
+  };
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
   /**
@@ -390,6 +429,19 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Definitions for those built-in tools, as the model is shown them — used by
+   * the RAW view of a reopened session and nowhere else.
+   *
+   * A live turn streams a `request_payload` carrying the real advertised set,
+   * so this is never consulted then. A rehydrated session replays no such
+   * event, so Raw synthesizes one from the currently-resolved tool schemas —
+   * and those come from connected MCP servers only. A host whose whole
+   * capability is the browser therefore rendered `"tools": {}` next to a
+   * conversation in which the model had just driven one. These are merged into
+   * the synthesized entry so it says what would actually be sent next.
+   */
+  builtInToolDefinitions?: SerializedModelRequestTool[];
   /**
    * Offer this turn the WebMCP tools of the page the inspector currently has
    * open. Off unless the caller opts in: a chat that silently gained tools from
@@ -650,6 +702,7 @@ export interface UseChatSessionReturn {
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>;
     },
     options?: {
@@ -754,6 +807,14 @@ interface LiveTraceTurnState {
    * when the spans blob fails to load or is genuinely empty.
    */
   endedAtMs?: number;
+  /**
+   * The page tools this turn advertised (rehydration only).
+   *
+   * Kept on the TURN rather than in a store keyed by browser: a store answers
+   * for the browser as it is now, and this has to answer for the turn as it
+   * was.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
   /** Persisted finish reason (rehydration only). */
   finishReason?: string;
   /** Persisted model id (rehydration only). */
@@ -819,6 +880,19 @@ export interface HydratedTurnTrace {
   usage?: LiveChatTraceUsage;
   spans: EvalTraceSpan[];
   modelId?: string;
+  /**
+   * The page's own WebMCP tools this turn advertised, as it advertised them.
+   *
+   * The reason it is persisted rather than re-read: the live browser describes
+   * the page it is on NOW. Reopened tomorrow, a card for `webmcp_bookSlot`
+   * would be attributed to whatever tool happens to carry that name then, and
+   * the Raw view would show a request that was never sent.
+   *
+   * Absent means "we do not know" — every historical turn, and every turn
+   * whose claim the backend could not parse. It is NOT the same as an empty
+   * array, which means "this turn advertised none".
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 interface PersistedWidgetSnapshot {
@@ -847,6 +921,7 @@ async function resolveHydratedTurnTraces(
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -902,6 +977,9 @@ async function resolveHydratedTurnTraces(
         usage: trace.usage,
         spans,
         modelId: trace.modelId,
+        ...(trace.pageToolsAtTurn !== undefined
+          ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+          : {}),
       };
     }),
   );
@@ -969,6 +1047,9 @@ function buildLiveTraceStateFromTurnTraces(
       endedAtMs: trace.endedAt,
       finishReason: trace.finishReason,
       modelId: trace.modelId,
+      ...(trace.pageToolsAtTurn !== undefined
+        ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+        : {}),
     };
   }
 
@@ -1624,6 +1705,7 @@ export function useChatSession(
     executionConfig,
     hostStyle,
     personalComputerEngine,
+    localHarnessExecution,
     onReset,
   } = options;
   // Caller-provided (Playground): send local only when it will actually run
@@ -1638,12 +1720,6 @@ export function useChatSession(
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
-  // The HARNESS execution target — a different axis from the computer engine
-  // above (where the whole agent runs, not where one bash call runs), resolved
-  // and transmitted the same way. Consent-gated: `target` is `local-native`
-  // only when a stored grant exists, so a selection without one sends nothing
-  // and the turn runs hosted while the consent sheet is what the user sees.
-  const localHarnessTarget = useLocalHarnessTarget(hostedProjectId ?? null);
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -2609,10 +2685,36 @@ export function useChatSession(
     !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
     hasLocalOnlySelectedServer;
+  /**
+   * Does THIS send explicitly ask to run Claude Code on this machine?
+   *
+   * The caller answered the host/surface half (`lib/local-harness-scope.ts`)
+   * and the "did the user choose it" half. The surface facts this hook owns —
+   * hosted mode, a scenario session, a surface already forced onto the web
+   * route — are re-applied here so the two ends of the same predicate cannot
+   * disagree; each is a case where a local turn is structurally impossible
+   * rather than merely unauthorized.
+   *
+   * Notably NOT gated on having a grant. "Requested" and "can be satisfied"
+   * are different questions, and collapsing them is how an explicit local
+   * request became a silent cloud turn: the target was simply omitted and the
+   * server obliged.
+   */
+  const localHarnessRequested =
+    !HOSTED_MODE &&
+    !hostedRequiresWebChatApi &&
+    !hostedScenarioId &&
+    localHarnessExecution?.requested === true;
   const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
   const shouldUseOrgAwareChatApi =
     isHostedTransport ||
-    (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
+    (selectedModelUsesOrgRuntime &&
+      !localMcpRuntimeRequired &&
+      // Local execution only exists on the local `/api/mcp` route. An
+      // org-runtime model would otherwise route an explicitly local turn to
+      // `/api/web/chat-v2`, which refuses the target — so the ask has to keep
+      // the turn on the route that can honour it.
+      !localHarnessRequested);
   const traceViewsSupported = HOSTED_MODE
     ? isMcpJamModel || selectedModelUsesOrgRuntime
     : true;
@@ -2808,22 +2910,12 @@ export function useChatSession(
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
-    // Scoped to /api/mcp/chat-v2 for the same reason the consent header above
-    // is: the local target only exists on the local server's route. The web
-    // route parses it too — and refuses it — so a stray send would be a 400
-    // rather than a silent hosted turn, but not sending it at all is better
-    // than relying on that.
-    const sendLocalHarnessTarget =
-      !shouldUseOrgAwareChatApi &&
-      !hostedScenarioId &&
-      localHarnessTarget.target === "local-native" &&
-      localHarnessTarget.consent !== null &&
-      authIsMemberRef.current;
-    if (sendLocalHarnessTarget && localHarnessTarget.consent) {
-      // The capability, in a HEADER. Never in the body, which is persisted.
-      mergedHeaders[LOCAL_HARNESS_GRANT_HEADER] =
-        localHarnessTarget.consent.token;
-    }
+    // The local-harness target is NOT resolved here. Its ids and its capability
+    // are produced together from one fresh snapshot taken per send, in
+    // `prepareSendMessagesRequest` below — this closure is built when the
+    // transport is memoized, which is before Allow, before a sign-out and
+    // before an expiry, and any of those makes a value captured here a lie by
+    // the time it is sent.
     // Only the local-computer consent capability rides the transport, because
     // it is not a credential authFetch knows how to resolve.
     const transportHeaders =
@@ -2983,13 +3075,6 @@ export function useChatSession(
                 ...(sendLocalEngine
                   ? { computerEngine: "local" as const }
                   : {}),
-                // "Native on this machine": run the whole Claude Code agent
-                // here. Opaque ids only — the capability rides the header
-                // above, and every id is re-derived server-side before
-                // anything spawns.
-                ...(sendLocalHarnessTarget && localHarnessTarget.consent
-                  ? { harnessTarget: localHarnessTarget.consent.target }
-                  : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
                 // Convex server Ids parallel to `selectedServers`. Only sent
@@ -3001,7 +3086,12 @@ export function useChatSession(
                 ...(hostedSelectedServerIds.length === selectedServers.length
                   ? { selectedServerIds: hostedSelectedServerIds }
                   : {}),
-                ...(localMcpRuntimeRequired
+                // Keeps an org-runtime model's turn on the local route's own
+                // runtime resolution. Local-only MCP servers need it; so does
+                // an explicit local-harness ask, for the same reason — the
+                // agent runs here, so the servers it reaches must resolve here.
+                ...(localMcpRuntimeRequired ||
+                (localHarnessRequested && selectedModelUsesOrgRuntime)
                   ? { localMcpRuntimeRequired: true }
                   : {}),
                 // Phase F: owner-preview / local scenario sessions persist as
@@ -3088,6 +3178,46 @@ export function useChatSession(
         };
       },
       headers: transportHeaders,
+      /**
+       * The one place a local-harness turn's ids and capability are produced,
+       * and the one place they are produced TOGETHER.
+       *
+       * `prepareSendMessagesRequest` runs exactly once per send, after `body`
+       * and `headers` have resolved, and can rewrite both — which is what makes
+       * "one fresh snapshot" expressible at all. Splitting it across the `body`
+       * closure and the `headers` object (where it used to live) meant the ids
+       * and the token were read at different moments from different sources,
+       * and a grant minted in between produced a body claiming a target with no
+       * capability to authorize it.
+       *
+       * The refusal below is the backstop the whole design rests on. Before it,
+       * an expired grant, a sign-out, or a false `authIsMemberRef` each simply
+       * OMITTED the target — and the server, seeing no target, ran the turn
+       * hosted. A user who deliberately scoped work to their machine got a
+       * cloud sandbox and no indication of it. Failing loudly is the point.
+       */
+      //
+      // Installed ONLY on a local-harness turn. The SDK adds `messages` (and
+      // `id`/`trigger`/`messageId`) to the request itself, but only when no
+      // `prepareSendMessagesRequest` returns a body — any returned body replaces
+      // the SDK's wholesale. A hook that ran on every turn and handed back the
+      // custom fields it was given sent every chat turn out with no `messages`
+      // (400 "messages are required", both routes). Not installing it on the
+      // ordinary path leaves the SDK's own composition in charge there, and
+      // `prepareLocalHarnessSendRequest` re-adds the SDK fields on the path
+      // that does rewrite the body — `lib/chat-send-request.ts` owns that
+      // contract and pins it against the real transport.
+      ...(localHarnessRequested
+        ? {
+            prepareSendMessagesRequest: (
+              options: ChatSendRequestOptions<UIMessage>,
+            ) =>
+              prepareLocalHarnessSendRequest(
+                options,
+                localHarnessExecution?.resolveSendTarget() ?? null,
+              ),
+          }
+        : {}),
     });
   }, [
     selectedModel,
@@ -3096,6 +3226,8 @@ export function useChatSession(
     customProviders,
     selectedModelUsesOrgRuntime,
     localMcpRuntimeRequired,
+    localHarnessRequested,
+    localHarnessExecution,
     hostedRequiresWebChatApi,
     shouldUseOrgAwareChatApi,
     temperature,
@@ -3165,8 +3297,11 @@ export function useChatSession(
     // React renders that status — so a post-stream effect reading it on the
     // ready transition always sees THIS turn's answer. Same ordering guarantee
     // the persist receipt already relies on.
-    onFinish: ({ isAbort }) => {
+    onFinish: ({ isAbort, message }) => {
       turnAbortedRef.current = isAbort;
+      baseSetMessages((current) =>
+        timestampMessageById(current, message.id, Date.now()),
+      );
     },
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
@@ -3736,6 +3871,41 @@ export function useChatSession(
     if (!traceTranscriptFromUi || traceTranscriptFromUi.length === 0) {
       return live;
     }
+    // Host-executed built-ins (today: the six `browser_*` tools) are advertised
+    // by the SERVER from the host's config, so they never appear in the
+    // client's server-derived schemas. See `withBuiltInToolDefinitions` for why
+    // an MCP tool of the same name still wins here.
+    // The page's own tools, from the turn that actually advertised them.
+    //
+    // PERSISTED, not re-read. Asking the live browser would answer for the page
+    // it is on now, which is a confident answer to a question about the past —
+    // and for a closed session there is no browser to ask at all. The rows
+    // carry identity and origin but no schema, because the turn record stores a
+    // digest rather than the schema itself; see `pageToolRowsFromRecords`.
+    // THE NEWEST TURN'S ANSWER, including when that answer is "we do not know".
+    //
+    // Filtering before picking would walk back to an older turn whose record
+    // happens to exist — and `undefined` here means the newest turn did not
+    // record one, not that its tools were the previous turn's. Showing a
+    // stale set for the current turn is a more confident wrong answer than
+    // showing none.
+    const lastTurnPageTools = [...Object.values(liveTraceState.turns)]
+      .sort((left, right) => left.promptIndex - right.promptIndex)
+      .at(-1)?.pageToolsAtTurn;
+    const tools = withBuiltInToolDefinitions(
+      {
+        ...(lastTurnPageTools
+          ? Object.fromEntries(
+              pageToolRowsFromRecords(lastTurnPageTools).map((row) => [
+                row.name,
+                row,
+              ]),
+            )
+          : {}),
+        ...serializedTools,
+      },
+      options.builtInToolDefinitions,
+    );
     return [
       {
         turnId: "rehydrated",
@@ -3743,16 +3913,18 @@ export function useChatSession(
         stepIndex: 0,
         payload: {
           system: systemPrompt ?? "",
-          tools: serializedTools,
+          tools,
           messages: traceTranscriptFromUi,
         },
       },
     ];
   }, [
     liveTraceState.requestPayloadHistory,
+    liveTraceState.turns,
     traceTranscriptFromUi,
     systemPrompt,
     serializedTools,
+    options.builtInToolDefinitions,
   ]);
 
   // useLayoutEffect (not useEffect) so the trace state is swapped out
@@ -3869,7 +4041,6 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       chatToolCallRequestIdsRef.current.clear();
-      const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
@@ -3957,6 +4128,13 @@ export function useChatSession(
           }
         }
         try {
+          const timestampedMetadata = withMessageTimestampMetadata(
+            metadata,
+            Date.now(),
+          );
+          const extra = {
+            metadata: timestampedMetadata,
+          } as { metadata: unknown };
           if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
             baseSendMessage({ text, files, ...extra });
@@ -4432,6 +4610,9 @@ export function useChatSession(
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
         session.turnTraces,
       );
+      if (hydratedTurnTraces !== undefined) {
+        uiMessages = hydrateMessageTimestamps(uiMessages, hydratedTurnTraces);
+      }
 
       if (options?.shouldApply && !options.shouldApply()) {
         return;
@@ -4851,7 +5032,12 @@ export function useChatSession(
   const selectedServerIdsRequired =
     HOSTED_MODE ||
     hostedRequiresWebChatApi ||
-    (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
+    (selectedModelUsesOrgRuntime &&
+      !localMcpRuntimeRequired &&
+      // Same carve-out as the route choice above, and for a sharper reason:
+      // this one feeds `hostedContextNotReady`, so getting it wrong leaves
+      // submit disabled forever with no way for the user to find out why.
+      !localHarnessRequested);
   // When the surface provides a send-time resolver (`ensureServerIds`), the
   // preflight resolves ad-hoc/App server names → Convex ids at send, so a
   // pre-resolved id per selected server is NOT required up front — requiring

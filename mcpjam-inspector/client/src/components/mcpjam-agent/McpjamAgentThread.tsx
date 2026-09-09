@@ -1,3 +1,14 @@
+import "./eval-chat.css";
+import { evalChatGuidance } from "@/lib/mcpjam-agent/eval-chat-guidance";
+import {
+  useEvalGeneration,
+  evalSuiteKey,
+} from "@/lib/mcpjam-agent/eval-workspace";
+import {
+  useEvalAgentScopes,
+  useEvalPromptQueue,
+} from "@/lib/mcpjam-agent/eval-scope";
+import { Button } from "@mcpjam/design-system/button";
 /**
  * McpjamAgentThread — full conversation surface for the MCPJam Agent.
  *
@@ -68,6 +79,14 @@ export function McpjamAgentThread({
     surface,
   });
 
+  const evalScope = useEvalAgentScopes((s) => s.scopes[sessionId]);
+  const generation = useEvalGeneration((state) =>
+    evalScope ? state.suites[evalSuiteKey(evalScope)] : undefined,
+  );
+  const guidance = evalScope
+    ? evalChatGuidance(evalScope, generation)
+    : undefined;
+  const scopeMissing = sessionId.startsWith("eval-") && !evalScope;
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -82,7 +101,7 @@ export function McpjamAgentThread({
     if (typeof window === "undefined") return null;
     try {
       const raw = window.sessionStorage.getItem(
-        pendingAgentPromptKey(sessionId)
+        pendingAgentPromptKey(sessionId),
       );
       if (!raw) return null;
       const parsed = JSON.parse(raw) as unknown;
@@ -107,6 +126,7 @@ export function McpjamAgentThread({
   // model + projectId. On cold load either can be undefined for a few
   // frames; gate every submit affordance on both being present.
   const isReady = session.model != null && projectId != null;
+  const queuedPrompt = useEvalPromptQueue((s) => s.pending[sessionId]);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -116,18 +136,38 @@ export function McpjamAgentThread({
       session.submit(trimmed);
       setDraft("");
       const existing = loadRecentMcpjamAgentSessions().find(
-        (s) => s.id === sessionId
+        (s) => s.id === sessionId,
       );
-      const title =
-        trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed;
+      const title = trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed;
       appendRecentMcpjamAgentSession({
         id: sessionId,
         title: existing?.title ?? title,
         ts: Date.now(),
       });
     },
-    [isReady, session, sessionId]
+    [isReady, session, sessionId],
   );
+
+  useEffect(() => {
+    if (
+      !queuedPrompt ||
+      !isReady ||
+      scopeMissing ||
+      session.hydrating ||
+      isStreaming
+    )
+      return;
+    useEvalPromptQueue.getState().consume(sessionId, queuedPrompt.id);
+    handleSubmit(queuedPrompt.text);
+  }, [
+    queuedPrompt,
+    isReady,
+    scopeMissing,
+    session.hydrating,
+    isStreaming,
+    sessionId,
+    handleSubmit,
+  ]);
 
   useEffect(() => {
     if (session.hydrating) return;
@@ -202,18 +242,50 @@ export function McpjamAgentThread({
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const shellStyle = getScenarioShellStyle("mcpjam", themeMode);
 
+  const guidanceContent = guidance && (
+    <div className="shrink-0 px-4 pb-1" data-testid="eval-chat-guidance">
+      <div className="flex flex-wrap justify-center gap-2">
+        {guidance.suggestions.map((suggestion) => (
+          <Button
+            key={suggestion.label}
+            variant="outline"
+            size="sm"
+            className="h-auto whitespace-normal rounded-md border-primary/20 bg-primary/5 text-center text-foreground hover:bg-primary/10"
+            onClick={() => {
+              setDraft(suggestion.prompt);
+              textareaRef.current?.focus();
+            }}
+          >
+            {suggestion.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+
   const composer = (
     <McpjamAgentComposer
+      evalStyle={Boolean(evalScope)}
       value={draft}
       onChange={setDraft}
       onSubmit={() => handleSubmit(draft)}
-      ready={isReady}
-      loadingMessage="Loading project…"
-      placeholder="Continue the conversation…"
+      ready={isReady && !scopeMissing}
+      loadingMessage={
+        scopeMissing
+          ? "Reopen chat from the case to restore eval context."
+          : "Loading project…"
+      }
+      placeholder={guidance?.placeholder ?? "Continue the conversation…"}
       isStreaming={isStreaming}
       onStop={() => session.stop()}
       textareaRef={textareaRef}
-      className={fillsParent ? composerColumnClassName : undefined}
+      className={
+        evalScope
+          ? undefined
+          : fillsParent
+            ? composerColumnClassName
+            : undefined
+      }
       footerControls={
         <label className="flex cursor-pointer items-center gap-1.5 text-[11px] leading-none text-muted-foreground/80">
           <ShieldCheck className="size-3.5" aria-hidden />
@@ -256,7 +328,7 @@ export function McpjamAgentThread({
         </div>
       </div>
     );
-  } else if (session.hydrating) {
+  } else if (session.hydrating && !evalScope) {
     // Resumed session (no optimistic pending): the user came from the
     // Recent Chat pill or a direct URL, so brand-marker-only is fine.
     body = (
@@ -266,9 +338,9 @@ export function McpjamAgentThread({
     );
   } else if (session.messages.length === 0) {
     body = (
-      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        Ask a question, or give a task — add a server, run an eval, inspect a
-        trace.
+      <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+        {!evalScope &&
+          "Ask a question, or give a task — add a server, run an eval, inspect a trace."}
       </div>
     );
   } else if (!session.model) {
@@ -317,31 +389,43 @@ export function McpjamAgentThread({
     <MarkdownLinkBaseProvider base="https://docs.mcpjam.com" trustLinks>
       <ScenarioHostStyleProvider value="mcpjam">
         <ScenarioHostThemeProvider value={themeMode}>
-        <div
-          className={cn(
-            "scenario-host-shell flex flex-col gap-4 min-h-0",
-            fillsParent
-              ? "h-full"
-              : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
-            className
-          )}
-          data-host-style="mcpjam"
-          style={shellStyle}
-        >
-          {body}
-          {composer}
-          {session.error && (
-            <p
-              className={cn(
-                "text-xs text-destructive",
-                isFull && "mx-auto w-full max-w-4xl px-4",
-                isSidebar && "w-full px-3"
-              )}
-            >
-              {session.error.message ?? "Something went wrong."}
-            </p>
-          )}
-        </div>
+          <div
+            className={cn(
+              "scenario-host-shell flex flex-col gap-4 min-h-0",
+              fillsParent
+                ? "h-full"
+                : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
+              className,
+            )}
+            data-host-style="mcpjam"
+            data-eval-chat={evalScope ? "true" : undefined}
+            style={evalScope ? undefined : shellStyle}
+          >
+            {body}
+            {session.messages.length === 0 && guidanceContent}
+            {session.messages.length > 0 && guidanceContent && (
+              <details className="shrink-0 px-4 text-center">
+                <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+                  Suggestions
+                </summary>
+                <div className="pt-3">{guidanceContent}</div>
+              </details>
+            )}
+            <div className={evalScope ? "shrink-0 px-4 pb-4 pt-1" : "contents"}>
+              {composer}
+            </div>
+            {session.error && (
+              <p
+                className={cn(
+                  "text-xs text-destructive",
+                  isFull && "mx-auto w-full max-w-4xl px-4",
+                  isSidebar && "w-full px-3",
+                )}
+              >
+                {session.error.message ?? "Something went wrong."}
+              </p>
+            )}
+          </div>
         </ScenarioHostThemeProvider>
       </ScenarioHostStyleProvider>
     </MarkdownLinkBaseProvider>

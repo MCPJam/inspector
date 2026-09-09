@@ -487,6 +487,43 @@ function resolveTar() {
   return { bin: "tar", gnu: false };
 }
 
+/**
+ * Refuse an archive carrying AppleDouble members.
+ *
+ * The suppression above is a flag, and a flag is a claim. This reads the
+ * archive back and checks it — because the failure it prevents does not show
+ * up until a user on macOS downloads the pack and the installer rejects it,
+ * which is the worst possible place to discover that a tar on some future
+ * runner image ignored `COPYFILE_DISABLE`.
+ *
+ * Listing an archive works on every tar this build runs under, so this is not
+ * conditional on which one produced it.
+ */
+function assertNoAppleDoubleMembers(tarBin, archivePath) {
+  let listing;
+  try {
+    listing = execFileSync(tarBin, ["-tzf", archivePath], {
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch (error) {
+    fail(`could not list the archive to check it: ${error.message}`);
+  }
+  const appleDouble = listing
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => basename(line).startsWith("._"));
+  if (appleDouble.length > 0) {
+    fail(
+      `the archive carries ${appleDouble.length} AppleDouble member(s) — ` +
+        `${appleDouble.slice(0, 5).join(", ")}. They are not in the tree ` +
+        `digest, so every install of this pack would extract extra files and ` +
+        `fail verification. COPYFILE_DISABLE=1 did not take effect on this ` +
+        `host's tar.`,
+    );
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const platformKey = String(args.platform ?? "");
@@ -691,6 +728,13 @@ function main() {
           // Belt and braces with `flattenHardLinks`: the tree has no shared
           // inodes left to record, and this says so to the one tar that would.
           "--hard-dereference",
+          // GNU tar reads a colon in the archive name as an rmt REMOTE HOST
+          // spec — `host:path` — so on Windows, where the out root is
+          // `D:\a\_temp\…`, it tried to reach a machine called `D` and died
+          // with "Cannot connect to D: resolve failed". Nothing to do with the
+          // archive or the tree. GNU-only, which is why it sits in this array;
+          // no other leg has a colon in the path to misread.
+          "--force-local",
         ]
       : [];
     if (!tar.gnu) {
@@ -699,11 +743,38 @@ function main() {
           "(the tree digest and archive hash are unaffected)",
       );
     }
+    // macOS AppleDouble members are not a cosmetic problem — they break every
+    // darwin install.
+    //
+    // bsdtar on macOS stores a file's extended attributes and resource fork as
+    // a SIBLING `._name` member. The tree digest is taken from `packRoot`
+    // BEFORE archiving, so those members exist in the archive and nowhere in
+    // the digest; extraction then produces a tree with extra files, its digest
+    // does not match the manifest, and the installer refuses the pack it just
+    // downloaded. The vendor CLI arrives with `com.apple.quarantine` and
+    // `com.apple.provenance` set, so this is the ordinary case rather than an
+    // edge one.
+    //
+    // `COPYFILE_DISABLE=1` is the documented switch for the copyfile(3) layer
+    // bsdtar uses. `--no-mac-metadata` says the same thing on a bsdtar new
+    // enough to have it and is ignored by GNU tar, which never wrote these in
+    // the first place — so both are set and neither depends on the other.
+    const macMetadata =
+      !tar.gnu && process.platform === "darwin" ? ["--no-mac-metadata"] : [];
     execFileSync(
       tar.bin,
-      [...reproducible, "-czf", archivePath, "-C", outRoot, "claude-code"],
-      { stdio: "inherit" },
+      [
+        ...reproducible,
+        ...macMetadata,
+        "-czf",
+        archivePath,
+        "-C",
+        outRoot,
+        "claude-code",
+      ],
+      { stdio: "inherit", env: { ...process.env, COPYFILE_DISABLE: "1" } },
     );
+    assertNoAppleDoubleMembers(tar.bin, archivePath);
     const archiveSha = sha256File(archivePath);
     writeFileSync(
       join(outRoot, `${stem}.tar.gz.sha256`),

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
@@ -39,6 +40,8 @@ import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
+import webmcpInspector from "../mcp/webmcp-inspector.js";
+import { HOSTED_MODE } from "../../config.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -63,7 +66,7 @@ web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/mcpjam-agent/widget-content",
   bearerAuthMiddleware,
-  guestRateLimitMiddleware
+  guestRateLimitMiddleware,
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -111,6 +114,35 @@ web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // deliberately open: it returns only a boolean and a public URL, and the
 // client needs it before any authed flow to know where the terminal lives.
 web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
+// The WebMCP Inspector, hosted. The SAME router the local inspector mounts at
+// `/api/mcp/webmcp`, which is unreachable here — `/api/mcp/*` is 410'd in
+// hosted mode — so it moves to the family that hosted actually serves.
+//
+// `requireVerifiedAuth` is the load-bearing part and is NOT redundant with the
+// bearer middleware beside it. That one validates `sk_` keys and guest tokens
+// but lets an unrecognized WorkOS JWT through unverified, on the stated
+// understanding that routes forward the bearer to Convex and let Convex judge
+// it. This router does that only when it establishes a session; afterwards it
+// serves commands from an in-process map, and nothing downstream re-checks the
+// caller. Without verification here, a bearer of any shape plus a session id
+// would drive somebody else's browser.
+//
+// Gated on HOSTED_MODE together with the router it guards, and it has to be:
+// LOCALLY this prefix already has an occupant. `/api/web/webmcp/sessions/:id/
+// frames` is the viewport frame socket, registered on the root app (a WS
+// upgrade cannot come from a sub-router) but AFTER `app.route("/api/web", ...)`
+// — so a `/webmcp/*` middleware registered here runs in front of it. It
+// authenticates with a token on `Sec-WebSocket-Protocol` and carries no
+// `Authorization` header, so `requireVerifiedAuth` refuses the upgrade and the
+// stream dies at 1006 before it opens.
+if (HOSTED_MODE) {
+  web.use(
+    "/webmcp/*",
+    bearerAuthMiddleware,
+    requireVerifiedAuth(),
+    guestRateLimitMiddleware,
+  );
+}
 // Cloud Skills are a project-MEMBERSHIP resource in Convex
 // (`convex/projectSkills.ts`); every op needs a bearer (forwarded to Convex for
 // authz). Guests are closed out HERE and not left to the backend: every
@@ -121,13 +153,13 @@ web.use(
   "/skills/*",
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
-  denyGuests("Cloud Skills")
+  denyGuests("Cloud Skills"),
 );
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
-  guestRateLimitMiddleware
+  guestRateLimitMiddleware,
 );
 
 web.route("/servers", servers);
@@ -172,6 +204,11 @@ web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);
+// Hosted only. Locally the same router is mounted under `/api/mcp`, and
+// mounting it twice would give one session two URLs.
+if (HOSTED_MODE) {
+  web.route("/webmcp", webmcpInspector);
+}
 web.route("/skills", skills);
 // Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
 // `/skills` above, which serves the project's durable Convex skills.

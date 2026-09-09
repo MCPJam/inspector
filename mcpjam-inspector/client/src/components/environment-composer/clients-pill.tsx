@@ -7,7 +7,7 @@
  */
 import { useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { ChevronDown, Users } from "lucide-react";
+import { ChevronDown, UserPlus, Users } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -21,8 +21,10 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
+import { clientDisplayName } from "@/lib/client-display-name";
 import { cn } from "@/lib/utils";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 export function ClientsPill({
   projectId,
@@ -33,6 +35,7 @@ export function ClientsPill({
   testId,
   inModal = false,
   budget,
+  actionLabel,
 }: {
   projectId: string;
   value: string[];
@@ -43,6 +46,8 @@ export function ClientsPill({
   testId?: string;
   /** Product-cap context from the composer. Absent ⇒ `selected.length >= max`. */
   budget?: TargetBudgetContext;
+  /** Table surfaces use the same picker as an explicit add-row action. */
+  actionLabel?: string;
   /**
    * Render the popover INLINE rather than portalled, for callers inside a Radix
    * Dialog — a portalled popover lands outside the dialog, where the modal
@@ -57,16 +62,20 @@ export function ClientsPill({
 
   const single = max === 1;
   const selected = value;
+  const selectedHosts = selected.map((hostId) => ({
+    hostId,
+    host: hosts.find((item) => item.hostId === hostId),
+  }));
   const triggerLabel =
-    selected.length === 0
+    (actionLabel ?? selected.length === 0)
       ? single
         ? "No client · pick one"
         : "No clients · pick some"
-      : (hosts.find((h) => h.hostId === selected[0])?.name ??
-        selected[0].slice(0, 8));
-  const extra = selected.length > 1 ? selected.length - 1 : 0;
-  const logo =
-    selected.length > 0 ? resolveHostLogoByDisplayName(triggerLabel) : null;
+      : selectedHosts
+          .map(({ hostId, host }) =>
+            host ? clientDisplayName(host) : hostId.slice(0, 8),
+          )
+          .join(", ");
 
   const toggle = (hostId: string, checked: boolean) => {
     if (single) {
@@ -85,12 +94,15 @@ export function ClientsPill({
   };
 
   return (
-    <Popover open={open} onOpenChange={(next) => {
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
         // CLOSE always goes through, even when disabled: a menu open at the
         // moment the strip becomes disabled (a commit starting) would otherwise
         // be stuck open with no way out.
         if (!next || !disabled) setOpen(next);
-      }}>
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -103,24 +115,29 @@ export function ClientsPill({
             selected.length === 0
               ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
-            disabled && "cursor-not-allowed opacity-60"
+            disabled && "cursor-not-allowed opacity-60",
           )}
         >
-          {logo ? (
-            <img
-              src={logo}
-              alt=""
-              className="size-3.5 shrink-0 rounded-sm object-contain"
-            />
+          {actionLabel ? (
+            <UserPlus className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : selectedHosts.length > 0 ? (
+            <span className="flex shrink-0 items-center -space-x-1">
+              {selectedHosts.map(({ hostId, host }) => (
+                <HostChipLogo
+                  key={hostId}
+                  logoSrc={resolveHostLogoByName(host?.name ?? hostId)}
+                  name={host ? clientDisplayName(host) : hostId}
+                  size="sm"
+                  className="rounded-full ring-1 ring-background"
+                />
+              ))}
+            </span>
           ) : (
             <Users className="size-3.5 shrink-0 text-muted-foreground" />
           )}
           <span className="min-w-0 flex-1 truncate text-xs font-medium">
             {triggerLabel}
           </span>
-          {extra > 0 ? (
-            <span className="text-[10px] text-muted-foreground">+{extra}</span>
-          ) : null}
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>
       </PopoverTrigger>
@@ -145,6 +162,8 @@ export function ClientsPill({
           <div className="max-h-64 space-y-0.5 overflow-y-auto">
             {hosts.map((host) => {
               const checked = selected.includes(host.hostId);
+              const hostName = clientDisplayName(host);
+              const hostLogo = resolveHostLogoByName(host.name);
               const productBlocked =
                 !single &&
                 !checked &&
@@ -153,22 +172,21 @@ export function ClientsPill({
               const capBlocked =
                 !single &&
                 !checked &&
-                (productBlocked ||
-                  (budget == null && selected.length >= max));
+                (productBlocked || (budget == null && selected.length >= max));
               return (
                 <Label
                   key={host.hostId}
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     (capBlocked || disabled) &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                   title={
                     productBlocked && budget
                       ? targetProductCapReason(
                           selected.length + 1,
                           budget.choiceCount,
-                          budget.maxTargets
+                          budget.maxTargets,
                         )
                       : undefined
                   }
@@ -179,10 +197,11 @@ export function ClientsPill({
                       toggle(host.hostId, next === true)
                     }
                     disabled={capBlocked || disabled}
-                    aria-label={host.name}
+                    aria-label={hostName}
                   />
+                  <HostChipLogo logoSrc={hostLogo} name={hostName} size="sm" />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {host.name}
+                    {hostName}
                   </span>
                 </Label>
               );

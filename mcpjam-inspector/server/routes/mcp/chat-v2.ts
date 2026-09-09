@@ -1,3 +1,17 @@
+import {
+  withoutLegacyWebmcpVerbs,
+  type BrowserPageToolsSnapshot,
+} from "../../utils/built-in-tools/browser.js";
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../../services/browserd/page-tools-peek.js";
+import {
+  toMintedPageToolRecords,
+  type MintedDeclaredTool,
+} from "@/shared/declared-tools";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { Hono } from "hono";
 import {
   createUIMessageStream,
@@ -18,6 +32,7 @@ import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import {
@@ -64,6 +79,8 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   buildWidgetModelContextSystemPrompt,
+  advertisedPageToolsOnly,
+  guardPageToolRefresh,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
@@ -113,6 +130,10 @@ import {
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "../../utils/harness/local/request-target.js";
+import {
+  contextCredentialClass,
+  resolveLocalHarnessActor,
+} from "../../utils/harness/local/acting-user.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -138,11 +159,6 @@ import {
   markLocalScopeStepUpWireStarted,
 } from "../../utils/scope-step-up-continuation.js";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  mergeUiToolApprovalClassifications,
-  type UiToolApprovalClassification,
-} from "@/shared/client-fulfilled-tools";
 import type {
   MrtrChatResumeResolution,
   MrtrEngineResume,
@@ -1178,9 +1194,34 @@ chatV2.post("/", async (c) => {
     // honoured is REFUSED here, before a stream opens, rather than silently
     // relocated to a cloud box: quietly moving a turn the user deliberately
     // scoped to their machine is the dishonesty this design removes.
+    //
+    // The acting user is resolved ONLY for an explicit local-native ask, by
+    // the same module and the same rules the consent route binds with, so the
+    // grant is verified against the identity that authenticated rather than
+    // one the body named or one nobody resolved at all. Every unrelated turn
+    // — hosted, BYOK, guest, anonymous desktop — skips this entirely and its
+    // authentication behaviour is exactly what it was.
+    const asksForLocalNative = body.harnessTarget?.kind === "local-native";
+    let localHarnessActingUserId: string | null = null;
+    if (asksForLocalNative) {
+      const actor = await resolveLocalHarnessActor({
+        authorizationHeader: requestAuthHeader,
+        contextCredential: contextCredentialClass(c),
+      });
+      if (!actor.ok) {
+        // The credential's own status, not a blanket 400: an expired session
+        // is a 401 the client re-authenticates from, and a deployment with no
+        // AuthKit at all is a 503 the operator fixes. Collapsing both into
+        // "your target is malformed" is what sends a signed-out user to
+        // re-pick a folder.
+        return c.json({ error: actor.message, reason: actor.reason }, actor.status);
+      }
+      localHarnessActingUserId = actor.actor.userId;
+    }
     const harnessTargetParse = parseHarnessExecutionTarget({
       body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      actingUserId: localHarnessActingUserId,
       serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
       actorEligible:
         !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,
@@ -1290,9 +1331,64 @@ chatV2.post("/", async (c) => {
     });
 
 
-    // Filled by the resolver when browser tools are advertised; merged into
-    // the engines' single `uiToolApprovals` slot below.
-    let browserToolApprovals: UiToolApprovalClassification | undefined;
+    // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
+    // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
+    // skipped entirely for a turn that has no browser capability.
+    const pageToolsPeek = await peekPageToolsForChatTurn({
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+      firstClass: webmcpPageToolsMode() === "first_class",
+      isHarnessTurn: Boolean(resolvedExecution.harness),
+      hasV1PageTools: validatedPageTools.length > 0,
+      engine: computerEngine === "local" ? "local" : "hosted",
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
+    });
+    const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
+    /**
+     * Record what this turn advertised from the page.
+     *
+     * Written down rather than re-derived: the live browser describes the page
+     * it is on NOW, so a conversation reopened tomorrow would attribute its
+     * cards to whatever tool happens to carry that name then.
+     */
+    const withPageToolsAtTurn = (
+      trace: PersistedTurnTrace,
+    ): PersistedTurnTrace =>
+      // A turn that started with no snapshot but grew tools mid-turn has a
+      // record worth keeping too — the refresher's, read at persist time.
+      pageToolsSnapshot || pageToolRefresh
+        ? {
+            ...trace,
+            // Filtered by the same collision policy the model's own set was,
+            // so the record cannot name a tool the model never got.
+            pageToolsAtTurn: toMintedPageToolRecords(
+              reservedAgainstPageTools
+                ? advertisedPageToolsOnly(
+                    advertisedPageTools,
+                    reservedAgainstPageTools,
+                  )
+                : advertisedPageTools,
+              advertisedPageToolsBinding ?? pageToolsSnapshot,
+            ),
+          }
+        : trace;
+
+    let advertisedPageTools: MintedDeclaredTool[] = [];
+    // The generation those tools belong to; moves with them on each refresh.
+    let advertisedPageToolsBinding = pageToolsSnapshot;
+    // The mid-turn refresher, when the browser capability built one. Kept in a
+    // mutable slot because `resolveHostTools` is synchronous and fills it by
+    // callback, exactly as it does the approval classification.
+    let pageToolRefresh:
+      | {
+          refreshPageTools: (ctx: {
+            signal?: AbortSignal;
+          }) => Promise<unknown>;
+          currentPageTools: () => MintedDeclaredTool[];
+          currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
+        }
+      | undefined;
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
@@ -1323,12 +1419,30 @@ chatV2.post("/", async (c) => {
             requireToolApproval: resolvedExecution.requireToolApproval === true,
             computerEngine,
             localComputerRequested: localPrefEligible,
-            // This route THREADS the classification below, so it may advertise
-            // interactive browser tools; surfaces that thread nothing get none
-            // (see built-in-tools/browser.ts).
+            // A person is watching this route, so browser tools may be
+            // advertised and keep a signed-in profile; surfaces that attest
+            // nothing get none (see built-in-tools/browser.ts).
             browserApprovalDelivery: { kind: "attested" },
-            onBrowserApprovals: (approvals) => {
-              browserToolApprovals = approvals;
+            ...(pageToolsSnapshot
+              ? { browserPageTools: pageToolsSnapshot }
+              : {}),
+            // ONLY WHERE THE SET CAN ACTUALLY GROW. A harness takes its toolset
+            // as a constructor argument and never re-reads it, so claiming it
+            // here would build a refresher nothing consumes. NOT gated on the
+            // snapshot: the ordinary turn starts on a blank tab or with no
+            // browser at all, and is exactly the one whose set has to grow.
+            browserDynamicPageTools: !resolvedExecution.harness,
+            // KEPT HERE, dropped later. Two of the engines this route can hand
+            // the set to consume `refreshTools` and two (BYOK direct, harness)
+            // do not; retiring the verbs at build time took the page away from
+            // the ones that cannot re-advertise. The two refreshing call sites
+            // below strip them with `withoutLegacyWebmcpVerbs`.
+            browserRetireInvokeVerb: false as const,
+            onBrowserPageTools: ({ minted }) => {
+              advertisedPageTools = minted;
+            },
+            onBrowserToolsRefresh: (refresh) => {
+              pageToolRefresh = refresh;
             },
           }
         : null,
@@ -1467,6 +1581,24 @@ chatV2.post("/", async (c) => {
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
+        // Read from the SERVER-resolved host config, never the body, and per
+        // turn rather than per connection: the connection's copy is captured
+        // when it connects, so a toggle saved mid-session would not reach it
+        // until something reconnected.
+        //
+        // Authoritative whenever a host config resolved: a host that cancels
+        // normally must send an EMPTY record, not nothing. `undefined` would
+        // fall through to the connection's connect-time copy — which is the
+        // stale value this exists to override — so switching the toggle back
+        // on would keep suppressing.
+        ...(hostRuntimeConfig
+          ? {
+              toolCallCancellation:
+                toolCallCancellationFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                ) ?? {},
+            }
+          : {}),
         modelDefinition,
         systemPrompt: effectiveSystemPrompt,
         temperature,
@@ -1480,6 +1612,9 @@ chatV2.post("/", async (c) => {
           : {}),
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
+        // The prompt section that explains `webmcp_*` tools has to be there
+        // BEFORE a navigation adds them; the refresher's presence is the fact.
+        pageToolsMayGrow: Boolean(pageToolRefresh),
         // A harness turn takes its skills on-box and must be handed none here —
         // the two delivery channels are deliberately disjoint.
         skillsSource: resolvedExecution.harness
@@ -1530,26 +1665,32 @@ chatV2.post("/", async (c) => {
       scrubMessages,
       progressivePlan,
       discoveryState,
+      reservedAgainstPageTools,
     } = prepared;
-    // The hosted engines (MCPJam-free and hosted-org) classify tool approval by
-    // NAME and never read a tool's own `needsApproval`, so page tools reach them
-    // approval-less unless we hand over their classification here. Page tools
-    // always gate; an empty set (no page tools, incl. every hosted-mode turn
-    // where WEBMCP_INSPECTOR_ENABLED is off) leaves all other tools on the
-    // existing `requireToolApproval` path unchanged. Without this the turn
-    // strands — the client defers the call awaiting an approval pill the server
-    // never sends. `uiTools` are ignored on this route (see above), so the page
-    // classification is the whole of this turn's `uiToolApprovals`.
-    const pageToolApprovals = classifyPageToolApprovals(
-      validatedPageTools.map((entry) => entry.alias),
-    );
-    // Browser tools are name-classified for the same reason page tools are,
-    // and the engines have ONE `uiToolApprovals` slot — so the two are merged
-    // rather than one overwriting the other.
-    const uiToolApprovals = mergeUiToolApprovalClassifications(
-      pageToolApprovals,
-      browserToolApprovals,
-    );
+
+    /**
+     * The mid-turn refresher, under the SAME collision policy `prepareChatV2`
+     * applied to the turn's opening set.
+     *
+     * The refresher reserves only the browser's own verb names; every MCP, app,
+     * UI and skill name beside them is decided here, and a page tool minted
+     * after a navigation has to lose to those exactly as one minted at turn
+     * start does.
+     */
+    const guardedRefreshTools = async (ctx: { signal?: AbortSignal }) => {
+      const refresh = await pageToolRefresh!.refreshPageTools(ctx);
+      // The persisted record is re-read here rather than captured at turn
+      // start, so a reopened conversation shows the set the turn ENDED with —
+      // the one its last steps actually used.
+      advertisedPageTools = advertisedPageToolsOnly(
+        pageToolRefresh!.currentPageTools(),
+        reservedAgainstPageTools,
+      );
+      advertisedPageToolsBinding = pageToolRefresh!.currentPageToolsBinding();
+      return refresh
+        ? (guardPageToolRefresh(refresh, reservedAgainstPageTools) as never)
+        : undefined;
+    };
     const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
     const scopeStepUpBindingKey = JSON.stringify([
       authenticatedUserId ?? "local-anonymous",
@@ -1602,6 +1743,22 @@ chatV2.post("/", async (c) => {
           }),
       },
     );
+    /**
+     * The tool set for an engine that CAN grow it mid-turn.
+     *
+     * The two by-name WebMCP verbs were kept at build time
+     * (`browserRetireInvokeVerb: false` above) because which engine runs is
+     * only known here. Two of them — local-org and direct BYOK — never consume
+     * `refreshTools`, so the verbs are their only way to reach a page the model
+     * navigated to after the turn started. Dropped ONLY on the two hosted paths
+     * that pass `refreshTools` below, which is the safe direction: an extra
+     * tool costs a line in the list, a missing one costs the page. Both go
+     * together (see `withoutLegacyWebmcpVerbs`). Mirrors `web-chat-turn.ts`.
+     */
+    const refreshingEngineTools = (): ToolSet =>
+      pageToolRefresh
+        ? withoutLegacyWebmcpVerbs(allTools as ToolSet)
+        : (allTools as ToolSet);
     const scopeStepUpEngineResume = scopeStepUpResumeRequest
       ? buildLocalScopeStepUpResume({
           request: scopeStepUpResumeRequest,
@@ -1690,7 +1847,7 @@ chatV2.post("/", async (c) => {
         provider: modelDefinition.provider,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader,
@@ -1698,8 +1855,12 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh
+          ? { refreshTools: guardedRefreshTools }
+          : {}),
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
         // tool-construction policies have to reach it separately. Inert on the
@@ -1812,7 +1973,7 @@ chatV2.post("/", async (c) => {
                         : {}),
                     }),
                 expectedVersion: body.expectedVersion,
-                turnTrace,
+                turnTrace: withPageToolsAtTurn(turnTrace),
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
             }
@@ -1913,7 +2074,7 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn(turnTrace),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }
@@ -1967,7 +2128,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages,
         systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
+        tools: refreshingEngineTools(),
         progressivePlan,
         discoveryState,
         authHeader: requestAuthHeader,
@@ -1976,8 +2137,12 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
+        // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
+        // step and the tools it needs exist only from the next.
+        ...(pageToolRefresh
+          ? { refreshTools: guardedRefreshTools }
+          : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
@@ -2128,7 +2293,7 @@ chatV2.post("/", async (c) => {
                       : {}),
                   }),
               expectedVersion: body.expectedVersion,
-              turnTrace,
+              turnTrace: withPageToolsAtTurn(turnTrace),
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
           }

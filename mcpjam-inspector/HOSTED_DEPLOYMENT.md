@@ -59,6 +59,34 @@ configured sandbox origin are equal by definition. No page can tell that apart
 from a deploy that pointed its sandbox at itself. Only the server knows which
 hostname it was supposed to answer as, which is why the check lives there.
 
+### Per-server view origins (optional)
+
+Each MCP server's views can be served from their own origin,
+`<label>.sandbox.example.com`, so apps do not share cookies or storage with
+each other and each gets an origin stable enough to name in an OAuth redirect
+URI or a third-party API-key allowlist. Off unless the deploy opts in:
+
+```bash
+# Client build time. Requires the DNS and certificate below.
+VITE_MCPJAM_VIEW_SUBDOMAINS=true
+```
+
+Before enabling it:
+
+- wildcard DNS for `*.sandbox.example.com` pointing at the same backend;
+- a certificate covering that wildcard. A one-level wildcard for the apex does
+  NOT cover `*.sandbox.example.com`, so this is usually a separate certificate;
+- if an access proxy fronts the sandbox host, its bypass must cover the
+  wildcard too, or the proxy document loads a login page instead.
+
+Enable it on staging first. With the DNS or certificate missing, a labelled
+host does not resolve and widgets fail to load rather than degrading — there is
+no fallback, by design, because silently sharing an origin is the failure this
+is meant to remove.
+
+`SANDBOX_HOSTS` needs no change: a label under a listed host is recognised
+automatically, and answers the sandbox proxy path only — not `/health`.
+
 ### DNS / routing
 
 Point the sandbox hostname at the same backend that serves the host app.
@@ -134,3 +162,37 @@ Use a local or explicitly approved non-production environment for verification;
 temporary test values must not be persisted into deployment configuration.
 Before expanding beyond debugger use, track KMS-backed signing or stored
 per-organization keys with dual-key rotation.
+
+## WorkOS API base URL (tests and local development only)
+
+`WORKOS_API_BASE_URL` redirects every server-side WorkOS call — the AuthKit
+session proxy, `sk_` API-key validation, and the key-management routes — at a
+local [`@workos/emulate`](https://github.com/workos/emulate) instance instead of
+`api.workos.com`. The `*.emulator.test.ts` suites set it themselves; you would
+only set it by hand to run the inspector against an emulator locally.
+
+**Never set it on a deployment.** It accepts loopback origins only —
+`localhost`, `127.0.0.1`, `[::1]` — and any other value makes the server throw
+at boot rather than at a user's first sign-in:
+
+```
+WORKOS_API_BASE_URL must be a loopback http(s) origin such as
+http://127.0.0.1:4820 (got "https://example.com")
+```
+
+The restriction is a mechanism, not a convention. `WORKOS_API_KEY` — the admin
+key that mints and revokes API keys — travels in an `Authorization` header on
+every one of those requests, so a base URL naming another host would send it
+there. Railway makes that worse than it sounds: preview environments are
+duplicated from staging wholesale (`pr-preview.yml`), and
+`.github/scripts/railway-set-vars.sh` can only set a variable, never unset one.
+A value written once to staging would therefore reach every future preview with
+no way to withdraw it. Refusing the value in code is the only durable defence.
+
+Unset — which is every deployment — the resolver returns `https://api.workos.com`
+and the SDK client is constructed with no options at all, exactly as it was
+before this variable existed.
+
+Not to be confused with `WORKOS_API_HOSTNAME`, which is a _browser_-facing
+hostname served in `window.__MCP_RUNTIME_CONFIG__` for `@workos-inc/authkit-js`.
+That one is unrelated and is documented by its use in `server/env.ts`.

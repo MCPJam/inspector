@@ -8,7 +8,9 @@
  * they never typed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { ReactNode } from "react";
 import { render, screen, act, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { WebmcpInspectorTab } from "../WebmcpInspectorTab";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import {
@@ -19,6 +21,16 @@ import type {
   WebMcpInputEvent,
   WebMcpSessionPublic,
 } from "@/shared/webmcp-inspector-protocol";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
 
 class FakeEventSource {
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -126,7 +138,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(captureScreenshot.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("polls rather than asking a hosted session for a screencast", async () => {
+  it("neither streams nor polls for a hosted session — it has a live view", async () => {
     useWebmcpInspectorStore.setState({
       session: session({
         viewportTransport: {
@@ -142,10 +154,12 @@ describe("WebmcpInspectorTab — viewport", () => {
     render(<WebmcpInspectorTab />);
     await act(async () => {});
 
-    // The hosted browser paints in a datacenter and shows itself through the
-    // Browser panel. There is no CDP screencast on this side to ask for.
+    // The hosted browser paints in a datacenter, so there is no CDP screencast
+    // on this side to ask for. It used to fall back to a screenshot every
+    // second, which was proof of life rather than a viewport; the pane embeds
+    // the browser's own live stream now, so neither is wanted.
     expect(setScreencast).not.toHaveBeenCalled();
-    expect(captureScreenshot).toHaveBeenCalled();
+    expect(captureScreenshot).not.toHaveBeenCalled();
   });
 
   it("hides the stale picture when Live view is switched off", async () => {
@@ -157,9 +171,9 @@ describe("WebmcpInspectorTab — viewport", () => {
       screen.getByAltText("Live view of the inspected page"),
     ).toBeInTheDocument();
 
-    await act(async () => {
-      screen.getByRole("button", { name: "Live view" }).click();
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Live view" }));
 
     // Holding the screenshot would freeze the pane on an old picture still
     // labelled "live", and the "Live view is off" line would never appear
@@ -186,9 +200,9 @@ describe("WebmcpInspectorTab — viewport", () => {
     await act(async () => {});
     setScreencast.mockClear();
 
-    await act(async () => {
-      screen.getByRole("button", { name: "Live view" }).click();
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Live view" }));
     expect(setScreencast).toHaveBeenCalledWith(false);
     expect(setScreencast).not.toHaveBeenCalledWith(true);
   });
@@ -889,9 +903,9 @@ describe("WebmcpInspectorTab — viewport", () => {
       display: "in-app",
     });
 
-    await act(async () => {
-      screen.getByRole("button", { name: "In app" }).click();
-    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "In app" }));
     await act(async () => {
       screen.getByRole("button", { name: "Open browser" }).click();
     });

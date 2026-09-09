@@ -213,6 +213,7 @@ export type {
   ServerSkillsLogger,
   VerifiedServerSkill,
 } from "./server-skills.js";
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
@@ -706,10 +707,12 @@ export type {
   RunConformanceConfig,
 } from "./conformance-run.js";
 export {
+  detectCiMetadata,
   detectConformanceCiMetadata,
+  detectLauncherKind,
   githubActionExternalRunId,
 } from "./conformance-ci.js";
-export type { ConformanceCiMetadata } from "./conformance-ci.js";
+export type { ConformanceCiMetadata, LauncherKind } from "./conformance-ci.js";
 export {
   finalizeConformanceRun,
   heartbeatConformanceRun,
@@ -1587,3 +1590,11 @@ export type {
   GetTaskExtResult,
   UpdateTaskExtResult,
 } from "./mcp-client-manager/index.js";
+
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+  toolNamesFromPathKey,
+} from "./contract/tool-path.js";

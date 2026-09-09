@@ -19,6 +19,10 @@ import {
   caseIntentSchema,
   caseIntentUpdateSchema,
 } from "../contract/stage-intent.js";
+import {
+  parseSuiteGatePolicyForAuthoring,
+  suiteGatePolicySchema,
+} from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -78,7 +82,11 @@ import type {
   PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalRouteFacts,
+  PlatformEvalServerFacts,
+  PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiver,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
@@ -90,6 +98,7 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
@@ -110,6 +119,11 @@ import type {
   PlatformPersona,
   PlatformPersonaDeleted,
   PlatformSecret,
+  PlatformTraceDestination,
+  PlatformTraceDestinationBackfillJob,
+  PlatformTraceDestinationDeleted,
+  PlatformTraceDestinationResumed,
+  PlatformTraceDestinationTestScheduled,
   PlatformSecretDeleted,
   PlatformRunScorecard,
   PlatformSessionSummary,
@@ -2570,6 +2584,27 @@ const SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION =
 const RUN_PROJECT_DESCRIPTION =
   "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
 
+// ── client / host, one selector ─────────────────────────────────────────────
+//
+// CLIENT is the product noun. `mcpjam-inspector/server/routes/v1/clients.ts`
+// declares it, the API registers `/clients` canonically with `/hosts` as a
+// deprecated alias, and `list_clients` below already uses it. The eval LAUNCH
+// inputs kept `host` from before that rename, so an agent reads `client` on
+// every CRUD operation and then has to type `host` to run the thing it just
+// made. Both spellings are accepted here and folded to one field.
+//
+// NOT renamed, because they are different concepts: `hostStyle`,
+// `/host-catalog` and the `clientCapabilities`/`clientInfo` inside a config
+// (the MCP protocol's client, whose name is the spec's).
+const EVAL_CLIENT_SELECTOR_DESCRIPTION =
+  "One client ATTACHED to the suite (name or ID) to run against. The run is stamped with that client's configuration; without it a suite with several attached clients cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`. `host` is the deprecated spelling of this field.";
+const EVAL_CLIENTS_SELECTOR_DESCRIPTION =
+  "Several attached clients to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `client` for exactly one; passing both is an error. `hosts` is the deprecated spelling of this field.";
+const DEPRECATED_HOST_SELECTOR_SUFFIX =
+  " DEPRECATED: use `client`, which means exactly this.";
+const DEPRECATED_HOSTS_SELECTOR_SUFFIX =
+  " DEPRECATED: use `clients`, which means exactly this.";
+
 /**
  * A caller-input problem the SDK can see without a round trip. Carries the same
  * `VALIDATION_ERROR` code the API would return, so surfaces render it
@@ -2579,6 +2614,82 @@ const RUN_PROJECT_DESCRIPTION =
  */
 function operationInputError(message: string): PlatformApiError {
   return new PlatformApiError(message, "VALIDATION_ERROR", { status: 0 });
+}
+
+/**
+ * Fold a `client` / `clients` selector onto the `host` / `hosts` field every
+ * read below already uses.
+ *
+ * Passing both spellings of ONE selector is a refusal, never a precedence
+ * rule — the same call `clients.ts` makes for `--client` / `--host` and this
+ * file already makes for `repetitions` / `iterations`. A precedence rule is
+ * invisible: a script that passes both because someone half-finished a
+ * migration keeps running, silently launching against whichever of two
+ * possibly-different clients this function happened to prefer, and spends on
+ * it. In `execute` rather than `.refine()` for the reason
+ * {@link operationInputError} gives: the CLI calls `execute` directly.
+ */
+function foldClientSelectors<
+  T extends {
+    host?: string;
+    hosts?: string[];
+    client?: string;
+    clients?: string[];
+  },
+>(input: T): T {
+  if (input.client !== undefined && input.host !== undefined) {
+    throw operationInputError(
+      "Pass either client or its deprecated host alias, not both."
+    );
+  }
+  if (input.clients !== undefined && input.hosts !== undefined) {
+    throw operationInputError(
+      "Pass either clients or its deprecated hosts alias, not both."
+    );
+  }
+  // BEFORE the fold, so the message names what the caller typed. Folded first,
+  // singular-with-plural is caught downstream by the `host`/`hosts` guard,
+  // which would answer a caller who wrote `client` and `clients` by telling
+  // them about two fields they never used.
+  if (input.client !== undefined && input.clients !== undefined) {
+    throw operationInputError(
+      "Pass either client (one) or clients (several), not both."
+    );
+  }
+  if (input.client === undefined && input.clients === undefined) return input;
+  return {
+    ...input,
+    ...(input.client !== undefined ? { host: input.client } : {}),
+    ...(input.clients !== undefined ? { hosts: input.clients } : {}),
+  };
+}
+
+/**
+ * The same fold for `compose`, whose stack names the client it runs as.
+ *
+ * `compose.host` was REQUIRED before `compose.client` existed, so the pair is
+ * "exactly one" rather than "at most one" — a composed stack with no client
+ * has nothing to stamp the run with, and the schema can no longer say so on
+ * its own now that either spelling satisfies it.
+ */
+function foldComposeClientSelector<
+  C extends { host?: string; client?: string },
+  T extends { compose?: C },
+>(input: T): T & { compose?: C & { host: string } } {
+  const compose = input.compose;
+  if (!compose) return input as T & { compose?: C & { host: string } };
+  if (compose.client !== undefined && compose.host !== undefined) {
+    throw operationInputError(
+      "Pass either compose.client or its deprecated compose.host alias, not both."
+    );
+  }
+  const host = compose.client ?? compose.host;
+  if (host === undefined) {
+    throw operationInputError(
+      "compose.client is required — a composed stack runs AS a client, and the run is stamped with that client's configuration."
+    );
+  }
+  return { ...input, compose: { ...compose, host } };
 }
 
 /**
@@ -2601,6 +2712,43 @@ function assertNoServerOverrideWithEnvironment(input: {
 }
 
 /**
+ * The nouns a refusal uses for the target selector, taken from what the CALLER
+ * typed rather than from the field the fold lands on.
+ *
+ * `foldClientSelectors` copies `client`/`clients` onto `host`/`hosts` before
+ * any combination guard runs, so without this a caller who wrote `client` and
+ * `environment` was answered with "Pass environments or hosts, not both" —
+ * about a field they never used, in the vocabulary this change exists to
+ * retire.
+ *
+ * `singular` and `plural` name each side INDEPENDENTLY, so a mixed
+ * `client` + `hosts` names both as typed. `axis*` is one vocabulary choice for
+ * the messages that talk about the target axis as a category rather than about
+ * a specific field.
+ *
+ * Omitted — the disclosure operation, which has no `client` alias — every noun
+ * is `host`/`hosts` and each message is byte-for-byte what it has always been.
+ */
+function runTargetSelectorNouns(spelling?: {
+  client?: string;
+  clients?: string[];
+}): {
+  singular: string;
+  plural: string;
+  axisSingular: string;
+  axisPlural: string;
+} {
+  const usedClientVocabulary =
+    spelling?.client !== undefined || spelling?.clients !== undefined;
+  return {
+    singular: spelling?.client !== undefined ? "client" : "host",
+    plural: spelling?.clients !== undefined ? "clients" : "hosts",
+    axisSingular: usedClientVocabulary ? "client" : "host",
+    axisPlural: usedClientVocabulary ? "clients" : "hosts",
+  };
+}
+
+/**
  * Reject every ambiguous COMBINATION of target selectors before anything
  * resolves.
  *
@@ -2609,16 +2757,23 @@ function assertNoServerOverrideWithEnvironment(input: {
  * spend on a run the caller did not ask for. `servers` × a target axis is the
  * same rejection the platform makes (an environment or host supplies its own
  * closed server set), raised here so it costs no round trip.
+ *
+ * `spelling` is the RAW input, before `foldClientSelectors` ran, and only
+ * decides the nouns the refusals use — see {@link runTargetSelectorNouns}.
  */
-function assertRunTargetSelectorsCoherent(input: {
-  servers?: string[];
-  environment?: string;
-  environments?: string[];
-  host?: string;
-  hosts?: string[];
-  allAttached?: boolean;
-  compose?: unknown;
-}): void {
+function assertRunTargetSelectorsCoherent(
+  input: {
+    servers?: string[];
+    environment?: string;
+    environments?: string[];
+    host?: string;
+    hosts?: string[];
+    allAttached?: boolean;
+    compose?: unknown;
+  },
+  spelling?: { client?: string; clients?: string[] }
+): void {
+  const noun = runTargetSelectorNouns(spelling);
   const hasEnvironmentAxis =
     Boolean(input.environment) || (input.environments?.length ?? 0) > 0;
   const hasHostAxis = Boolean(input.host) || (input.hosts?.length ?? 0) > 0;
@@ -2636,7 +2791,7 @@ function assertRunTargetSelectorsCoherent(input: {
       input.allAttached)
   ) {
     throw operationInputError(
-      "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs."
+      `Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, ${noun.axisSingular}, server override or allAttached alongside it describes two different runs.`
     );
   }
 
@@ -2647,12 +2802,12 @@ function assertRunTargetSelectorsCoherent(input: {
   }
   if (input.host && (input.hosts?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either host (one) or hosts (several), not both."
+      `Pass either ${noun.singular} (one) or ${noun.plural} (several), not both.`
     );
   }
   if (hasEnvironmentAxis && hasHostAxis) {
     throw operationInputError(
-      "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had."
+      `Pass environments or ${noun.axisPlural}, not both — a run targets ONE axis, and an environment already resolves a ${noun.axisSingular}, so combining them would describe a configuration the suite never had.`
     );
   }
   if (hasEnvironmentAxis && (input.servers?.length ?? 0) > 0) {
@@ -2670,7 +2825,7 @@ function assertRunTargetSelectorsCoherent(input: {
   }
   if (hasHostAxis && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override."
+      `Pass either a ${noun.axisSingular} or servers, not both — running an attached ${noun.axisSingular} uses that ${noun.axisSingular}'s own configured server set, which servers cannot override.`
     );
   }
   if (input.allAttached && (hasEnvironmentAxis || hasHostAxis)) {
@@ -3549,7 +3704,7 @@ const secretSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no \"all of them\" mode. A `sharing: \"user\"` secret still reaches only sessions its owner started."
+        'Project SECRET ids this environment grants. The environment is the GRANT BOUNDARY: no selection means a run receives no secrets, and there is no "all of them" mode. A `sharing: "user"` secret still reaches only sessions its owner started.'
       ),
   })
   .describe(
@@ -3569,12 +3724,22 @@ const secretSelectionInput = z
  */
 const composeRunTargetInput = z
   .object({
+    client: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Client (name or ID) the composed stack runs as — whose configuration the run is stamped with. Required unless the deprecated `host` spelling is given instead."
+      ),
     host: z
       .string()
       .trim()
       .min(1)
+      .optional()
       .describe(
-        "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with."
+        "Client (name or ID) the composed stack runs as." +
+          DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     serverGroup: z
       .string()
@@ -3785,20 +3950,31 @@ const runEvalSuiteInput = z
       .describe(
         "Several attached environments to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error."
       ),
+    client: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(EVAL_CLIENT_SELECTOR_DESCRIPTION),
+    clients: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(EVAL_CLIENTS_SELECTOR_DESCRIPTION),
     host: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe(
-        "One host ATTACHED to the suite (name or ID) to run against. The run is stamped with that host's configuration; without it a suite with several attached hosts cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`."
+        EVAL_CLIENT_SELECTOR_DESCRIPTION + DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     hosts: z
       .array(z.string().trim().min(1))
       .min(1)
       .optional()
       .describe(
-        "Several attached hosts to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `host` for exactly one; passing both is an error."
+        EVAL_CLIENTS_SELECTOR_DESCRIPTION + DEPRECATED_HOSTS_SELECTOR_SUFFIX
       ),
     allAttached: z
       .boolean()
@@ -3960,14 +4136,21 @@ export const runEvalSuiteOperation: PlatformOperation<
   }),
   inputSchema: runEvalSuiteInput,
   async execute(
-    input,
+    rawInput,
     { client, signal, onScopeResolved, onDisclosure, onDisclosureUnavailable }
   ) {
+    // One selector before anything reads one: `client`/`clients` fold onto
+    // `host`/`hosts`, and both spellings of one selector is a refusal.
+    const input = foldComposeClientSelector(foldClientSelectors(rawInput));
+
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
+    //
+    // `rawInput` goes in beside the folded input purely so the refusals name
+    // the spelling the caller used; the fold has already erased it.
     assertNoServerOverrideWithEnvironment(input);
-    assertRunTargetSelectorsCoherent(input);
+    assertRunTargetSelectorsCoherent(input, rawInput);
 
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
@@ -4053,13 +4236,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : input.environments ?? [],
+      input.environment ? [input.environment] : (input.environments ?? []),
       signal
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : input.hosts ?? []
+      input.host ? [input.host] : (input.hosts ?? [])
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4107,7 +4290,10 @@ export const runEvalSuiteOperation: PlatformOperation<
             ? { allAttached: input.allAttached }
             : {}),
           ...(overrideServers
-            ? { serverIds: overrideServers.map((server) => server.id) }
+            ? {
+                serverIds: overrideServers.map((server) => server.id),
+                serverNames: overrideServers.map((server) => server.name),
+              }
             : {}),
         });
 
@@ -4192,8 +4378,8 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(disclosureEnvironmentIds.length === 1
               ? { environmentId: disclosureEnvironmentIds[0]! }
               : disclosureEnvironmentIds.length > 1
-              ? { environmentIds: disclosureEnvironmentIds }
-              : {}),
+                ? { environmentIds: disclosureEnvironmentIds }
+                : {}),
             ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
           { signal: disclosureBound.signal }
@@ -4241,6 +4427,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             body: {
               suiteId: suite.id,
               ...(plan.serverIds ? { serverIds: plan.serverIds } : {}),
+              // Paired with `serverIds` by index. A launch that re-authors the
+              // suite's saved selection persists these NAMES; without them the
+              // platform stores the raw ids and the suite reads back with an
+              // opaque id where the server name belongs.
+              ...(plan.serverNames ? { serverNames: plan.serverNames } : {}),
               ...(plan.target?.kind === "environment"
                 ? { environmentId: plan.target.id }
                 : {}),
@@ -4415,13 +4606,22 @@ const runEvalCaseInput = z
       .min(1)
       .optional()
       .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+    client: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "One client ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that client's configuration. Mutually exclusive with `environment` and `servers`. `host` is the deprecated spelling of this field."
+      ),
     host: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe(
-        "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`."
+        "One client ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that client's configuration. Mutually exclusive with `environment` and `servers`." +
+          DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     compose: composeRunTargetInput.optional(),
     repetitions: RUN_KNOB_FIELDS.repetitions,
@@ -4493,9 +4693,11 @@ export const runEvalCaseOperation: PlatformOperation<
     evalRunRef(result.runId, result.suite.id, result.project?.id),
   ]),
   inputSchema: runEvalCaseInput,
-  async execute(input, { client, signal, onScopeResolved }) {
+  async execute(rawInput, { client, signal, onScopeResolved }) {
+    const input = foldComposeClientSelector(foldClientSelectors(rawInput));
     assertNoServerOverrideWithEnvironment(input);
-    assertRunTargetSelectorsCoherent(input);
+    // `rawInput` names the spelling the caller used; see run_eval_suite.
+    assertRunTargetSelectorsCoherent(input, rawInput);
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -4580,7 +4782,12 @@ export const runEvalCaseOperation: PlatformOperation<
             suiteId: suite.id,
             caseIds: [testCase.id],
             ...(overrideServers
-              ? { serverIds: overrideServers.map((server) => server.id) }
+              ? {
+                  serverIds: overrideServers.map((server) => server.id),
+                  // Index-paired names, so an override persists as names
+                  // rather than ids. See the same pairing in run_eval_suite.
+                  serverNames: overrideServers.map((server) => server.name),
+                }
               : {}),
             // MUTUALLY EXCLUSIVE, and enforced above by
             // `assertRunTargetSelectorsCoherent`: `compose` with `environment`
@@ -4693,6 +4900,12 @@ const evalCaseInput = z.object({
     .describe(
       "Optional analytics grouping label for this case. It does not change scoring or verdicts."
     ),
+  kind: z
+    .enum(["capability", "regression"])
+    .optional()
+    .describe(
+      "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
+    ),
   runs: z
     .number()
     .int()
@@ -4735,10 +4948,23 @@ const evalCaseInput = z.object({
     .record(z.string(), z.any())
     .optional()
     .describe("Per-case matcher options (advanced)."),
+  // CHECK is the user-facing word for this rule: the API field name, the UI
+  // section, and the SDK's own `CheckPolicy` / `checkRole` / `checkSeverity`
+  // prefix. An agent that authors a suite here and then edits one of its own
+  // cases through `create_eval_case` should not have to switch words halfway.
+  checks: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      "Per-case check gate (advanced): `{ mode: inherit | replace | extend, list: [...] }`. `predicates` is the deprecated spelling of this field; passing both is an error."
+    ),
+  /** @deprecated Use `checks`. */
   predicates: z
     .record(z.string(), z.any())
     .optional()
-    .describe("Per-case success-predicate gate (advanced)."),
+    .describe(
+      "DEPRECATED spelling of `checks`, which means exactly this. Per-case check gate (advanced)."
+    ),
   model: z
     .string()
     .trim()
@@ -4777,6 +5003,13 @@ const createEvalSuiteInput = z.strictObject({
     .describe(
       "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted."
     ),
+  hosts: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Client (host) names or IDs to attach the suite to, in attach order. Same vocabulary update_eval_suite uses. A suite with no attached host runs under its own execution config and reports no client anywhere it is listed. Attaching also makes the host selectable on run_eval_suite, which only runs hosts ATTACHED to the suite."
+    ),
   model: z
     .string()
     .trim()
@@ -4803,11 +5036,36 @@ const createEvalSuiteInput = z.strictObject({
 
 export type CreateEvalSuiteInput = z.infer<typeof createEvalSuiteInput>;
 
+/**
+ * Fold a case's `checks` onto the wire's `predicates`.
+ *
+ * One rule, three names a customer types: the suite file called it
+ * `assertions`, this operation called it `predicates`, and the API, the UI and
+ * `create_eval_case` all call it `checks`. `check` is the surviving word — it
+ * is already the API field, the UI section and this SDK's own `CheckPolicy` /
+ * `checkRole` / `checkSeverity` prefix. Both spellings at once is a refusal:
+ * two gates are two different gradings of one case.
+ */
+function foldCaseCheckAlias(
+  authored: z.infer<typeof evalCaseInput>
+): z.infer<typeof evalCaseInput> {
+  if (authored.checks === undefined) return authored;
+  if (authored.predicates !== undefined) {
+    throw operationInputError(
+      `Case "${authored.title}" sets both checks and its deprecated predicates alias — set one.`
+    );
+  }
+  const { checks, ...rest } = authored;
+  return { ...rest, predicates: checks };
+}
+
 export type CreateEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
   /** The HTTP servers the suite was configured against. */
   servers: Array<{ id: string; name?: string }>;
+  /** The clients (hosts) attached to the suite; empty when none were named. */
+  hosts: Array<{ id: string; name?: string }>;
   caseUpsert: PlatformEvalSuiteCreated["caseUpsert"];
 };
 
@@ -4818,7 +5076,7 @@ export const createEvalSuiteOperation: PlatformOperation<
   name: "create_eval_suite",
   title: "Create MCPJam eval suite",
   description:
-    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
+    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, optionally the clients (hosts) to attach it to, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
@@ -4847,11 +5105,17 @@ export const createEvalSuiteOperation: PlatformOperation<
           ...(input.description ? { description: input.description } : {}),
           serverIds: servers.map((server) => server.id),
           serverNames: servers.map((server) => server.name),
+          ...(input.hosts?.length
+            ? { hosts: input.hosts.map((host) => ({ host })) }
+            : {}),
           model: input.model,
           ...(input.provider ? { provider: input.provider } : {}),
           // Ergonomic case shape; the backend normalizes per-case defaults
           // (runs, model/provider fill, tool-call mapping) into the run schema.
-          tests: input.cases,
+          // `checks` folds onto the wire's `predicates` here, so an older
+          // deployment that has never heard the canonical word still gets a
+          // body it understands.
+          tests: input.cases.map(foldCaseCheckAlias),
         },
       },
       { signal }
@@ -4863,6 +5127,7 @@ export const createEvalSuiteOperation: PlatformOperation<
         id: server.id,
         name: server.name,
       })),
+      hosts: created.hosts ?? [],
       caseUpsert: created.caseUpsert,
     };
   },
@@ -4903,6 +5168,12 @@ const caseFieldsShape = {
     .optional()
     .describe(
       "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
+  kind: z
+    .enum(["capability", "regression"])
+    .optional()
+    .describe(
+      "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
     ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
@@ -4995,6 +5266,13 @@ function buildCreateCaseBody(
 ): Record<string, unknown> {
   const body = buildCaseBody(input);
   if (input.id !== undefined) body.id = input.id;
+  // Not a case field — the marker that says this write IS the suite file, the
+  // same one the batch form sends. Without it a CI-owned suite refuses
+  // `case.create`, so single-case file sync could not write what the batch
+  // could.
+  if (input.declaredSuiteId !== undefined) {
+    body.declaredSuiteId = input.declaredSuiteId;
+  }
   return body;
 }
 
@@ -5115,7 +5393,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : input.environments ?? [],
+      input.environment ? [input.environment] : (input.environments ?? []),
       signal
     );
     // SAME plan resolution `run_eval_suite` uses — including its
@@ -5204,8 +5482,8 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         ...(disclosureEnvironmentIds.length === 1
           ? { environmentId: disclosureEnvironmentIds[0]! }
           : disclosureEnvironmentIds.length > 1
-          ? { environmentIds: disclosureEnvironmentIds }
-          : {}),
+            ? { environmentIds: disclosureEnvironmentIds }
+            : {}),
         ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
       { signal }
@@ -5215,6 +5493,31 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
 
 // STRICT: the reported silent no-op (`hostIds` / top-level `servers`)
 // was stripped here before the HTTP body was ever built.
+/**
+ * The suite file's own `suite.id`, when a write IS that file syncing itself.
+ *
+ * A CI-owned suite (one with a declared id, or created by SDK ingest) refuses
+ * configuration writes from the app and from the API alike. The file's own sync
+ * is the exception, and this is how it says so: the platform allows the write
+ * iff the id names the suite's own. Naming any other id refuses exactly as
+ * loudly as naming none, so it is not a capability — omit it for an ordinary
+ * edit, and the refusal you get on a CI-owned suite is the correct one.
+ */
+const declaredSuiteIdField = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .optional()
+  .describe(
+    "The suite file's `suite.id`, when this write is that file syncing itself. Required to edit a CI-managed suite (one whose configuration lives in a repository); omit it otherwise."
+  );
+
+// Every nested object here is STRICT for the same reason the top level is:
+// a non-strict zod object silently DROPS an unknown key, so a typo — or a
+// field this surface does not implement, like `judge.groundedness` — returns
+// 200 having written nothing, and the caller has a receipt for a change that
+// never happened. A refusal that names the key is the honest answer.
 const updateEvalSuiteInput = z.strictObject({
   project: z
     .string()
@@ -5223,6 +5526,7 @@ const updateEvalSuiteInput = z.strictObject({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().optional(),
   environment: z
@@ -5252,17 +5556,30 @@ const updateEvalSuiteInput = z.strictObject({
     })
     .optional()
     .describe("Suite execution config; unspecified fields are preserved."),
-  hosts: z
+  clients: z
     .array(
       z.object({
-        host: z.string().trim().min(1).describe("Host name or ID."),
+        client: z.string().trim().min(1).describe("Client name or ID."),
         servers: z.array(z.string().trim().min(1)).optional(),
       })
     )
     .optional()
-    .describe("Host attachments (replace-all)."),
+    .describe(
+      "Client attachments (replace-all). `hosts` is the deprecated spelling of this field."
+    ),
+  hosts: z
+    .array(
+      z.object({
+        host: z.string().trim().min(1).describe("Client name or ID."),
+        servers: z.array(z.string().trim().min(1)).optional(),
+      })
+    )
+    .optional()
+    .describe(
+      "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
+    ),
   settings: z
-    .object({
+    .strictObject({
       minimumAccuracy: z.number().min(0).max(100).optional(),
       minimumIterations: z
         .union([z.number().int().min(1).max(10), z.null()])
@@ -5274,7 +5591,7 @@ const updateEvalSuiteInput = z.strictObject({
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
-        .object({
+        .strictObject({
           enabled: z
             .boolean()
             .optional()
@@ -5296,10 +5613,125 @@ const updateEvalSuiteInput = z.strictObject({
             .describe(
               "Advisory pass threshold, 0–1 (passed = score >= threshold)."
             ),
+          role: z
+            .enum(["advisory", "gating"])
+            .optional()
+            .describe(
+              "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+            ),
+          severity: z
+            .literal("warn")
+            .optional()
+            .describe(
+              "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
+            ),
+          rubric: z
+            .union([
+              z.strictObject({
+                criteria: z
+                  .array(
+                    z.strictObject({
+                      id: z
+                        .string()
+                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
+                        .describe(
+                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
+                        ),
+                      label: z.string().trim().min(1).max(200),
+                      description: z.string().max(1000).optional(),
+                      required: z.boolean().optional(),
+                    })
+                  )
+                  .min(1)
+                  .max(25),
+              }),
+              z.null(),
+            ])
+            .optional()
+            .describe(
+              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+            ),
         })
         .optional(),
+      repetitions: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
+        ),
+      passThreshold: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
+        ),
+      validity: z
+        .object({
+          minEligibleTrials: z.number().int().min(1).optional(),
+          minCompletionRate: z.number().min(0).max(1).optional(),
+          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+        })
+        .strict()
+        .optional()
+        .describe(
+          "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
+        ),
+      qualityGate: z
+        .union([suiteGatePolicySchema, z.null()])
+        .optional()
+        .describe(
+          "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+        ),
     })
     .optional(),
+  expectedRevisionNumber: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
+    ),
+  revisionNote: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
+    ),
+}).superRefine((body, ctx) => {
+  if (body.settings?.qualityGate === undefined) return;
+  if (body.expectedRevisionNumber === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedRevisionNumber"],
+      message:
+        "expectedRevisionNumber is required when settings.qualityGate is present.",
+    });
+  }
+  const note = body.revisionNote?.trim() ?? "";
+  if (note.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["revisionNote"],
+      message: "revisionNote is required when settings.qualityGate is present.",
+    });
+  }
+  if (body.settings.qualityGate !== null) {
+    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
+    if (!parsed.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["settings", "qualityGate"],
+        message: parsed.message,
+      });
+    }
+  }
 });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
@@ -5310,13 +5742,31 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the verdict policy v2 fields (repetitions/passThreshold/validity — fractions, and the v2 replacement for minimumAccuracy). Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
   ]),
   inputSchema: updateEvalSuiteInput,
-  async execute(input, { client, signal, onScopeResolved }) {
+  async execute(rawInput, { client, signal, onScopeResolved }) {
+    // `clients` folds onto the `hosts` the wire body still names, entry by
+    // entry, for the reason {@link foldClientSelectors} gives. Both at once is
+    // a refusal: two replace-all attachment lists are two different suites.
+    if (rawInput.clients !== undefined && rawInput.hosts !== undefined) {
+      throw operationInputError(
+        "Pass either clients or its deprecated hosts alias, not both."
+      );
+    }
+    const input =
+      rawInput.clients !== undefined
+        ? {
+            ...rawInput,
+            hosts: rawInput.clients.map(({ client: name, servers }) => ({
+              host: name,
+              ...(servers !== undefined ? { servers } : {}),
+            })),
+          }
+        : rawInput;
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -5330,6 +5780,10 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "executionConfig",
       "hosts",
       "settings",
+      "expectedRevisionNumber",
+      "revisionNote",
+      // Not an edit — the marker that says this edit IS the suite file.
+      "declaredSuiteId",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }
@@ -5348,6 +5802,7 @@ const deleteEvalSuiteInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
 });
 export type DeleteEvalSuiteInput = z.infer<typeof deleteEvalSuiteInput>;
 
@@ -5369,7 +5824,13 @@ export const deleteEvalSuiteOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.deleteEvalSuite(
-      { projectId: project.id, suiteId: suite.id },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        ...(input.declaredSuiteId !== undefined
+          ? { declaredSuiteId: input.declaredSuiteId }
+          : {}),
+      },
       { signal }
     );
   },
@@ -5383,6 +5844,7 @@ const setEvalSuiteScheduleInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   enabled: z.boolean().describe("Turn scheduled runs on or off."),
   intervalMinutes: z
     .number()
@@ -5451,6 +5913,11 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
             ? { intervalMinutes: input.intervalMinutes }
             : {}),
           ...(environment ? { environmentId: environment.id } : {}),
+          // Not a schedule field — the marker that says this write IS the
+          // suite file. A CI-owned suite refuses `suite.schedule` without it.
+          ...(input.declaredSuiteId !== undefined
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
         },
       },
       { signal }
@@ -5466,6 +5933,7 @@ const setEvalSuiteEnvironmentsInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   environments: z
     .union([z.array(z.string().trim().min(1)).min(1), z.null()])
     .describe(
@@ -5575,7 +6043,12 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
       {
         projectId: project.id,
         suiteId: suite.id,
-        body: { environmentIds },
+        body: {
+          environmentIds,
+          ...(input.declaredSuiteId
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
+        },
       },
       { signal }
     );
@@ -5676,6 +6149,7 @@ const createEvalCaseInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   ...caseFieldsShape,
   title: z.string().trim().min(1).describe("Short case label."),
   id: declaredCaseIdField,
@@ -5721,6 +6195,7 @@ const createEvalCasesInput = z.object({
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   cases: z
     .array(
       z.object({
@@ -5809,6 +6284,9 @@ export const createEvalCasesOperation: PlatformOperation<
           ...(input.overrideReason
             ? { overrideReason: input.overrideReason }
             : {}),
+          ...(input.declaredSuiteId
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
         },
       },
       { signal }
@@ -5829,6 +6307,7 @@ const updateEvalCaseInput = z.object({
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
   ...caseFieldsShape,
   // UPDATE-only nullability, matching the route: PATCH accepts `null` to clear
   // the claim, create does not. `buildCaseBody` keeps `null` and drops
@@ -5847,6 +6326,13 @@ const updateEvalCaseInput = z.object({
     .optional()
     .describe(
       "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
+    ),
+  kind: z
+    .enum(["capability", "regression"])
+    .nullable()
+    .optional()
+    .describe(
+      "Authored case kind. Omit to preserve it; pass null to clear it."
     ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
@@ -5881,7 +6367,16 @@ export const updateEvalCaseOperation: PlatformOperation<
           projectId: project.id,
           suiteId: suite.id,
           caseId: testCase.id,
-          body: buildCaseBody(input),
+          // `buildCaseBody` copies only `caseFieldsShape` keys, which is what
+          // keeps a selector (`project`, `suite`, `case`) out of the case
+          // definition. The marker is not one of those keys and not a case
+          // field either, so it is added here rather than widening that shape.
+          body: {
+            ...buildCaseBody(input),
+            ...(input.declaredSuiteId
+              ? { declaredSuiteId: input.declaredSuiteId }
+              : {}),
+          },
         },
         { signal }
       ),
@@ -5899,6 +6394,7 @@ const deleteEvalCaseInput = z.object({
     .describe(PROJECT_SELECTOR_DESCRIPTION),
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   case: z.string().trim().min(1).describe(CASE_SELECTOR_DESCRIPTION),
+  declaredSuiteId: declaredSuiteIdField,
 });
 export type DeleteEvalCaseInput = z.infer<typeof deleteEvalCaseInput>;
 
@@ -5927,7 +6423,14 @@ export const deleteEvalCaseOperation: PlatformOperation<
       signal
     );
     return client.deleteEvalCase(
-      { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        caseId: testCase.id,
+        ...(input.declaredSuiteId
+          ? { declaredSuiteId: input.declaredSuiteId }
+          : {}),
+      },
       { signal }
     );
   },
@@ -6120,6 +6623,11 @@ export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
  * for a terminal run: while a run is still going its verdict does not exist
  * yet, so the extra request would buy a `notEstablished` a poller already knows
  * from `status`.
+ *
+ * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has run
+ * every trial but has not been decided — its `result` is `pending` — so
+ * fetching a summary for it would return exactly the `notEstablished` this set
+ * exists to avoid asking for.
  */
 const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -6338,6 +6846,82 @@ export const listEvalRunIterationsOperation: PlatformOperation<
   },
 };
 
+const evalSuiteRevisionsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Opaque pagination cursor from a previous response."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum number of revisions to return per page (newest first)."),
+});
+
+export type ListEvalSuiteRevisionsInput = z.infer<
+  typeof evalSuiteRevisionsInput
+>;
+
+export type ListEvalSuiteRevisionsResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  items: PlatformEvalSuiteRevision[];
+  nextCursor?: string;
+};
+
+export const listEvalSuiteRevisionsOperation: PlatformOperation<
+  ListEvalSuiteRevisionsInput,
+  ListEvalSuiteRevisionsResult
+> = {
+  name: "list_eval_suite_revisions",
+  title: "List MCPJam eval suite revisions",
+  description:
+    "List a suite's settings history, newest first: one entry per committed edit, with who made it, which stored fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Pass a revisionNumber back as expectedRevisionNumber on update_eval_suite to make an edit a compare-and-set.",
+  readOnly: true,
+  // The suite, not the revision: a revision has no page of its own, and the
+  // settings sheet's history panel is reached from the suite.
+  permalink: derivePermalinks((result) => [
+    {
+      type: "eval_suite" as const,
+      id: result.suite.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: evalSuiteRevisionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const page = await client.listEvalSuiteRevisions(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        cursor: input.cursor,
+        limit: input.limit,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
 const evalIterationTraceInput = evalRunScopedInput.extend({
   iterationId: z
     .string()
@@ -6517,6 +7101,441 @@ export const getEvalRunStageAnalyticsOperation: PlatformOperation<
       }
       throw error;
     }
+  },
+};
+
+export type GetEvalRunGateResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  report: PlatformEvalRunGate;
+};
+
+/**
+ * A bare 404 — the route is not there — as opposed to the route saying the
+ * run is not visible.
+ *
+ * Unlike stage analytics, a retrieved run NEVER has "no document": the
+ * evaluator answers `not_configured` as a 200 report. A 404 after the run
+ * was retrieved is a missing route (or an upstream fault), never proof
+ * that no policy exists.
+ */
+function isSuiteGateRouteUnavailable(error: unknown): boolean {
+  if (!(error instanceof PlatformApiError)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+function suiteGateRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run quality-gate evaluation. That is a fact about the deployment, not about the run — do not report the run as having no policy.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunGateOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunGateResult
+> = {
+  name: "get_eval_run_gate",
+  title: "Get MCPJam eval run quality gate",
+  description:
+    "Get ONE run's suite quality-gate report: the stored suite policy evaluated against this run. Outcomes are passed, failed, non_gateable, or not_configured. not_configured means the suite has no active conditions — it is a 200 report, never an absent route. The run is fetched first, so a run that does not exist or is not visible fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. A 404 after the run was retrieved is NEVER proof that no policy exists. A run waiver never covers this report; compose it with the flag/base report separately.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const report = await client.getEvalRunGate(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        report,
+      };
+    } catch (error) {
+      if (isSuiteGateRouteUnavailable(error)) {
+        throw suiteGateRouteUnavailableError();
+      }
+      throw error;
+    }
+  },
+};
+
+const ROUTE_FACTS_READING_RULES =
+  "Population is the TRIAL. Substitution is named only for the one-to-one in-catalog shape: exactly one expected name missing and exactly one unexpected in-catalog name observed. Cosine similarity is not a diagnostic. " +
+  "`catalogState` is `loaded` or `notLoaded`; catalog-not-loaded forbids substitution and unexpected tools read as `catalogNotLoaded`, never as in- or outside-catalog. " +
+  "A ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `notMeasured` is not zero. " +
+  "`endedWithQuestion` is measured GOING FORWARD: the runner records it on every trial it finalizes from now on, and there is no backfill — a run that finished before that shipped stays `notMeasured`, which is not a zero and not a pass. " +
+  "This document is REPORT-ONLY and never a verdict: nothing here writes `result`, feeds a gate, or changes a pass/fail. " +
+  "There is NO BACKFILL: a run that terminalized before route-facts measurement shipped has no document and never will, and that absence is unmeasured, never zeros.";
+
+export type GetEvalRunRouteFactsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  /**
+   * Whether this run has a route-facts document at all.
+   *
+   * `measured` — `routeFacts` is the run's document. `unmeasured` — the run
+   * was RETRIEVED and has no document, which is the only path on which that
+   * claim is honest. A deployment that does not serve the route, and a run
+   * that could not be retrieved, are errors instead: see the operation's
+   * execute body.
+   */
+  routeFactsState: "measured" | "unmeasured";
+  routeFacts: PlatformEvalRouteFacts | null;
+};
+
+function routeFactsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run route facts. That is a fact about the deployment, not about the run — do not report the run as unmeasured.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunRouteFactsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunRouteFactsResult
+> = {
+  name: "get_eval_run_route_facts",
+  title: "Get MCPJam eval run route facts",
+  description:
+    "Get ONE run's materialized tool-route facts: which ordered tool paths the trials took, which expected tools were missing, which unexpected tools were observed, and which one-to-one in-catalog substitutions occurred — overall and per case. This is the ROUTE half of the run story: `get_eval_run`'s `decisionSummary` says where a trial stopped, and this says which paths the trials actually walked. " +
+    ROUTE_FACTS_READING_RULES +
+    ' ABSENCE IS THREE DIFFERENT FACTS and this operation keeps them apart. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run WAS retrieved and its document is absent does the result say `routeFactsState: "unmeasured"` with `routeFacts: null` — and that state is permanent, because there is no backfill.',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, and this ordering is the whole point. The route-facts
+    // route answers 404 for two different facts on purpose — the run is not
+    // visible, or it has no document — and the API declines to separate them
+    // so it does not leak the existence of runs in projects the caller cannot
+    // see. So the separation happens HERE, where the caller's own scope is
+    // already resolved: retrieving the run first turns "404" into "this run
+    // exists and has no routes document", which is the only footing on which
+    // "unmeasured" is an honest claim rather than a guess that reads
+    // identically to a typo.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const routeFacts = await client.getEvalRunRouteFacts(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        routeFactsState: "measured",
+        routeFacts,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw routeFactsRouteUnavailableError();
+      }
+      if (error instanceof PlatformApiError && error.status === 404) {
+        return {
+          project: toSelectedProjectInfo(project),
+          runId: run.id,
+          suiteId: run.suiteId,
+          routeFactsState: "unmeasured",
+          routeFacts: null,
+        };
+      }
+      throw error;
+    }
+  },
+};
+
+const SERVER_FACTS_READING_RULES =
+  "Everything here is a FACT ABOUT THE SERVER, and none of it is a verdict: a 57-tool surface is not a defect, a three-second connect is not a failure, and a precheck is a signal. Nothing in this document feeds a gate or changes a pass/fail. " +
+  "PAYLOAD SIZE IS THREE DIFFERENT NUMBERS and this document keeps two of them apart by name. `payload.basis` is `aggregated_catalog_json` (the catalog as the client assembled it, measured at capture) or `normalized_snapshot` (the bytes we retained, which is smaller whenever redaction dropped fields — `payload.complete` says so). The third — what the model actually saw — is a per-run HOST fact and is NOT in this document. Never compare numbers across bases and never report either as context consumption. " +
+  "TOKENS ARE AN ESTIMATE. `tokenEstimate.method` is `json_chars_div_4`; there is no tokenizer. `referenceWindowShare` is a share of a REFERENCE window (`tokenEstimate.referenceWindowTokens`), not of any model's real context. Quote the estimate with its caveat or not at all. " +
+  "A PRECHECK IS NOT AUTOMATICALLY A VIOLATION. Only `class: \"spec_required\"` names one. A row with `protocolDependent: true` is a rule we could not tell applied — the protocol version was unknown — and reporting it as a defect accuses a server that may be correct. " +
+  "RELATED ASSESSMENTS ARE LINKED, NEVER GRADED. The join is by server id ALONE (`comparability: \"sameServerId\"`): a different server version, environment or auth context is not excluded by it. Each carries its own `createdAt`. None of them is this run's verdict. " +
+  "AN UNOBSERVED SETUP PHASE IS NOT A FAILED ONE: an absent `setup.connection` means nothing was recorded, and `durationMs` is measured ONCE PER RUN — a run with 200 trials did not connect 200 times.";
+
+export type GetEvalRunServerFactsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  serverFacts: PlatformEvalServerFacts;
+};
+
+function serverFactsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run server facts. That is a fact about the deployment, not about the run — do not report the run as having no server snapshot.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunServerFactsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunServerFactsResult
+> = {
+  name: "get_eval_run_server_facts",
+  title: "Get MCPJam eval run server facts",
+  description:
+    "Get ONE run's SERVER FACTS: the tool snapshot it ran against — per server, the tool count, the catalog's measured size, annotation and output-schema coverage, and the deterministic tool-metadata prechecks — plus what the setup phase observed (connect and discovery outcome, attribution and wall time) and any conformance or readiness runs for the same servers. This is the SERVER half of the run story: `get_eval_run`'s `decisionSummary` says where trials stopped and `get_eval_run_route_facts` says which paths they walked; this says what they were walking through. " +
+    SERVER_FACTS_READING_RULES +
+    ' ABSENCE IS NOT A STATE OF THIS DOCUMENT, unlike route facts. Server facts are COMPUTED ON READ, so there is no materializer and no backfill window: a run that finished years ago still answers. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error, and a deployment that does not serve this route fails as an explicit deployment error. A run with nothing to describe answers INSIDE the document, with `state: "unavailable"` and a `reason` — `snapshotMissing` (no snapshot was stored), `snapshotPartial` (some servers did not answer; the ones that did are still listed and their numbers are real), or `setupNotObserved` (no setup audit was recorded, which means unmeasured and NOT failed).',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, same reason as route facts: the route answers 404 for
+    // "not visible to you" without distinguishing it from anything else, so
+    // retrieving the run separately is what turns that into a run-not-found
+    // error rather than a silence the caller has to interpret.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const serverFacts = await client.getEvalRunServerFacts(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        serverFacts,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw serverFactsRouteUnavailableError();
+      }
+      throw error;
+    }
+  },
+};
+
+const proposeEvalDescriptionRewriteInput = evalRunScopedInput.extend({
+  toolName: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Tool whose description should be rewritten. Must appear in the source run's tool snapshot."
+    ),
+  caseIds: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Restrict the proposal's evidence to these case ids. Omit to use every case that expected the tool and failed at least once."
+    ),
+});
+
+export type ProposeEvalDescriptionRewriteInput = z.infer<
+  typeof proposeEvalDescriptionRewriteInput
+>;
+
+export type ProposeEvalDescriptionRewriteResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
+  ProposeEvalDescriptionRewriteInput,
+  ProposeEvalDescriptionRewriteResult
+> = {
+  name: "propose_eval_description_rewrite",
+  title: "Propose an eval description rewrite",
+  description:
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. SPENDS a small model budget (worst case about $0.10) and returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: proposeEvalDescriptionRewriteInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.proposeEvalDescriptionRewrite(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        toolName: input.toolName,
+        ...(input.caseIds ? { caseIds: input.caseIds } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
+  },
+};
+
+const startEvalDescriptionExperimentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  experiment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Description-experiment id, as returned by propose_eval_description_rewrite."
+    ),
+  caseScope: z
+    .enum(["all", "affected"])
+    .optional()
+    .describe(
+      "Which cases to replay. Default all, so the regression check is contemporaneous. affected skips non-matching cases and the report says checked: false."
+    ),
+  iterationOverride: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Repetitions per case per arm (1–10). Default is the source run's."
+    ),
+  maxTrials: z
+    .number()
+    .int()
+    .min(1)
+    .max(400)
+    .optional()
+    .describe(
+      "Refuse the launch if plannedTrials (cases × repetitions × 2) exceeds this. Default 200; hard cap 400."
+    ),
+});
+
+export type StartEvalDescriptionExperimentInput = z.infer<
+  typeof startEvalDescriptionExperimentInput
+>;
+
+export type StartEvalDescriptionExperimentResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const startEvalDescriptionExperimentOperation: PlatformOperation<
+  StartEvalDescriptionExperimentInput,
+  StartEvalDescriptionExperimentResult
+> = {
+  name: "start_eval_description_experiment",
+  title: "Start an eval description experiment",
+  description:
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × repetitions × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: startEvalDescriptionExperimentInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.startEvalDescriptionExperiment(
+      {
+        projectId: project.id,
+        experimentId: input.experiment,
+        ...(input.caseScope !== undefined
+          ? { caseScope: input.caseScope }
+          : {}),
+        ...(input.iterationOverride !== undefined
+          ? { iterationOverride: input.iterationOverride }
+          : {}),
+        ...(input.maxTrials !== undefined
+          ? { maxTrials: input.maxTrials }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
+  },
+};
+
+const getEvalDescriptionExperimentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  experiment: z.string().trim().min(1).describe("Description-experiment id."),
+});
+
+export type GetEvalDescriptionExperimentInput = z.infer<
+  typeof getEvalDescriptionExperimentInput
+>;
+
+export type GetEvalDescriptionExperimentResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const getEvalDescriptionExperimentOperation: PlatformOperation<
+  GetEvalDescriptionExperimentInput,
+  GetEvalDescriptionExperimentResult
+> = {
+  name: "get_eval_description_experiment",
+  title: "Get an eval description experiment",
+  description:
+    "Read one description-experiment document: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison (Newcombe interval in points, per-case bars, regression line, evidence label) once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(
+      result.experiment.sourceRunId,
+      result.experiment.suiteId,
+      result.project?.id
+    ),
+  ]),
+  inputSchema: getEvalDescriptionExperimentInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.getEvalDescriptionExperiment(
+      { projectId: project.id, experimentId: input.experiment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
   },
 };
 
@@ -6944,6 +7963,19 @@ function checkRepoOrganizationOrThrow(project: PlatformProject): string {
 // them here would let a caller retarget a repository away from the suite it is
 // standing on.
 
+// The two GitHub-check operations' descriptions, declared once: the canonical
+// pair below reads them as-is, and the deprecated pair prefixes a line saying
+// which name replaced it. One body, so the two spellings cannot describe the
+// same behaviour differently.
+const EVAL_GITHUB_REPOS_LIST_DESCRIPTION =
+  'List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.';
+const EVAL_GITHUB_REPO_CONNECT_DESCRIPTION =
+  "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.";
+const DEPRECATED_EVAL_CHECK_REPOS_PREFIX =
+  "Deprecated spelling of list_eval_github_repos, which does exactly this — `check` here means a GITHUB check, never a case's grading check. ";
+const DEPRECATED_EVAL_CHECK_REPO_CONNECT_PREFIX =
+  "Deprecated spelling of connect_eval_github_repo, which does exactly this — `check` here means a GITHUB check, never a case's grading check. ";
+
 const listEvalCheckReposInput = z.object({
   project: z
     .string()
@@ -6968,7 +8000,7 @@ export const listEvalCheckReposOperation: PlatformOperation<
   name: "list_eval_check_repos",
   title: "List MCPJam GitHub Checks repositories",
   description:
-    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
+    DEPRECATED_EVAL_CHECK_REPOS_PREFIX + EVAL_GITHUB_REPOS_LIST_DESCRIPTION,
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -7025,7 +8057,8 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
   name: "connect_eval_check_repo",
   title: "Run an MCPJam eval suite on a repository's pull requests",
   description:
-    "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+    DEPRECATED_EVAL_CHECK_REPO_CONNECT_PREFIX +
+    EVAL_GITHUB_REPO_CONNECT_DESCRIPTION,
   readOnly: false,
   // Not `spend`: it costs an eval run per pull request, but the hazard a
   // surface needs to warn about here is REACH — it changes what happens in a
@@ -7058,6 +8091,44 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
     );
     return { project: toSelectedProjectInfo(project), check };
   },
+};
+
+// ── GitHub, under the name of the thing it manages ──────────────────────────
+//
+// `list_eval_check_repos` / `connect_eval_check_repo` manage GITHUB CHECKS, and
+// sat as siblings to `checks` meaning a case's GRADING RULES under the same
+// `eval` noun — a `cloud eval checks list` that returns repositories, beside a
+// suite's `checks` that holds predicates. The app already calls its section
+// "GitHub checks", which is the disambiguated form.
+//
+// ADDITIVE, deliberately. The old names STAY in `ALL_OPERATIONS`, so an agent
+// already calling one keeps the tool it has; their descriptions simply say
+// which name is canonical now. Each new operation spreads its old sibling, so
+// the two names share one implementation and cannot diverge.
+
+// The spread carries `execute`, the schema, the risk and the permalink — one
+// implementation for both names. `description` is NOT inherited: its sibling's
+// says "deprecated spelling of THIS operation", which spread onto the
+// canonical one would have it introduce itself to an agent as the deprecated
+// spelling of itself.
+export const listEvalGithubReposOperation: PlatformOperation<
+  ListEvalCheckReposInput,
+  ListEvalCheckReposResult
+> = {
+  ...listEvalCheckReposOperation,
+  name: "list_eval_github_repos",
+  title: "List MCPJam GitHub check repositories",
+  description: EVAL_GITHUB_REPOS_LIST_DESCRIPTION,
+};
+
+export const connectEvalGithubRepoOperation: PlatformOperation<
+  ConnectEvalCheckRepoInput,
+  ConnectEvalCheckRepoResult
+> = {
+  ...connectEvalCheckRepoOperation,
+  name: "connect_eval_github_repo",
+  title: "Run an MCPJam eval suite on a GitHub repository's pull requests",
+  description: EVAL_GITHUB_REPO_CONNECT_DESCRIPTION,
 };
 
 const evalRunStepsInput = evalRunScopedInput.extend({
@@ -9419,15 +10490,17 @@ const composeStackFields = {
   pluginVersionIds: pluginVersionIdsInput.optional(),
 } as const;
 
-const ensureAdhocEnvironmentInput = z.object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  ...composeStackFields,
-}).superRefine(refineComposeServerSelectors);
+const ensureAdhocEnvironmentInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    ...composeStackFields,
+  })
+  .superRefine(refineComposeServerSelectors);
 export type EnsureAdhocEnvironmentInput = z.infer<
   typeof ensureAdhocEnvironmentInput
 >;
@@ -9450,7 +10523,7 @@ const SERVER_GROUP_NAME_ATTEMPTS = 5;
  */
 function refineComposeServerSelectors(
   value: { server?: string; servers?: string[]; serverGroup?: string },
-  ctx: z.RefinementCtx,
+  ctx: z.RefinementCtx
 ): void {
   if (value.server !== undefined && value.servers !== undefined) {
     ctx.addIssue({
@@ -9513,7 +10586,7 @@ async function resolveComposeServerGroup(
   client: PlatformApiClient,
   project: PlatformProject,
   selectors: string[],
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<string> {
   // Reuses the run-server resolver: same name-or-id rules, same up-front
   // refusal of stdio/URL-less servers the hosted runner could never connect.
@@ -9534,7 +10607,7 @@ async function resolveComposeServerGroup(
       // there, so say so rather than leaving them to guess.
       if (error instanceof PlatformApiError && error.status === 404) {
         throw resolutionError(
-          "This deployment does not support --compose-server yet. Create a server group in the app and pass it with --compose-server-group <id>.",
+          "This deployment does not support --compose-server yet. Create a server group in the app and pass it with --compose-server-group <id>."
         );
       }
       throw error;
@@ -9554,7 +10627,7 @@ async function resolveComposeServerGroup(
           projectId: project.id,
           body: { name, serverIds: wanted },
         },
-        { signal },
+        { signal }
       );
       return created.id;
     } catch (error) {
@@ -9569,7 +10642,7 @@ async function resolveComposeServerGroup(
   throw resolutionError(
     `Could not create a server group named "${baseName}": that name and ${
       SERVER_GROUP_NAME_ATTEMPTS - 1
-    } numbered variants are already taken by groups holding different servers. Rename one, or pass an existing group with --compose-server-group.`,
+    } numbered variants are already taken by groups holding different servers. Rename one, or pass an existing group with --compose-server-group.`
   );
 }
 
@@ -9588,7 +10661,7 @@ async function materializeComposeServers<
   client: PlatformApiClient,
   project: PlatformProject,
   stack: T,
-  signal: AbortSignal | undefined,
+  signal: AbortSignal | undefined
 ): Promise<T> {
   // Both refinement rules are repeated below, not just the group one: the
   // schemas only run for callers that PARSE their input, and a direct
@@ -9603,7 +10676,7 @@ async function materializeComposeServers<
   if (selectors.length === 0) return stack;
   if (stack.serverGroup !== undefined) {
     throw operationInputError(
-      "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both.",
+      "Provide either `serverGroup` (an existing group ID) or `server`/`servers` (which resolve to one), not both."
     );
   }
   const serverGroup = await resolveComposeServerGroup(
@@ -11850,6 +12923,406 @@ export const deleteSecretOperation: PlatformOperation<
       { signal }
     );
     return { project: toSelectedProjectInfo(project), secret };
+  },
+};
+
+// ── Trace destinations ──────────────────────────────────────────────────────
+//
+// ORGANIZATION-scoped, not project-scoped: a destination is a vendor binding
+// the whole organization streams through, and the project allowlist is a
+// filter ON it rather than its owner. So none of these take a project
+// selector, and `organization` is required rather than defaulted — there is no
+// "most recently updated organization" that could be the obvious one, and
+// guessing would point a customer's traces at the wrong tenant.
+//
+// HEADER VALUES NEVER COME BACK. No result type below carries one; see
+// `PlatformTraceDestination`.
+
+const ORGANIZATION_SELECTOR_DESCRIPTION =
+  "Organization id, from list_organizations.";
+
+const TRACE_DESTINATION_ROUTE_NOTE =
+  "No `organizations/:organizationId/observability/:destinationId` route: the Observability section lists every destination and selects one as component state, so there is no page a single destination can be opened at.";
+
+const traceDestinationSourceTypes = z.enum([
+  "eval",
+  "scenario",
+  "swarm",
+  "direct",
+]);
+
+const listTraceDestinationsInput = z.object({
+  organization: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ORGANIZATION_SELECTOR_DESCRIPTION),
+});
+
+export type ListTraceDestinationsInput = z.infer<
+  typeof listTraceDestinationsInput
+>;
+
+export const listTraceDestinationsOperation: PlatformOperation<
+  ListTraceDestinationsInput,
+  PlatformPage<PlatformTraceDestination>
+> = {
+  name: "list_trace_destinations",
+  title: "List MCPJam trace destinations",
+  description:
+    "List where an organization's traces are streamed: endpoint, which sources each destination subscribes to, whether content is redacted, and delivery health. Header NAMES appear; their values never do, on this or any other call. Read this before diagnosing 'our traces stopped arriving' — a paused destination says why in `paused.reason`.",
+  readOnly: true,
+  permalink: noPermalink("route-not-addressable", TRACE_DESTINATION_ROUTE_NOTE),
+  inputSchema: listTraceDestinationsInput,
+  async execute(input, { client, signal }) {
+    return await client.listTraceDestinations(
+      { organizationId: input.organization },
+      { signal }
+    );
+  },
+};
+
+const traceDestinationSelectorInput = z.object({
+  organization: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ORGANIZATION_SELECTOR_DESCRIPTION),
+  destination: z.string().trim().min(1).describe("Trace destination id."),
+});
+
+export type GetTraceDestinationInput = z.infer<
+  typeof traceDestinationSelectorInput
+>;
+
+export const getTraceDestinationOperation: PlatformOperation<
+  GetTraceDestinationInput,
+  PlatformTraceDestination
+> = {
+  name: "get_trace_destination",
+  title: "Get one MCPJam trace destination",
+  description:
+    "One destination in full, including delivery health: the last HTTP status the vendor answered with, how many sessions and spans have landed, how many units were given up on, and how many sessions still have work owed. Never its header values.",
+  readOnly: true,
+  permalink: noPermalink("route-not-addressable", TRACE_DESTINATION_ROUTE_NOTE),
+  inputSchema: traceDestinationSelectorInput,
+  async execute(input, { client, signal }) {
+    return await client.getTraceDestination(
+      { organizationId: input.organization, destinationId: input.destination },
+      { signal }
+    );
+  },
+};
+
+const createTraceDestinationInput = z.object({
+  organization: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ORGANIZATION_SELECTOR_DESCRIPTION),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .describe("Human label for this destination."),
+  endpointUrl: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "The vendor's OTLP/HTTP intake, HTTPS only. `/v1/traces` is appended if the path does not already end there. Private-network addresses are refused."
+    ),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      'Auth headers the vendor expects, e.g. {"Authorization": "Bearer <key>"}. THESE VALUES TRAVEL IN THIS CALL and become visible to whatever surface makes it — its process, its logs, its transcript — so supply them from a file or an environment variable, not from something a human typed into a chat. They are never returned by any call.'
+    ),
+  resourceAttributes: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      "Extra OTel resource attributes merged into every export, e.g. Coralogix's cx.application.name / cx.subsystem.name. `mcpjam.*` names are reserved by the exporter and refused here."
+    ),
+  sourceTypes: z
+    .array(traceDestinationSourceTypes)
+    .min(1)
+    .optional()
+    .describe(
+      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `swarm` is high volume: one run is many sessions."
+    ),
+  includeContent: z
+    .boolean()
+    .optional()
+    .describe(
+      "Default false, which REDACTS prompts, outputs, tool arguments and screenshots. Turning it on sends customer content to a third party, so it is a decision for a human who knows what that vendor holds — not a default to flip for convenience."
+    ),
+  projectIds: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .describe(
+      "Restrict to these projects. Omit for every project in the organization, present and future."
+    ),
+  compression: z
+    .enum(["gzip", "none"])
+    .optional()
+    .describe("gzip is optional in OTLP/HTTP; some intakes reject it."),
+  preset: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Vendor preset id this was created from. Labelling only."),
+  enabled: z.boolean().optional().describe("Default true."),
+});
+
+export type CreateTraceDestinationInput = z.infer<
+  typeof createTraceDestinationInput
+>;
+
+export const createTraceDestinationOperation: PlatformOperation<
+  CreateTraceDestinationInput,
+  PlatformTraceDestination
+> = {
+  name: "create_trace_destination",
+  title: "Create an MCPJam trace destination",
+  description:
+    "Start streaming this organization's traces to an OTLP/HTTP endpoint, continuously and with no export step. THE HEADER VALUES TRAVEL IN THIS CALL and become visible to whatever surface makes it, so supply them from a file or an environment variable. Content is REDACTED unless `includeContent` is set, which is the choice to make deliberately: it decides whether prompts and outputs leave the platform. The response is metadata only.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: createTraceDestinationInput,
+  async execute(input, { client, signal }) {
+    const { organization, ...rest } = input;
+    return await client.createTraceDestination(
+      { organizationId: organization, ...rest },
+      { signal }
+    );
+  },
+};
+
+const updateTraceDestinationInput = z.object({
+  organization: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ORGANIZATION_SELECTOR_DESCRIPTION),
+  destination: z.string().trim().min(1).describe("Trace destination id."),
+  name: z.string().trim().min(1).max(80).optional(),
+  endpointUrl: z.string().trim().min(1).optional(),
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      "REPLACES every header. Omit to leave the stored set alone — there is no way to edit one header in place, because a partial update would have to read the stored values and nothing may read them but the sender. Same exposure as on create."
+    ),
+  resourceAttributes: z.record(z.string(), z.string()).optional(),
+  sourceTypes: z.array(traceDestinationSourceTypes).min(1).optional(),
+  includeContent: z
+    .boolean()
+    .optional()
+    .describe(
+      "Turning this ON starts sending prompts, outputs, tool arguments and screenshots to the vendor. It is audited."
+    ),
+  projectIds: z.array(z.string().trim().min(1)).optional(),
+  allProjects: z
+    .boolean()
+    .optional()
+    .describe(
+      "The explicit way back to every project. `projectIds: []` cannot mean it — an empty allowlist is a destination that matches nothing."
+    ),
+  compression: z.enum(["gzip", "none"]).optional(),
+  preset: z.string().trim().min(1).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export type UpdateTraceDestinationInput = z.infer<
+  typeof updateTraceDestinationInput
+>;
+
+export const updateTraceDestinationOperation: PlatformOperation<
+  UpdateTraceDestinationInput,
+  PlatformTraceDestination
+> = {
+  name: "update_trace_destination",
+  title: "Update an MCPJam trace destination",
+  description:
+    "Edit a destination's endpoint, headers, sources, project allowlist or content setting. A rotated credential takes effect within about a minute — the sender re-reads the destination before every delivery. `headers` REPLACES the whole set. Enabling `includeContent` starts sending customer content to a third party and is audited.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: updateTraceDestinationInput,
+  async execute(input, { client, signal }) {
+    const { organization, destination, ...rest } = input;
+    return await client.updateTraceDestination(
+      { organizationId: organization, destinationId: destination, ...rest },
+      { signal }
+    );
+  },
+};
+
+export type DeleteTraceDestinationInput = z.infer<
+  typeof traceDestinationSelectorInput
+>;
+
+export const deleteTraceDestinationOperation: PlatformOperation<
+  DeleteTraceDestinationInput,
+  PlatformTraceDestinationDeleted
+> = {
+  name: "delete_trace_destination",
+  title: "Delete an MCPJam trace destination",
+  description:
+    "Stop streaming and remove the destination. Anything still queued for it is discarded and its stored headers are deleted. ONE LIMIT, and it matters when responding to a mistake: traces ALREADY DELIVERED stay in the vendor's system — MCPJam cannot retract them, and deleting here does nothing about what is already there.",
+  readOnly: false,
+  risk: "destructive",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: traceDestinationSelectorInput,
+  async execute(input, { client, signal }) {
+    return await client.deleteTraceDestination(
+      { organizationId: input.organization, destinationId: input.destination },
+      { signal }
+    );
+  },
+};
+
+export type TestTraceDestinationInput = z.infer<
+  typeof traceDestinationSelectorInput
+>;
+
+export const testTraceDestinationOperation: PlatformOperation<
+  TestTraceDestinationInput,
+  PlatformTraceDestinationTestScheduled
+> = {
+  name: "test_trace_destination",
+  title: "Send a test span to an MCPJam trace destination",
+  description:
+    "Send one synthetic span, to prove the endpoint and credentials work before trusting a destination with real traffic. Returns as soon as the send is SCHEDULED — the send itself is a round trip to a third party — so read the outcome from the destination's `lastTest` with get_trace_destination a moment later.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: traceDestinationSelectorInput,
+  async execute(input, { client, signal }) {
+    return await client.testTraceDestination(
+      { organizationId: input.organization, destinationId: input.destination },
+      { signal }
+    );
+  },
+};
+
+export type PauseTraceDestinationInput = z.infer<
+  typeof traceDestinationSelectorInput
+>;
+
+export const pauseTraceDestinationOperation: PlatformOperation<
+  PauseTraceDestinationInput,
+  PlatformTraceDestination
+> = {
+  name: "pause_trace_destination",
+  title: "Pause an MCPJam trace destination",
+  description:
+    "Stop delivering to a destination without deleting it. NOTHING IS QUEUED while it is paused: the window becomes a gap, not a backlog, and the only way to fill it afterwards is backfill_trace_destination. Use this to stop a noisy or misconfigured export while it is investigated.",
+  readOnly: false,
+  risk: "none",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: traceDestinationSelectorInput,
+  async execute(input, { client, signal }) {
+    return await client.pauseTraceDestination(
+      { organizationId: input.organization, destinationId: input.destination },
+      { signal }
+    );
+  },
+};
+
+export type ResumeTraceDestinationInput = z.infer<
+  typeof traceDestinationSelectorInput
+>;
+
+export const resumeTraceDestinationOperation: PlatformOperation<
+  ResumeTraceDestinationInput,
+  PlatformTraceDestinationResumed
+> = {
+  name: "resume_trace_destination",
+  title: "Resume an MCPJam trace destination",
+  description:
+    "Start delivering again, whether the destination was paused by hand or by a failure. Fix what caused an automatic pause first — `paused.reason` says which — or it will pause again. The result carries `pausedSince` so the gap can be sized and, if it matters, backfilled.",
+  readOnly: false,
+  risk: "exposure",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: traceDestinationSelectorInput,
+  async execute(input, { client, signal }) {
+    return await client.resumeTraceDestination(
+      { organizationId: input.organization, destinationId: input.destination },
+      { signal }
+    );
+  },
+};
+
+const backfillTraceDestinationInput = z.object({
+  organization: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ORGANIZATION_SELECTOR_DESCRIPTION),
+  destination: z.string().trim().min(1).describe("Trace destination id."),
+  days: z
+    .number()
+    .int()
+    .min(1)
+    .max(30)
+    .describe(
+      "How far back to replay, in days. REJECTED outside [1, 30] — this schema refuses the call rather than clamping it, so 40 is an error, not 30."
+    ),
+});
+
+export type BackfillTraceDestinationInput = z.infer<
+  typeof backfillTraceDestinationInput
+>;
+
+export const backfillTraceDestinationOperation: PlatformOperation<
+  BackfillTraceDestinationInput,
+  PlatformTraceDestinationBackfillJob
+> = {
+  name: "backfill_trace_destination",
+  title: "Backfill an MCPJam trace destination",
+  description:
+    "Replay a window of history into a destination — for filling the gap a pause left, or seeding a new destination with recent runs. Queues every eligible session active in the window, so a wide window on a busy organization is a lot of outbound traffic and a lot of vendor ingest. `days` outside 1-30 is refused, not clamped. Refused too while the destination is paused or disabled, because nothing would be queued.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: backfillTraceDestinationInput,
+  async execute(input, { client, signal }) {
+    return await client.backfillTraceDestination(
+      {
+        organizationId: input.organization,
+        destinationId: input.destination,
+        days: input.days,
+      },
+      { signal }
+    );
+  },
+};
+
+export type ListTraceDestinationBackfillsInput = z.infer<
+  typeof traceDestinationSelectorInput
+>;
+
+export const listTraceDestinationBackfillsOperation: PlatformOperation<
+  ListTraceDestinationBackfillsInput,
+  PlatformPage<PlatformTraceDestinationBackfillJob>
+> = {
+  name: "list_trace_destination_backfills",
+  title: "List MCPJam trace destination backfills",
+  description:
+    "The 20 most recent backfills for a destination, newest first, with how many sessions each scanned and queued. Read this to tell a backfill that is still working from one that finished or failed.",
+  readOnly: true,
+  permalink: noPermalink("route-not-addressable", TRACE_DESTINATION_ROUTE_NOTE),
+  inputSchema: traceDestinationSelectorInput,
+  async execute(input, { client, signal }) {
+    return await client.listTraceDestinationBackfills(
+      { organizationId: input.organization, destinationId: input.destination },
+      { signal }
+    );
   },
 };
 
@@ -14445,6 +15918,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalSuiteOperation,
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -14457,6 +15931,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   generateEvalCasesOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   listEvalRunIterationsOperation,
@@ -14466,6 +15946,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
@@ -14544,6 +16026,16 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createSecretOperation,
   updateSecretOperation,
   deleteSecretOperation,
+  listTraceDestinationsOperation,
+  getTraceDestinationOperation,
+  createTraceDestinationOperation,
+  updateTraceDestinationOperation,
+  deleteTraceDestinationOperation,
+  testTraceDestinationOperation,
+  pauseTraceDestinationOperation,
+  resumeTraceDestinationOperation,
+  backfillTraceDestinationOperation,
+  listTraceDestinationBackfillsOperation,
   generatePersonasOperation,
   getJourneyOperation,
   createJourneyOperation,

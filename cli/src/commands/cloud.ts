@@ -14,6 +14,7 @@ import { registerScenariosCommands } from "./scenarios.js";
 import { registerSecretsCommands } from "./secrets.js";
 import { registerSessionsCommands } from "./sessions.js";
 import { registerSwarmAuthoringCommands } from "./swarms.js";
+import { registerTraceDestinationsCommands } from "./trace-destinations.js";
 import { registerTunnelCommands } from "./tunnel.js";
 import { registerUserTestingCommands } from "./user-testing.js";
 
@@ -50,6 +51,12 @@ export function registerCloudCommands(program: Command): Command {
   registerSecretsCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
+
+  cloud.commandsGroup("Observability:");
+  // Organization-scoped, not project-scoped: a destination is a vendor binding
+  // the whole organization streams through, and the project allowlist is a
+  // filter on it rather than its owner.
+  registerTraceDestinationsCommands(cloud);
 
   cloud.commandsGroup("Swarms and user testing:");
   const journeys = registerJourneysCommands(cloud);

@@ -17,6 +17,14 @@
  * The toggle is deliberate. A chat that silently gained tools because a browser
  * session was left open in another tab would be a surprise, and these tools run
  * code on somebody else's site.
+ *
+ * Rendered in BOTH modes. It was local-only while `/api/web/chat-v2` ignored
+ * `pageTools` — listing tools that would then be dropped mid-conversation is
+ * worse than not offering them — and the hosted route now validates, advertises
+ * and approval-classifies them exactly as the local one does. Fulfilment was
+ * never the obstacle: the client invokes through the session it already owns,
+ * and that session's transport is hosted or local without this component
+ * knowing which.
  */
 import { Globe } from "lucide-react";
 import {

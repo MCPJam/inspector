@@ -99,6 +99,36 @@ test("an INCONCLUSIVE run is a warning that did not measure enough", () => {
 	assert.ok(!text.includes("failed"), "must not read as a failure");
 });
 
+test("a run held for its GATING JUDGE is informational, never red", () => {
+	// B10e. A run in `grading` has finished every trial and is waiting for the
+	// judge that may still take a green away — it has no verdict at all. It used
+	// to fall through to the red branch and read "Run grading — see what broke",
+	// which is a defect claim about a run nothing has decided.
+	const content = formatRunOutcome(
+		{
+			status: "grading",
+			result: "pending",
+			summary: { passed: 2, total: 2 },
+		},
+		url,
+		"U1",
+		summaryWithBreak("call", "argumentMismatch"),
+	);
+	assert.equal(content.severity, "info");
+	assert.equal(content.code, "run_grading");
+	const text = plainText(content);
+	assert.equal(
+		text,
+		"Run is being graded by its judge — started by @U1 — details",
+	);
+	assert.ok(!text.includes("see what broke"), "must not blame the server");
+	assert.ok(!text.includes("failed"), "must not read as a failure");
+	// NO COUNTS and NO CHAIN. Both describe a decided run, and the pass count is
+	// exactly the number the judge may still overturn.
+	assert.ok(!text.includes("2/2"), "must not quote counts the judge may move");
+	assert.ok(!text.includes("First break"), "must not narrate an undecided run");
+});
+
 test("a cancelled run stays informational and still carries its chain", () => {
 	const content = formatRunOutcome(
 		{ status: "cancelled", result: null },

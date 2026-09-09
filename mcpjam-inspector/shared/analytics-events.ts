@@ -155,6 +155,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },
@@ -242,6 +243,10 @@ export const ANALYTICS_EVENTS = {
   eval_suite_duplicated: { source: "client" },
   eval_suite_run_start_requests_completed: { source: "client" },
   eval_suite_server_changed: { source: "client" },
+  eval_case_run_test: { source: "client" },
+  eval_suggestion_accepted: { source: "client" },
+  eval_suggestion_dismissed: { source: "client" },
+  eval_suggestion_shown: { source: "client" },
   eval_test_case_created: { source: "client" },
   eval_test_case_deleted: { source: "client" },
   eval_test_case_duplicated: { source: "client" },
@@ -270,6 +275,12 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
+  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
+  // on hosted): shown/dismissed measure the gate's conversion funnel; the
+  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with location "invite_signup_nudge".
+  invite_signup_nudge_shown: { source: "client" },
+  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
@@ -343,6 +354,12 @@ export const ANALYTICS_EVENTS = {
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
+  // Guest credit-wall A/B (BB-133): the treatment modal replaces the single
+  // "Sign in" CTA with a benefit-led create-account primary and a see-plans
+  // secondary. `variant` on the impression/click events lets PostHog compare
+  // sign-in vs create-account conversion across control and treatment.
+  plan_limit_create_account_clicked: { source: "client" },
+  plan_limit_see_plans_clicked: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },
@@ -452,6 +469,10 @@ export const ANALYTICS_EVENTS = {
   //   active project.
   // `project_route_inaccessible`       props: reason (malformed | not-a-member
   //   | timed-out). Never says whether the project exists.
+  // `project_route_recovered`          props: cause (late-ready). A route that
+  //   had already looked inaccessible later resolved without navigation.
+  // `project_route_stale_return_recovered` props: outcome (switched |
+  //   no-fallback). A post-sign-in scoped path named a lost membership.
   // `project_route_scope_mismatch`     props: guard (redirect-loop |
   //   repeated-switch). Redirect-loop protection tripped.
   // `app_signin_return_restored`       props: outcome (restored | absent |
@@ -459,8 +480,16 @@ export const ANALYTICS_EVENTS = {
   project_route_legacy_normalized: { source: "client" },
   project_route_resolved: { source: "client" },
   project_route_inaccessible: { source: "client" },
+  project_route_recovered: { source: "client" },
+  project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // `browser_pane_session_summary`   props: engine, transport, tier, fps,
+  //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
+  //   on unmount — a per-frame event would be tens of thousands of captures an
+  //   hour, and the question ("did the viewport work move the numbers?") is
+  //   answered by the session, not the frame.
+  browser_pane_session_summary: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

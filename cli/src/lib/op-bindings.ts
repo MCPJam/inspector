@@ -97,6 +97,26 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_secret: { command: "cloud secrets set" },
   update_secret: { command: "cloud secrets update" },
   delete_secret: { command: "cloud secrets rm" },
+
+  // ── Trace destinations ──────────────────────────────────────────────────
+  // The full surface, bound rather than excluded. Availability is decided per
+  // organization and the server answers a de-flagged org with a clean refusal,
+  // which is a better answer than a command that does not exist — the same
+  // reasoning `journeys` states above. A CLI binding is what makes this
+  // scriptable from CI, which is where an observability integration is
+  // configured in the first place.
+  list_trace_destinations: { command: "cloud trace-destinations list" },
+  get_trace_destination: { command: "cloud trace-destinations show" },
+  create_trace_destination: { command: "cloud trace-destinations create" },
+  update_trace_destination: { command: "cloud trace-destinations update" },
+  delete_trace_destination: { command: "cloud trace-destinations rm" },
+  test_trace_destination: { command: "cloud trace-destinations test" },
+  pause_trace_destination: { command: "cloud trace-destinations pause" },
+  resume_trace_destination: { command: "cloud trace-destinations resume" },
+  backfill_trace_destination: { command: "cloud trace-destinations backfill" },
+  list_trace_destination_backfills: {
+    command: "cloud trace-destinations backfills",
+  },
   list_swarms: { command: "cloud swarms list" },
   get_swarm: { command: "cloud swarms get" },
   create_swarm: { command: "cloud swarms create" },
@@ -172,9 +192,15 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   set_eval_suite_schedule: { command: "cloud eval schedule" },
   set_eval_suite_environments: { command: "cloud eval environments set" },
   list_eval_suite_runs: { command: "cloud eval runs" },
+  list_eval_suite_revisions: { command: "cloud eval revisions" },
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   request_eval_run_judge: { command: "cloud eval judge" },
+  list_eval_github_repos: { command: "cloud eval github list" },
+  connect_eval_github_repo: { command: "cloud eval github connect" },
+  // The pre-rename spellings, still advertised and still bound — to the
+  // `checks` subgroup they shipped under, which stays registered as a
+  // deprecated alias of `github`.
   list_eval_check_repos: { command: "cloud eval checks list" },
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
@@ -189,6 +215,20 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // the bare command and the test would still pass with `--run` deleted.
   get_eval_run_stage_analytics: {
     command: "cloud eval stage-analytics --run",
+  },
+  get_eval_run_gate: {
+    command: "cloud eval gate --run",
+  },
+  get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
+  get_eval_run_server_facts: { command: "cloud eval server-facts --run" },
+  propose_eval_description_rewrite: {
+    command: "cloud eval description-experiment propose --run --tool",
+  },
+  start_eval_description_experiment: {
+    command: "cloud eval description-experiment start --experiment",
+  },
+  get_eval_description_experiment: {
+    command: "cloud eval description-experiment get --experiment",
   },
   list_eval_suite_stage_analytics: {
     command: "cloud eval stage-analytics --suite",

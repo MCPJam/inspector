@@ -370,42 +370,109 @@ export type WorkspaceGrantResult =
  * picker — the Electron main-process dialog, or a loopback-only,
  * session-authenticated route — never from a renderer-submitted string.
  */
+export type WorkspaceCandidate =
+  | { ok: true; canonicalPath: string }
+  | { ok: false; message: string };
+
+/**
+ * Is this canonical path a filesystem root?
+ *
+ * The same rule the launcher applies (`bin/launch-workspace.mjs`), because a
+ * suggestion and a registration must not disagree about what is acceptable.
+ *
+ * Exported for its own test. Comparing against `sep` alone missed Windows —
+ * there it is a backslash, which never equals a drive root like `C:\` or
+ * `C:/` — so a whole volume was accepted as a workspace on a platform the
+ * harness treats as native. That form is unreachable through
+ * `registerWorkspaceGrant` on a Linux runner, where `realpath` refuses it
+ * first, which is why the predicate is separable at all.
+ */
+export function isFilesystemRoot(canonicalPath: string): boolean {
+  return (
+    canonicalPath === sep ||
+    canonicalPath === "/" ||
+    // A drive root: `C:`, `C:\`, `C:/`.
+    /^[A-Za-z]:[\\/]?$/.test(canonicalPath) ||
+    // A UNC share root: `\\server\share` and its trailing-separator form, and
+    // a bare `\\server`. Scoping a session to a whole network share is the
+    // same mistake as scoping it to a whole volume, and the earlier rule
+    // covered only the volume. Anything BELOW the share
+    // (`\\server\share\project`) stays acceptable.
+    //
+    // Matched on the BACKSLASH form only. Accepting `//` here as well read a
+    // POSIX path with a doubled leading slash — `//tmp/project`, which POSIX
+    // expressly permits an implementation to keep — as a share root, and
+    // refused an ordinary directory. Windows has no such ambiguity to trade
+    // against: `realpath` and `path.resolve` both answer `\\server\share`
+    // there, so the canonical path this predicate is given is always the
+    // backslash form.
+    /^\\{2}[^\\/]+([\\/][^\\/]+)?[\\/]?$/.test(canonicalPath)
+  );
+}
+
+/**
+ * Is this path a usable workspace? Reads the filesystem; writes nothing.
+ *
+ * Split out of `registerWorkspaceGrant` because two callers now need the
+ * ANSWER without the side effect. `/availability` suggests the folder the
+ * caller launched from, and suggesting one it would then refuse is a worse
+ * first impression than suggesting nothing; and `POST /workspace-grant
+ * {useSuggested:true}` re-validates before registering rather than trusting
+ * the value it handed out a moment earlier. Neither should mint a grant as a
+ * side effect of asking.
+ *
+ * The rules are the ones a grant is registered under, in one place, so a
+ * suggestion and a registration cannot disagree about what is acceptable:
+ * canonicalize (`realpath`), require a directory, and refuse the two roots
+ * that make the workspace label meaningless.
+ */
+export async function validateWorkspaceCandidate(
+  rawPath: string,
+): Promise<WorkspaceCandidate> {
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(rawPath);
+    const info = await stat(canonicalPath);
+    if (!info.isDirectory()) {
+      return { ok: false, message: "the selection is not a directory" };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: `the selected workspace could not be resolved: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  // Refuse the obviously wrong roots. A home directory or a filesystem root
+  // as "the workspace" makes the workspace label meaningless.
+  // Compare against the RESOLVED home: on a machine where the home
+  // directory is itself a symlink, the raw value never equals the
+  // canonicalized selection and the refusal below would not fire.
+  const home = await realpath(homedir()).catch(() => homedir());
+  if (canonicalPath === home || isFilesystemRoot(canonicalPath)) {
+    return {
+      ok: false,
+      message:
+        "pick a project directory rather than your home directory or the " +
+        "filesystem root — the workspace is what the session is scoped to.",
+    };
+  }
+  return { ok: true, canonicalPath };
+}
+
 export function registerWorkspaceGrant(
   rawPath: string,
 ): Promise<WorkspaceGrantResult> {
   return withGrantLock(async () => {
-    let canonicalPath: string;
-    try {
-      canonicalPath = await realpath(rawPath);
-      const info = await stat(canonicalPath);
-      if (!info.isDirectory()) {
-        return {
-          ok: false as const,
-          message: "the selection is not a directory",
-        };
-      }
-    } catch (error) {
-      return {
-        ok: false as const,
-        message: `the selected workspace could not be resolved: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      };
+    // Validated INSIDE the lock, not before it: the directory can be replaced
+    // between a caller's check and this registration, and what gets recorded
+    // must be what was just canonicalized.
+    const candidate = await validateWorkspaceCandidate(rawPath);
+    if (!candidate.ok) {
+      return { ok: false as const, message: candidate.message };
     }
-    // Refuse the obviously wrong roots. A home directory or a filesystem root
-    // as "the workspace" makes the workspace label meaningless.
-    // Compare against the RESOLVED home: on a machine where the home
-    // directory is itself a symlink, the raw value never equals the
-    // canonicalized selection and the refusal below would not fire.
-    const home = await realpath(homedir()).catch(() => homedir());
-    if (canonicalPath === home || canonicalPath === sep) {
-      return {
-        ok: false as const,
-        message:
-          "pick a project directory rather than your home directory or the " +
-          "filesystem root — the workspace is what the session is scoped to.",
-      };
-    }
+    const canonicalPath = candidate.canonicalPath;
 
     const state = await readState();
     const existing = state.workspaces.find(

@@ -6,6 +6,7 @@ import {
   JudgeVerdictPanel,
   type JudgeCase,
 } from "./goal-completion-presentation";
+import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
 // One copy, deliberately. This module used to carry a byte-identical
@@ -67,8 +68,10 @@ import {
   type TestStep,
 } from "@/shared/steps";
 import {
+  assembleStepResults,
   parseStepStatusById,
   type StepReplayMetadata,
+  type StepReplayEnvelope,
 } from "@/shared/eval-step-replay";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
@@ -215,6 +218,18 @@ function TraceBlobLoadErrorPanel({
   );
 }
 
+/** What the Scorecard slot needs from this component's own state. */
+export type ScorecardTabContext = {
+  /** The resolved trace envelope, for per-step evidence. Null until loaded. */
+  envelope: StepReplayEnvelope | null;
+  envelopeLoading: boolean;
+  reviewActive: boolean;
+  judgeHidden: boolean;
+  onJudgeVisibilityChange: (hidden: boolean) => void;
+  /** The existing ScoresList block, integrity banner and all. */
+  scoresSection: ReactNode | null;
+};
+
 export function IterationDetails({
   iteration,
   testCase,
@@ -222,7 +237,13 @@ export function IterationDetails({
   layoutMode = "compact",
   caseInsightSlot,
   judgeCase = null,
+  enableJudgeReview = false,
   trialChainSlot,
+  scorecard,
+  trialVerdictWord,
+  requestedTab,
+  syncedStepId,
+  onSyncStep,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -232,6 +253,18 @@ export function IterationDetails({
   caseInsightSlot?: ReactNode;
   /** Advisory judge verdict for this case+run; surfaced on the Results tab. */
   judgeCase?: JudgeCase | null;
+  /**
+   * Offer the CALIBRATION LABEL beside the judge's verdict.
+   *
+   * Opt-in for the same reason `trialChainSlot` is a slot: this component has
+   * five hosts, and the label's read and write have no business firing for the
+   * four that never asked. The host that shows a trial from a real suite run
+   * turns it on; the quick-run and playground hosts do not. Even when on, a
+   * trial with no `suiteRunId` (a quick run) gets the read-only verdict: the
+   * backend refuses every label for it (`JUDGE_REVIEW_NO_RUN`), so offering
+   * the control would only offer the refusal.
+   */
+  enableJudgeReview?: boolean;
   /**
    * This trial's user-value chain — where value stopped travelling, and why.
    *
@@ -243,12 +276,56 @@ export function IterationDetails({
    * fetch four of its callers never asked for.
    */
   trialChainSlot?: ReactNode;
+  /**
+   * Evaluate-only. Present ⇒ the Scorecard layout: the authored scorers with
+   * this trial's results, as the default tab. Absent ⇒ the legacy layout,
+   * byte-identical — which is what every `/evals` mount and every compact
+   * mount still gets.
+   *
+   * A SLOT, not a component: `evals/` does not import `evaluate/`, for the
+   * same reason `trialChainSlot` is one.
+   */
+  scorecard?: { render: (ctx: ScorecardTabContext) => ReactNode };
+  /**
+   * The verdict word the page already computed. Supplying it stops the Steps
+   * tab deriving a SECOND one from a different field — they can disagree on
+   * the same screen.
+   */
+  trialVerdictWord?: string;
+  requestedTab?: { iterationId: string; mode: "steps" | "scorecard" } | null;
+  /**
+   * Step cursor shared with a host that lists the authored steps beside this
+   * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
+   * view untouched; absent for the other hosts.
+   */
+  syncedStepId?: string | null;
+  onSyncStep?: (stepId: string | null) => void;
 }) {
+  // The Scores list prints the same judge number the review panel hides.
+  // Own the flag here so hiding starts on first paint (before the panel's
+  // read lands) and so a trial switch cannot leave the previous trial's
+  // reveal open on this one.
+  const reviewActive = Boolean(enableJudgeReview && iteration.suiteRunId);
+  const [judgeHidden, setJudgeHidden] = useState(reviewActive);
+  useEffect(() => {
+    setJudgeHidden(reviewActive);
+  }, [iteration._id, reviewActive]);
+
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
   ) as unknown as (args: { iterationId: string }) => Promise<any>;
 
-  const [blob, setBlob] = useState<any>(null);
+  const traceIdentity = JSON.stringify([
+    iteration._id,
+    iteration.blob,
+    iteration.chatSessionId,
+  ]);
+  const [loadedBlob, setLoadedBlob] = useState<{
+    identity: string;
+    data: any;
+  } | null>(null);
+  // Gate on identity during render, before the fetching effect can run.
+  const blob = loadedBlob?.identity === traceIdentity ? loadedBlob.data : null;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blobRetryTick, setBlobRetryTick] = useState(0);
@@ -295,9 +372,10 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
-  type PreviewTraceMode = TraceViewMode | "browser" | "steps";
-  const [previewTraceMode, setPreviewTraceMode] =
-    useState<PreviewTraceMode>("chat");
+  type PreviewTraceMode = TraceViewMode | "browser" | "steps" | "scorecard";
+  const [previewTraceMode, setPreviewTraceMode] = useState<PreviewTraceMode>(
+    scorecard ? "scorecard" : "chat",
+  );
 
   // The authored steps this run executed (from its snapshot), so the replay can
   // offer the same step-aligned "Steps" tab the live preview does. Falls back to
@@ -313,6 +391,16 @@ export function IterationDetails({
   }, [iteration.testCaseSnapshot]);
   const hasSteps = snapshotSteps.length > 0;
 
+  useEffect(() => {
+    if (requestedTab?.iterationId === iteration._id) {
+      setPreviewTraceMode(
+        requestedTab.mode === "steps" && !hasSteps
+          ? "scorecard"
+          : requestedTab.mode,
+      );
+    }
+  }, [requestedTab, iteration._id, hasSteps]);
+
   // Source-aware trace identity. New iterations carry `chatSessionId`
   // (unified path); legacy iterations carry `blob`. The hook gates on
   // either being present and re-runs when either changes.
@@ -323,7 +411,7 @@ export function IterationDetails({
     async function run() {
       if (!traceSourceKey) {
         prevBlobIdRef.current = undefined;
-        setBlob(null);
+        setLoadedBlob(null);
         setLoading(false);
         setError(null);
         return;
@@ -332,6 +420,7 @@ export function IterationDetails({
         prevBlobIdRef.current = traceSourceKey;
         setIsBlobErrorDetailsOpen(false);
       }
+      setLoadedBlob(null);
       setLoading(true);
       setError(null);
       try {
@@ -340,7 +429,7 @@ export function IterationDetails({
         // otherwise reads from `iteration.blob`. Both paths return the
         // same envelope shape to `TraceViewer`.
         const data = await getBlob({ iterationId: iteration._id });
-        if (!cancelled) setBlob(data);
+        if (!cancelled) setLoadedBlob({ identity: traceIdentity, data });
       } catch (e: any) {
         if (!cancelled) {
           setError(e?.message || "Failed to load blob");
@@ -354,7 +443,7 @@ export function IterationDetails({
     return () => {
       cancelled = true;
     };
-  }, [traceSourceKey, getBlob, blobRetryTick]);
+  }, [traceSourceKey, traceIdentity, getBlob, blobRetryTick]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -363,7 +452,9 @@ export function IterationDetails({
     // the 1:1 mirror of the authored steps — matching the live preview default;
     // pure prompt+grade cases keep Chat.
     setPreviewTraceMode(
-      snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+      scorecard
+        ? "scorecard"
+        : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
         ? "steps"
         : "chat",
     );
@@ -608,23 +699,39 @@ export function IterationDetails({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const hasTrace = Boolean(iteration.blob || iteration.chatSessionId);
   const traceFirst = layoutMode === "full" && hasTrace;
+  // With a scorecard the toolbar does not wait on the trace, and does not
+  // disappear when it fails to load: the scorecard reads persisted metadata,
+  // so a traceless or blob-errored trial still has scorers to show — and
+  // hiding the tabs would hide the only view of them, which is the failure
+  // this pane exists to fix. The trace-backed tabs hide individually instead.
+  /** The tabs that read the trace blob, and therefore wait for it. */
+  const traceTabsReady = hasTrace && !loading && !error;
   const previewTraceToolbar =
-    layoutMode === "full" && hasTrace && !loading && !error ? (
+    layoutMode === "full" &&
+    // A trial with NO trace has only its scorecard, so it gets no tab row
+    // rather than a row of tabs that lead nowhere. With a trace the row
+    // appears immediately; the trace-backed tabs join it once the blob lands.
+    (scorecard ? hasTrace : hasTrace && !loading && !error) ? (
       <PreviewHeaderSlot>
         <TraceViewModeTabs
           mode={
-            previewTraceMode === "browser" || previewTraceMode === "steps"
+            previewTraceMode === "browser" ||
+            previewTraceMode === "steps" ||
+            previewTraceMode === "scorecard"
               ? "timeline"
               : previewTraceMode
           }
           onModeChange={setPreviewTraceMode}
-          showToolsTab={hasEvalToolCalls}
-          showBrowserTab={hasBrowserArtifacts}
+          showToolsTab={hasEvalToolCalls && traceTabsReady}
+          showBrowserTab={hasBrowserArtifacts && traceTabsReady}
           browserActive={previewTraceMode === "browser"}
           onSelectBrowser={() => setPreviewTraceMode("browser")}
-          showStepsTab={hasSteps}
+          showStepsTab={hasSteps && traceTabsReady}
           stepsActive={previewTraceMode === "steps"}
           onSelectSteps={() => setPreviewTraceMode("steps")}
+          showScorecardTab={Boolean(scorecard)}
+          scorecardActive={previewTraceMode === "scorecard"}
+          onSelectScorecard={() => setPreviewTraceMode("scorecard")}
           appearance="segment"
           className="w-full"
         />
@@ -866,6 +973,27 @@ export function IterationDetails({
       .widgetRenderObservations;
     return Array.isArray(raw) ? raw : [];
   }, [blob]);
+  /** The structural subset `assembleStepResults` reads off the trace blob. */
+  const blobEnvelope = useMemo<StepReplayEnvelope | null>(() => {
+    if (!blob || Array.isArray(blob) || typeof blob !== "object") return null;
+    return blob as StepReplayEnvelope;
+  }, [blob]);
+
+  /**
+   * Per-step verdicts WITH their reasons, for the Steps tab and the scorecard.
+   * `parseStepStatusById` keeps only the status, which is why a failed step
+   * has never said why.
+   */
+  const stepReplayRows = useMemo(
+    () =>
+      assembleStepResults(
+        snapshotSteps,
+        iteration.metadata as StepReplayMetadata | undefined,
+        blobEnvelope ?? undefined,
+      ),
+    [snapshotSteps, iteration.metadata, blobEnvelope],
+  );
+
   const predicatesSection =
     gateRows && gateRows.length > 0 ? (
       <div className="space-y-2" data-testid="iteration-predicates-section">
@@ -899,6 +1027,7 @@ export function IterationDetails({
           scores={scores ?? []}
           evaluationConfig={parseEvaluationConfig(iteration.metadata)}
           integrity={integrity}
+          hideJudgeRows={reviewActive && judgeHidden}
         />
       </div>
     );
@@ -1002,12 +1131,19 @@ export function IterationDetails({
               fillContent={layoutMode === "full"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={
-                layoutMode === "full" ? previewTraceMode : undefined
+                layoutMode === "full" && previewTraceMode !== "scorecard"
+                  ? previewTraceMode
+                  : undefined
               }
               steps={snapshotSteps}
+              stepPresentation={scorecard ? "scorecard" : "legacy"}
+              stepResults={scorecard ? stepReplayRows : undefined}
+              verdictWord={scorecard ? trialVerdictWord : undefined}
               stepStatusById={
                 stepStatusById.size > 0 ? stepStatusById : undefined
               }
+              syncedStepId={syncedStepId}
+              onSyncStep={onSyncStep}
               iterationResult={iteration.result}
               expectedToolCalls={expectedToolCalls}
               actualToolCalls={actualToolCalls}
@@ -1031,7 +1167,6 @@ export function IterationDetails({
         layoutMode === "full" ? "gap-3" : "gap-4 py-2",
       )}
     >
-      {previewTraceToolbar}
       {/* WHERE VALUE STOPPED, above the transcript.
           A reader who opened this trial is asking why it did not deliver, and
           the answer is six cards wide — putting it under the trace would make
@@ -1042,11 +1177,26 @@ export function IterationDetails({
           {trialChainSlot}
         </div>
       ) : null}
+      {previewTraceToolbar}
       {/* Advisory judge verdict — pinned under the tab row so it's visible on
           every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
-      {layoutMode === "full" && judgeCase ? (
+      {/* With a scorecard the judge is a ROW there, hosting this same panel as
+          its body — so the protocol survives without a second mount, and the
+          judge sits with the other scorers instead of above all of them. */}
+      {layoutMode === "full" && judgeCase && !scorecard ? (
         <div className="shrink-0 px-3">
-          <JudgeVerdictPanel judgeCase={judgeCase} />
+          {enableJudgeReview && iteration.suiteRunId ? (
+            // Keyed by trial: a switch remounts the panel, so no read or label
+            // state from the previous trial can survive into this one.
+            <TrialJudgeReviewPanel
+              key={iteration._id}
+              iterationId={iteration._id}
+              judgeCase={judgeCase}
+              onVisibilityChange={setJudgeHidden}
+            />
+          ) : (
+            <JudgeVerdictPanel judgeCase={judgeCase} />
+          )}
         </div>
       ) : null}
       {/* Error Display */}
@@ -1094,12 +1244,28 @@ export function IterationDetails({
 
       {caseInsightFallback}
 
-      {isProbe ? (
+      {isProbe && !scorecard ? (
         <>
           {predicatesSection}
           {scoresSection}
           {probeArtifactsSection}
         </>
+      ) : scorecard ? (
+        previewTraceMode === "scorecard" ? (
+          scorecard.render({
+            envelope: blobEnvelope,
+            envelopeLoading: loading,
+            reviewActive: Boolean(enableJudgeReview && iteration.suiteRunId),
+            judgeHidden,
+            onJudgeVisibilityChange: setJudgeHidden,
+            scoresSection,
+          })
+        ) : (
+          <>
+            {traceSection}
+            {toolCallsSection}
+          </>
+        )
       ) : traceFirst ? (
         <>
           {traceSection}

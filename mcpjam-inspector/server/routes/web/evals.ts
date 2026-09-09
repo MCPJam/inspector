@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
+import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -16,7 +17,9 @@ import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
+  conformanceKnobWireShape,
   createManualHostedConnection,
+  extractMcpInitializeOptions,
   handleRoute,
   parseWithSchema,
   readJsonBody,
@@ -25,9 +28,17 @@ import {
 } from "./auth.js";
 import { assertBearerToken, ErrorCode, WebRouteError } from "./errors.js";
 import {
+  applyHostConformanceKnobs,
+  applyHostParamMirroring,
+  conformanceKnobsFromMcpProfile,
+  mirrorToolParamHeadersFromMcpProfile,
   parseXaaPolicyValue,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
+import {
+  buildHostConnectionPins,
+  hostClientCapabilities,
+} from "../../services/host-connection-pins.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
@@ -38,6 +49,7 @@ import {
   RunTestCaseRequestSchema,
   generateEvalTestsWithManager,
   generateNegativeEvalTestsWithManager,
+  passCriteriaSchema,
   prepareEvalRun,
   type PreparedEvalRun,
   runEvalTestCaseWithManager,
@@ -60,6 +72,12 @@ const hostedBatchSchema = z.object({
     .optional(),
   supportedProtocolVersions: z.array(z.string().min(1)).optional(),
   mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
+  // The client-conformance knobs, spread from their one declaration rather
+  // than re-listed here. This schema strips what it does not name, and every
+  // hosted eval body is parsed through it BEFORE
+  // `extractMcpInitializeOptions` reads the pins — so an eval run against a
+  // non-conforming host was executing as a fully conforming client.
+  ...conformanceKnobWireShape,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   scenarioId: z.string().min(1).optional(),
@@ -101,11 +119,12 @@ const hostedReplayRunSchema = z.object({
   runId: z.string().min(1),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   notes: z.string().optional(),
-  passCriteria: z
-    .object({
-      minimumPassRate: z.number(),
-    })
-    .optional(),
+  // The SHARED pass-criteria schema, so a replay is bounded and speaks the same
+  // vocabulary as every other write. As a bare `z.object` this both STRIPPED
+  // `minimumPassRatePercent` silently — a replay losing the very override it
+  // was sent to apply — and accepted an unbounded number, so `0.8` meant 0.8%
+  // and the gate it produced could never fail.
+  passCriteria: passCriteriaSchema.optional(),
 });
 
 const hostedTraceRepairStartSchema = z.discriminatedUnion("scope", [
@@ -173,6 +192,26 @@ evals.post("/run", async (c) =>
         c,
         rawBody,
         hostedRunEvalsSchema,
+        {
+          // The host THIS run executes under, so the manager negotiates as that
+          // host. An environment pins its own, and the browser's pins come from
+          // whichever host it had ACTIVE — without this a run could take its
+          // tool visibility from one host and its protocol version from
+          // another. Resolved inside the connection rather than before it, so
+          // it stays one step with the rest of the connection work instead of a
+          // network hop that reorders this route's failures.
+          // `loadSuiteHostConfig` is never hostless: no named host and no suite
+          // config falls back to the default MCPJam host.
+          hostConfigForBody: async (body) =>
+            await loadSuiteHostConfig(
+              createConvexClient(await getConvexBearerForRequest(c)),
+              typeof body.suiteId === "string" ? body.suiteId : undefined,
+              preflightEnvironment?.hostId ??
+                (typeof body.namedHostId === "string"
+                  ? body.namedHostId
+                  : undefined),
+            ),
+        },
       );
       const { manager, body, convexAuthToken } = connection;
       let prepared: PreparedEvalRun;
@@ -229,7 +268,23 @@ evals.post("/run-test-case", async (c) =>
         ...body,
         convexAuthToken: assertBearerToken(c),
       }),
-    { rpcLogs: false },
+    {
+      rpcLogs: false,
+      // Connect as the host this case runs under, not as whichever one the
+      // browser had active — same rule as the suite-run and streaming routes.
+      // The wrapper owns the body, so the lookup is a callback.
+      hostConfigForBody: async (rawBody) =>
+        typeof rawBody.namedHostId === "string" && rawBody.namedHostId
+          ? await loadSuiteHostConfig(
+              // The DELEGATED JWT, not the raw bearer: an `sk_` API key 401s
+              // Convex's query surface, which is why the suite-run route
+              // converts too.
+              createConvexClient(await getConvexBearerForRequest(c)),
+              undefined,
+              rawBody.namedHostId,
+            )
+          : undefined,
+    },
   ),
 );
 
@@ -268,22 +323,78 @@ evals.post("/stream-test-case", async (c) => {
     xaaPolicy = parseXaaPolicyValue(rawBody.xaaPolicy);
   }
 
+  // This is the ONE eval route that builds its own manager instead of going
+  // through `createManualHostedConnection` / `withEphemeralConnection`, and
+  // those wrappers are what normally extract the host's `mcpProfile` pins from
+  // the body. Without this call the endpoint accepted every pin its schema
+  // declares — clientInfo, supportedProtocolVersions, the per-server version
+  // map, and the conformance knobs — and connected as if none had been sent.
+  //
+  // Read from the PRE-PARSE raw body for the same reason `xaaPolicy` above
+  // does: the extractor is itself the validator (every field is shape-gated,
+  // and unknown protocol versions are dropped), so going through the parsed
+  // body would only add a second place for a field to be silently stripped.
+  const { initializePins, mcpProtocolVersionsByServerId } =
+    extractMcpInitializeOptions(rawBody);
+
+  // Same reason the suite-run route resolves one: a single case run against an
+  // attached host must negotiate as THAT host, not as whichever one the
+  // browser had active. Only when the body names a host — a plain ad-hoc case
+  // run owns its own session and keeps sending the body's pins.
+  const caseHostConfig = body.namedHostId
+    ? await loadSuiteHostConfig(
+        // Delegated JWT — see the run-test-case route above.
+        createConvexClient(await getConvexBearerForRequest(c)),
+        undefined,
+        body.namedHostId,
+      )
+    : undefined;
+  const caseHostPins = caseHostConfig
+    ? buildHostConnectionPins(caseHostConfig, WEB_CALL_TIMEOUT_MS)
+    : undefined;
+  // REPLACE, not merge — see the note in `host-connection-pins.ts`.
+  const mergedCasePins = caseHostPins
+    ? {
+        initializePins: caseHostPins.initializePins,
+        mcpProtocolVersionsByServerId:
+          caseHostPins.mcpProtocolVersionsByServerId,
+      }
+    : { initializePins, mcpProtocolVersionsByServerId };
+  // See `auth.ts`: widened to the manager's pin shape so the overlays keep the
+  // conformance knobs they are called to apply.
+  const baseCasePins: NonNullable<
+    Parameters<typeof createAuthorizedManager>[7]
+  >["initializePins"] = mergedCasePins.initializePins;
+  const effectiveCasePins = caseHostConfig
+    ? applyHostConformanceKnobs(
+        applyHostParamMirroring(
+          baseCasePins,
+          mirrorToolParamHeadersFromMcpProfile(caseHostConfig.mcpProfile),
+        ),
+        conformanceKnobsFromMcpProfile(caseHostConfig.mcpProfile),
+      )
+    : mergedCasePins.initializePins;
+
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
     body.projectId,
     serverIds,
-    WEB_CALL_TIMEOUT_MS,
+    caseHostPins?.timeoutMs ?? WEB_CALL_TIMEOUT_MS,
     oauthTokens,
-    body.clientCapabilities as Record<string, unknown> | undefined,
+    (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
+      (body.clientCapabilities as Record<string, unknown> | undefined),
     {
-      accessScope: body.accessScope as
-        | "project_member"
-        | "chat_v2"
-        | undefined,
+      accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
+      initializePins: effectiveCasePins,
+      mcpProtocolVersionsByServerId:
+        mergedCasePins.mcpProtocolVersionsByServerId,
+      ...(caseHostPins?.requestTimeoutByServerId
+        ? { requestTimeoutByServerId: caseHostPins.requestTimeoutByServerId }
+        : {}),
       xaaPolicy,
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
     },
@@ -405,7 +516,10 @@ evals.post("/replay-run", async (c) =>
   handleRoute(
     c,
     async () => {
-      const body = parseWithSchema(hostedReplayRunSchema, await readJsonBody(c));
+      const body = parseWithSchema(
+        hostedReplayRunSchema,
+        await readJsonBody(c),
+      );
       const convexAuthToken = assertBearerToken(c);
       const convexClient = createConvexClient(convexAuthToken);
       try {

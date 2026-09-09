@@ -38,6 +38,15 @@ import {
   type UserValueStage,
 } from "./chain.js";
 import { STAGE_REASONS, type StageReason } from "./stage-derivation.js";
+import {
+  FRICTION_NOT_MEASURED_REASONS,
+  FRICTION_SIGNAL_KINDS,
+  SUSPECTED_CONDITIONS,
+  type FrictionNotMeasuredReason,
+  type FrictionSignalKind,
+  type SuspectedCondition,
+  type SuspectedConditionConfidence,
+} from "./friction-signals.js";
 import type { EvalStageCoverageDetail } from "./stage-analytics.js";
 import {
   EVAL_VERDICT_DECISION_REASONS,
@@ -181,9 +190,9 @@ export const STAGE_REASON_LABELS = Object.freeze({
   impliedByLaterEvidence: "a later stage's success implies it",
   // "LLM judge", not "judge". These five are the only reasons in the
   // vocabulary decided by a model rather than by a deterministic rule, and a
-  // reader who cannot tell the two apart cannot weigh the row: an assertion
-  // that failed and an advisory verdict that came in low are different kinds
-  // of claim. The provenance belongs in the label because these strings are
+  // reader who cannot tell the two apart cannot weigh the row: a check that
+  // failed and an advisory verdict that came in low are different kinds of
+  // claim. The provenance belongs in the label because these strings are
   // the ONE place all four renderers read from.
   judgeObserved: "the LLM judge scored at or above the threshold",
   // "AT or above the floor": the band is `>= partialFloor` and `< threshold`
@@ -204,7 +213,7 @@ export const STAGE_REASON_LABELS = Object.freeze({
  * it answers at the coarse bucket, seven categories with one action each, and
  * a category can only ever name a system to go and look at. A stage reason is
  * the finest thing the contract records about where the chain stopped, so a
- * remedy keyed on it can name the actual assertion, schema or recipe field to
+ * remedy keyed on it can name the actual check, schema or recipe field to
  * open — which is a narrower promise than the category map makes, and the only
  * reason to keep a second map at all.
  *
@@ -226,7 +235,7 @@ export const STAGE_REASON_LABELS = Object.freeze({
  */
 export const STAGE_REASON_REMEDIES = Object.freeze({
   missingToolCall:
-    "if this pull request intentionally renamed or removed the expected tool, update this case's expected tool call in MCPJam so the assertion matches the server; if the tool should still be chosen for this prompt, review its name and description in the tool catalog, then push again",
+    "if this pull request intentionally renamed or removed the expected tool, update this case's expected tool call in MCPJam so the check matches the server; if the tool should still be chosen for this prompt, review its name and description in the tool catalog, then push again",
   unexpectedToolCall:
     "decide which side is right: if the extra call is correct behaviour, widen this case's expected tool calls or its match options in MCPJam; if it is not, review the names and descriptions that made the extra tool look applicable",
   argumentMismatch:
@@ -252,7 +261,7 @@ export const STAGE_REASON_REMEDIES = Object.freeze({
   lifecycleStopped:
     "the run was stopped mid-flight, so this case reached no verdict: re-run the check",
   notAuthored:
-    "this case asserts nothing this stage could decide: add an assertion in MCPJam if this stage should be measured",
+    "this case asserts nothing this stage could decide: add a check in MCPJam if this stage should be measured",
   judgeFailed:
     "read the judge's rationale on the run: either the response stopped satisfying the case's goal, or the goal needs rewording to match what the server now returns",
   judgePartial:
@@ -300,12 +309,12 @@ export const STAGE_REASONS_WITHOUT_REMEDY = Object.freeze([
  */
 export const EVAL_VERDICT_DECISION_REASON_LABELS = Object.freeze({
   configuredTrialsNotAttempted:
-    "some configured trial never ran, so the run does not cover what it was asked to",
+    "some configured iteration never ran, so the run does not cover what it was asked to",
   noGradeableTrials: "nothing in the run produced a gradeable verdict",
   eligibleTrialsBelowMinimum:
-    "fewer gradeable trials than the suite's validity floor requires",
+    "fewer gradeable iterations than the suite's validity floor requires",
   completionRateBelowMinimum:
-    "too few attempted trials completed to meet the suite's completion floor",
+    "too few attempted iterations completed to meet the suite's completion floor",
   completionRateNotMeasured:
     "nothing was attempted, so the completion floor cannot be satisfied",
   evaluatorErrorRateAboveMaximum:
@@ -462,6 +471,81 @@ export function describeExcludedTrialDetail(
   return out;
 }
 
+/**
+ * The five friction signals, in OBSERVATION words.
+ *
+ * Every line here describes what was seen and stops. None of them says
+ * "wasted", "unnecessary" or "the server": each pattern has a benign reading
+ * (see `friction-signals.ts`'s header), and a label that pre-judged it would
+ * make the reader's first act a defence rather than a look. "Identifiers
+ * surfaced, none used later" is a fact about the calls; "wasted work" is a
+ * verdict this contract deliberately does not reach.
+ */
+export const FRICTION_SIGNAL_LABELS = Object.freeze({
+  identifierSurfacedUnused: "Identifiers surfaced, none used later",
+  searchRepeatedAfterIdentifier: "Same tool searched again after identifiers",
+  identicalRetry: "Repeated with identical arguments",
+  changedRetry: "Same tool called again with changed arguments",
+  paginationContinuation: "Pagination continued",
+} satisfies Record<FrictionSignalKind, string>);
+
+/**
+ * Why a trial's friction signals, or its identifier signals alone, were not
+ * measured.
+ *
+ * Phrased as facts about the EVIDENCE, never about the run: a trial whose
+ * results were not retained is not a trial that did something wrong, and a
+ * reader who reads "not measured" as "nothing found" has been told the
+ * opposite of what the document says.
+ */
+export const FRICTION_NOT_MEASURED_REASON_LABELS = Object.freeze({
+  noToolCalls: "no tool calls to look at",
+  resultsUnavailable: "tool results were not retained",
+  orderingUnknown: "the calls cannot be placed in a causal order",
+  evidenceIncomplete: "the evidence for this trial has a known hole",
+  truncated: "too many tool calls to measure",
+} satisfies Record<FrictionNotMeasuredReason, string>);
+
+/**
+ * The nine suspected conditions, in words.
+ *
+ * SUSPECTED, and every line stays inside what an advisory judge established.
+ * None of them says "caused": step 2 names a plausible contributor from one
+ * window of one trial, and only step 3's controlled rewrite can turn that into
+ * a claim about cause. `unclear` reads as "could not attribute" rather than
+ * "no problem found" — the two are opposite readings of the same word, and the
+ * second one is not what the judge said.
+ *
+ * `responseWasClear` is the honest NEGATIVE and reads as one: the server's
+ * output does not explain the pattern. It is a real answer, and a label that
+ * made it sound like a failure to answer would push readers toward believing
+ * the ones that name a condition.
+ */
+export const SUSPECTED_CONDITION_LABELS = Object.freeze({
+  unclear: "could not attribute",
+  idBuriedInPayload: "identifier buried in payload",
+  idNameCollision: "identifier name collision",
+  missingQueryEcho: "response does not echo the query",
+  silentTruncation: "response truncated without saying so",
+  ambiguousErrorSemantics: "error text does not say whether to retry",
+  missingUnits: "value has no stated unit",
+  responseWasClear: "the response was clear",
+  descriptionMisleading: "tool description points the wrong way",
+} satisfies Record<SuspectedCondition, string>);
+
+/**
+ * How sure the judge was, in words.
+ *
+ * `low` never reaches a reader as a named condition — the backend demotes a
+ * low-confidence verdict to `unclear` before it is persisted — so this map's
+ * `low` is here for totality and for a verdict that predates that rule.
+ */
+export const SUSPECTED_CONDITION_CONFIDENCE_LABELS = Object.freeze({
+  low: "low confidence",
+  medium: "medium confidence",
+  high: "high confidence",
+} satisfies Record<SuspectedConditionConfidence, string>);
+
 /** Every vocabulary this module renders, for tests that assert totality. */
 export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   stages: USER_VALUE_STAGES,
@@ -469,6 +553,28 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   failureCategories: FAILURE_CATEGORIES,
   stageReasons: STAGE_REASONS,
   verdictDecisionReasons: EVAL_VERDICT_DECISION_REASONS,
+  frictionSignalKinds: FRICTION_SIGNAL_KINDS,
+  frictionNotMeasuredReasons: FRICTION_NOT_MEASURED_REASONS,
+  suspectedConditions: SUSPECTED_CONDITIONS,
+  // NOT listed here: SUSPECTED_CONDITION_CONFIDENCES. Its consumer walks the
+  // whole OpenAPI document flagging any enum that overlaps a registered
+  // vocabulary by three quarters, and `low`/`medium`/`high` is not a
+  // distinctive member list — it collides with every severity and confidence
+  // scale in the spec (`ActionableFinding.confidence`,
+  // `ActionableFinding.severity`), which are unrelated vocabularies that
+  // happen to share three common words. Registering it would either redden
+  // the guard permanently or force those sites to be pinned to a vocabulary
+  // they are not. Its label map's totality is asserted directly against
+  // `SUSPECTED_CONDITION_CONFIDENCES` instead, which is the same protection
+  // for the one thing that matters here.
+  // NOT listed here: B7's `PREDICATE_STAGE`. This registry holds closed
+  // member LISTS, and its consumer walks the OpenAPI spec asserting that any
+  // enum overlapping one of them matches it exactly. `PREDICATE_STAGE` is a
+  // map from predicate kind to stage, so it has no member list to guard —
+  // and its VALUES are already `stages` above. Adding it would have meant
+  // weakening that check to accommodate a shape it was never about. It is
+  // exported from the contract index directly, which is how consumers reach
+  // it.
   // NOT listed here: the fine-grained exclusion detail. Its vocabulary is a
   // zod object's SHAPE rather than a `const` array, so its totality test reads
   // `evalStageCoverageDetailSchema.shape` directly — a hand-copied list here

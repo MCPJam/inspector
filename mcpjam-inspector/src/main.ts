@@ -64,6 +64,14 @@ import {
 // `will-attach-webview` guard, and the server provider's ownership check all
 // have to agree on exactly. Three literals would drift; one constant cannot.
 import { WEBMCP_WEBVIEW_PARTITION } from "../shared/webmcp-inspector-protocol.js";
+// Safe to import statically, unlike the server graph below: this module is
+// deliberately import-free — reaching it through `electron-context.ts` would
+// drag in `utils/logger.ts`, which initialises Sentry and Axiom as a side
+// effect of being loaded. See that file's header.
+import {
+  agentBrowserWindowCount,
+  isAgentBrowserWindow,
+} from "../server/services/browserd/electron/agent-windows.js";
 
 // Configure logging
 log.transports.file.level = "info";
@@ -121,6 +129,35 @@ let serverPort: number = 0;
 let localHarnessSessionToken: string | null = null;
 let shutdownLocalTerminals: (() => void) | null = null;
 let killLocalTerminals: (() => void) | null = null;
+/**
+ * The agent's own browser, held for teardown for the same reason as the PTYs:
+ * it is a real Chromium this process started, and nothing else closes it.
+ * Async, unlike the PTY pair — closing the browser context is what makes
+ * Chromium release the profile's singleton lock.
+ */
+let shutdownLocalBrowsers: (() => Promise<void>) | null = null;
+let killLocalBrowsers: (() => Promise<void>) | null = null;
+/**
+ * The browser teardown currently running, if any.
+ *
+ * Closing Chromium is what makes it write out and RELEASE the profile's
+ * singleton lock, and that close is asynchronous. Whoever needs the profile
+ * next — a dock re-activation, or the quit itself — has to wait for this
+ * rather than racing the dying process for the lock and being told the profile
+ * is in use.
+ */
+let browserTeardown: Promise<void> | null = null;
+let quittingAfterBrowserTeardown = false;
+/**
+ * The activation currently being handled.
+ *
+ * `activate` now awaits the browser teardown, and two dock clicks can both
+ * pass the zero-window check before either has recreated the window — which
+ * would build two windows, or race two server starts. They queue instead.
+ */
+let activating: Promise<void> | null = null;
+let shutdownLocalBrowserFrames: (() => void) | null = null;
+let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
@@ -202,13 +239,13 @@ function createElectronHostedAuthNavigationUrl(url: string): string {
             [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
           }
         : parsedState === undefined
-        ? {
-            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-          }
-        : {
-            [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
-            originalState: parsedState,
-          };
+          ? {
+              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+            }
+          : {
+              [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
+              originalState: parsedState,
+            };
 
     urlObj.searchParams.set("state", JSON.stringify(nextState));
     return urlObj.toString();
@@ -219,12 +256,12 @@ function createElectronHostedAuthNavigationUrl(url: string): string {
 
 function installSafeOAuthCallbackRouting(
   authWindow: BrowserWindow,
-  source: string
+  source: string,
 ): void {
   const routeIfOAuthCallback = (
     event: { preventDefault: () => void },
     url: string,
-    isMainFrame?: boolean
+    isMainFrame?: boolean,
   ) => {
     if (isMainFrame === false) {
       return;
@@ -232,7 +269,7 @@ function installSafeOAuthCallbackRouting(
 
     const protocolCallbackUrl = buildProtocolOAuthCallbackUrl(
       url,
-      getRendererBaseUrl()
+      getRendererBaseUrl(),
     );
     if (!protocolCallbackUrl) {
       return;
@@ -251,14 +288,14 @@ function installSafeOAuthCallbackRouting(
     "will-navigate",
     (event, url, _isInPlace, isMainFrame) => {
       routeIfOAuthCallback(event, url, isMainFrame);
-    }
+    },
   );
 
   authWindow.webContents.on(
     "will-redirect",
     (event, url, _isInPlace, isMainFrame) => {
       routeIfOAuthCallback(event, url, isMainFrame);
-    }
+    },
   );
 }
 
@@ -280,14 +317,14 @@ function installSafeOAuthCallbackRouting(
 function lockDownWebviewPartition(): void {
   const guestSession = session.fromPartition(WEBMCP_WEBVIEW_PARTITION);
   guestSession.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false)
+    callback(false),
   );
   guestSession.setPermissionCheckHandler(() => false);
 }
 
 function createSafeOAuthWindow(
   options: BrowserWindowConstructorOptions = {},
-  source = "Electron fallback"
+  source = "Electron fallback",
 ): BrowserWindow {
   const { webPreferences: _unsafeWebPreferences, ...safeOptions } = options;
   const authWindow = new BrowserWindow({
@@ -316,13 +353,13 @@ function createSafeOAuthWindow(
 function openSafeOAuthWindow(
   url: string,
   parent: BrowserWindow | null,
-  source: string
+  source: string,
 ): void {
   const authWindow = createSafeOAuthWindow(
     {
       parent: parent ?? undefined,
     },
-    source
+    source,
   );
 
   void authWindow.loadURL(url).catch((error) => {
@@ -385,10 +422,10 @@ async function startHonoServer(): Promise<number> {
             log.warn(
               `Port ${failedPort} unavailable (${
                 err.code ?? err.message
-              }); trying next port`
+              }); trying next port`,
             );
           },
-        }
+        },
       );
       process.env.SERVER_PORT = String(port);
       cachedProbedPort = port;
@@ -401,7 +438,7 @@ async function startHonoServer(): Promise<number> {
     process.env.MCPJAM_RUNTIME_ROOT = path.join(
       app.getPath("userData"),
       "local-harness",
-      "runtime"
+      "runtime",
     );
 
     // Dynamic import so server/config.ts evaluates with the env var we just
@@ -414,9 +451,8 @@ async function startHonoServer(): Promise<number> {
     // workspace grant through the server's own route. Read here, after the
     // server module has generated it, and re-read on every restart.
     try {
-      const { getSessionToken } = await import(
-        "../server/services/session-token.js"
-      );
+      const { getSessionToken } =
+        await import("../server/services/session-token.js");
       localHarnessSessionToken = getSessionToken();
     } catch {
       localHarnessSessionToken = null;
@@ -426,14 +462,13 @@ async function startHonoServer(): Promise<number> {
     // rather than imported by the server, which has to stay loadable under
     // `npx` where there is no Electron and no keychain at all.
     try {
-      const { setInstanceKeyStore } = await import(
-        "../server/utils/harness/local/instance-key.js"
-      );
+      const { setInstanceKeyStore } =
+        await import("../server/utils/harness/local/instance-key.js");
       setInstanceKeyStore(createSafeStorageKeyStore());
     } catch (err) {
       log.warn(
         "Local harness instance key will fall back to an owner-only file",
-        err
+        err,
       );
     }
     const {
@@ -443,6 +478,10 @@ async function startHonoServer(): Promise<number> {
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
       killWebMcpFrameSockets,
+      shutdownLocalBrowserSessions,
+      killLocalBrowserSessions,
+      shutdownLocalBrowserFrameSockets,
+      killLocalBrowserFrameSockets,
     } = await createHonoApp();
     // Held for teardown: killing live local PTYs is the ONLY thing that stops
     // them — `server.close()` does not tear down established sockets. The
@@ -455,6 +494,15 @@ async function startHonoServer(): Promise<number> {
     // and a non-latching one for `window-all-closed`.
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
+    // The agent's browser is a real Chromium this process started. Quitting the
+    // app without closing it leaves an orphan holding the profile lock, which
+    // the next launch then has to refuse.
+    shutdownLocalBrowsers = shutdownLocalBrowserSessions;
+    killLocalBrowsers = killLocalBrowserSessions;
+    // The viewport sockets are established WebSockets that `server.close()`
+    // leaves attached, with the same latching/non-latching split.
+    shutdownLocalBrowserFrames = shutdownLocalBrowserFrameSockets;
+    killLocalBrowserFrames = killLocalBrowserFrameSockets;
 
     server = serve({
       fetch: honoApp.fetch,
@@ -467,7 +515,7 @@ async function startHonoServer(): Promise<number> {
 
     if (port !== DEFAULT_SERVER_PORT) {
       log.warn(
-        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`
+        `🚀 MCPJam Server started on fallback port ${port} (default ${DEFAULT_SERVER_PORT} was unavailable)`,
       );
     } else {
       log.info(`🚀 MCPJam Server started on port ${port}`);
@@ -518,7 +566,7 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   const maybeOpenExternalNavigation = (
     event: { preventDefault: () => void },
     url: string,
-    isMainFrame: boolean
+    isMainFrame: boolean,
   ) => {
     if (!isMainFrame) {
       return;
@@ -530,14 +578,14 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       const hostedAuthUrl = createElectronHostedAuthNavigationUrl(url);
       const openExternalPromise = shouldForceElectronOAuthFallback()
         ? Promise.reject(
-            new Error("Forced open-external failure for OAuth fallback test")
+            new Error("Forced open-external failure for OAuth fallback test"),
           )
         : shell.openExternal(hostedAuthUrl);
 
       void openExternalPromise.catch((error) => {
         log.warn(
           "Failed to open hosted auth in system browser; continuing in a safe Electron auth window:",
-          error
+          error,
         );
         openSafeOAuthWindow(hostedAuthUrl, window, "hosted auth");
       });
@@ -558,14 +606,14 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     event.preventDefault();
     const openExternalPromise = shouldForceElectronOAuthFallback()
       ? Promise.reject(
-          new Error("Forced open-external failure for OAuth fallback test")
+          new Error("Forced open-external failure for OAuth fallback test"),
         )
       : shell.openExternal(url);
 
     void openExternalPromise.catch((error) => {
       log.warn(
         "Failed to open external navigation in system browser; continuing in a safe Electron window:",
-        error
+        error,
       );
       openSafeOAuthWindow(url, window, "external navigation");
     });
@@ -575,14 +623,14 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     "will-navigate",
     (event, url, _isInPlace, isMainFrame) => {
       maybeOpenExternalNavigation(event, url, isMainFrame);
-    }
+    },
   );
 
   window.webContents.on(
     "will-redirect",
     (event, url, _isInPlace, isMainFrame) => {
       maybeOpenExternalNavigation(event, url, isMainFrame);
-    }
+    },
   );
 
   // Show window when ready
@@ -597,6 +645,18 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   // Handle window closed
   window.on("closed", () => {
     mainWindow = null;
+    // The agent's hidden windows are windows too, so leaving them open means
+    // `window-all-closed` NEVER FIRES: on Windows and Linux the app would never
+    // quit, and on macOS the server would never be torn down.
+    //
+    // Which makes this call the thing that unblocks that event, not a tidy-up
+    // it will do anyway — do not read it as redundant and remove it. The pane
+    // watching these windows has gone with the UI regardless.
+    if (agentBrowserWindowCount() > 0) {
+      browserTeardown = (killLocalBrowsers?.() ?? Promise.resolve()).catch(
+        () => {},
+      );
+    }
   });
 
   return window;
@@ -769,7 +829,7 @@ function pruneStaleCachesOnVersionChange(): void {
   log.info(
     `App version changed (${
       previousVersion ?? "<none>"
-    } → ${currentVersion}); pruning stale GPU/HTTP caches`
+    } → ${currentVersion}); pruning stale GPU/HTTP caches`,
   );
 
   for (const sub of ["Cache", "Code Cache", "GPUCache"]) {
@@ -847,7 +907,7 @@ function showStartupFailureDialog(error: unknown): void {
     } catch (rmErr) {
       log.warn(
         "Failed to remove .last-launched-version during recovery reset:",
-        rmErr
+        rmErr,
       );
     }
     app.relaunch();
@@ -867,7 +927,7 @@ function showStartupFailureDialog(error: unknown): void {
       .then((result) => {
         if (result) {
           log.warn(
-            `shell.openPath reported error opening logs folder: ${result}`
+            `shell.openPath reported error opening logs folder: ${result}`,
           );
         }
       })
@@ -934,7 +994,7 @@ app.whenReady().then(async () => {
     } catch (dialogErr) {
       log.error(
         "Failed to show startup failure dialog; quitting silently:",
-        dialogErr
+        dialogErr,
       );
       app.quit();
     }
@@ -948,6 +1008,14 @@ app.on("window-all-closed", () => {
   // does it anyway; this makes it unconditional) but do NOT latch shutdown, or
   // every terminal handshake after reopening would be refused.
   killLocalTerminals?.();
+  // Same non-latching kill for the agent's browser: on macOS this is not a
+  // quit, and latching would refuse every browser the user opened after
+  // reopening the window from the dock. Kept rather than dropped, because
+  // `activate` may need to wait for it.
+  browserTeardown = (killLocalBrowsers?.() ?? Promise.resolve()).catch(
+    () => {},
+  );
+  killLocalBrowserFrames?.();
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
@@ -962,9 +1030,49 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("activate", async () => {
+app.on("activate", () => {
+  // Serialized: the body awaits a teardown, and a second click arriving inside
+  // that await would otherwise pass the same zero-window check.
+  // The tail catch is what keeps this queue usable: a `handleActivate` that
+  // throws would otherwise leave `activating` REJECTED — an unhandled
+  // rejection now, and a link the next dock click has to swallow before it can
+  // do anything. Logged and absorbed here, so the chain always resolves and
+  // the next click starts from a clean one.
+  activating = (activating ?? Promise.resolve())
+    .then(() => handleActivate())
+    .catch((error) => {
+      log.error("Failed to handle dock activation:", error);
+    });
+});
+
+/**
+ * Windows a PERSON has, ignoring the agent's hidden ones.
+ *
+ * The agent browser opens real `BrowserWindow`s — hidden, but windows all the
+ * same — so `getAllWindows()` counts them. An open agent tab therefore made the
+ * dock click below find a non-zero count and rebuild nothing: the app was
+ * running, in the tray, with no way to get its UI back.
+ */
+function visibleWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(
+    (window) => !isAgentBrowserWindow(window),
+  );
+}
+
+async function handleActivate(): Promise<void> {
   // On macOS, re-create window when the dock icon is clicked
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (visibleWindows().length === 0) {
+    // A quick reopen can arrive while the browser closed by
+    // `window-all-closed` is still shutting down. Starting the server (and
+    // with it the next browser) now would hit the profile lock the dying
+    // Chromium has not released yet.
+    if (browserTeardown) {
+      await browserTeardown;
+      browserTeardown = null;
+    }
+    // Re-asked after the await: the teardown is long enough for a window to
+    // have appeared, and building a second one is worse than doing nothing.
+    if (visibleWindows().length > 0) return;
     if (serverPort > 0) {
       mainWindow = createMainWindow(getServerUrl());
       setTrustedUpdateWindow(mainWindow);
@@ -979,7 +1087,7 @@ app.on("activate", async () => {
       }
     }
   }
-});
+}
 
 // Handle OAuth callback URLs
 app.on("open-url", (event, url) => {
@@ -1010,9 +1118,7 @@ app.on("web-contents-created", (_, contents) => {
    */
   contents.on("will-attach-webview", (event, webPreferences, params) => {
     if (params.partition !== WEBMCP_WEBVIEW_PARTITION) {
-      log.warn(
-        `Refusing a <webview> on partition ${String(params.partition)}`
-      );
+      log.warn(`Refusing a <webview> on partition ${String(params.partition)}`);
       event.preventDefault();
       return;
     }
@@ -1040,7 +1146,7 @@ app.on("web-contents-created", (_, contents) => {
                 ...options,
                 parent: mainWindow || undefined,
               },
-              "OAuth popup"
+              "OAuth popup",
             );
 
             return popup.webContents;
@@ -1074,8 +1180,23 @@ app.on("before-quit", (event) => {
   }
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();
+  }
+  // The one asynchronous step in quitting. Electron will exit as soon as this
+  // handler returns, so a fire-and-forget teardown loses the race with the
+  // process: Chromium never releases the profile's singleton lock, and the
+  // NEXT launch refuses the profile as in use. Hold the quit for exactly one
+  // teardown — the re-fired `before-quit` falls through this branch.
+  if (!quittingAfterBrowserTeardown && shutdownLocalBrowsers) {
+    event.preventDefault();
+    quittingAfterBrowserTeardown = true;
+    browserTeardown = (browserTeardown ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => shutdownLocalBrowsers?.())
+      .catch(() => {});
+    void browserTeardown.finally(() => app.quit());
   }
 });
 

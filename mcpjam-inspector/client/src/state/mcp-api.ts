@@ -118,6 +118,9 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.dropToolListChanged === true
       ? { dropToolListChanged: true }
       : {}),
+    ...(options.connectionDefaults?.toolCallCancellation
+      ? { toolCallCancellation: options.connectionDefaults.toolCallCancellation }
+      : {}),
   };
 }
 

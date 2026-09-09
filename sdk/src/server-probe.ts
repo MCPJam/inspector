@@ -27,6 +27,13 @@ export interface ProbeMcpServerConfig {
   clientName?: string;
   clientVersion?: string;
   retryPolicy?: RetryPolicy;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local) for
+   * the metadata pointers this probe follows. The LOCAL inspector and CLI set
+   * it; hosted callers leave it unset. Link-local and cloud-metadata
+   * destinations stay refused either way.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 export interface ProbeHttpAttempt {
@@ -243,7 +250,8 @@ function buildAuthServerMetadataUrls(
  */
 function assertMetadataDestinationAllowed(
   candidate: string,
-  serverUrl: string
+  serverUrl: string,
+  allowPrivateNetwork = false
 ): void {
   try {
     const target = new URL(candidate);
@@ -267,6 +275,7 @@ function assertMetadataDestinationAllowed(
 
   assertOutboundOAuthUrlAllowed(candidate, {
     allowLoopback: isLoopbackOAuthUrl(serverUrl),
+    allowPrivateNetwork,
   });
 }
 
@@ -582,7 +591,8 @@ async function discoverOAuthDetails(
     if (resourceMetadataUrlFromHeader) {
       assertMetadataDestinationAllowed(
         resourceMetadataUrlFromHeader,
-        config.url
+        config.url,
+        config.allowPrivateNetwork
       );
     }
     attempts.push(resourceMetadataAttempt);
@@ -616,7 +626,12 @@ async function discoverOAuthDetails(
         config.fetchFn ?? fetch,
         attempt,
         config.timeoutMs,
-        (landingUrl) => assertMetadataDestinationAllowed(landingUrl, config.url)
+        (landingUrl) =>
+          assertMetadataDestinationAllowed(
+            landingUrl,
+            config.url,
+            config.allowPrivateNetwork
+          )
       );
 
       return new Response(
@@ -652,7 +667,11 @@ async function discoverOAuthDetails(
       // loopback server discovering its own metadata. This also keeps a
       // malformed entry from aborting discovery inside `new URL()` below.
       if (advertisedAuthServer) {
-        assertMetadataDestinationAllowed(advertisedAuthServer, config.url);
+        assertMetadataDestinationAllowed(
+          advertisedAuthServer,
+          config.url,
+          config.allowPrivateNetwork
+        );
       }
       authMetadataUrls = buildAuthServerMetadataUrls(
         protocolVersion,
@@ -680,7 +699,11 @@ async function discoverOAuthDetails(
           authAttempt,
           config.timeoutMs,
           (landingUrl) =>
-            assertMetadataDestinationAllowed(landingUrl, config.url)
+            assertMetadataDestinationAllowed(
+              landingUrl,
+              config.url,
+              config.allowPrivateNetwork
+            )
         );
 
         if (

@@ -236,4 +236,17 @@ describe("RunCaseRows", () => {
       screen.getByText("This run has no cases to show."),
     ).toBeInTheDocument();
   });
+
+  it("renders a route line under the break text when one is supplied", () => {
+    render(
+      <RunCaseRows
+        rows={[row()]}
+        defaultOpenKey={null}
+        routeLines={new Map([["g1", "7 took `search→get` · 2 called nothing"]])}
+      />,
+    );
+    expect(screen.getByTestId("route-line-g1")).toHaveTextContent(
+      "7 took `search→get` · 2 called nothing",
+    );
+  });
 });

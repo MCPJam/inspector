@@ -32,14 +32,29 @@ export interface PackSigningKey {
 /**
  * Keys a pack manifest signature is accepted from.
  *
- * EMPTY until the release key is generated and its public half committed.
- * Empty is not a bypass: `verifyPackManifestSignature` refuses everything
- * while this list is empty, so no pack can be installed from a network source
- * before there is a key to vouch for one. Development uses
- * `MCPJAM_LOCAL_HARNESS_PACK_SOURCE` pointing at a local path, which is an
- * explicitly-named file rather than something fetched.
+ * An EMPTY list is not a bypass but a refusal: `verifyPackManifestSignature`
+ * turns away everything while there is no key to vouch for a pack, which is
+ * what this repository shipped before the release key existed. Development
+ * never reaches here — `MCPJAM_LOCAL_HARNESS_PACK_SOURCE` names a local file
+ * instead of fetching one.
+ *
+ * Rotation is additive: append the new key, ship a release that trusts both,
+ * and only then start signing with it. An entry outlives the signing rather
+ * than the other way round, because removing one makes every pack it signed
+ * uninstallable.
  */
-export const PACK_SIGNING_KEYS: readonly PackSigningKey[] = [];
+export const PACK_SIGNING_KEYS: readonly PackSigningKey[] = [
+  {
+    // Generated 2026-09-02. The private half went straight into the CI secret
+    // `LOCAL_HARNESS_PACK_SIGNING_KEY` and exists nowhere else — there is no
+    // copy to lose, and recovery is rotation, not restore.
+    keyId: "pack-2026-09",
+    publicKeyPem: `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAjaZXzr+4k5pJEuzIy5JUU858ksLJgjZv9b9jxmNhV6A=
+-----END PUBLIC KEY-----
+`,
+  },
+];
 
 export type PackSignatureResult =
   | { ok: true; keyId: string }

@@ -1,4 +1,8 @@
-import { generateKeyPairSync, sign as edSign } from "node:crypto";
+import {
+  createPublicKey,
+  generateKeyPairSync,
+  sign as edSign,
+} from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   PACK_SIGNING_KEYS,
@@ -74,14 +78,39 @@ describe("pack manifest signatures", () => {
   });
 
   it("refuses everything while no key is configured", () => {
-    // The repo state before the release key is generated. Empty is not a
-    // bypass — it is a refusal — so no pack can be installed from a network
-    // source before there is a key to vouch for one.
-    expect(PACK_SIGNING_KEYS).toEqual([]);
+    // Empty is not a bypass — it is a refusal — so no pack can be installed
+    // from a network source before there is a key to vouch for one. Asserted
+    // against an explicit empty list rather than against PACK_SIGNING_KEYS,
+    // which now carries the release key: the property belongs to the function,
+    // not to whatever the repository happens to trust today.
     const { sign } = testKey("anything");
-    expect(verifyPackManifestSignature(MANIFEST, sign(MANIFEST))).toMatchObject(
-      { ok: false, reason: "no-keys" },
-    );
+    expect(
+      verifyPackManifestSignature(MANIFEST, sign(MANIFEST), []),
+    ).toMatchObject({ ok: false, reason: "no-keys" });
+  });
+
+  it("carries release keys that node can actually verify with", () => {
+    // A committed key is a string until something parses it. A typo in the
+    // PEM would not fail a build, a typecheck or any other test here — it
+    // would fail at the one moment that matters, when a user's install
+    // verifies a downloaded pack, and present as "not signed by any key this
+    // Inspector trusts". `verifyPackManifestSignature` swallows a malformed
+    // key on purpose so one bad entry cannot shadow a good one, which is
+    // exactly why the parse has to be asserted somewhere.
+    expect(PACK_SIGNING_KEYS.length).toBeGreaterThan(0);
+    for (const key of PACK_SIGNING_KEYS) {
+      expect(key.keyId).toMatch(/^[a-z0-9-]+$/);
+      const publicKey = createPublicKey(key.publicKeyPem);
+      expect(publicKey.asymmetricKeyType).toBe("ed25519");
+    }
+  });
+
+  it("does not trust two keys under one id", () => {
+    // Rotation appends, and the id is how a refusal names the key that turned
+    // a pack away. Two entries sharing one id make that message ambiguous at
+    // the only moment anybody reads it.
+    const ids = PACK_SIGNING_KEYS.map((key) => key.keyId);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("refuses a signature that is not base64 at all", () => {

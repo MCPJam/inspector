@@ -37,6 +37,7 @@ import {
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import {
   readClaimRefusal,
   type ClaimRefusalDetails,
@@ -518,6 +519,10 @@ export function ServerConnectionHandoff() {
    */
   const switchAccount = useCallback(() => {
     setBusy(true);
+    // See `sign-out-latch`: without this, the refresh timer notices the
+    // revoked session mid-navigation and redirects to sign-in, losing the
+    // handoff link this function exists to return to.
+    markSignOutInProgress();
     const back = `${window.location.pathname}${window.location.search}`;
     void Promise.resolve(signOut({ navigate: false }))
       .catch(() => {

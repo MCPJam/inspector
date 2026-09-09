@@ -112,6 +112,12 @@ describe("every surface reads the same map", () => {
     { id: "codex" },
   ];
 
+  it("hides Claude Code and Codex from gated pickers when flags are off", () => {
+    expect(
+      filterHostsByFeatureFlags(hosts, ALL_OFF).map((host) => host.id)
+    ).toEqual(["cursor"]);
+  });
+
   it("hides cursor-cli from the host picker, the reports, and the profiles alike", () => {
     const visibility = { ...ALL_ON, cursorCli: false };
     expect(

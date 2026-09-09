@@ -9,6 +9,7 @@ import type { ChatSessionStageDerivation } from "@/components/shared/user-value-
 // runtime cycle. One declaration of the backend contract, not two.
 import type { SessionCriteria } from "@/lib/swarm-api";
 import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 
 export type SharedChatSourceType = "scenario" | "swarm";
 
@@ -282,6 +283,8 @@ export interface SharedChatTurnTrace {
   spanCount: number;
   modelId?: string;
   spansBlobUrl?: string | null;
+  /** The `webmcp_*` page tools this turn advertised; see `ChatHistoryTurnTrace`. */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 export function useSharedChatTurnTraces({

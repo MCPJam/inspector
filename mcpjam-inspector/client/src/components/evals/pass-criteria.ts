@@ -69,7 +69,7 @@ export function computeIterationResult(
       arguments: Record<string, any>;
     }>;
   },
-  criteria?: PassCriteria,
+  criteria?: PassCriteria
 ):
   | "pending"
   | "passed"
@@ -117,15 +117,48 @@ export function computeIterationResult(
 }
 
 /**
- * Compute if an individual iteration passed based on its data.
- * Uses the shared two-pass matching algorithm from @/shared/eval-matching.
+ * Did this iteration pass?
+ *
+ * ── B3b W4: the stored result is the ONLY source for a row that has one ─────
+ *
+ * A STORED terminal `result` wins outright, whatever `resultSource` says. That
+ * is the retirement this step is for: the browser used to re-run the tool-call
+ * matcher over `actualToolCalls` and grade the iteration a second time, in a
+ * second implementation, from evidence that had already been graded server-side
+ * — and by the score contract at `enforce`, from evidence the browser cannot
+ * see at all (predicates, gates, tool errors, the whole gating row set). A
+ * client re-derivation is not a check on the server; it is a different answer
+ * to the same question, arrived at with less information, and the two silently
+ * disagreeing is the failure mode that ends here.
+ *
+ * ── What survives, and why it is not the same thing ─────────────────────────
+ *
+ * The matcher below is UNTOUCHED and still runs for a row with NO stored
+ * result. Two real populations need it:
+ *
+ *   - LEGACY ROWS that never persisted one. Falling back to "not passed" would
+ *     silently re-grade years of history as failures.
+ *   - LIVE GRADING (`eval-live-grading.ts`), which hands this function
+ *     synthetic per-turn projections that were never persisted at all. It is a
+ *     PREVIEW of a verdict, not a re-derivation of a decided one.
+ *
+ * So the matcher does not retire as an evaluator; what retires is the
+ * UNVERIFIED CLIENT RE-DERIVATION of an iteration that has already been graded.
+ *
+ * Restoring the old behaviour after this ships requires reverting the PR that
+ * introduced it, not flipping a flag.
  */
 export function computeIterationPassed(
   iteration: EvalIteration,
-  criteria?: PassCriteria,
+  criteria?: PassCriteria
 ): boolean {
-  if (iteration.resultSource === "reported") {
+  if (iteration.result === "passed" || iteration.result === "failed") {
     return iteration.result === "passed";
+  }
+  if (iteration.resultSource === "reported") {
+    // A reported row whose result is non-terminal (`pending`, `cancelled`,
+    // `timed_out`) still says what it says. Unchanged from before W4.
+    return false;
   }
 
   const actual = iteration.actualToolCalls || [];
@@ -185,7 +218,7 @@ export function computeIterationPassed(
 export function evaluatePassCriteria(
   run: EvalSuiteRun,
   iterations: EvalIteration[],
-  criteria: PassCriteria = DEFAULT_CRITERIA,
+  criteria: PassCriteria = DEFAULT_CRITERIA
 ): PassCriteriaEvaluation {
   // Filter to only this run's iterations
   const runIterations = iterations.filter((it) => it.suiteRunId === run._id);
@@ -205,7 +238,7 @@ export function evaluatePassCriteria(
       (it) =>
         it.result === "passed" ||
         it.result === "failed" ||
-        it.result === "timed_out",
+        it.result === "timed_out"
     );
 
   const totalCount = iterationsWithResults.length;
@@ -222,7 +255,9 @@ export function evaluatePassCriteria(
         passed,
         reason: passed
           ? undefined
-          : `Pass rate ${overallPassRate.toFixed(1)}% below threshold ${threshold}%`,
+          : `Pass rate ${overallPassRate.toFixed(
+              1
+            )}% below threshold ${threshold}%`,
         details: {
           overallPassRate,
           threshold,
@@ -254,7 +289,7 @@ export function evaluatePassCriteria(
       // Check each template
       for (const [templateKey, templateIterations] of byTemplate) {
         const templatePassed = templateIterations.filter(
-          (it) => it.passed,
+          (it) => it.passed
         ).length;
         const templateTotal = templateIterations.length;
         const templatePassRate =

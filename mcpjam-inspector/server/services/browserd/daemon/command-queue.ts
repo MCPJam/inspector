@@ -40,9 +40,45 @@ export type CommandExecutor = (
   command: BrowserCommand,
 ) => Promise<BrowserCommandResult>;
 
+/**
+ * Is this a control message rather than work on the page?
+ *
+ * Only cancellation. It has no side effect of its own, it is idempotent, and
+ * its whole value is arriving while something else is still running — the three
+ * properties that make skipping the queue safe rather than merely convenient.
+ */
+function isOutOfBand(command: BrowserCommand): boolean {
+  return command.action.kind === "webmcp_cancel";
+}
+
 /** Which FIFO a command belongs to: its tab, or the session if tab-less. */
 function queueKeyFor(command: BrowserCommand): string {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
+}
+
+/**
+ * Is this command safe to simply run again?
+ *
+ * At-most-once exists to protect SIDE EFFECTS: a click that submits a form, a
+ * page tool that charges a card. An `observe` has none — it reads the page and
+ * returns what it saw — so remembering its id buys nothing, and remembering it
+ * FOREVER costs the one resource this queue rations.
+ *
+ * That cost is not theoretical. Every distinct id must be retained for the
+ * whole boot, first as a result and then as a tombstone, against
+ * `maxCommandsPerBoot`. The WebMCP inspector polls the page's tool list on an
+ * interval for as long as somebody is watching it, which is thousands of
+ * observations an hour — enough to exhaust a 50,000-command budget in a day
+ * and leave the daemon answering `at_capacity` to everything, including the
+ * commands that do have side effects. Exempting reads keeps the budget for
+ * the commands whose duplicates actually matter.
+ *
+ * A duplicate observation therefore re-executes, which is the correct answer
+ * for a read: it returns what the page looks like NOW, which is fresher than
+ * what a cache would have said anyway.
+ */
+function isReplayable(command: BrowserCommand): boolean {
+  return command.action.kind === "observe";
 }
 
 function normalizeError(err: unknown): BrowserCommandResult {
@@ -97,7 +133,8 @@ export class CommandQueue {
     this.retainTtlMs =
       options.retainTtlMs ?? DEFAULT_COMMAND_QUEUE_OPTIONS.retainTtlMs;
     this.perQueueDepthCap =
-      options.perQueueDepthCap ?? DEFAULT_COMMAND_QUEUE_OPTIONS.perQueueDepthCap;
+      options.perQueueDepthCap ??
+      DEFAULT_COMMAND_QUEUE_OPTIONS.perQueueDepthCap;
     this.maxCommandsPerBoot =
       options.maxCommandsPerBoot ??
       DEFAULT_COMMAND_QUEUE_OPTIONS.maxCommandsPerBoot;
@@ -106,13 +143,19 @@ export class CommandQueue {
     // Reject nonsensical limits up front: e.g. `maxRetained: -1` would make
     // `settle` loop forever (`0 > -1`), blocking the daemon event loop.
     if (!Number.isInteger(this.maxRetained) || this.maxRetained < 0) {
-      throw new RangeError(`maxRetained must be an integer >= 0, got ${this.maxRetained}`);
+      throw new RangeError(
+        `maxRetained must be an integer >= 0, got ${this.maxRetained}`,
+      );
     }
     if (!Number.isInteger(this.perQueueDepthCap) || this.perQueueDepthCap < 1) {
-      throw new RangeError(`perQueueDepthCap must be an integer >= 1, got ${this.perQueueDepthCap}`);
+      throw new RangeError(
+        `perQueueDepthCap must be an integer >= 1, got ${this.perQueueDepthCap}`,
+      );
     }
     if (!Number.isFinite(this.retainTtlMs) || this.retainTtlMs < 0) {
-      throw new RangeError(`retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`);
+      throw new RangeError(
+        `retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`,
+      );
     }
     // The per-boot ceiling must admit at least the result cache, or a full cache
     // would wedge the daemon at capacity with no room for tombstones.
@@ -127,13 +170,30 @@ export class CommandQueue {
   }
 
   async submit(command: BrowserCommand): Promise<BrowserCommandOutcome> {
+    // A STOP DOES NOT WAIT ITS TURN. Everything else here is ordered against
+    // the tab's other work; a cancellation is ordered against the very command
+    // it cancels, and putting it behind that command in the FIFO means it can
+    // only ever arrive after the thing it was meant to stop has finished. For a
+    // page tool that hangs — the case Stop exists for — the queue would hold
+    // the cancellation for the whole timeout while the page kept working.
+    //
+    // Safe to take out of order because a cancellation is not an action on the
+    // page: it names an invocation, it is idempotent, and a cancellation for
+    // one that already finished (or never existed) is a no-op. The lease gate
+    // upstream has already run, so this bypasses ordering only, not permission.
+    if (isOutOfBand(command)) return this.runOutOfBand(command);
+    // Reads run on the FIFO like anything else — ordering still matters, and
+    // the depth cap still applies — but they are never tracked by id, so they
+    // spend no part of the per-boot budget. See `isReplayable`.
+    if (isReplayable(command)) return this.runUntracked(command);
+
     const existing = this.lookup(command.commandId);
     if (existing) {
       // Rules 2 & 3: de-duplicate to the one execution. The running promise is
       // pre-normalized, so awaiting it here can never reject.
       const result =
         existing.state === "running" ? await existing.promise : existing.result;
-      return { status: "ok", result, bootId: this.bootId };
+      return { status: "ok", result, bootId: this.bootId, deduped: true };
     }
 
     // Rule 4: a commandId we retained a result for and then evicted is NOT safe
@@ -169,7 +229,10 @@ export class CommandQueue {
     // resolves to a normalized result and NEVER rejects, so an executor throw
     // yields the same `{ok:false}` outcome for everyone (rule 2).
     const normalized = raw.then((r) => r, normalizeError);
-    this.commands.set(command.commandId, { state: "running", promise: normalized });
+    this.commands.set(command.commandId, {
+      state: "running",
+      promise: normalized,
+    });
 
     let result: BrowserCommandResult;
     try {
@@ -180,6 +243,51 @@ export class CommandQueue {
     }
 
     this.settle(command.commandId, result);
+    return { status: "ok", result, bootId: this.bootId };
+  }
+
+  /**
+   * Run a command without claiming its id: no result cache, no tombstone, no
+   * charge against the per-boot ceiling. Still queued and still depth-capped,
+   * so it cannot stampede the browser.
+   */
+  private async runUntracked(
+    command: BrowserCommand,
+  ): Promise<BrowserCommandOutcome> {
+    const key = queueKeyFor(command);
+    if ((this.depth.get(key) ?? 0) >= this.perQueueDepthCap) {
+      return { status: "busy", bootId: this.bootId };
+    }
+    this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
+    const prior = this.tails.get(key) ?? Promise.resolve();
+    const raw = prior.catch(() => undefined).then(() => this.executor(command));
+    this.tails.set(key, raw);
+    try {
+      const result = await raw.then((r) => r, normalizeError);
+      return { status: "ok", result, bootId: this.bootId };
+    } finally {
+      this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
+      if (this.tails.get(key) === raw) this.tails.delete(key);
+    }
+  }
+
+  /**
+   * Run a command NOW, off the tab's FIFO entirely.
+   *
+   * Not depth-capped either, and deliberately: the depth cap exists to stop a
+   * caller stampeding the browser with work, and this lane carries only
+   * cancellations — refusing one because the tab is busy would refuse it in
+   * exactly the situation it is for. Untracked, like a read: a cancellation is
+   * idempotent, so a retry replaying it costs nothing and a tombstone would buy
+   * nothing.
+   */
+  private async runOutOfBand(
+    command: BrowserCommand,
+  ): Promise<BrowserCommandOutcome> {
+    const result = await this.executor(command).then(
+      (value) => value,
+      normalizeError,
+    );
     return { status: "ok", result, bootId: this.bootId };
   }
 

@@ -2,7 +2,8 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { useHost } from "@/hooks/useClients";
+import { useHost, useHostList } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 import { useProjectServers, type RemoteServer } from "@/hooks/useProjects";
 import {
   useEnvironmentPreview,
@@ -107,20 +108,30 @@ export function EnvironmentCanvasPanel({
     revision
   );
   const { host, isLoading: hostLoading } = useHost({ isAuthenticated, hostId });
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId,
+    includePrivateBacking: true,
+  });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
 
   const viewModel = useMemo(() => {
     if (!preview || !host) return null;
+    const listedHost = hosts.find((item) => item.hostId === hostId);
     return buildRedesignedHostCanvas(
       buildEnvironmentCanvasContext({
-        hostName: host.name ?? preview.host.hostName ?? "",
+        hostName:
+          (listedHost ? clientDisplayName(listedHost) : null) ??
+          host.name ??
+          preview.host.hostName ??
+          "",
         hostConfig: host.config ?? null,
         previewServers: preview.servers,
         projectServers: servers,
       }),
       []
     );
-  }, [preview, host, servers]);
+  }, [preview, host, hosts, hostId, servers]);
 
   // Stable across renders: the canvas memoizes its matrix context on
   // `onRequestEdit`, so a fresh closure would re-render the matrix subtree

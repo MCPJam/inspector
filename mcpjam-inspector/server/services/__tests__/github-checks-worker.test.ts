@@ -8,6 +8,7 @@ import {
   vi,
 } from "vitest";
 import {
+  awaitJudgeVerdict,
   describeCheckFailure,
   effectiveRunResult,
   executeClaimedCheck,
@@ -388,12 +389,7 @@ describe("executeClaimedCheck — happy path", () => {
     );
   });
 
-  it("targets the run at THIS check's server and refreshes the suite snapshot", async () => {
-    // `serverIds` alone is not enough: it never reaches the run-start mutation,
-    // so the run's configSnapshot.environment comes from the suite's persisted
-    // environment — which names the PREVIOUS check's deleted server unless the
-    // snapshot is refreshed. Without this the runner fails on a dead reference
-    // instead of testing the PR.
+  it("passes this check's temporary server identity to the suite runner", async () => {
     const prepared: Array<Record<string, unknown>> = [];
     const h = harness({
       runEvalSuite: async (args) => {
@@ -403,10 +399,6 @@ describe("executeClaimedCheck — happy path", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
 
-    // The suite-snapshot refresh itself lives in `defaultRunEvalSuite`, which
-    // needs a live Convex + connected manager and is covered by the end-to-end
-    // pass; what is checkable here is that the run is handed THIS check's
-    // freshly-created server rather than anything the suite has stored.
     expect(prepared[0]).toMatchObject({
       serverId: "server-1",
       serverName: "gh-check-trig-1",
@@ -943,10 +935,151 @@ describe("describeCheckFailure", () => {
     });
   });
 
+  it("names the org spend budget from either canonical marker", () => {
+    expect(
+      describeCheckFailure(new Error("spend_budget_reached"))
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
+    expect(
+      describeCheckFailure(
+        new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}')
+      )
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
+    // A build error that merely mentions a budget keeps its own message.
+    expect(
+      describeCheckFailure(new Error("build failed: budget.ts not found"))
+    ).toMatchObject({ failureReason: "build failed: budget.ts not found" });
+  });
+
   it("bounds the failure reason", () => {
     expect(
       describeCheckFailure(new Error("x".repeat(1_000))).failureReason.length
     ).toBe(200);
+  });
+});
+
+/**
+ * B10e — a run HELD for its gating judge.
+ *
+ * The property this whole section buys: a gating run is NEVER neutral while
+ * its judge is still within its deadline, and NEVER red without a verdict.
+ * The first half is `awaitJudgeVerdict` waiting; the second half is
+ * `runReachedAVerdict` refusing `grading`, which is what makes a wait that
+ * runs out land `infra_error` rather than a red X on a PR nobody graded.
+ */
+describe("a run held for its gating judge", () => {
+  it("is not a verdict, and has no effective result", () => {
+    // Unchanged, and that is the assertion. Only `completed` carries a
+    // verdict; a held run's `result` is the backend's `pending`, and calling
+    // it decided would put a red X on a PR whose judge has not answered.
+    expect(runReachedAVerdict("grading")).toBe(false);
+    expect(effectiveRunResult({ status: "grading" })).toBeUndefined();
+  });
+
+  describe("awaitJudgeVerdict", () => {
+    function client(rows: Array<Record<string, unknown> | Error>) {
+      let call = 0;
+      const query = vi.fn(async () => {
+        const row = rows[Math.min(call, rows.length - 1)];
+        call += 1;
+        if (row instanceof Error) throw row;
+        return row;
+      });
+      return { query };
+    }
+
+    function clock() {
+      let time = 0;
+      const sleeps: number[] = [];
+      return {
+        now: () => time,
+        sleep: async (ms: number) => {
+          sleeps.push(ms);
+          time += ms;
+        },
+        sleeps,
+      };
+    }
+
+    it("polls until the run leaves grading, then returns it", async () => {
+      const c = client([
+        { status: "grading" },
+        { status: "grading" },
+        { status: "completed", result: "passed" },
+      ]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      expect(run).toMatchObject({ status: "completed", result: "passed" });
+      expect(c.query).toHaveBeenCalledTimes(3);
+      expect(time.sleeps).toEqual([1_000, 1_000]);
+    });
+
+    it("returns the held row when the wait runs out — it decides nothing", async () => {
+      const c = client([{ status: "grading" }]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 2_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      // Still `grading`, which `runReachedAVerdict` refuses — so the caller
+      // throws and the check lands neutral rather than red.
+      expect(run).toMatchObject({ status: "grading" });
+      expect(runReachedAVerdict(run?.status)).toBe(false);
+    });
+
+    it("stops the moment the claim stops being ours", async () => {
+      const c = client([{ status: "grading" }]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+        isLeaseHeld: () => false,
+      });
+      expect(run).toMatchObject({ status: "grading" });
+      // One read, no waiting: there is no point spending half an hour on a
+      // check somebody else has already concluded.
+      expect(c.query).toHaveBeenCalledTimes(1);
+      expect(time.sleeps).toEqual([]);
+    });
+
+    it("does not poll a run that was never held", async () => {
+      const c = client([{ status: "completed", result: "passed" }]);
+      const time = clock();
+      await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      expect(c.query).toHaveBeenCalledTimes(1);
+      expect(time.sleeps).toEqual([]);
+    });
+
+    it("retries a read that throws rather than concluding from it", async () => {
+      // A transient Convex blip during a 31-minute wait is not evidence about
+      // the run.
+      const c = client([
+        { status: "grading" },
+        new Error("convex unavailable"),
+        { status: "completed", result: "failed" },
+      ]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      expect(run).toMatchObject({ status: "completed", result: "failed" });
+    });
   });
 });
 
@@ -1195,11 +1328,8 @@ describe("startGithubChecksWorker loop", () => {
 });
 
 describe("verifyRunSnapshot", () => {
-  // The dedicated suite is shared and `refreshSnapshot` rewrites its environment
-  // before the run freezes it, so two concurrent checks can interleave and one can
-  // end up evaluating the other's server. This cannot prevent that; it decides when
-  // the theft is PROVEN, and when we simply could not look — a verdict about
-  // somebody else's PR being worse than no verdict.
+  // The run-only environment override prevents the former shared-suite rewrite
+  // race. This remains a final defense against a malformed or regressed snapshot.
   const clientWith = (snapshot: unknown) =>
     ({
       query: async () => ({ configSnapshot: { environment: snapshot } }),

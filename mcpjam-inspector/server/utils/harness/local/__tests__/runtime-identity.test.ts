@@ -231,12 +231,20 @@ describe("managed bundles", () => {
     });
   });
 
-  it("cannot resolve a platform the shipped manifest has no pack digest for", async () => {
-    // The shipped manifest carries no digests until the pack build runs, so it
-    // cannot enable a runtime by accident even if a bundle directory exists.
-    await writeBundle("claude-code", { "bridge.mjs": "x" });
+  it("cannot resolve a target the manifest has no pack digest for", async () => {
+    // A target with no digest refuses rather than accepting whatever bundle
+    // directory happens to be on disk — there would be nothing to check it
+    // against. Asserted against a manifest with the digests removed, because
+    // the property is the manifest's and not the repository's: this used to
+    // pass `LOCAL_HARNESS_MANIFEST` and lean on the SHIPPED table being empty,
+    // which stopped being true the moment the pack digests were committed.
+    const root = await writeBundle("no-digest", { "bridge.mjs": "x" });
+    const withDigests = manifestFor("no-digest", await computeTreeDigest(root));
     const result = await resolveManagedBundle({
-      manifest: LOCAL_HARNESS_MANIFEST["claude-code"],
+      manifest: {
+        ...withDigests,
+        runtime: { ...withDigests.runtime, bundleDigest: {} },
+      } as LocalHarnessCompatibility,
       runtimeRoot,
       platform: "linux",
     });

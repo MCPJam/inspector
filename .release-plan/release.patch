@@ -1,155 +1,581 @@
-diff --git a/.changeset/drop-suite-stage-funnel.md b/.changeset/drop-suite-stage-funnel.md
+diff --git a/.changeset/bb-133-guest-credit-wall.md b/.changeset/bb-133-guest-credit-wall.md
 deleted file mode 100644
-index 099acb0ae..000000000
---- a/.changeset/drop-suite-stage-funnel.md
+index 9d75eee35..000000000
+--- a/.changeset/bb-133-guest-credit-wall.md
 +++ /dev/null
-@@ -1,15 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--The suite page stops opening with an aggregate
--
--The first thing labelled "user value chain" on the suite page was a funnel — a population statistic, sitting above the run history. It was the wrong introduction to the idea. The chain a reader arrives asking about is one request's journey, and the aggregate answers a different, later question.
--
--It also read badly on real runs. On a three-trial suite it showed six green stages over "2 of 3 trials", the excluded one being precisely the trial that broke; on a ten-trial suite it showed `call` and `response` as `applicable=0`, which looks like a gap and only means those cases assert nothing there. The page's most prominent claim was its least reliable.
--
--The per-trial chain now answers "why did this not deliver value", on the run page, the trace pane and the case table. The run-level document still renders on the run page behind its existing flag, where it reads as the follow-up it is.
--
--Removed with the mount: `StageAnalyticsPanel`, `useEvalSuiteStageAnalytics`, `fetchEvalSuiteStageAnalytics` and the panel-state model — the suite-scoped reader had exactly one consumer, and dead code with passing tests is what drifts. `RunDocument`, `RateCell` and `useStageFindings` all stay; the run page uses them.
--
--**Two test files were re-aimed rather than deleted.** The findings tests ran through the panel, and the API tests covered only the suite listing — but their claims were never about which resource was fetched. The findings ones now assert against `RunDocument` + `StageFindingsCard`, the composition the run page actually builds; the API ones now cover `fetchEvalRunStageAnalytics`, which had no wrapper-level coverage at all (its hook test mocks the wrapper). Deleting them would have quietly dropped the guarantees they exist for: auth has one owner, the payload is validated not trusted, identity is bound, and the four failure kinds stay four.
-diff --git a/.changeset/environment-secret-selection-sdk.md b/.changeset/environment-secret-selection-sdk.md
+-Add a benefit-led A/B variant of the guest credit-limit modal (BB-133). Behind the PostHog flag `guest-credit-wall-copy`, the treatment replaces the single "Sign in" wall with a headline, value copy, a hero illustration, and two CTAs — "Create free account" (sign-up) and "See paid plans" (pricing page). The `plan_limit_*` events now carry a `variant` tag so sign-in vs create-account conversion can be compared across control and treatment. Defaults to the existing control modal when the flag is off.
+diff --git a/.changeset/connection-error-toast-copy.md b/.changeset/connection-error-toast-copy.md
 deleted file mode 100644
-index dbb5edcca..000000000
---- a/.changeset/environment-secret-selection-sdk.md
+index 04df2ffc0..000000000
+--- a/.changeset/connection-error-toast-copy.md
 +++ /dev/null
-@@ -1,21 +0,0 @@
+@@ -1,35 +0,0 @@
 ----
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
+-"@mcpjam/inspector": patch
 ----
 -
--An environment's secret grant is reachable from the SDK, CLI and MCP again
+-A failed connection reads as a title and a failure, and copies as both
 -
--`secretSelection` is how a project secret is granted to the runs an environment launches. The API takes it on create and on update, the `/api/v1` route takes it on both, and `PlatformEnvironmentCreateBody` / `PlatformEnvironmentUpdateBody` have always declared it — but the two operation schemas in `platform/operations.ts` never did, so the only surfaces an agent or a script can use dropped it on the floor.
+-The toast said `Excalidraw (App): Request failed (500)` — the server and the
+-failure spliced into one run-on line by a colon, with sonner's error icon
+-aligned against the middle of it rather than a title. It now uses the two
+-fields sonner renders: the server name as the title, the failure as the muted
+-description below it. The single-line form is kept for the message that already
+-names the server, where a title would print the name twice.
 -
--Both halves were silent in the way that costs the most time:
+-One failure also produced two differently-worded toasts. `ServerDetailModal`,
+-`ServerConnectionCard` and `RecommendedServers` each caught the throw and built
+-their own sentence around it ("Failed to connect to X: …") while the connection
+-layer was already reporting the same failure in its own words. All three now
+-raise it through one helper, so the wording matches wherever it comes from. The
+-duplicate report itself is untouched and still open.
 -
--- **Create** parses through a `z.object`, which STRIPS what it does not declare. A create carrying a grant returned 201 with `secretSelection: null` and no error anywhere — the environment simply had no credentials, and the failure surfaced much later as a run refusing to start for want of a secret that had apparently been attached.
--- **Update** validated fine, but the at-least-one-field `.refine` did not list the field, so a PATCH changing ONLY the grant was rejected client-side with a message that enumerated eight other fields and not the one the caller had passed.
+-The error toast's copy button copied only the line it sits on, which after the
+-split is a server name and nothing else. It now takes the description with it.
 -
--Together those meant a secret could be attached by neither path: not on create, and not afterwards. The route's own comment says as much about what unclearable would cost — "an environment's credential grant can only ever grow, and revoking it would require deleting the environment" — and that was the state the SDK was in.
+-Error-toast action buttons no longer claim a full centered row of their own.
+-The Toaster forced that because a sentence-long CTA squeezed the message beside
+-it, but it also stranded short labels — "Retry", "Reconnect" — under a one-line
+-error at four times their width. The toast content grows instead, so the label
+-decides: a short button rides the title row at the trailing edge, and one that
+-no longer fits wraps to its own line.
 -
--The field now rides a single shared `secretSelectionInput` used by both operations, matching how `skillSelection` and `pluginVersionIds` are already shared, with the same tri-state on update: omit to leave unchanged, `null` to REVOKE, a value to replace. `secretIds: []` is rejected rather than read as "remove every credential" — that is what `null` is for.
--
--The CLI's `--file`/`--json` help on `environments create` and `environments update` listed every other body field but this one; it lists it now.
--
--Not changed: `ensure_adhoc_environment` and the run operations' `compose` still have no secrets axis, though the route accepts one. A composed stack cannot carry a grant, so a run that needs a credential still needs a named environment.
-diff --git a/.changeset/uvc-iteration-chain-read.md b/.changeset/uvc-iteration-chain-read.md
+-Two layout fixes come with it. The toast aligns its icon and action to the
+-first line rather than the middle of a paragraph, and a paragraph no longer
+-forces its own row and strands the icon alone above it. And the copy button no
+-longer overflows the message box it sits in: at 20px against a 19.5px line it
+-raised a native scrollbar — arrows and all — over a one-line error.
+diff --git a/.changeset/error-cards-copy-and-select.md b/.changeset/error-cards-copy-and-select.md
 deleted file mode 100644
-index f3712cedd..000000000
---- a/.changeset/uvc-iteration-chain-read.md
+index 3a6432ee4..000000000
+--- a/.changeset/error-cards-copy-and-select.md
 +++ /dev/null
 @@ -1,20 +0,0 @@
 ----
+-"@mcpjam/inspector": patch
+----
+-
+-Error cards can be copied, and their text selected
+-
+-Highlighting the text on an error card was impossible wherever the card sits in
+-a surface that owns the drag gesture. On the servers grid, dnd-kit spreads its
+-sortable listeners over the whole card, and once the 8px activation distance is
+-crossed the sensor wipes the selection on every `selectionchange` — dragging
+-across the message reordered the card instead of selecting a word of it. In the
+-OAuth flow the card renders inside a ReactFlow node, and `.react-flow__node`
+-sets `user-select: none`, so there was nothing to drag for in the first place.
+-
+-The card now stops the pointerdown from reaching those surfaces and carries
+-`select-text nodrag nopan`. A Copy button beside "Show details" puts the whole
+-failure on the clipboard as plain text — title, one-liner, likely causes, next
+-steps, raw error and cause — including the details while they are still
+-collapsed, since expanding them first to copy them defeats the point. A
+-clipboard that refuses the write says "Copy failed" instead of claiming success.
+diff --git a/.changeset/grader-stage-contract-map.md b/.changeset/grader-stage-contract-map.md
+deleted file mode 100644
+index 2ac4aa73f..000000000
+--- a/.changeset/grader-stage-contract-map.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-The contract now says which stage of the chain each grader measures
+-
+-The six-stage user-value chain has always been able to answer "where did this run stop being good?" for a single trial. What nothing could answer was the same question about a suite's SETTINGS: given this configuration, which stages does it actually measure, and which does it leave unchecked? The routing existed, but it lived inside the stage analyzer, reachable only by running a trial through it.
+-
+-`PREDICATE_STAGE`, `GRADER_STAGE` and `PREDICATE_KINDS` export that routing directly, so a settings surface can group graders by what they measure instead of by how they happen to be implemented.
+-
+-- **The analyzer's own routing is now derived from the map, not restated beside it.** That is the point of the change rather than a tidy-up. Two hand-kept copies of the same fact are one edit away from a suite that renders a grader under "selection" while the analyzer files its failures under "user value" — a disagreement neither copy is wrong enough to fail a test for. A new test asserts the analyzer routes exactly the three predicate kinds it routed before, so the derivation cannot quietly widen or narrow.
+-- **`PREDICATE_KINDS` is derived from the authoring schema.** A hand-written list is a list that misses the next predicate someone adds, and a predicate missing from the map is a grader a settings page cannot place — which renders as a stage that looks unmeasured when it is not. Totality is tested in both directions.
+-- **`toolCalledWith` is mapped to `selection` and is still matcher-graded.** The map records what an author was measuring; the analyzer still routes the kind through `expectedToolCalls`, because re-reading its point-in-time predicate row would let a raw residual contradict the adjudicated verdict. `isSelectionStagePredicateKind` (the map's question) and `isSelectionPredicateKind` (the analyzer's) deliberately disagree on this one kind, and a test pins that.
+-- **`GRADER_PRESENTATION_GROUP` carries no analytical weight.** Token and turn ceilings read better beside each other than beside "did the answer contain the right thing", but they are still filed where the analyzer files them. A test pins that the grouping never redefines a stage.
+-
+-`STAGE_ANALYZER_VERSION` stays at 8. Nothing about where a failure is attributed has changed, so this is a refactor rather than a re-derivation. The docblock names the kinds that are future bump candidates — `noToolErrors` toward `call` or `response`, the three `widget*` kinds toward `response` — so that moving one is a deliberate versioned change rather than a fix someone applies to the table in isolation.
+diff --git a/.changeset/local-harness-pack-signing-key.md b/.changeset/local-harness-pack-signing-key.md
+deleted file mode 100644
+index 22b85c066..000000000
+--- a/.changeset/local-harness-pack-signing-key.md
++++ /dev/null
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Trust the local-harness runtime pack release key. `PACK_SIGNING_KEYS` shipped
+-empty, which refused every network-sourced pack — the correct default before a
+-key existed, and a hard blocker on publishing packs at all. The public half of
+-the Ed25519 release key is now committed; the private half lives only in CI.
+diff --git a/.changeset/local-inspector-reaches-private-networks.md b/.changeset/local-inspector-reaches-private-networks.md
+deleted file mode 100644
+index e67c9434a..000000000
+--- a/.changeset/local-inspector-reaches-private-networks.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/inspector": patch
+----
+-
+-The local inspector reaches OAuth servers on your own network
+-
+-Testing a fully local OAuth setup failed with `OAuth proxy target resolves to
+-a private/reserved IP address (127.0.0.1)` whenever the authorization server
+-had a hostname of its own — `auth.local`, or anything else answering
+-loopback. The address guard could not tell a developer's laptop from our
+-hosted infrastructure, so it applied the policy written for the second to
+-both, and the official MCP Inspector, which has no guard at all, worked where
+-we did not.
+-
+-**What changed.** The guard now distinguishes two questions instead of
+-answering one. "Is this private?" still governs the hosted app, which fetches
+-from our nodes where a private address means our own network. "Is this ever
+-dialable?" governs the local inspector and the CLI, and refuses only what is
+-never a real OAuth endpoint: link-local and every cloud metadata service,
+-including the two that hide inside ranges corporate networks legitimately use
+-(Alibaba's inside CGNAT, AWS's inside the unique-local range), plus the
+-unspecified address, multicast and reserved space.
+-
+-So `npx @mcpjam/inspector` and `mcpjam oauth …` now reach loopback, LAN,
+-CGNAT and unique-local targets, and hostnames that resolve to them, with no
+-flag to set. The hosted app is unchanged. The CLI's three OAuth proxy
+-commands, which hardcoded the hosted policy and could not be talked out of
+-it, gain `--https-only` for reproducing what the hosted app would do.
+-
+-**For SDK consumers.** `allowPrivateNetwork` (and `allowPrivateMetadataFetch`
+-on the state-machine surfaces) is additive and defaults to false, so existing
+-callers keep today's behaviour without changing a line, and `httpsOnly` still
+-overrides it. The one visible difference for an unchanged caller is wording:
+-a link-local or metadata destination now says so, instead of being reported
+-as "private/reserved".
+-
+-**What is still refused locally.** The allowance belongs to the chain, and
+-the chain's character is decided by where its first hop actually landed
+-rather than by how the hostname looked — a name that looks public and answers
+-`127.0.0.1` is the case this exists to serve, so a name-based test would
+-refuse the thing it permits. A public server that answers `302 Location:
+-http://192.168.1.1/…` therefore cannot make your inspector fetch it. DNS is
+-still resolved once and pinned into the socket, so rebinding is closed, and
+-cross-origin redirects still drop credentials.
+diff --git a/.changeset/modern-cancellation-aborts-the-stream.md b/.changeset/modern-cancellation-aborts-the-stream.md
+deleted file mode 100644
+index 6ded1ba2f..000000000
+--- a/.changeset/modern-cancellation-aborts-the-stream.md
++++ /dev/null
+@@ -1,43 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Modern-era cancellation aborts the per-request stream instead of POSTing `notifications/cancelled`
+-
+-MCP `2026-07-28` moved cancellation onto the transport for Streamable HTTP:
+-
+-> Closing the SSE response stream is the cancellation signal. The server MUST treat a client disconnect as cancellation of that request. No `notifications/cancelled` message is required or expected.
+-
+-The client package already forks on exactly this. Its protocol layer aborts the
+-per-request stream when the negotiated era is modern **and** the transport
+-reports `hasPerRequestStream === true`, and only falls back to POSTing
+-`notifications/cancelled` — the 2025-era and stdio signal — when it does not.
+-`StreamableHTTPClientTransport` sets the flag; the fork was never reaching it.
+-
+-Every transport we hand to a client is wrapped first, and the wrappers forwarded
+-`sessionId` and `setProtocolVersion` but not `hasPerRequestStream`. The flag read
+-`undefined`, so the fork took the legacy branch on *every* connection. This was
+-not limited to debug configurations: `wrapTransportForTaskResults` is applied
+-unconditionally at every HTTP transport site, so a plain 2026-07-28 connection
+-with no logger and no simulated-client options was already downgraded.
+-
+-Both halves of the resulting behavior were wrong. We sent a `notifications/cancelled`
+-a modern server neither requires nor expects, and — because that notification is
+-its own POST while the cancelled call is a *different* in-flight request — the
+-server holding the tool call never learned anything. It kept running the tool
+-until it finished, on a stateless transport where the abandoned response stream
+-was the only signal that would have reached it.
+-
+-All five wrappers now forward the flag: the four in `transport-utils`
+-(`LoggingTransport`, `DroppedListChangedTransport`, `TaskResultTransport`,
+-`FirstPageOnlyTransport`) and the widget runtime's `LoggingTransport`. It is
+-forwarded, never defaulted — a wrapper around a stdio transport must keep
+-reporting no per-request stream, because there the notification IS the spec
+-signal.
+-
+-The suite already had a test asserting no `notifications/cancelled` on a modern
+-abort, and it passed throughout. The legacy branch POSTs fire-and-forget, so
+-asserting the instant the call rejects reads `exchanges` before the notification
+-lands. The test now waits for that window to settle and additionally asserts the
+-positive half — that the aborted `tools/call` exchange actually terminates, which
+-a client that only rejects locally never does.
+diff --git a/.changeset/pass-criteria-enter-commits-once.md b/.changeset/pass-criteria-enter-commits-once.md
+deleted file mode 100644
+index 3fc882bbd..000000000
+--- a/.changeset/pass-criteria-enter-commits-once.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Pressing Enter in the accuracy field reports one edit, not two
+-
+-Enter leaves the field by blurring it, and blurring is what commits — so
+-committing before the blur as well filed the same edit twice. The test that
+-covered Enter only checked the value it reported, which is why the duplicate
+-went unnoticed; it now pins the call count too.
+diff --git a/.changeset/retire-client-verdict-rederivation.md b/.changeset/retire-client-verdict-rederivation.md
+deleted file mode 100644
+index ed37123af..000000000
+--- a/.changeset/retire-client-verdict-rederivation.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Stop re-grading eval iterations in the browser.
+-
+-The run-detail view used to re-run the tool-call matcher over an iteration's
+-`actualToolCalls` and compute its own pass/fail — a second grader, in a second
+-implementation, over evidence the server had already graded. It only deferred
+-to the stored verdict when `resultSource` was exactly `"reported"`; a `derived`
+-row was re-derived client-side every time.
+-
+-A stored terminal `result` is now the only source for a row that has one.
+-
+-This matters more than it used to. Under the versioned score contract at
+-grading mode `enforce`, an iteration's verdict comes from its gating score rows
+-— predicates, gates, tool errors, the whole set — and the browser can see none
+-of that. It sees the tool calls. Re-deriving from them is not a check on the
+-server; it is a different answer to the same question, reached with less
+-information, and the two silently disagreeing is exactly the failure this
+-removes.
+-
+-The matcher itself is untouched and still runs where there is nothing stored to
+-defer to: legacy rows that never persisted a result (falling back to "failed"
+-would silently re-grade years of history), and the live-grading preview, whose
+-synthetic per-turn rows were never persisted at all. What retires is the
+-unverified re-derivation of an iteration that has already been graded — not the
+-matcher, and not the evaluation.
+-
+-This one is not behind a flag. Restoring the old behaviour means reverting this
+-change.
+diff --git a/.changeset/suite-settings-draft-and-commit.md b/.changeset/suite-settings-draft-and-commit.md
+deleted file mode 100644
+index 11699729e..000000000
+--- a/.changeset/suite-settings-draft-and-commit.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Eval suite settings are a draft you save, not a form that saves as you read it
+-
+-Every control in the settings sheet used to write the moment you touched it. A dropdown, a toggle, a text field: each fired its own mutation and its own toast. Three things followed, and all three were reported rather than predicted.
+-
+-- **There was no way to not save.** No Cancel, because there was nothing uncommitted to cancel. Opening the sheet to check a setting meant risking changing it, and the only way to find out whether you had was to close it and look again.
+-- **There was no unit of change.** Adjusting four related settings produced four writes and four toasts, none of which was the change you made. Anyone reading the suite later saw four unrelated events.
+-- **Two people editing one suite silently overwrote each other.** Each write succeeded, last one won, and neither person was told.
+-
+-The sheet now holds a draft. Edits accumulate, a bar appears with a count, and Review and save shows what will change — before and after, per setting — with an optional note that lands on the suite's revision so the next reader gets a reason instead of a diff to interpret. ⌘S opens the review rather than saving, because in a sheet with a review step the honest response to "commit what I did" is to show you what that is.
+-
+-- **One write, carrying only what changed.** A save that resent every field would clobber a colleague's edit to a row you never opened. The clearing semantics each control had are preserved exactly — the backend distinguishes an omitted field from a cleared one, and getting that wrong means a setting you cleared is still there on reload.
+-- **A concurrent save is refused, and your draft survives.** The save carries the revision you loaded. If someone saved first, the sheet keeps your edits, marks the settings you both changed, and asks you to look — rather than discarding your work, which is the outcome the check exists to prevent.
+-- **Renaming moved into the sheet.** It was an inline header edit that committed on blur, so a stray click saved a half-typed name to a suite other people watch.
+-- **Leaving with unsaved changes now asks.** In-app navigation and closing the tab are separately handled, because either alone leaves a whole class of exits silent.
+-
+-The debounced default-checks committer is gone, along with the pass-criteria localStorage mirror. Both were machinery for saving on every keystroke — a debounce that had to serialize its own writes so an out-of-order response could not persist stale text, and a local mirror so a value the server had not accepted yet survived a reload. Neither has anything to do now.
+-
+-Environments, the schedule and client attachments still save immediately and say so in their hint. Each has cross-field validation a batched save would have to re-implement, and re-implementing a validation is how the two copies come to disagree.
+-
+-On a deployment whose backend predates the composite save, the sheet detects the missing function once and falls back to the previous mutation. Everything still batches into one write; only the revision history is absent.
+diff --git a/.changeset/suite-settings-draft-follow-ups.md b/.changeset/suite-settings-draft-follow-ups.md
+deleted file mode 100644
+index 105a294e7..000000000
+--- a/.changeset/suite-settings-draft-follow-ups.md
++++ /dev/null
+@@ -1,47 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A settings draft belongs to one suite, and its concurrency check now runs
+-
+-Five follow-ups from review of the draft-and-commit sheet. The first two are
+-the ones that mattered.
+-
+-**Unsaved edits followed you to another suite.** The draft lived in a
+-component that is not remounted between suites, and the effect that used to
+-reset it per suite went away with the per-control writers. Rebasing keeps
+-every key the person edited — that is the whole point of it — so opening
+-suite A, typing a name, confirming "leave without saving" and clicking suite
+-B left A's name proposed as an unsaved change on B, and saving wrote it
+-there. A draft now carries the suite it belongs to, and a rebase across
+-identities starts a new one instead of reconciling.
+-
+-**Confirming the prompt now actually discards.** The guard only paused the
+-navigation; nothing threw the draft away, so the edits survived, every later
+-navigation re-prompted, and ⌘S opened the review dialog from pages that have
+-no settings sheet.
+-
+-**A conflict marker survived only until the next unrelated change.**
+-Conflicts were recomputed from the new base each time, so a colleague
+-renaming the suite cleared the warning about the threshold you had both
+-changed, and the next save overwrote theirs silently. A conflict is now
+-resolved by the person, by editing the key or discarding.
+-
+-**Renaming had two writers.** The header's inline editor still committed on
+-blur — no review, no note, no precondition — while the sheet drafted the
+-same field. Using it marked the sheet as "changed elsewhere" for the
+-person's own action, and the next save overwrote the rename. The header
+-title is read-only in the sheet; the overview keeps its own editor.
+-
+-**The accuracy input kept showing a discarded number.** It held its own text
+-state and never followed the prop, so Discard reverted the draft while the
+-field still displayed the old value — a settings control saying one thing
+-while a different thing gets saved.
+-
+-Also: pass criteria is omitted rather than sent as `null` (the mutation's
+-validator has no null member, so a clear would have failed the whole batched
+-save), an absent judge config reads as "Not configured" rather than "Off"
+-(absent resolves to an enabled advisory judge), and on a deployment without
+-the composite mutation the fallback drops fields that backend does not
+-declare and names them in the toast, rather than failing every save in the
+-draft.
+diff --git a/.changeset/suite-settings-draft-review-fixes.md b/.changeset/suite-settings-draft-review-fixes.md
+deleted file mode 100644
+index 46a114879..000000000
+--- a/.changeset/suite-settings-draft-review-fixes.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A save reports what it actually wrote, and typing survives an edit landing elsewhere
+-
+-Three follow-ups from review of the draft-and-commit settings sheet. The
+-first two lose an edit.
+-
+-**A field the save could not carry was marked saved anyway.** On a
+-deployment that predates the composite mutation, the fallback drops settings
+-the older mutation does not declare — a judge rubric today — and its toast
+-says so. But the commit still reported a clean save, so the draft rebased
+-every dirty key, including the one that never travelled. The rubric stopped
+-being an unsaved change and there was nothing left to retry. The commit now
+-names the keys it dropped and the draft keeps them dirty, which is what the
+-toast was already promising.
+-
+-**An in-flight save landed on the suite you switched to.** Rebasing a live
+-suite already ignores a result that belongs to a different suite; the
+-matching commit path did not check, so a mutation started on suite A and
+-resolved after the person opened suite B wrote A's values into B's draft.
+-Both paths now carry the suite the save was started for.
+-
+-**The accuracy field was pulled out from under someone typing.** Following
+-the prop is what stops the input from displaying a number the draft no
+-longer holds, but the guard could not tell a live edit from a settled one,
+-so a colleague's save or a discard elsewhere replaced half-typed text.
+-Typing now wins until it is committed or abandoned — and Escape genuinely
+-abandons it, where before the blur it triggered committed the value it was
+-meant to throw away.
+diff --git a/.changeset/tool-cancellation-host-knob.md b/.changeset/tool-cancellation-host-knob.md
+deleted file mode 100644
+index fbd2ae707..000000000
+--- a/.changeset/tool-cancellation-host-knob.md
++++ /dev/null
+@@ -1,90 +0,0 @@
+----
 -"@mcpjam/sdk": patch
 -"@mcpjam/inspector": patch
 ----
 -
--A passing trial can have its chain read too
+-Model tool cancellation per era: two Protocol-tab switches and two caniuse rows
 -
--D9's decision summary carries a per-trial user-value chain, and the browser already fetches it — for **non-passing trials only**. That filter lives in the contract assembler and is deliberate: diagnostics are evidence beneath a verdict, and a trial that passed is not evidence of anything going wrong. The consequence is that a reader who opens a trial that succeeded has nothing to read, and "how far did value travel here" is exactly as good a question about a passing trial as a failing one.
+-A server author has no way to answer the question that decides whether a stopped
+-turn costs them anything: **when the user hits stop, does the host tell me?** If
+-it does not, the tool runs to completion server-side — side effects, tokens and
+-all — while the host has already moved on.
 -
--The iterations resource projects the same stage columns over every row of a run, passing included — verified against production, where all ten trials of a run came back carrying six rows each. This adds the client read for it.
+-`mcpProfile.toolCallCancellation` now answers it, as
+-`{ legacy?: boolean; modern?: boolean }` — one leaf per era.
 -
--**One chain type, one validator.** The rows go through the contract's own chain assembler, now exported as `assembleEvalRunDecisionChain`, which is the same function D9's summary is built from. So the result is `EvalRunDecisionChain` — the type the decision card and the trial cards already render, with no adapter and no second shape — and the **whole derivation** is validated rather than the rows one at a time. Row-level validation accepts five rows, or six in the wrong order, and a renderer that numbers cards `01`–`06` by position would then publish a different claim about which stages were blocked, because `notReached` is derived from position. A test feeds it both shapes and pins that they come back `unverified`.
+-**Two leaves, not one boolean.** A host can be right on one era and wrong on the
+-other, and the proof is this package's own history: MCPJam sent
+-`notifications/cancelled` correctly on 2025 while never aborting the stream on
+-2026. Through the 2026 migration that split is common, and collapsing it hides
+-exactly the defect the prober exists to find. `legacy` covers every 2025 revision
+-(they are identical here; `2025-11-25` differs only in routing task-augmented
+-requests through `tasks/cancel`); `modern` covers `2026-07-28`.
 -
--**Three absences stay three facts.** A bare 404 from a router that never had the path is a deployment that does not serve iterations; an enveloped `NOT_FOUND` is a run that is not there; a row with no derivation is `absent`. Reading the first as the third would report every trial on an undeployed build as having no chain.
+-The era selects the leaf, not the transport: a 2026 stdio connection reads
+-`modern` even though its mechanism is `notifications/cancelled`. What is modeled
+-is whether the host cancels on that era's connections, not which message carries
+-it. Users never see `legacy`/`modern` — the UI and caniuse say "Tool cancellation
+-(2025)" and "(2026)".
 -
--**Keyed on the run's revision, not just terminal status.** A terminal run is not frozen — a judge landing minutes later rewrites `judgePending` into `judgeObserved`, which is a different chain for the same trial. The read keys its cache on the same revision marker the decision-summary store uses, so the two refresh together and one trial can never show two chains at once.
+-Absent per leaf is the conforming answer, so a fully cancelling client writes
+-nothing and keeps its canonical hash; only an explicit `false` is stored. The
+-field is validated by the same `canonicalBooleanCapabilityRecord` its sibling
+-`toolListChanged` already uses, on both sides of the wire.
 -
--**Silent unless asked.** Off without the caller's switch, a project id, and a finished run; with any missing it issues no request at all.
+-Both leaves travel to the connection, and the leaf that governs is resolved
+-AFTER the handshake from `getNegotiatedProtocolVersion()` — the same value the
+-UI reports — falling back to the configured pin before the handshake lands.
+-Resolving at config-build time cannot work for an unpinned (`"auto"`) host: the
+-era does not exist yet, so picking one there makes the other era's toggle
+-unreachable.
 -
--The route needed an entry in `authFetch`'s bearer allowlist, and the existing eval-chain test already pinned it in the negative list — so this is a **move**, not an addition, and the test now pins that the trace and per-iteration paths beneath it are still *not* granted. Without the entry the read ships no `Authorization` and the 401 surfaces as "could not be loaded", which reads as a backend outage while the API is fine. That has happened three times before on this surface.
-diff --git a/.changeset/uvc-per-trial-stage-cards.md b/.changeset/uvc-per-trial-stage-cards.md
+-A `false` leaf is enforced by withholding the caller's abort signal from the
+-request and racing the caller against it locally instead. The signal is the only
+-thing that reaches the wire, so withholding it withholds whichever mechanism that
+-era would have used, while the turn still ends promptly for the user. It is
+-deliberately not implemented by hiding the transport's `hasPerRequestStream`:
+-that would make a modern connection fall back to POSTing
+-`notifications/cancelled`, a message no conforming client sends on `2026-07-28`.
+-The simulated host must be silent, not wrong.
+-
+-Two fixes fall out of wiring it up:
+-
+-- `toolCallCancellation` was missing from `CONFORMANCE_PROFILE_KEYS`, so the
+-  public `HostMcp` ⇄ `mcpProfile` round-trip silently dropped it in both
+-  directions.
+-- `isMcpProfileEmpty` did not know the field, so turning an era off on a host
+-  with nothing else configured collapsed the profile and wrote nothing at all.
+-
+-**Public rows appear with their data.** caniuse.dev hides any field no published
+-host has been measured for, rather than showing a column of "Not yet tested" — a
+-question dressed as an answer. The two eras gate independently, so a 2025-only
+-measurement never publishes a 2026 row nobody has probed. No host values ship
+-here, so neither row is visible yet.
+-
+-The saved value has to reach a connection that is already up, and it does so
+-twice over:
+-
+-- **Per turn.** The chat routes (local and hosted) resolve the host config
+-  server-side on every turn and pass its cancellation record to
+-  `getToolsForAiSdk` as a per-turn override that takes precedence over the
+-  connection's connect-time copy. It is authoritative whenever a host config
+-  resolved: a host that cancels normally sends an *empty* record, not nothing,
+-  because `undefined` would fall through to the stale connection copy and a
+-  toggle switched back on would keep suppressing.
+-- **On save.** The host's connected servers are reconnected so the connection's
+-  own copy is refreshed too — the same reason the per-server protocol pin
+-  reconnects after its save. The reconnect is deferred until the app's view of
+-  the host shows the just-saved config: it builds its connection defaults from
+-  the active host's profile, and right after the mutation resolves that
+-  subscription still holds the previous config, so an immediate reconnect
+-  applied the value the user had just replaced — one save behind, every time.
+-  Narrow by construction: only when the setting actually changed, only for
+-  servers already connected, never interactive, and a failed reconnect warns
+-  rather than failing the save.
+-
+-A suppressed call also outlives the default request timeout. The protocol layer
+-runs the same cancellation on a timeout as on an abort — closing the stream on a
+-modern connection — so with the 60s timer left in place a host configured never
+-to cancel still cancelled, a minute later, which read as the knob being flaky
+-rather than off. Suppressed requests now carry a long bounded timeout instead.
+diff --git a/.changeset/tool-list-changed-reaches-hosted-connections.md b/.changeset/tool-list-changed-reaches-hosted-connections.md
 deleted file mode 100644
-index 22d11bf1e..000000000
---- a/.changeset/uvc-per-trial-stage-cards.md
+index 3d02dd916..000000000
+--- a/.changeset/tool-list-changed-reaches-hosted-connections.md
 +++ /dev/null
-@@ -1,17 +0,0 @@
+@@ -1,79 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Every failing trial now shows its own user-value chain, as cards
+-The two "Tool list changed" switches now reach the connection, hosted and local
 -
--The run-level funnel answers "how much of this run was measured, and where did it stop". The question a reader actually arrives with is narrower: **this** trial did not deliver value — how far did it get, and why. That answer already existed and was rendered as six lines of flat text inside a collapsed diagnostic row: `Connection: passed`, `Response: failed — the server reported a tool error`.
+-`mcpProfile.toolListChanged` models a host that never opens the listen channel
+-(`listens: false`) or that ignores `notifications/tools/list_changed` when it
+-arrives (`refetches: false`) — the two ways a real client can leave a server's
+-tool list stale. **Neither switch reached a connection.** Every connection
+-listened and refetched no matter how the host was configured, so the debugger
+-reported conforming behavior the host does not have.
 -
--It is now the same six numbered cards the suite page uses, reading left to right, with a "what happened" card underneath the one a reader selects. The chain opens on the stage the contract named as the first failure, so a reader lands on the break rather than hunting for it.
+-The values were computed correctly and then never handed over — at four
+-separate hand-offs, all of them silent.
 -
--**A trial is not a population, and the card row says so.** The aggregate chip counts (`failed in 2 of 3 measured`); a trial's chip states (`failed`). There are no rates on a trial's card — "100% (1/1)" over a single observation is a statistic manufactured from one trial — and no latency, which is deliberately not a field on a stage row. What a trial's card carries instead is what a trial actually has: one state, one reason, and that row's own evidence.
+-**Hosted.** `App.tsx` resolved both leaves into `hostedMcpProfilePins` and
+-stopped there, without passing them to `useApiContext`. Even had it passed
+-them, `projectServerSchema` declared neither field, so Zod would have stripped
+-them off the request body; two hops further,
+-`extractMcpInitializeOptions` did not read them and `toHttpConfig` had nowhere
+-to put them. The sibling knobs (`firstPageOnly`, `supportsMrtr`,
+-`toolCallCancellation`) travel every one of those hops; these two never did.
 -
--**The reason stays off the chip and on the detail card.** Some reason labels are whole sentences, six cards at their minimum width would wrap into unreadable columns, and — the part that matters — keeping the chip to the state word keeps the "never says passed when nothing was decided" invariant total over the five states rather than dependent on the twenty-nine-member reason vocabulary. Two reason labels contain the word "made", which that invariant's own regex matches.
+-Hosted **chat** turns were right by accident: a turn with a backing host config
+-re-derives every conformance knob server-side (`applyHostConformanceKnobs`),
+-overwriting whatever the body carried. Every other hosted surface — Tools,
+-Resources, Prompts, tasks, evals, bench, apps, export, MRTR continuation, and
+-ad-hoc chat turns with no host config — builds its connection straight from the
+-request body, and so ran as a fully conforming client.
 -
--**Which card opens is a UI choice; where the chain stopped is the contract's.** The default selection is `firstFailedStage`, read from the chain and never re-derived by scanning rows — the day a second derivation disagreed, the UI would be the one that was wrong while looking authoritative. When the contract established no failed stage at all, the card that opens is the first non-passing row carrying a reason: that is the setup-abort and policy-block shape, where every stage reads `not measured` and the single sentence explaining the trial would otherwise sit behind a click nobody knows to make.
+-**Local.** The same pair died one hop earlier and for the same reason. The
+-client put both leaves on `connectionDefaults` and `/api/mcp/connect` received
+-them, but `parseConnectionDefaults` — the shape gate that must name every field
+-it keeps — did not read them, and `toMCPServerConfig` had no field to set. A
+-local connect was as conforming as a hosted one, whatever the host asked for.
 -
--A withheld (`unverified`) or absent chain renders its existing notice and no cards. An empty six-card row would read as measured, which is exactly what those two states exist to prevent.
-diff --git a/.changeset/uvc-trial-chain-on-trace-pane.md b/.changeset/uvc-trial-chain-on-trace-pane.md
-deleted file mode 100644
-index a04e2ca20..000000000
---- a/.changeset/uvc-trial-chain-on-trace-pane.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
+-Both switches now travel the same path their siblings do on both surfaces: only
+-the non-conforming value reaches the wire, the boundary declares it, the
+-extractor or parser reads it, and it lands on the SDK config. An absent field
+-still means the conforming behavior, so a host with no `toolListChanged`
+-opinion sends nothing and behaves exactly as before.
 -
--The trace pane opens with the chain, not just the transcript
+-**The wire declaration is now written once.** Chasing this bug turned up two
+-more instances of it, both the same shape and neither about `toolListChanged`:
+-`projectServerSchema` had never declared `toolCallCancellation`, so that knob
+-was stripped on every hosted surface except chat (which extracts from the
+-pre-parse raw body) since the day it shipped; and `hostedBatchSchema` — the
+-schema every hosted **eval** body is parsed through — declared none of the
+-conformance knobs at all. Three knobs, three schemas, one failure mode: Zod
+-strips what a schema does not name, and the result is not an error but a
+-silently conforming session. The six fields now live in one exported
+-`conformanceKnobWireShape` that both schemas spread, so a new knob reaches
+-every body-built surface by being added in one place.
 -
--"View trace" lands a reader on one trial's transcript — the place they arrive when they want to know why that trial did not deliver value. The answer was not on that screen. It was back on the run page, inside a diagnostic row they had already navigated away from, and for a trial that PASSED it did not exist anywhere.
+-The hosted local-runtime **stdio** divert was dropping `toolCallCancellation`
+-for the same reason at a different hop: it forwarded the sibling knobs to
+-`resolveLocalStdioServerConfig`, which has always accepted cancellation and
+-writes it onto the child config, but the hand-off never passed it. Cancellation
+-is era-scoped, not transport-scoped, so a stdio connection has to honor it too.
 -
--The chain now sits above the transcript: six cards, opened on the break, with the "what happened" card under whichever one the reader selects. A passing trial reads as the delivery story end to end — Session connected → Tools and resources discovered → … → Request satisfied — which is the first time that story has been visible for a trial that worked.
+-`/api/web/evals/stream-test-case` needed one more fix of the same family. It is
+-the only eval route that builds its own manager instead of going through the
+-wrappers that extract the body's `mcpProfile` pins, so it accepted every pin its
+-schema declares — `clientInfo`, `supportedProtocolVersions`, the per-server
+-version map, and now the conformance knobs — and connected as though none had
+-been sent. It extracts them now, from the pre-parse raw body for the same reason
+-`xaaPolicy` there does.
 -
--**`IterationDetails` does not fetch it.** It has five hosts and knows only its iteration: not the run, not the project, not whether the Evaluate opt-in is on — and the chain read needs all three. So it takes a slot, and the one host that can answer those questions builds the node. The other four pass nothing and issue no request, which keeps a shared component free of a read four of its callers never asked for.
+-One thing this does **not** change: on the body-built surfaces a server-side
+-host config is not re-derived over the request body. Only chat turns do that
+-(`applyHostConformanceKnobs`); everywhere else the body is the source, exactly
+-as it already was for the sibling knobs.
 -
--**The hooks sit above the early return, and that placement is load-bearing.** The editor returns a loading state before its test case resolves, so a hook called below it runs on some renders and not others — React reports that as "rendered more hooks than during the previous render". A test caught exactly that, on the first draft.
--
--Selection uses the same `undefined`-is-not-`null` rule as the run page: `undefined` means "not chosen yet" and derives the default at render time, `null` means the reader closed the card. The distinction is what makes the trace pane work at all — the chain arrives *after* mount there, so a state initialized once from an empty chain would compute `null` and never auto-open the break.
--
--An absent map key means "not loaded", never "no chain": a trial the page walk has not reached renders nothing rather than a false absence.
-diff --git a/.changeset/uvc-trial-chain-table-chip.md b/.changeset/uvc-trial-chain-table-chip.md
-deleted file mode 100644
-index 3f6eefb1c..000000000
---- a/.changeset/uvc-trial-chain-table-chip.md
-+++ /dev/null
-@@ -1,17 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--A run's case table says where each trial stopped
--
--The run-scoped case view lists every trial of one case and told you, per row, whether it passed. "Failed" is the least useful true thing you can say about a trial: the reader's next question is always *where*, and answering it meant opening rows one at a time.
--
--Each row now carries a one-line summary of its chain — `broke at Tool response`, `Request satisfied`, `chain withheld` — from the same read the trace pane uses, so the whole table costs one request rather than one per row.
--
--**The table takes a lookup, not a run.** The chain is scoped by run, and only the run-scoped host of this table knows which run its rows belong to; the cross-run case view passes nothing and issues no read, because filling that column there would mean one request per run.
--
--Three shades of nothing stay distinct, which is the whole reason this is a function of the chain rather than of the row's result:
--
--- a row whose chain has not loaded renders **no chip** — an absent map key means "not loaded", never "no chain";
--- a chain the server withheld says `chain withheld`, not silence, because the rows exist and did not validate;
--- a trial with no failed stage says `Request satisfied` **only when user value actually passed**. A policy-blocked trial has no failed stage either, and calling that satisfied would claim an outcome from an absence of evidence; it reads `not measured` instead.
+-One asymmetry is deliberate. `dropToolListChanged` edits an inbound JSON-RPC
+-frame, so it is forwarded on stdio as well as HTTP; `suppressListenChannel`
+-refuses a server→client GET stream that only Streamable HTTP has, so — like
+-`mirrorToolParamHeaders` — it is not written onto a stdio config, where it
+-could never act.
 diff --git a/cli/package.json b/cli/package.json
-index 1c6efcdcf..5ba2a0a7b 100644
+index d1b3ea28f..f5f08ad10 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "5.5.0",
-+  "version": "5.5.1",
+-  "version": "5.5.2",
++  "version": "5.6.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -157,46 +583,46 @@ index 1c6efcdcf..5ba2a0a7b 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^8.5.0",
-+    "@mcpjam/sdk": "^8.5.1",
+-    "@mcpjam/sdk": "^8.5.2",
++    "@mcpjam/sdk": "^8.6.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 46ee8a20e..e21bd031a 100644
+index bbdd10137..daaaf0c8c 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.3.3",
-+  "version": "3.3.4",
+-  "version": "3.3.5",
++  "version": "3.3.6",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -136,7 +136,7 @@
+@@ -137,7 +137,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.5.0",
-+    "@mcpjam/sdk": "^8.5.1",
+-    "@mcpjam/sdk": "^8.5.2",
++    "@mcpjam/sdk": "^8.6.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 38c1e205a..03043e5ed 100644
+index fccd59c0f..f82bfc78d 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -62,9 +62,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "5.5.0",
-+      "version": "5.5.1",
+-      "version": "5.5.2",
++      "version": "5.6.0",
        "dependencies": {
--        "@mcpjam/sdk": "^8.5.0",
-+        "@mcpjam/sdk": "^8.5.1",
+-        "@mcpjam/sdk": "^8.5.2",
++        "@mcpjam/sdk": "^8.6.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
@@ -204,8 +630,8 @@ index 38c1e205a..03043e5ed 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.3.3",
-+      "version": "3.3.4",
+-      "version": "3.3.5",
++      "version": "3.3.6",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -213,29 +639,29 @@ index 38c1e205a..03043e5ed 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.5.0",
-+        "@mcpjam/sdk": "^8.5.1",
+-        "@mcpjam/sdk": "^8.5.2",
++        "@mcpjam/sdk": "^8.6.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -39240,7 +39240,7 @@
+@@ -39236,7 +39236,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.5.0",
-+      "version": "8.5.1",
+-      "version": "8.5.2",
++      "version": "8.6.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 8c6372fff..41bd3125d 100644
+index 57f8709b6..7a84b33bf 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.5.0",
-+  "version": "8.5.1",
+-  "version": "8.5.2",
++  "version": "8.6.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

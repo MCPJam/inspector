@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import {
   Loader2,
   Plus,
@@ -79,7 +80,7 @@ export function RecommendedServers({
       navigate(routePaths.servers);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to connect ${server.name}: ${message}`);
+      toastServerConnectionFailure(server.name, message);
     } finally {
       setConnectingUrl(null);
     }

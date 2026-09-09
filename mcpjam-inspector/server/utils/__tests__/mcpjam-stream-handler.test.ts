@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
-import {
-  classifyPageToolApprovals,
-  classifyUiToolApprovals,
-} from "@/shared/client-fulfilled-tools";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
+import { buildPageTools } from "../chat-v2-orchestration";
 import { serializeToolsForConvex } from "../mcpjam-tool-helpers";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 
@@ -75,6 +73,15 @@ vi.mock("../chat-helpers", async () => {
 
 vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
+}));
+
+// The handler imports exactly one function from the harness runner, and that
+// module pulls in `@ai-sdk/harness/agent` at load time. Nothing in this suite
+// runs a harness turn, so the whole file used to fail to LOAD wherever that
+// optional package is absent — which is every checkout that has not installed
+// it, and this suite is the one that pins the approval and emit invariants.
+vi.mock("../harness/run-harness-turn", () => ({
+  runHarnessTurn: vi.fn(),
 }));
 
 vi.mock("../logger", () => ({
@@ -1637,10 +1644,12 @@ describe("mcpjam-stream-handler", () => {
     } as any;
 
     it("treats a real tool named like a meta-tool as approval-required when progressive mode is off", async () => {
-      // Regression guard: `isMetaToolName` was name-only, so a real MCP
-      // server exposing a tool literally named `search_mcp_tools` would
-      // bypass approval whenever progressive mode wasn't active. With
-      // `progressivePlan` undefined the exemption MUST NOT apply.
+      // Regression guard: the meta-tool exemption was name-only, so a real MCP
+      // server exposing a tool literally named `search_mcp_tools` would bypass
+      // approval whenever progressive mode wasn't active. Approval now comes
+      // from the tool's own declaration — this one is a REAL tool built for a
+      // switch-on turn, so it asks — and the name-plus-plan check survives only
+      // as the pre-pause DRAIN filter, which must still reject it.
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
 
       await handleMCPJamFreeChatModel({
@@ -1660,7 +1669,9 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { search_mcp_tools: { _serverId: "evil" } } as any,
+        tools: {
+          search_mcp_tools: { _serverId: "evil", needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
@@ -1715,8 +1726,11 @@ describe("mcpjam-stream-handler", () => {
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
         tools: {
-          search_mcp_tools: {},
-          list_servers: { _serverId: "ops" },
+          // What `createProgressiveMetaTools` and `mcpToolOptionsFor` produce
+          // for a switch-on progressive turn: the meta-tool declares `never`,
+          // the real tool follows the switch.
+          search_mcp_tools: { needsApproval: false },
+          list_servers: { _serverId: "ops", needsApproval: true },
         } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
@@ -1764,27 +1778,16 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "observe then navigate" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        // Both are no-execute client-fulfilled entries.
-        tools: { ui_snapshot_app: {}, ui_navigate: {} } as any,
+        // Both are no-execute client-fulfilled entries carrying the
+        // declaration `buildUiTools` computed for a switch-on turn.
+        tools: {
+          ui_snapshot_app: { needsApproval: false },
+          ui_navigate: { needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_snapshot_app",
-              readOnly: true,
-              annotations: { readOnlyHint: true, destructiveHint: false },
-            },
-            {
-              name: "ui_navigate",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: false },
-            },
-          ],
-          true
-        ),
       });
 
       await lastExecution;
@@ -1826,26 +1829,16 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "run it" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_execute_tool: {}, ui_navigate: {} } as any,
+        // The `always` floor is what a destructive entry carries; `ui_navigate`
+        // is `setting`, and the switch is off.
+        tools: {
+          ui_execute_tool: { needsApproval: true },
+          ui_navigate: { needsApproval: false },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-            {
-              name: "ui_navigate",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: false },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
@@ -1858,8 +1851,9 @@ describe("mcpjam-stream-handler", () => {
     });
 
     it("does not emit approval requests for real MCP tools when the flag is OFF", async () => {
-      // The UI classification must not leak into real-tool policy: unknown
-      // names still follow `requireToolApproval`.
+      // A real MCP tool carries the declaration `mcpToolOptionsFor` produced
+      // for this turn — with the switch off, no approval — and a destructive
+      // `ui_*` tool advertised alongside it does not change that answer.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1876,21 +1870,14 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "go" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { some_mcp_tool: {} } as any,
+        tools: {
+          some_mcp_tool: { needsApproval: false },
+          ui_execute_tool: { needsApproval: true },
+        } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
@@ -1923,21 +1910,11 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_snapshot_app: {} } as any,
+        tools: { ui_snapshot_app: { needsApproval: false } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: true,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_snapshot_app",
-              readOnly: true,
-              annotations: { readOnlyHint: true, destructiveHint: false },
-            },
-          ],
-          true
-        ),
       });
 
       await lastExecution;
@@ -1953,10 +1930,10 @@ describe("mcpjam-stream-handler", () => {
       }
     });
 
-    it("emits an approval request for a page_* tool with the flag OFF (via classifyPageToolApprovals)", async () => {
-      // Page tools always gate. With their classification threaded in, the
-      // hosted gate emits a pill even though requireToolApproval is off (the
-      // default on the WebMCP Inspector surface).
+    it("emits an approval request for a page_* tool with the flag OFF", async () => {
+      // Page tools always gate — the `always` floor `buildPageTools` bakes in
+      // — so the hosted gate emits a pill even though requireToolApproval is
+      // off (the default on the WebMCP Inspector surface).
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -1973,12 +1950,11 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "use the page tool" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { page_ab12cd34: {} } as any,
+        tools: { page_ab12cd34: { needsApproval: true } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyPageToolApprovals(["page_ab12cd34"]),
       });
 
       await lastExecution;
@@ -1990,11 +1966,13 @@ describe("mcpjam-stream-handler", () => {
       expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-page-1" });
     });
 
-    it("STRANDS a page_* call when no classification is threaded (the bug this fix closes)", async () => {
-      // Regression guard for the pre-fix chat-v2 behavior: with no
-      // uiToolApprovals and the flag off, the hosted gate emitted no pill while
-      // the client had already deferred the call awaiting one — a turn that
-      // waits forever. This asserts the broken shape so a revert fails here.
+    it("gates a page_* call from the BUILT tool alone — no threading, nothing to forget", async () => {
+      // The turn that used to strand. A route that handed the engine its page
+      // tools but forgot to thread their name classification got no pill,
+      // while the client had already deferred the call awaiting one — a turn
+      // that waits forever. There is nothing to thread now: the tool
+      // `buildPageTools` produces carries the answer, and this drives the
+      // engine with exactly that tool and nothing else.
       global.fetch = vi.fn().mockResolvedValue(
         createSseResponse([
           {
@@ -2011,12 +1989,20 @@ describe("mcpjam-stream-handler", () => {
         messages: [{ role: "user", content: "use the page tool" }] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { page_ab12cd34: {} } as any,
+        tools: buildPageTools([
+          {
+            alias: "page_ab12cd34",
+            sessionId: "sess_1",
+            toolKey: "https://shop.test::checkout",
+            rawName: "checkout",
+            origin: "https://shop.test",
+            description: "Check out",
+          },
+        ] as never) as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        // uiToolApprovals deliberately omitted — the pre-fix chat-v2 shape.
       });
 
       await lastExecution;
@@ -2024,7 +2010,398 @@ describe("mcpjam-stream-handler", () => {
       const approvalRequests = writtenChunks.filter(
         (chunk: any) => chunk.type === "tool-approval-request"
       );
-      expect(approvalRequests).toHaveLength(0);
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({
+        toolCallId: "call-page-strand",
+      });
+    });
+
+    it("an unclassified webmcp_* page tool EXECUTES with no pill (why classification is mandatory)", async () => {
+      // The reason `buildWebmcpPageTools` returns its approval classification
+      // rather than leaving anyone to derive it: a `webmcp_*` name is
+      // SERVER-EXECUTED, so unlike a stranded `page_*` call it does not wait
+      // for anybody — it runs. Approval on this engine is keyed by name, and a
+      // name in neither set falls through to `requireToolApproval`, which is
+      // off by default. So an unclassified page tool is third-party code
+      // running against a signed-in browser with no gate at all.
+      //
+      // This asserts the UNGATED shape on purpose. It is the hazard the
+      // builder's classification exists to remove, and a change that quietly
+      // made unclassified names gate would make that classification look
+      // optional.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-webmcp-1",
+            toolName: "webmcp_pay",
+            input: { amount: 1 },
+          },
+          { type: "finish", finishReason: "tool-calls" },
+        ])
+      );
+      // The loop only reaches its tool-execution branch through this gate,
+      // and the suite mocks it to an inert `false`. Left that way, "the call
+      // executed" is unobservable and the assertion below could only have
+      // been about a chunk the mocked stream writes regardless.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "pay" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          webmcp_pay: {
+            description: "pay",
+            inputSchema: z.object({ amount: z.number() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        // Deliberately omitted — the shape the builder must never produce.
+      });
+
+      await lastExecution;
+
+      expect(
+        writtenChunks.filter(
+          (chunk: any) => chunk.type === "tool-approval-request"
+        )
+      ).toHaveLength(0);
+      // THE CALL REACHED THE EXECUTOR. This is the claim in the test's name,
+      // and a `tool-input-available` chunk cannot carry it: that chunk is
+      // written from the mocked stream whatever happens next, so a regression
+      // that stranded the call would leave it in place and this test green
+      // while the hazard it describes had quietly gone away.
+      //
+      // The suite runs tool execution through a mocked
+      // `executeToolCallsFromMessages`, so THAT is the seam — reaching it is
+      // what "third-party code runs against a signed-in browser" means here,
+      // and the classified twin below asserts the same seam is NOT reached.
+      expect(executeToolCallsFromMessages).toHaveBeenCalled();
+      const executedTools = vi.mocked(executeToolCallsFromMessages).mock
+        .calls[0]!;
+      expect(JSON.stringify(executedTools)).toContain("webmcp_pay");
+      // No pill is the WHOLE hazard here. A `page_*` call with no
+      // classification strands (the test above) because the browser is waiting
+      // for an approval that never comes; a `webmcp_*` call has an `execute`,
+      // so nothing is waiting on anything — the step proceeds to the executor
+      // and third-party code runs against a signed-in browser. The paired test
+      // below shows the pill is the only thing that stops it.
+      expect(
+        writtenChunks.some(
+          (chunk: any) => chunk.type === "tool-input-available"
+        )
+      ).toBe(true);
+    });
+
+    it("a CLASSIFIED webmcp_* page tool pauses for approval", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "call-webmcp-2",
+            toolName: "webmcp_pay",
+            input: { amount: 1 },
+          },
+          { type: "finish", finishReason: "tool-calls" },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "pay" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          webmcp_pay: {
+            description: "pay",
+            inputSchema: z.object({ amount: z.number() }),
+            // The gate rides on the tool: this is what the builder declares
+            // for every page tool on an attested surface.
+            needsApproval: true,
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+      });
+
+      await lastExecution;
+
+      const approvalRequests = writtenChunks.filter(
+        (chunk: any) => chunk.type === "tool-approval-request"
+      );
+      expect(approvalRequests).toHaveLength(1);
+      expect(approvalRequests[0]).toMatchObject({ toolCallId: "call-webmcp-2" });
+      // And the turn PAUSED rather than running the page's tool while the
+      // person was being asked.
+      expect(vi.mocked(executeToolCallsFromMessages)).not.toHaveBeenCalled();
+    });
+
+    it("advertises a tool that appeared BETWEEN steps, with its pill", async () => {
+      // The whole point of the mid-turn refresh: a page registers a tool two
+      // seconds after load, no model action caused it, and the next step has
+      // to be able to call it.
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://pizza.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "add pepperoni" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          browser_navigate: {
+            description: "navigate",
+            inputSchema: z.object({ url: z.string() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        refreshTools: async () => ({
+          add: {
+            webmcp_add_topping: {
+              description: "[WebMCP page tool] add a topping",
+              inputSchema: z.object({ topping: z.string() }),
+              // Arrives WITH its gate, on the tool object.
+              needsApproval: true,
+              execute: async () => ({ ok: true }),
+            },
+          } as any,
+        }),
+      });
+
+      await lastExecution;
+
+      expect(bodies.length).toBeGreaterThan(1);
+      const step1 = (bodies[0].tools ?? []).map((tool: any) => tool.name);
+      const step2 = (bodies[1].tools ?? []).map((tool: any) => tool.name);
+      expect(step1).not.toContain("webmcp_add_topping");
+      expect(step2).toContain("webmcp_add_topping");
+    });
+
+    it("withdraws a retired tool's DEFINITION but keeps it callable", async () => {
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://elsewhere.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+      const tools: any = {
+        browser_navigate: {
+          description: "navigate",
+          inputSchema: z.object({ url: z.string() }),
+          execute: async () => ({ ok: true }),
+        },
+        webmcp_gone: {
+          description: "[WebMCP page tool] gone",
+          inputSchema: z.object({}),
+          execute: async () => ({ ok: true }),
+        },
+      };
+      const originalGone = tools.webmcp_gone;
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        refreshTools: async () => ({
+          retire: ["webmcp_gone"],
+          tombstones: {
+            webmcp_gone: {
+              description: "[WebMCP page tool] gone",
+              inputSchema: z.object({}),
+              execute: async () => ({
+                error: "page_moved_on",
+              }),
+            } as never,
+          },
+        }),
+      });
+
+      await lastExecution;
+
+      const step2 = (bodies[1]?.tools ?? []).map((tool: any) => tool.name);
+      expect(step2).not.toContain("webmcp_gone");
+      // NOT MERELY STILL PRESENT — replaced. The original entry would still be
+      // "defined" whether or not anything happened, which is why asserting its
+      // presence proves nothing; what matters is that a model which had already
+      // decided to call it now reaches something that can explain itself
+      // instead of the dead binding, and instead of "Tool not found".
+      expect(tools.webmcp_gone).not.toBe(originalGone);
+      await expect(tools.webmcp_gone.execute({}, {} as never)).resolves
+        .toMatchObject({ error: "page_moved_on" });
+    });
+
+    it("keeps the tool definitions IDENTICAL when nothing changed", async () => {
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://a.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          browser_navigate: {
+            description: "navigate",
+            inputSchema: z.object({ url: z.string() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        // An unchanged page reports nothing to do.
+        refreshTools: async () => undefined,
+      });
+
+      await lastExecution;
+
+      // Byte-identical, which is what keeps every provider's prompt cache
+      // hitting across the steps of one turn.
+      //
+      // Both sides are pinned as PRESENT first: a handler that stopped sending
+      // `tools` at all would make both stringify to `undefined`, and the
+      // equality below would hold while pinning nothing.
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(bodies[0].tools?.length).toBeGreaterThan(0);
+      expect(JSON.stringify(bodies[1]?.tools)).toBe(
+        JSON.stringify(bodies[0]?.tools),
+      );
+    });
+
+    it("swallows a throwing refresh and carries on with the current set", async () => {
+      const bodies: any[] = [];
+      global.fetch = vi.fn().mockImplementation(async (_url, init: any) => {
+        bodies.push(JSON.parse(init.body));
+        return bodies.length === 1
+          ? createSseResponse([
+              {
+                type: "tool-input-available",
+                toolCallId: "call-nav",
+                toolName: "browser_navigate",
+                input: { url: "https://a.test" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ])
+          : createSseResponse([{ type: "finish", finishReason: "stop" }]);
+      });
+      // The loop only reaches its continuation point through the
+      // tool-execution branch, and this suite mocks both of these to inert
+      // defaults. Restore just enough for a two-step turn with real names.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(serializeToolsForConvex).mockImplementation((toolSet: any) =>
+        Object.entries(toolSet ?? {}).map(([name]) => ({
+          name,
+          inputSchema: { type: "object" },
+        })) as never,
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "go" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          browser_navigate: {
+            description: "navigate",
+            inputSchema: z.object({ url: z.string() }),
+            execute: async () => ({ ok: true }),
+          },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: false,
+        refreshTools: async () => {
+          throw new Error("the browser would not answer");
+        },
+      });
+
+      await lastExecution;
+
+      // A tool-list read is not a reason to end somebody's conversation.
+      expect(bodies.length).toBeGreaterThan(1);
+      expect((bodies[1].tools ?? []).map((tool: any) => tool.name)).toContain(
+        "browser_navigate",
+      );
     });
 
     it("a resume turn with a client tool-result + dangling approval-request proceeds to the model", async () => {
@@ -2098,9 +2475,11 @@ describe("mcpjam-stream-handler", () => {
     it("processes a DENIAL of a destructive ui_* tool when the approval flag is OFF", async () => {
       // The stranding case. Approving a ui_* call is resolved by the browser
       // shipping a tool-result, but DENYING it sends an approval response
-      // back here. If pending-approval handling stayed gated on
-      // `requireToolApproval`, that denial would never be processed with the
-      // flag off — the tool call stays unresolved and the turn hangs forever.
+      // back here. Pending-approval handling used to run only when the switch
+      // was on (or a name set said so), so with the flag off that denial was
+      // never processed — the tool call stayed unresolved and the turn hung
+      // forever. It is unconditional now: a history carrying an approval
+      // request is the only fact that decides.
       vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
 
       await handleMCPJamFreeChatModel({
@@ -2134,21 +2513,11 @@ describe("mcpjam-stream-handler", () => {
         ] as any,
         modelId: "gpt-4.1-mini",
         systemPrompt: "You are helpful",
-        tools: { ui_execute_tool: {} } as any,
+        tools: { ui_execute_tool: { needsApproval: true } } as any,
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
         requireToolApproval: false,
-        uiToolApprovals: classifyUiToolApprovals(
-          [
-            {
-              name: "ui_execute_tool",
-              readOnly: false,
-              annotations: { readOnlyHint: false, destructiveHint: true },
-            },
-          ],
-          false
-        ),
       });
 
       await lastExecution;
@@ -3374,18 +3743,206 @@ describe("mcpjam-stream-handler", () => {
       });
     });
 
-    // NOTE: `emitInheritedToolCalls` also fires `onToolCall` after the
-    // PR 5b fix (the function's signature gained `tools` / `traceTurn`
-    // / `stepIndex` / `onToolCall` params, and the loop body now
-    // invokes the callback alongside the existing `writer.write({type:
-    // "tool-input-available", ...})`). That path is harder to trigger
-    // in isolation than the resumed-approval branch covered above —
-    // it requires the per-step path to reach the local tool-execution
-    // branch with prior unresolved tool-calls in scope, a
-    // multi-fixture setup that doesn't fit cleanly into the
-    // single-handler-call test shape used here. The code fix is
-    // covered by the same `tools` + `traceTurn` plumbing pattern as
-    // the approved-tools site above, which IS tested.
+    it("re-introduces an UNAPPROVED sibling before answering it on a resumed turn", async () => {
+      // The approval pause is whole-step: it drains only approval-free meta
+      // tools, so an ordinary tool the model emitted in the same assistant
+      // message is still unresolved when the approval comes back. The resume
+      // then executes EVERY unresolved call, so that sibling gets an answer —
+      // and the client, on a fresh response, has no tool part to attach it to
+      // unless the call was re-introduced first. It throws
+      // `No tool invocation found for tool call ID "…"` and ends the turn with
+      // a red banner, after both tools have already run.
+      //
+      // A page tool makes this the ordinary case: `webmcp_*` always pauses
+      // while the `browser_*` verbs follow their own floor, so one request
+      // emits one of each in a single step.
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "done" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      global.fetch = vi.fn().mockResolvedValue(createSseResponse(stepTwo));
+
+      // ONE assistant message, TWO calls, ONE approval. The sibling has no
+      // approval parts at all — it never needed any.
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-page-1",
+              toolName: "webmcp_add_topping",
+              input: { topping: "pepperoni" },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-sibling-1",
+              toolName: "browser_observe",
+              input: {},
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-page-1",
+              toolCallId: "call-page-1",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-page-1",
+              approved: true,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      // What the real helper does: run every unresolved call in the history,
+      // not only the approved one.
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-page-1",
+                toolName: "webmcp_add_topping",
+                output: { type: "json", value: { ok: true } },
+              },
+              {
+                type: "tool-result",
+                toolCallId: "call-sibling-1",
+                toolName: "browser_observe",
+                output: { type: "json", value: { url: "https://pizza.test/" } },
+              },
+            ],
+          };
+          messages.push(toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          webmcp_add_topping: {},
+          browser_observe: {},
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      const indexOf = (type: string, toolCallId: string) =>
+        writtenChunks.findIndex(
+          (chunk) => chunk?.type === type && chunk?.toolCallId === toolCallId,
+        );
+
+      // The sibling is introduced, and BEFORE its answer. Either half missing
+      // is the bug: no input chunk at all was the original failure, and an
+      // input written after the output would still throw on the output.
+      const siblingInput = indexOf("tool-input-available", "call-sibling-1");
+      const siblingOutput = indexOf("tool-output-available", "call-sibling-1");
+      expect(siblingInput).toBeGreaterThanOrEqual(0);
+      expect(siblingOutput).toBeGreaterThanOrEqual(0);
+      expect(siblingInput).toBeLessThan(siblingOutput);
+
+      // And the approved call keeps the ordering it already had.
+      const pageInput = indexOf("tool-input-available", "call-page-1");
+      const pageOutput = indexOf("tool-output-available", "call-page-1");
+      expect(pageInput).toBeGreaterThanOrEqual(0);
+      expect(pageInput).toBeLessThan(pageOutput);
+    });
+
+    it("re-introduces a DENIED call before telling the client it was denied", async () => {
+      // Same rule, the other emission: `tool-output-denied` also asks the
+      // client for a tool part it does not have on a fresh response.
+      const stepTwo = [
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "ok" },
+        { type: "text-end", id: "text-1" },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ];
+      global.fetch = vi.fn().mockResolvedValue(createSseResponse(stepTwo));
+
+      const resumedMessages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-denied-2",
+              toolName: "browser_navigate",
+              input: { url: "https://pizza.test/" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "approval-denied-2",
+              toolCallId: "call-denied-2",
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-approval-response",
+              approvalId: "approval-denied-2",
+              approved: false,
+            },
+          ],
+        },
+      ];
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: resumedMessages as any,
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful",
+        tools: { browser_navigate: {} } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      const inputIdx = writtenChunks.findIndex(
+        (chunk) =>
+          chunk?.type === "tool-input-available" &&
+          chunk?.toolCallId === "call-denied-2",
+      );
+      const deniedIdx = writtenChunks.findIndex(
+        (chunk) =>
+          chunk?.type === "tool-output-denied" &&
+          chunk?.toolCallId === "call-denied-2",
+      );
+      expect(inputIdx).toBeGreaterThanOrEqual(0);
+      expect(deniedIdx).toBeGreaterThanOrEqual(0);
+      expect(inputIdx).toBeLessThan(deniedIdx);
+    });
 
     it("fires `onToolResult` for denied tools on resumed approval turns (PR 5b-pre review fix — Cursor Medium)", async () => {
       // Cursor PR 5b-pre review fix: `handlePendingApprovals` writes a
