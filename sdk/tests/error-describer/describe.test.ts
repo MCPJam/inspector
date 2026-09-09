@@ -255,7 +255,9 @@ const CASES: Case[] = [
   {
     name: "MCPJam daily model limit",
     build: () =>
-      new Error("Daily MCPJam model limit reached. Use BYOK or try again tomorrow."),
+      new Error(
+        "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+      ),
     expectSlug: "provider/mcpjam_limit_daily",
   },
   {

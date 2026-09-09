@@ -13,10 +13,13 @@ export function consumeUrlFlag(name: string, value: string): boolean {
 
   searchParams.delete(name);
   const remaining = searchParams.toString();
+  // Only the flag comes off. Rebuilding from `pathname + search` alone would
+  // also drop the `#hash` and blank the router's own history state, so reading
+  // a flag would cost the reader their anchor and their Back button.
   window.history.replaceState(
-    null,
+    window.history.state,
     "",
-    `${window.location.pathname}${remaining ? `?${remaining}` : ""}`,
+    `${window.location.pathname}${remaining ? `?${remaining}` : ""}${window.location.hash}`,
   );
   return true;
 }

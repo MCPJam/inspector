@@ -24,6 +24,24 @@ describe("ErrorCard cause heading", () => {
     expect(screen.queryByText("Likely causes")).not.toBeInTheDocument();
   });
 
+  it("shows neither heading when nothing lists a cause", () => {
+    // No catalog entry is causeless, but a server-supplied `normalized` block
+    // reaches the card through `WebApiError` and can be — and an empty list
+    // under either heading is a heading promising something it doesn't have.
+    render(
+      <ErrorCard
+        error={{
+          ...describeAsSlug("provider/mcpjam_limit_daily", new Error("x")),
+          likelyCauses: [],
+        }}
+      />,
+    );
+    openDetails();
+
+    expect(screen.queryByText("Why this happened")).not.toBeInTheDocument();
+    expect(screen.queryByText("Likely causes")).not.toBeInTheDocument();
+  });
+
   it("keeps the hedge where the wire genuinely does not settle it", () => {
     render(
       <ErrorCard

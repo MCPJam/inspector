@@ -71,6 +71,20 @@ describe("consumeUrlFlag", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("keeps the hash and the router's history state", () => {
+    // React Router keeps `{ usr, key, idx }` here and reads it to go Back.
+    window.history.replaceState(
+      { usr: null, key: "abc123", idx: 4 },
+      "",
+      "/organizations/org-1/billing?plans=open#payment-history",
+    );
+
+    expect(consumeUrlFlag("plans", "open")).toBe(true);
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("#payment-history");
+    expect(window.history.state).toEqual({ usr: null, key: "abc123", idx: 4 });
+  });
+
   it("returns false without a window instead of throwing", () => {
     vi.stubGlobal("window", undefined);
     expect(consumeUrlFlag("plans", "open")).toBe(false);
