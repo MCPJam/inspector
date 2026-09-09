@@ -3,6 +3,8 @@ import {
   withGithubCredentialPolicy,
   isCredentialFreeGithubExecution,
   refuseGithubCredentialAccess,
+  verifyGithubCredentialAccess,
+  requireGithubToolSelection,
 } from "../credential-policy.js";
 import { resolveHostTools } from "../../../utils/built-in-tools/registry.js";
 
@@ -58,4 +60,29 @@ describe("fork eval credential boundary", () => {
     ]);
     expect(isCredentialFreeGithubExecution()).toBe(false);
   });
+});
+
+it("opted-in forks cannot add tools or replace the live revocation check", async () => {
+  const checkAccess = vi.fn(async () => {});
+  await withGithubCredentialPolicy(
+    {
+      policy: "suite_credentials",
+      allowedBuiltInToolIds: ["bash"],
+      checkAccess,
+    },
+    async () => {
+      expect(() => requireGithubToolSelection(["bash"])).not.toThrow();
+      expect(() => requireGithubToolSelection(["mcpjam"])).toThrow(
+        "credential_policy_blocked",
+      );
+      await verifyGithubCredentialAccess();
+      checkAccess.mockRejectedValue(new Error("credential_policy_blocked"));
+      await withGithubCredentialPolicy(false, async () => {
+        await expect(verifyGithubCredentialAccess()).rejects.toThrow(
+          "credential_policy_blocked",
+        );
+      });
+    },
+  );
+  expect(checkAccess).toHaveBeenCalledTimes(2);
 });

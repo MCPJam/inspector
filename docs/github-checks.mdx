@@ -54,6 +54,25 @@ gets the check run and no comment. The per-repository toggle is visible before
 then and records your choice; nothing is posted until the rollout reaches you.
 </Note>
 
+## Suite credentials in approved forks
+
+Each connected repository has **Allow suite credentials in approved forks** in
+Settings and in its suite's connected-repository section. It is off by default;
+only organization admins can change it.
+
+- **Off:** approved fork runs require a credential-free suite. Checks needing
+  saved credentials report **Action required**.
+- **On:** approved fork runs can use that suite's existing credentials and
+  connected services. Only approve code you trust. This does not inject saved
+  secrets into the PR server.
+
+Every new commit needs maintainer approval. Enabling the setting does not upgrade
+old approvals or running jobs: approve again. Changes to selected credentials
+also require fresh approval. Disabling blocks further credential access and
+stops affected runs; credentials already delivered cannot be taken back.
+Changing the connected suite resets the setting off. Environments with plugin
+credential grants that cannot be verified remain blocked.
+
 ## `mcpjam.yaml`
 
 MCPJam can usually work out how to build and start a server on its own. When it

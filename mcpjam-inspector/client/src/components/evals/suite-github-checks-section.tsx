@@ -1,3 +1,4 @@
+import { GithubForkCredentialsToggle } from "@/components/settings/github-fork-credentials-toggle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Github, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -66,6 +67,7 @@ export function SuiteGithubChecksSection({
     repos,
     bindings,
     connectVerifiedRepo,
+    setRepoForkCredentials,
     listInstallationRepos,
   } = useGithubChecksSettings(organizationId);
 
@@ -246,14 +248,27 @@ export function SuiteGithubChecksSection({
           {connectedToThisSuite.map((row) => (
             <div
               key={row._id}
-              className="flex items-center gap-2 text-sm"
+              className="space-y-2 text-sm"
               data-testid={`suite-github-repo-${row.repoFullName}`}
             >
-              <Github className="size-3.5 text-muted-foreground" aria-hidden />
-              <span className="truncate">{row.repoFullName}</span>
-              {!row.enabled ? (
-                <span className="text-xs text-muted-foreground">(paused)</span>
-              ) : null}
+              <div className="flex items-center gap-2">
+                <Github
+                  className="size-3.5 text-muted-foreground"
+                  aria-hidden
+                />
+                <span className="truncate">{row.repoFullName}</span>
+                {!row.enabled ? (
+                  <span className="text-xs text-muted-foreground">
+                    (paused)
+                  </span>
+                ) : null}
+              </div>
+              <GithubForkCredentialsToggle
+                key={`${organizationId}:${row._id}`}
+                row={row}
+                canManage={availability?.canManage === true}
+                onChange={setRepoForkCredentials}
+              />
             </div>
           ))}
         </div>

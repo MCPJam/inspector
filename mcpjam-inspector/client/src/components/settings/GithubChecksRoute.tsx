@@ -1,3 +1,4 @@
+import { GithubForkCredentialsToggle } from "./github-fork-credentials-toggle";
 import {
   useCallback,
   useEffect,
@@ -269,6 +270,7 @@ export function GithubChecksRoute({
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoForkCredentials,
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
@@ -923,28 +925,29 @@ export function GithubChecksRoute({
           rows.map((row) => (
             <div
               key={row._id}
-              className="flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border/40 bg-muted/20 transition-colors"
+              className="space-y-3 px-4 py-3 rounded-md border border-border/40 bg-muted/20 transition-colors"
               data-testid={`repo-row-${row.repoFullName}`}
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                  <Github className="size-4 text-primary" aria-hidden />
-                </div>
-                <div className="flex flex-col min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-medium truncate">
-                      {row.repoFullName}
-                    </span>
-                    <RepoVisibilityBadge
-                      isPrivate={visibilityByRepo.get(
-                        normalizeRepoName(row.repoFullName),
-                      )}
-                    />
-                    <RepoConnectionState status={row.connectionStatus} />
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                    <Github className="size-4 text-primary" aria-hidden />
                   </div>
-                  <RepoCheckState enabled={row.enabled} />
-                  <RepoConnectionExplainer status={row.connectionStatus} />
-                  {/* Always shown, on every row. This is what MCPJam writes
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-medium truncate">
+                        {row.repoFullName}
+                      </span>
+                      <RepoVisibilityBadge
+                        isPrivate={visibilityByRepo.get(
+                          normalizeRepoName(row.repoFullName),
+                        )}
+                      />
+                      <RepoConnectionState status={row.connectionStatus} />
+                    </div>
+                    <RepoCheckState enabled={row.enabled} />
+                    <RepoConnectionExplainer status={row.connectionStatus} />
+                    {/* Always shown, on every row. This is what MCPJam writes
                       on somebody else's pull request, and a line that only
                       appeared once it was switched off would be an explanation
                       arriving after the decision. */}
@@ -961,59 +964,61 @@ export function GithubChecksRoute({
                        behave that way for an unstamped row, but nobody chose
                        it, and saying so is what lets an administrator tell the
                        two apart. */
-                    <span className="text-xs text-muted-foreground">
-                      No outage policy chosen — effectively fails open, so the
-                      check reports neutral during an MCPJam outage or pause.
-                    </span>
-                  ) : null}
+                      <span className="text-xs text-muted-foreground">
+                        No outage policy chosen — effectively fails open, so the
+                        check reports neutral during an MCPJam outage or pause.
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-3 shrink-0">
-                <Select
-                  value={row.suiteId}
-                  disabled={!canManage}
-                  onValueChange={(value) => void handleSuiteChange(row, value)}
-                >
-                  <SelectTrigger
-                    className="w-48"
-                    aria-label={`Suite for ${row.repoFullName}`}
+                <div className="flex min-w-0 flex-wrap items-center gap-3">
+                  <Select
+                    value={row.suiteId}
+                    disabled={!canManage}
+                    onValueChange={(value) =>
+                      void handleSuiteChange(row, value)
+                    }
                   >
-                    <SelectValue placeholder="Select a suite" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suiteOptions.map((suite) => (
-                      <SelectItem key={suite._id} value={suite._id}>
-                        {suite.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    <SelectTrigger
+                      className="w-48"
+                      aria-label={`Suite for ${row.repoFullName}`}
+                    >
+                      <SelectValue placeholder="Select a suite" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suiteOptions.map((suite) => (
+                        <SelectItem key={suite._id} value={suite._id}>
+                          {suite.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
                 {/* `?? ""` shows the placeholder rather than a value. Binding
                     this to `fail_open` for an unstamped row would render the
                     administrator's screen as though they had already chosen
                     the default — a claim the stored row does not make. */}
-                <Select
-                  value={row.outagePolicy ?? ""}
-                  disabled={pendingPolicies.has(row._id) || !canManage}
-                  onValueChange={(value) =>
-                    void handlePolicyChange(
-                      row,
-                      value as GithubCheckOutagePolicy,
-                    )
-                  }
-                >
-                  <SelectTrigger
-                    className="w-44"
-                    aria-label={`Outage policy for ${row.repoFullName}`}
+                  <Select
+                    value={row.outagePolicy ?? ""}
+                    disabled={pendingPolicies.has(row._id) || !canManage}
+                    onValueChange={(value) =>
+                      void handlePolicyChange(
+                        row,
+                        value as GithubCheckOutagePolicy,
+                      )
+                    }
                   >
-                    <SelectValue placeholder="Policy not chosen" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <OutagePolicySelectItems />
-                  </SelectContent>
-                </Select>
+                    <SelectTrigger
+                      className="w-44"
+                      aria-label={`Outage policy for ${row.repoFullName}`}
+                    >
+                      <SelectValue placeholder="Policy not chosen" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <OutagePolicySelectItems />
+                    </SelectContent>
+                  </Select>
 
                 {/* Each switch is captioned. Three bare switches in a row
                     said nothing about which was which, and only a screen
@@ -1074,16 +1079,23 @@ export function GithubChecksRoute({
                   />
                 </SwitchField>
 
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  disabled={!canManage}
-                  aria-label={`Disconnect ${row.repoFullName}`}
-                  onClick={() => void handleDisconnect(row)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    disabled={!canManage}
+                    aria-label={`Disconnect ${row.repoFullName}`}
+                    onClick={() => void handleDisconnect(row)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                  </Button>
+                </div>
               </div>
+              <GithubForkCredentialsToggle
+                key={`${activeOrganizationId}:${row._id}`}
+                row={row}
+                canManage={canManage}
+                onChange={setRepoForkCredentials}
+              />
             </div>
           ))
         )}
