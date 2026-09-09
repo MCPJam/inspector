@@ -170,14 +170,20 @@ type EnginePref = { engine: "local" | "cloud"; consentToken: string | null };
 async function renderWithEngine(
   personalComputerEngine?: EnginePref,
   hostedContext?: Record<string, unknown>,
-  extra?: { usePageTools?: boolean },
+  extra?: { usePageTools?: boolean; requireToolApproval?: boolean },
 ) {
+  // The switch is STATE seeded from `executionConfig`, not a prop of its own —
+  // so a case that needs it on has to seed it the way the app does.
+  const { requireToolApproval, ...rest } = extra ?? {};
   const rendered = renderHook(() =>
     useChatSession({
       selectedServers: ["server-1"],
       ...(personalComputerEngine ? { personalComputerEngine } : {}),
       ...(hostedContext ? { hostedContext } : {}),
-      ...(extra ?? {}),
+      ...(requireToolApproval !== undefined
+        ? { executionConfig: { requireToolApproval } }
+        : {}),
+      ...rest,
     } as never),
   );
   await waitFor(() => expect(mockState.chatOnData).not.toBeNull());
@@ -340,8 +346,12 @@ describe("useChatSession — local computer engine transmission", () => {
       invokeToolForResult: invoke as never,
     });
 
+    // Switch ON, which is what makes the server emit the pill this test waits
+    // for. With it off there is no pill coming and the call runs immediately
+    // — see the case below.
     const rendered = await renderWithEngine(undefined, undefined, {
       usePageTools: true,
+      requireToolApproval: true,
     });
     const advertised = lastTransport().body.pageTools as Array<{
       alias: string;
@@ -374,6 +384,69 @@ describe("useChatSession — local computer engine transmission", () => {
         output: expect.objectContaining({
           content: [{ type: "text", text: "added" }],
         }),
+      }),
+    );
+  });
+
+  it("runs a page call immediately when approval is off, instead of stalling", async () => {
+    // The client claims every owned `page_*` call so it can hold it until the
+    // user decides. With the switch off the server declares no approval and
+    // sends no pill, so a claim with nothing to release it waits forever: the
+    // model's call never resolves and the turn stops with no error and no
+    // result. It has to run the call itself.
+    const pageTool = {
+      alias: pageToolAlias("session-1", "https://shop.test::add_to_cart"),
+      sessionId: "session-1",
+      toolKey: "https://shop.test::add_to_cart",
+      rawName: "add_to_cart",
+      origin: "https://shop.test",
+    };
+    useWebmcpInspectorStore.setState({
+      session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+      tools: [
+        {
+          toolKey: pageTool.toolKey,
+          name: pageTool.rawName,
+          origin: pageTool.origin,
+          fromSubframe: false,
+          registrationKind: "imperative",
+        } as never,
+      ],
+      chatEnabled: true,
+    });
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "added" }));
+    const initialStore = useWebmcpInspectorStore.getState();
+    vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+      ...initialStore,
+      session: { sessionId: pageTool.sessionId, status: "ready" } as never,
+      invokeToolForResult: invoke as never,
+    });
+
+    await renderWithEngine(undefined, undefined, {
+      usePageTools: true,
+      requireToolApproval: false,
+    });
+    const advertised = lastTransport().body.pageTools as Array<{
+      alias: string;
+    }>;
+    setAdvertisedPageTools(advertised as never);
+
+    await mockState.chatOnToolCall!({
+      toolCall: {
+        toolName: advertised[0]!.alias,
+        toolCallId: "page-call-ungated",
+        input: { sku: "ABC-123" },
+      },
+    });
+
+    // No pill was requested and none is coming, so the result has to arrive
+    // from here.
+    await waitFor(() => expect(mockState.addToolOutput).toHaveBeenCalled());
+    expect(invoke).toHaveBeenCalledWith(pageTool.toolKey, { sku: "ABC-123" });
+    expect(mockState.addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool: advertised[0]!.alias,
+        toolCallId: "page-call-ungated",
       }),
     );
   });

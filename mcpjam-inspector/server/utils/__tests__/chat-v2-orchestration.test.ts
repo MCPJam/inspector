@@ -1491,7 +1491,7 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     ).toBeFalsy();
   });
 
-  it("promises a destructive gate in default mode ONLY when the snapshot is annotation-aware", () => {
+  it("describes the switch's actual state, and never promises a pause it cannot deliver", () => {
     const annotated: UiToolEntry[] = [
       {
         name: "ui_navigate",
@@ -1507,41 +1507,41 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       },
     ];
 
-    // The families that pause whatever the settings say are stated in every
-    // mode — they are the ones the model should know about before it commits
-    // to a plan, and none of them depends on the ui snapshot.
+    // NOTHING pauses whatever the settings say any more, so nothing may claim
+    // to. A model told a browser action will be checked by a human plans as if
+    // someone is reading along — the expensive direction of this mistake.
     for (const prompt of [
-      buildUiToolsSystemPrompt(annotated, { requireToolApproval: true }),
       buildUiToolsSystemPrompt(annotated),
       buildUiToolsSystemPrompt(uiTools),
+      buildUiToolsSystemPrompt(annotated, { requireToolApproval: false }),
     ]) {
-      expect(prompt).toContain("always pause");
+      expect(prompt).not.toContain("always pause");
+      expect(prompt).not.toContain("whatever the settings say");
+      expect(prompt).toContain("Tool approval is OFF");
+      expect(prompt).toContain("apply immediately");
+      // The families it names as running unchecked are the ones a model is
+      // most likely to assume are gated.
       expect(prompt).toContain("driving a browser");
       expect(prompt).toContain("on the user's own machine");
-      expect(prompt).toContain("A denial is final");
     }
 
-    // Strict mode: most other calls pause too, and the model is told which
-    // families the switch does NOT cover — promising it covers everything
-    // would have the model narrate a pause that never comes.
+    // Switch ON: every family that acts pauses, named so the model can plan
+    // around the checkpoint rather than guess at it.
     const strict = buildUiToolsSystemPrompt(annotated, {
       requireToolApproval: true,
     });
-    expect(strict).toContain("most other tool calls pause too");
-    expect(strict).toContain("still run without asking");
+    expect(strict).toContain("Tool approval is ON");
+    expect(strict).toContain("every tool call that ACTS pauses");
+    expect(strict).toContain("driving a browser");
+    expect(strict).toContain("A denial is final");
 
-    // Default mode, annotation-aware: the destructive-`ui_*` promise holds.
-    const annotatedDefault = buildUiToolsSystemPrompt(annotated);
-    expect(annotatedDefault).toContain("destructive `ui_*` actions");
-    expect(annotatedDefault).toContain("Everything else applies immediately");
-
-    // Default mode, LEGACY snapshot (the fixture has no annotations): a bare
-    // `readOnly` entry sits at the `setting` floor, so with the switch off
-    // NOTHING in that namespace pauses. The prompt must not promise a
-    // destructive gate that isn't enforced.
-    const legacyDefault = buildUiToolsSystemPrompt(uiTools);
-    expect(legacyDefault).not.toContain("destructive `ui_*` actions");
-    expect(legacyDefault).toContain("applies immediately");
+    // What never pauses is stated in BOTH modes: it does not change with the
+    // switch, and it is the half a model most often gets wrong.
+    for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
+      expect(prompt).toContain("never pause");
+      expect(prompt).toContain("`app_*`");
+      expect(prompt).toContain("discovery meta-tools");
+    }
   });
 });
 

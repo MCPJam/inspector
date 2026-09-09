@@ -503,6 +503,33 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
+    // Floor: never, and the row that matters most for it. An unattended run
+    // uses the LOCAL engine, so a floor keyed on the engine rather than on the
+    // DELIVERY would put this back on the switch — and a host config with
+    // approval on would then hang every eval iteration on a pill nobody can
+    // click. `allow_all` so the interactive verbs are actually built: the
+    // read-only row below proves the policy filter, this one proves the floor.
+    family: "browser_* unattended (allow_all) — nobody to ask",
+    name: "browser_act",
+    tools: (flag) =>
+      buildBrowserTools({
+        authHeader: "Bearer u",
+        projectId: "proj_1",
+        engine: "local",
+        runKey: "run-1",
+        requireToolApproval: flag,
+        approvalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        ensureSession: fakeBrowserSession() as never,
+      })!.tools,
+    expected: {
+      mcpjam: { on: "free", off: "free" },
+      byok: { on: "free", off: "free" },
+    },
+  },
+  {
     // Floor: never. An unattended read-only run builds ONLY the tools that
     // look — refusing to build the rest is stronger than gating them, since
     // there is nobody to ask.

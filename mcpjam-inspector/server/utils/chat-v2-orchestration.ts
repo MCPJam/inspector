@@ -1162,43 +1162,31 @@ export function buildUiToolsSystemPrompt(
 /**
  * The approval sentence for the turn.
  *
- * States the FLOOR RULE once, for every family, rather than only for `ui_*`.
- * The model is choosing between a browser tool, a shell and a UI action in the
- * same breath; a sentence about one namespace leaves it guessing about the
- * others — including the ones that pause whatever the settings say, which are
- * exactly the ones worth knowing about before it commits to a plan.
+ * States the rule once, for every family, rather than only for `ui_*`. The
+ * model is choosing between a browser tool, a shell and a UI action in the same
+ * breath, and a sentence about one namespace leaves it guessing about the rest.
  *
- * Told honestly for the snapshot that was actually sent. The destructive-`ui_*`
- * half of the promise only holds when EVERY entry is annotation-aware: a legacy
- * client sends bare `readOnly`, whose floor with the switch off is `setting`,
- * i.e. nothing pauses. The families above it do not depend on the snapshot and
- * are stated either way.
+ * It used to name the families that paused WHATEVER the settings said. There
+ * are none now: one switch decides for every tool that acts, so the honest
+ * sentence is about this conversation's setting rather than about a floor the
+ * model cannot see. Describing a checkpoint the turn does not have is the worse
+ * failure of the two — a model that expects to be stopped plans as if someone
+ * is reading along.
  */
 function approvalGuidance(
-  uiTools: UiToolEntry[],
+  _uiTools: UiToolEntry[],
   requireToolApproval: boolean,
 ): string {
-  const annotationAware = uiTools.every((t) => t.annotations !== undefined);
-  // Only families that pause on EVERY path belong here. Loading a skill an
-  // MCP server provided does not: the live SEP-2640 wrapper delegates to the
-  // base skill tool (`hostWantsApproval`), so with the switch off it can load
-  // without a prompt — what it always does is TAG the origin and bind the
-  // digest, which is not a pause. Promising one here would advertise a gate
-  // the turn may not have.
-  const alwaysPause = [
-    "anything driving a browser or a third-party web page",
-    "anything running on the user's own machine",
-    ...(annotationAware ? ["destructive `ui_*` actions"] : []),
-  ];
-  const always =
-    "Some actions always pause for the user's explicit approval before they " +
-    `run, whatever the settings say: ${alwaysPause
-      .slice(0, -1)
-      .join(", ")}, and ${alwaysPause[alwaysPause.length - 1]}.`;
-  const rest = requireToolApproval
-    ? "Tool approval is ON for this conversation, so most other tool calls pause too. Read-only lookups of the user's own project, the discovery meta-tools and read-only `ui_*` actions still run without asking — they are not covered by the switch in either direction."
-    : "Everything else applies immediately, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for.";
-  return `${always} ${rest} A denial is final — explain what you wanted to do instead of retrying the call.`;
+  // Named either way, because "what never pauses" does not change with the
+  // switch and is the half the model most often gets wrong: it is why a read
+  // it expected to be gated simply happened.
+  const free =
+    "Read-only lookups of the user's own project, the discovery meta-tools, " +
+    "read-only `ui_*` actions and an open app's own `app_*` tools never pause, " +
+    "in either setting.";
+  return requireToolApproval
+    ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} A denial is final — explain what you wanted to do instead of retrying the call.`
+    : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Nothing will stop you, so be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free}`;
 }
 
 /**

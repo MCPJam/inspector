@@ -174,8 +174,10 @@ import {
 import {} from "@/state/oauth-orchestrator";
 import {
   deferPageToolCallForApproval,
+  fulfillApprovedPageToolCall,
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
+import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
@@ -3313,16 +3315,35 @@ export function useChatSession(
 
       // WebMCP page tools: the model asked for a tool a real web page
       // registered, and the browser session that owns that page lives in this
-      // app. Claim it synchronously and wait for the approval pill to fulfill
-      // it. AI SDK delivers tool-input-available before tool-approval-request,
-      // so invoking here would bypass the user's decision.
+      // app. Claim it synchronously — the AI SDK delivers
+      // tool-input-available before tool-approval-request, so a claim is the
+      // only way to hold the call until the user's decision arrives.
+      const pageToolCallId = (toolCall as { toolCallId: string }).toolCallId;
+      const pageToolInput = (toolCall as { input: unknown }).input;
       if (
         deferPageToolCallForApproval({
           toolName,
-          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
-          input: (toolCall as { input: unknown }).input,
+          toolCallId: pageToolCallId,
+          input: pageToolInput,
         })
       ) {
+        // AND RUN IT, when nothing is going to ask. The server emits an
+        // approval request only when the tool it built declared one, so with
+        // the switch off there is no pill coming and a call left deferred
+        // waits for a decision nobody will make — the turn stalls on a tool
+        // that was never gated in the first place.
+        //
+        // The SAME predicate the server built the tool from, so the two cannot
+        // drift: a client that guessed differently either strands the turn or
+        // runs something the user was meant to see first.
+        if (!pageToolCallNeedsApproval(requireToolApprovalRef.current)) {
+          void fulfillApprovedPageToolCall({
+            toolCallId: pageToolCallId,
+            alias: toolName,
+            input: pageToolInput,
+            addToolOutput,
+          });
+        }
         return;
       }
 

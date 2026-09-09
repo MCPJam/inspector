@@ -961,13 +961,19 @@ export function buildBrowserTools(
   // argument for what to DEFAULT to, not for overruling a person who has just
   // told this host what they want.
   //
-  // An UNATTENDED run on a disposable box keeps `never`, and that is not the
-  // switch being ignored — there is nobody to ask, so a gate would hang the
-  // run rather than protect it. The declared `toolPolicy` is the answer
-  // instead, and the interactive tools it might have freed were never built
-  // (see `names`).
+  // An UNATTENDED run keeps `never`, and that is not the switch being ignored
+  // — there is nobody to ask, so a gate would hang the run rather than protect
+  // it. The declared `toolPolicy` is the answer instead, and the interactive
+  // tools it might have freed were never built (see `names`).
+  //
+  // ON DELIVERY ALONE, not on the engine. An unattended run uses the LOCAL
+  // engine (a throwaway Chromium keyed per run), so an `|| engine === "local"`
+  // here would put every unattended local run back on the switch — and a host
+  // config with approval on would then hang each eval iteration against a pill
+  // nobody can click. The engine says whose machine it is; only the delivery
+  // says whether anyone is there to ask.
   const interactiveFloor: ApprovalFloor =
-    delivery.kind === "attested" || engine === "local" ? "setting" : "never";
+    delivery.kind === "attested" ? "setting" : "never";
   // Observation is the one thing a read-only policy may free, and only there:
   // a policy cannot make clicking a button on a live logged-in page safe, but
   // it can say this run only looks.
