@@ -166,6 +166,15 @@ export function decodeStateToken(
     ) {
       return undefined;
     }
+    // A revision of the wrong type is DROPPED rather than failing the token.
+    // The four fields above are the token; this one is an extra guard, and
+    // losing the guard for one act is better than losing the act.
+    if (
+      "viewportRevision" in parsed &&
+      typeof parsed.viewportRevision !== "number"
+    ) {
+      delete (parsed as { viewportRevision?: unknown }).viewportRevision;
+    }
     return parsed as ObservationStateToken;
   } catch {
     // A token we cannot read is treated as absent rather than as a failure: the
@@ -193,6 +202,14 @@ export function toDaemonAction(command: BrowserAgentCommand): MappedAction {
         ok: true,
         action: {
           kind: "back",
+          observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
+        },
+      };
+    case "forward":
+      return {
+        ok: true,
+        action: {
+          kind: "forward",
           observe: command.observeAfter ?? DEFAULT_OBSERVE_AFTER,
         },
       };
@@ -313,6 +330,8 @@ export function publishedOpFor(
       return "navigate";
     case "back":
       return "back";
+    case "forward":
+      return "forward";
     case "reload":
       return "reload";
     case "act":

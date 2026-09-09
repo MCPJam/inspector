@@ -157,6 +157,8 @@ export interface PageWebContents {
   navigationHistory?: {
     canGoBack(): boolean;
     goBack(): void;
+    canGoForward(): boolean;
+    goForward(): void;
   };
 }
 
@@ -902,6 +904,22 @@ export function createElectronPage(
         navigationSettled(wc, () => history.goBack()),
         NAV_TIMEOUT_MS,
         "going back",
+        () => wc.stop?.(),
+      );
+    },
+    async goForward() {
+      await session();
+      const history = wc.navigationHistory;
+      // Electron's `goForward()` on an empty forward history does nothing and
+      // fires no navigation event, so `navigationSettled` would wait out the
+      // full timeout for a commit that is never coming. Returning early is
+      // what makes this a no-op rather than a ten-second stall — the same
+      // outcome Playwright reaches by resolving with a null response.
+      if (!history?.canGoForward()) return;
+      await deadline(
+        navigationSettled(wc, () => history.goForward()),
+        NAV_TIMEOUT_MS,
+        "going forward",
         () => wc.stop?.(),
       );
     },

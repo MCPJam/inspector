@@ -910,6 +910,33 @@ describe("electron page — navigation", () => {
     );
   });
 
+  it("returns immediately when there is nothing to go forward to", async () => {
+    // NOT a rejection, and not a stall. Electron's `goForward()` on an empty
+    // forward history does nothing and fires no navigation event, so waiting
+    // for a commit would burn the whole nav timeout on a no-op — and the pane
+    // disables the button from `canGoForward` anyway, so reaching this is a
+    // race rather than a mistake anybody made.
+    const { page, contents } = makePage();
+    await expect(page.goForward()).resolves.toBeUndefined();
+    expect(contents.navigations).not.toContain("goForward");
+  });
+
+  it("goes forward after a back, and a new navigation truncates the history", async () => {
+    const { page, contents } = makePage();
+    await page.goto("https://one.test/");
+    await page.goto("https://two.test/");
+    await page.goBack();
+    await page.goForward();
+    expect(contents.navigations).toContain("goForward");
+
+    // Following a link after going back leaves nothing ahead.
+    await page.goBack();
+    await page.goto("https://three.test/");
+    contents.navigations.length = 0;
+    await page.goForward();
+    expect(contents.navigations).not.toContain("goForward");
+  });
+
   it("calls off a navigation that blew its budget", async () => {
     // The command that started it has already been answered and the queue has
     // moved on. A load left running commits underneath whatever runs NEXT, and

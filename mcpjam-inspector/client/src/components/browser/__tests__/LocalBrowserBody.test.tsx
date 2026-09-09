@@ -19,6 +19,19 @@ const api = vi.hoisted(() => ({
   watchMissing: false,
   /** Holds the next lease answer open, so a test can move the pane under it. */
   leaseGate: null as Promise<void> | null,
+  /** What the shell's state poll answers. Null is "cannot say", as in life. */
+  state: null as unknown,
+  /** Every pane command the shell sent, in order. */
+  paneCommands: [] as unknown[],
+  /**
+   * Answer pane commands 501, as a daemon older than these endpoints does.
+   *
+   * `supportsPane()` duck-types the browserd client, so a browser started by
+   * a pre-pane daemon has a real session and refuses all three routes.
+   */
+  paneUnsupported: false,
+  /** Every panel measurement reported. */
+  viewports: [] as Array<{ width: number; height: number }>,
   /** The last socket handed to the pane, so a test can deliver a frame. */
   socket: null as {
     readyState: number;
@@ -76,6 +89,21 @@ vi.mock("@/lib/local-browser/client", async () => {
       // watching it — which is how a refused pane hears about a hand-back.
       return { watching: true as const, lease: api.lease };
     },
+    // The shell's three calls. Answered rather than left to the real module,
+    // which would reach the network and leave the shell permanently
+    // reconnecting — a state that is correct but drowns every other assertion.
+    fetchLocalBrowserState: async () => api.state,
+    sendLocalPaneCommand: async (args: any) => {
+      api.paneCommands.push(args.command);
+      if (api.paneUnsupported) {
+        return { ok: false as const, reason: "unsupported" as const };
+      }
+      return { ok: true as const };
+    },
+    reportLocalPaneViewport: async (args: any) => {
+      api.viewports.push({ width: args.width, height: args.height });
+      return { width: args.width, height: args.height, revision: 1 };
+    },
     openLocalBrowserFrameStream: () => {
       const socket = {
         readyState: 1,
@@ -105,6 +133,10 @@ beforeEach(() => {
   api.leaseGate = null;
   api.watchMissing = false;
   api.socket = null;
+  api.state = null;
+  api.paneCommands = [];
+  api.paneUnsupported = false;
+  api.viewports = [];
   window.sessionStorage.clear();
 });
 
@@ -125,6 +157,21 @@ async function deliverFrame() {
     }),
   });
   return screen.findByTestId("rail-browser-frame");
+}
+
+/**
+ * Take the browser the way a person does: by clicking the page.
+ *
+ * A frame first, because there is no picture to click until one arrives — and
+ * jsdom lays nothing out, so the pane cannot map a point without a rectangle
+ * to map it against.
+ */
+async function clickPicture() {
+  const image = await deliverFrame();
+  image.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+  fireEvent.click(image, { clientX: 10, clientY: 10 });
+  return image;
 }
 
 function renderBody(over: Record<string, unknown> = {}) {
@@ -170,18 +217,66 @@ describe("the agent browser pane", () => {
     expect(await screen.findByText(/42%/)).toBeTruthy();
   });
 
-  it("says who is driving, and offers control only when nobody is", async () => {
+  it("says who is driving, and takes the browser when somebody uses it", async () => {
+    // There is no "Take control" button any more. Clicking the picture IS
+    // taking it, which is what every browser anybody has used does.
     renderBody();
     await userEvent.click(
       await screen.findByRole("button", { name: /open the browser/i }),
     );
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /take control/i })).toBeNull();
 
+    await clickPicture();
+    expect(await screen.findByText(/you have it/i)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /resume agent/i }),
+    ).toBeTruthy();
+  });
+
+  it("takes the browser on a paste, and sends the text", async () => {
+    // Pasting into the page is somebody using the browser, exactly as typing
+    // is. Returning early while the agent held the lease dropped the paste
+    // silently — no text, no takeover, and nothing on screen to say why.
+    renderBody();
     await userEvent.click(
-      screen.getByRole("button", { name: /take control/i }),
+      await screen.findByRole("button", { name: /open the browser/i }),
     );
-    expect(await screen.findByText(/you have control/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /hand back/i })).toBeTruthy();
+    const image = await deliverFrame();
+    fireEvent.paste(image, {
+      clipboardData: { getData: () => "hello from the clipboard" },
+    });
+    expect(await screen.findByText(/you have it/i)).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        api.inputs
+          .flatMap((call: any) => call.events as any[])
+          .some(
+            (event) =>
+              event?.type === "text" &&
+              event.text === "hello from the clipboard",
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it("sends an Alt shortcut as a shortcut, not as a letter", async () => {
+    // `Alt+F` reports a single-character `key` — "f" on Linux and Windows,
+    // "ƒ" on macOS — so a text test that only excluded Ctrl and Meta dropped
+    // the Alt modifier and typed a stray character into the page instead of
+    // opening the menu the person asked for.
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    const image = await deliverFrame();
+    fireEvent.keyDown(image, { key: "f", code: "KeyF", altKey: true });
+    await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
+    const events = api.inputs.flatMap((call: any) => call.events as any[]);
+    expect(events.some((e) => e?.type === "text")).toBe(false);
+    expect(events.some((e) => e?.type === "key_down" && e.key === "f")).toBe(
+      true,
+    );
   });
 
   it("sends no input until this pane holds the browser", async () => {
@@ -197,16 +292,14 @@ describe("the agent browser pane", () => {
     expect(api.inputs).toHaveLength(0);
   });
 
-  it("hands the browser back", async () => {
+  it("hands the browser back so the agent can continue", async () => {
     renderBody();
     await userEvent.click(
       await screen.findByRole("button", { name: /open the browser/i }),
     );
+    await clickPicture();
     await userEvent.click(
-      await screen.findByRole("button", { name: /take control/i }),
-    );
-    await userEvent.click(
-      await screen.findByRole("button", { name: /hand back/i }),
+      await screen.findByRole("button", { name: /resume agent/i }),
     );
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
   });
@@ -218,10 +311,12 @@ describe("the agent browser pane — driving it", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /open the browser/i }),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: /take control/i }),
-    );
-    await screen.findByText(/you have control/i);
+    await clickPicture();
+    await screen.findByText(/you have it/i);
+    // The click that TOOK the browser is itself input, and it has already been
+    // forwarded. A test counting what it sends afterwards must not count it.
+    await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
+    api.inputs = [];
   }
 
   it("moves the keyboard to the pane, not the button that took control", async () => {
@@ -348,9 +443,7 @@ describe("the agent browser pane — driving it", () => {
     api.leaseGate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /take control/i }),
-    );
+    await clickPicture();
 
     for (const projectId of ["proj-2", "proj-1"]) {
       view.rerender(
@@ -367,7 +460,7 @@ describe("the agent browser pane — driving it", () => {
     await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
 
     expect(screen.getByText(/agent is driving/i)).toBeTruthy();
-    expect(screen.queryByText(/you have control/i)).toBeNull();
+    expect(screen.queryByText(/you have it/i)).toBeNull();
   });
 });
 
@@ -408,10 +501,8 @@ describe("the agent browser pane — a hold you can get back", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /open the browser/i }),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: /take control/i }),
-    );
-    expect(api.lease.holder).toBeTruthy();
+    await clickPicture();
+    await waitFor(() => expect(api.lease.holder).toBeTruthy());
 
     // A reload is a fresh mount against the same tab's sessionStorage.
     first.unmount();
@@ -421,7 +512,7 @@ describe("the agent browser pane — a hold you can get back", () => {
     );
 
     // Recognised as the same hands: control, not a refusal.
-    expect(await screen.findByText(/you have control/i)).toBeTruthy();
+    expect(await screen.findByText(/you have it/i)).toBeTruthy();
   });
 
   it("does not adopt a hold belonging to a different tab", async () => {
@@ -432,8 +523,10 @@ describe("the agent browser pane — a hold you can get back", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /open the browser/i }),
     );
-    expect(await screen.findByText(/has control/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /hand back/i })).toBeNull();
+    expect(await screen.findByText(/someone else is driving/i)).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /resume agent/i }),
+    ).toBeNull();
   });
 });
 
@@ -535,7 +628,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: /open the browser/i }),
       );
-      await screen.findByRole("button", { name: /take control/i });
+      await screen.findByText(/agent is driving/i);
       api.socket?.onmessage?.({
         data: JSON.stringify({
           type: "input_ack",
@@ -544,16 +637,15 @@ describe("the agent browser pane — when somebody else is driving", () => {
         }),
       });
       await screen.findByText(/somebody else has taken control/i);
-      expect(
-        screen.queryByRole("button", { name: /take control/i }),
-      ).toBeNull();
+      // The pane says who has it; there is no button to withhold any more.
+      expect(screen.queryByText(/you have it/i)).toBeNull();
 
       api.lease = { state: "free", holder: undefined };
       const ensuresBefore = api.ensures.length;
       const watchesBefore = api.watches.length;
       await vi.advanceTimersByTimeAsync(6_000);
       expect(
-        await screen.findByRole("button", { name: /take control/i }),
+        await screen.findByText(/agent is driving/i),
       ).toBeTruthy();
       expect(
         screen.queryByText(/somebody else has taken control/i),
@@ -583,7 +675,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: /open the browser/i }),
       );
-      await screen.findByRole("button", { name: /take control/i });
+      await screen.findByText(/agent is driving/i);
       await deliverFrame();
       api.socket?.onmessage?.({
         data: JSON.stringify({
@@ -616,7 +708,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: /open the browser/i }),
       );
-      await screen.findByRole("button", { name: /take control/i });
+      await screen.findByText(/agent is driving/i);
       api.socket?.onmessage?.({
         data: JSON.stringify({
           type: "input_ack",
@@ -642,5 +734,33 @@ describe("the agent browser pane — when somebody else is driving", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("a browser whose daemon predates the pane endpoints", () => {
+  it("stops offering controls that swallow every click", async () => {
+    // The whole chain, because each link on its own looks fine: the routes
+    // answer 501, the wire mapper calls that `unsupported`, and the hook
+    // swallows it deliberately. Only here does it show up as a tab strip and
+    // an address field that look live and do nothing.
+    api.paneUnsupported = true;
+    renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    const newTab = await screen.findByTestId("browser-new-tab");
+    // Enabled first: nothing has refused yet, and the state poll cannot tell
+    // us — it answers null for an old engine and a busy one alike.
+    expect(newTab).not.toBeDisabled();
+
+    await userEvent.click(newTab);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("browser-new-tab")).toBeDisabled(),
+    );
+    // The strip stays on screen. A browser whose chrome vanishes reads as one
+    // that crashed, which is a worse lie than one that is merely old.
+    expect(screen.getByTestId("browser-tab-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("browser-address")).toBeDisabled();
   });
 });

@@ -837,7 +837,7 @@ describe("GET /v1/frames?codec=h264", () => {
               height: 768,
               spawnProcess: ffmpeg.spawnProcess,
             }),
-            displaySize: { width: 1024, height: 768 },
+            displaySize: () => ({ width: 1024, height: 768 }),
           }),
     });
     server = stack.server;

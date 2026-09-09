@@ -100,7 +100,11 @@ export interface SessionClient {
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
-  lease?(): Promise<BrowserdLeaseState>;
+  /**
+   * Read the lease. The signal is what lets the handoff poll be cancelled;
+   * an implementation free to ignore it, but never to drop it silently.
+   */
+  lease?(options?: { signal?: AbortSignal }): Promise<BrowserdLeaseState>;
   leaseAction?(args: {
     action: "acquire" | "heartbeat" | "resume";
     holder: string;
@@ -1012,7 +1016,12 @@ function withActivityTouches(
       }
       return client.sendCommand(command, expectedBootId);
     },
-    ...(client.lease ? { lease: () => client.lease!() } : {}),
+    // ARGUMENTS FORWARDED, not just the call. A wrapper that took none
+    // silently dropped the abort signal the handoff poll passes, so a
+    // cancelled turn went on holding a lease read nobody was waiting for.
+    ...(client.lease
+      ? { lease: (options?: { signal?: AbortSignal }) => client.lease!(options) }
+      : {}),
     ...(client.leaseAction
       ? { leaseAction: (args) => client.leaseAction!(args) }
       : {}),

@@ -92,6 +92,8 @@ export class FakeBrowserWebContents extends EventEmitter {
   private url: string;
   private readonly options: FakeBrowserWebContentsOptions;
   private historyDepth = 0;
+  /** How many entries are AHEAD of the current one; `goBack` creates them. */
+  private forwardDepth = 0;
 
   constructor(options: FakeBrowserWebContentsOptions = {}) {
     super();
@@ -106,6 +108,9 @@ export class FakeBrowserWebContents extends EventEmitter {
     const committed = this.redirectTo ?? url;
     this.url = committed;
     this.historyDepth += 1;
+    // A fresh navigation truncates the forward history, as every browser does:
+    // go back twice, then follow a link, and there is nothing ahead any more.
+    this.forwardDepth = 0;
     this.emit("did-navigate", { preventDefault() {} }, committed);
     return undefined;
   }
@@ -152,6 +157,14 @@ export class FakeBrowserWebContents extends EventEmitter {
     goBack: () => {
       this.navigations.push("goBack");
       this.historyDepth -= 1;
+      this.forwardDepth += 1;
+      queueMicrotask(() => this.emit("did-finish-load"));
+    },
+    canGoForward: () => this.forwardDepth > 0,
+    goForward: () => {
+      this.navigations.push("goForward");
+      this.historyDepth += 1;
+      this.forwardDepth -= 1;
       queueMicrotask(() => this.emit("did-finish-load"));
     },
   };

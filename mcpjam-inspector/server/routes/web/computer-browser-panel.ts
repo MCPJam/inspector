@@ -58,6 +58,10 @@ import {
 } from "../../services/browserd/live-session-deps.js";
 import { attachBrowserSession } from "../../services/browserd/browser-session.js";
 import {
+  parseAnchor,
+  parsePaneCommand,
+} from "../../services/browserd/daemon/pane-command.js";
+import {
   pageToolsFromCommandResponse,
   webmcpToolsObserveCommand,
 } from "../../services/browserd/page-tools.js";
@@ -127,7 +131,13 @@ export interface BrowserPanelDeps {
     browserdToken: string;
   }) => Pick<
     BrowserdClient,
-    "lease" | "leaseAction" | "sendInput" | "sendCommand"
+    | "lease"
+    | "leaseAction"
+    | "sendInput"
+    | "sendCommand"
+    | "paneState"
+    | "paneCommand"
+    | "paneViewport"
   > & { exportProfile?: () => Promise<Uint8Array> };
   configured?: () => boolean;
 }
@@ -569,6 +579,182 @@ export function createComputerBrowserPanelRoutes(
         { ok: false, error: "Failed to send input to the browser." },
         502,
       );
+    }
+  });
+
+  /**
+   * What the browser IS — every tab, the history, who is driving, the size.
+   *
+   * READ-ONLY and cheap enough to poll, which is what the shell does between
+   * the events that push changes. It carries the authenticated user as the
+   * holder for the same reason `/input` does: the daemon compares it against
+   * the lease to decide whether this watcher may see the tab list at all, and
+   * a holder read off the request body would let anyone who echoed the right
+   * id read the titles of a session somebody else is signing into.
+   */
+  app.get("/state", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId, userId } = auth.claims;
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const state = await createClient(session).paneState({ holder: userId });
+      // NULL is not an error here. A daemon that predates the shell answers
+      // 501, and a pane that has lost the browser to somebody else gets a 423
+      // — in both cases the shell keeps what it last saw rather than blanking
+      // a tab strip that is still accurate.
+      if (!state) {
+        return c.json({ ok: false, error: "state_unavailable" }, 409);
+      }
+      return c.json({ ok: true, state });
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "browser_unreachable" }, 502);
+      }
+      reportRouteFailure("browser panel state failed", error, {
+        source: "computer-browser-panel.state",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json({ ok: false, error: "state_failed" }, 502);
+    }
+  });
+
+  /**
+   * A person's navigation, which TAKES the browser.
+   *
+   * `pane-command` rather than `command`, mirroring the daemon's own naming
+   * and for the same reason: one path serving both authorities, with the
+   * attribution decided by which fields happened to be present, is exactly
+   * what the ledger's `source` column exists to prevent.
+   */
+  app.post("/pane-command", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId, userId } = auth.claims;
+    const parsed: unknown = await c.req.json().catch(() => undefined);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return c.json({ ok: false, error: "Expected a JSON object." }, 400);
+    }
+    const body = parsed as {
+      command?: unknown;
+      commandId?: unknown;
+      anchor?: unknown;
+    };
+    // Validated HERE as well as at the daemon. This route is reachable with a
+    // minted browser token and the daemon is reachable on its own public host;
+    // neither check is redundant, because they are checks at different doors.
+    const command = parsePaneCommand(body.command);
+    if (!command) {
+      return c.json({ ok: false, error: "invalid_command" }, 400);
+    }
+    const anchor = parseAnchor(body.anchor);
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const outcome = await createClient(session).paneCommand({
+        // The authenticated USER, exactly as `/lease` and `/input` derive it.
+        holder: userId,
+        command,
+        ...(typeof body.commandId === "string"
+          ? { commandId: body.commandId }
+          : {}),
+        ...(anchor ? { anchor } : {}),
+      });
+      if (!outcome.ok) {
+        const status =
+          outcome.reason === "lease_held"
+            ? 423
+            : outcome.reason === "page_changed"
+              ? 409
+              : outcome.reason === "unsupported"
+                ? 501
+                : 502;
+        return c.json(
+          {
+            ok: false,
+            error: outcome.reason,
+            ...(outcome.reason === "lease_held" && outcome.holder
+              ? { holder: outcome.holder }
+              : {}),
+          },
+          status,
+        );
+      }
+      // Driving IS real use — see `/input`'s note. Somebody navigating by hand
+      // issues no agent commands at all, and left as a panel touch their box
+      // would hibernate underneath them mid-login.
+      void touchSession({
+        sessionId: session.sessionId,
+        kind: "command",
+      }).catch(() => {});
+      void touchActivity({ computerId }).catch(() => {});
+      return c.json({
+        ok: true,
+        ...(outcome.viewport ? { viewport: outcome.viewport } : {}),
+      });
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "browser_unreachable" }, 502);
+      }
+      reportRouteFailure("browser pane command failed", error, {
+        source: "computer-browser-panel.pane-command",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json({ ok: false, error: "pane_command_failed" }, 502);
+    }
+  });
+
+  /**
+   * The panel measured a size.
+   *
+   * Deliberately NOT an activity touch. A resize is something that happens TO
+   * a pane rather than something a person did with the browser — a window
+   * moved to another monitor sends one, and so does every reflow of the app
+   * around it — and counting it would keep a metered box awake for as long as
+   * a tab was left open somewhere.
+   */
+  app.post("/viewport", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId } = auth.claims;
+    const parsed: unknown = await c.req.json().catch(() => undefined);
+    if (typeof parsed !== "object" || parsed === null) {
+      return c.json({ ok: false, error: "Expected a JSON object." }, 400);
+    }
+    const body = parsed as { width?: unknown; height?: unknown };
+    if (typeof body.width !== "number" || typeof body.height !== "number") {
+      return c.json({ ok: false, error: "invalid_viewport" }, 400);
+    }
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const viewport = await createClient(session).paneViewport({
+        width: body.width,
+        height: body.height,
+      });
+      if (!viewport) {
+        return c.json({ ok: false, error: "viewport_unsupported" }, 501);
+      }
+      return c.json({ ok: true, viewport });
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json({ ok: false, error: "browser_unreachable" }, 502);
+      }
+      reportRouteFailure("browser pane viewport failed", error, {
+        source: "computer-browser-panel.viewport",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json({ ok: false, error: "viewport_failed" }, 502);
     }
   });
 

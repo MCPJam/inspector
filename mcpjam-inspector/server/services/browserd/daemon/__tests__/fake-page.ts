@@ -92,6 +92,9 @@ export interface FakePage extends DriverPage {
     goto: string[];
     reload: number;
     goBack: number;
+    goForward: number;
+    /** Every size this page was resized to, in order. */
+    viewportSizes: Array<{ width: number; height: number }>;
     shots: number;
     acts: ActLog;
     front: number;
@@ -179,6 +182,8 @@ export function fakePage(init: {
     goto: [] as string[],
     reload: 0,
     goBack: 0,
+    goForward: 0,
+    viewportSizes: [] as Array<{ width: number; height: number }>,
     shots: 0,
     acts: [] as ActLog,
     front: 0,
@@ -222,6 +227,10 @@ export function fakePage(init: {
     async goto(u) { calls.goto.push(u); url = u; },
     async reload() { calls.reload++; },
     async goBack() { calls.goBack++; },
+    async goForward() { calls.goForward++; },
+    async setViewportSize(size: { width: number; height: number }) {
+      calls.viewportSizes.push(size);
+    },
     async waitForNetworkIdle(signal) {
       if (!init.hangNetwork) return;
       return new Promise<void>((_r, reject) =>

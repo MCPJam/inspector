@@ -36,6 +36,11 @@
 
 import type { DriverContext, DriverPage } from "../daemon/browser-page";
 import { BROWSERD_OBSERVATION_VIEWPORT } from "../protocol";
+import {
+  createElectronInputShield,
+  type ShieldViewConstructor,
+  type ShieldWindow,
+} from "./input-shield";
 import { createElectronPage, type PageWebContents } from "./electron-page";
 // A separate, import-free module because `src/main.ts` reads the same registry
 // and must not pull the server graph in at module-load time. See its header.
@@ -217,6 +222,24 @@ export async function launchElectronContext(
     // pane is watching when it is NOT being shown natively.
     backgroundThrottling: false,
   };
+
+  /**
+   * Teach the surface to build an input shield, now that Electron is loaded.
+   *
+   * HERE rather than where the surface is created, because of an ordering that
+   * is not ours to choose: the surface has to exist before this context (it
+   * registers each tab as the tab is made) and only this module has Electron.
+   * @see ContextSurface.setShieldFactory
+   */
+  options.surface?.setShieldFactory(({ window, onGesture }) => {
+    const View = electron.WebContentsView;
+    if (typeof View !== "function") return null;
+    return createElectronInputShield(
+      View as unknown as ShieldViewConstructor,
+      window as unknown as ShieldWindow,
+      onGesture,
+    );
+  });
 
   function newView(): ElectronWindowLike {
     const WebContentsView = electron.WebContentsView!;

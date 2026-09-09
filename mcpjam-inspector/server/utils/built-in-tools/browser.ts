@@ -52,10 +52,11 @@ import { needsApprovalFor, type ApprovalFloor } from "@/shared/tool-approval";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { webmcpPageToolsMode } from "../../config.js";
 import { logger } from "../logger.js";
+import { parkForHandoff } from "./browser-handoff.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
+import { MAX_SESSION_VIEWPORT } from "@/shared/browser-viewport";
 import {
-  BROWSERD_OBSERVATION_VIEWPORT,
   DEFAULT_QUEUE_KEY,
   isPointInViewport,
   type BrowserAction,
@@ -95,13 +96,28 @@ import {
 export { BROWSER_BUILT_IN_TOOL_ID };
 
 /**
- * The coordinate space the model is told about, stated in the tool schema and
- * re-checked before a command leaves this process. Read from the protocol so
- * the schema, the daemon's bounds check, and the launched viewport cannot
- * disagree about what "x: 900" means.
+ * The coordinate space the model is told about — as a RANGE, not a size.
+ *
+ * It used to be the size: the schema said `max: 1023`, the description said
+ * "1024x768", and the daemon's bounds check agreed with both. That works
+ * exactly as long as no session is ever a different size, and one of them now
+ * is — the interactive Playground's browser follows the panel somebody can
+ * drag. A schema that named 1023 would refuse a perfectly good click at x=1200
+ * before it ever reached the browser.
+ *
+ * So the schema states the WIDEST a session may be, the description tells the
+ * model to read the actual size off its last observation (every one carries
+ * `viewport`), and the daemon refuses anything outside the session's real
+ * bounds — which is the only place that knows them.
+ *
+ * WRITTEN ONCE, deliberately. A description that named the current size would
+ * have to be regenerated on every resize, and regenerating it rotates the
+ * host-configuration hash — so dragging a panel would invalidate every cached
+ * tool manifest, several times a second.
  */
-const VIEWPORT_W = BROWSERD_OBSERVATION_VIEWPORT.width;
-const VIEWPORT_H = BROWSERD_OBSERVATION_VIEWPORT.height;
+const VIEWPORT_MAX_W = MAX_SESSION_VIEWPORT.width;
+const VIEWPORT_MAX_H = MAX_SESSION_VIEWPORT.height;
+
 
 /**
  * How approval reaches the user for this turn — the thing a surface must
@@ -131,6 +147,18 @@ export interface BrowserSessionScope {
 }
 
 export interface BrowserToolsOptions {
+  /**
+   * Told while a turn is parked behind a person holding the browser.
+   *
+   * The "visible waiting state" the handoff needs: without it, a turn that is
+   * politely waiting for somebody to finish signing in is indistinguishable
+   * from a turn that has hung. Optional because an unattended run has nobody
+   * to show it to.
+   */
+  onHandoffWaiting?: (state: {
+    waiting: boolean;
+    holder?: { kind: "human" | "script" };
+  }) => void;
   /** Bearer authorization forwarded to the control plane. */
   authHeader: string;
   /** Project whose computer this turn drives. */
@@ -419,6 +447,11 @@ interface CommandSender {
  * Read BOTH failure layers of a daemon reply. The transport status says
  * whether the command was ADMITTED; `result.ok` says whether the browser
  * actually did it. Only when both are good is this a success.
+ */
+/**
+ * The handoff coordinator, imported rather than inlined: it is the one piece
+ * of this file with no browser in it at all, and it is easier to trust when it
+ * can be tested against a clock the test owns.
  */
 function unwrapCommand(response: {
   status: string;
@@ -1186,6 +1219,45 @@ export function buildBrowserTools(
         throw error;
       }
       disarm?.();
+      // A PERSON HAS THE BROWSER. Park instead of refusing, and come back with
+      // a fresh look rather than with this command's result — which does not
+      // exist, because the command was never run. @see browser-handoff.ts
+      if (response.status === "lease_blocked" && !recovering) {
+        state.forgetTokens(handle.bootId);
+        return {
+          ...(await parkForHandoff<ObservationStateToken>({
+            // The SESSION client, not the `CommandSender` cast above: reading
+            // the lease is a different method, and it is the one thing here
+            // that a `sendCommand`-shaped view cannot answer.
+            client: handle.client,
+            ...(args.signal ? { signal: args.signal } : {}),
+            observe: (signal) =>
+              send(
+                { kind: "observe", mode: "a11y" },
+                {
+                  ...(args.tabId ? { tabId: args.tabId } : {}),
+                  ...(signal ? { signal } : {}),
+                  // `recovering`, for the same reason the origin recovery
+                  // below is: this runs from INSIDE the lock section this
+                  // command already holds, so taking the lock again parks the
+                  // resumption behind the command it exists to resume — and
+                  // neither ever finishes. The turn hangs until the client
+                  // gives up, with the person holding a browser nobody is
+                  // coming back for.
+                  recovering: true,
+                  // The observation belongs to the model — it is what the next
+                  // action is decided from — so its token is remembered like
+                  // any other. `raw` would withhold exactly the thing that
+                  // makes the resumption usable.
+                },
+              ),
+            ...(opts.onHandoffWaiting
+              ? { onWaiting: opts.onHandoffWaiting }
+              : {}),
+          })),
+          tabId,
+        };
+      }
       let outcome = unwrapCommand(response);
       // W4/L6 — a handoff invalidates everything this turn cached. Two signals
       // reach us: a refusal while the person still holds the browser, and the
@@ -1288,16 +1360,16 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns the page ` +
+        `Open a URL in ${engineLabel(engine)} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting.",
       inputSchema: z.object({
         url: z
           .string()
           .optional()
-          .describe("URL to open. Omit when using back or reload."),
+          .describe("URL to open. Omit when using back, forward or reload."),
         action: z
-          .enum(["goto", "back", "reload"])
+          .enum(["goto", "back", "forward", "reload"])
           .optional()
           .describe("Defaults to goto."),
         tabId: z
@@ -1335,7 +1407,9 @@ export function buildBrowserTools(
               }
             : verb === "back"
               ? { kind: "back" }
-              : { kind: "reload" };
+              : verb === "forward"
+                ? { kind: "forward" }
+                : { kind: "reload" };
         return presented(
           await send(
             // BOTH, matching `browser_act` and matching what the description
@@ -1360,10 +1434,10 @@ export function buildBrowserTools(
         "answer a JavaScript dialog that is blocking the page. " +
         "Target by `ref` from the last a11y observation (best: it is the element you read, and a covered one is refused rather than mis-clicked), or by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
-        "screenshot. Coordinates are CSS pixels in a " +
-        `${VIEWPORT_W}x${VIEWPORT_H} viewport with (0, 0) at the TOP-LEFT of the ` +
-        "screenshot — the screenshot is always shown at that size, so read x and y " +
-        "straight off it without scaling.",
+        "screenshot. Coordinates are CSS pixels, (0, 0) at the screenshot's " +
+        "TOP-LEFT, read straight off it without scaling. The page can be " +
+        "resized while you work, so take its size from the `viewport` on your " +
+        "last observation; a coordinate outside it is refused, not clamped.",
       inputSchema: z.object({
         verb: z.enum([
           "click",
@@ -1381,19 +1455,15 @@ export function buildBrowserTools(
         x: z
           .number()
           .min(0)
-          .max(VIEWPORT_W - 1)
+          .max(VIEWPORT_MAX_W - 1)
           .optional()
-          .describe(
-            `X coordinate from the last screenshot, 0 to ${VIEWPORT_W - 1}.`,
-          ),
+          .describe("X from the last screenshot, inside its `viewport`."),
         y: z
           .number()
           .min(0)
-          .max(VIEWPORT_H - 1)
+          .max(VIEWPORT_MAX_H - 1)
           .optional()
-          .describe(
-            `Y coordinate from the last screenshot, 0 to ${VIEWPORT_H - 1}.`,
-          ),
+          .describe("Y from the last screenshot, inside its `viewport`."),
         value: z
           .string()
           .optional()
@@ -1428,7 +1498,17 @@ export function buildBrowserTools(
         { verb, ref, selector, x, y, value, fields, submit, observe, tabId },
         { abortSignal },
       ) => {
-        if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
+        if (
+          x !== undefined &&
+          y !== undefined &&
+          // The WIDEST page this browser could be showing, not the default
+          // one. This session's real size lives in the daemon, and the daemon
+          // refuses against it; this check exists only to answer an obviously
+          // impossible coordinate in the model's own terms rather than as a
+          // transport error, so a bound tighter than the schema's would refuse
+          // points that are perfectly valid on a panel somebody widened.
+          !isPointInViewport(x, y, MAX_SESSION_VIEWPORT)
+        ) {
           // The schema states the bounds, but a hosted path reconstructs the
           // schema on the wire and executes with whatever input comes back, so
           // the bound is re-checked here rather than assumed. The daemon
@@ -1436,9 +1516,11 @@ export function buildBrowserTools(
           // instead of as a transport error.
           return {
             error:
-              `out_of_viewport: (${x}, ${y}) is outside the ${VIEWPORT_W}x${VIEWPORT_H} ` +
-              "screenshot; nothing was clicked. Coordinates are CSS pixels with " +
-              "(0, 0) at the top-left — re-read the screenshot and pick a point inside it.",
+              `out_of_viewport: (${x}, ${y}) is outside any page this browser ` +
+              `can show (at most ${VIEWPORT_MAX_W}x${VIEWPORT_MAX_H}); nothing ` +
+              "was clicked. Coordinates are CSS pixels with (0, 0) at the " +
+              "top-left — re-read the screenshot, take the page's size from its " +
+              "`viewport`, and pick a point inside it.",
           };
         }
         // REF FIRST. It is the only target the model did not have to invent:
@@ -2278,6 +2360,22 @@ function defaultEnsureSession(
         projectId,
         contextMode,
         ...(ownerKey ? { ownerKey } : {}),
+        /**
+         * `followPane` for the interactive session, `fixed` for everything
+         * else, and `contextMode` is exactly that distinction already made.
+         *
+         * `persistent` is the interactive Playground's browser: one per
+         * project, keeping its logins between turns, watched by a panel
+         * somebody can drag. `ephemeral` is an eval iteration, a swarm, a
+         * journey attempt — a throwaway browser with no panel and a replay
+         * artifact that is only comparable against a run at the same size.
+         *
+         * Reusing the existing distinction rather than adding a second flag
+         * beside it: two ways to say "is this a real person's session" is two
+         * ways for them to disagree, and the disagreement would be an eval
+         * silently recorded at whatever size somebody's window happened to be.
+         */
+        viewportPolicy: contextMode === "persistent" ? "followPane" : "fixed",
         ...(logicalSessionId ? { sessionId: logicalSessionId } : {}),
         ...(profileArchive ? { profileArchive } : {}),
       });

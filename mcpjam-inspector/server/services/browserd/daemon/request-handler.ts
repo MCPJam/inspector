@@ -17,6 +17,12 @@
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
 import {
+  parseAnchor,
+  paneCommandToAction,
+  parsePaneCommand,
+} from "./pane-command";
+import { shortHash } from "./state-token";
+import {
   BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
   BROWSERD_WEBMCP_FEATURES,
@@ -91,6 +97,7 @@ const ACTIVITY_BOOST_WINDOW_MS = 1_500;
 const MOTION_ACTIONS: ReadonlySet<string> = new Set([
   "navigate",
   "back",
+  "forward",
   "reload",
   "act",
 ]);
@@ -138,12 +145,20 @@ export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit"> & Partial<Pick<CommandQueue, "isIdle">>;
   driver: Pick<
     BrowserDriver,
-    | "health"
-    | "viewport"
-    | "viewportIfWatched"
-    | "tabsSnapshot"
-    | "webmcpToolsSnapshot"
-  >;
+    "health" | "viewport" | "viewportIfWatched" | "tabsSnapshot" | "webmcpToolsSnapshot"
+  > &
+    /**
+     * PARTIAL, so a driver that predates the browser shell is still a driver.
+     * Every one of these is answered with a documented refusal when absent —
+     * `state_unsupported`, `viewport_unsupported`, an unchecked anchor — which
+     * is what lets a unit fake and an older engine keep working unchanged.
+     */
+    Partial<
+      Pick<
+        BrowserDriver,
+        "sessionViewportState" | "stateSnapshot" | "requestViewport" | "currentStateToken"
+      >
+    >;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -239,14 +254,7 @@ const RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
-  private readonly driver: Pick<
-    BrowserDriver,
-    | "health"
-    | "viewport"
-    | "viewportIfWatched"
-    | "tabsSnapshot"
-    | "webmcpToolsSnapshot"
-  >;
+  private readonly driver: BrowserdHandlerDeps["driver"];
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
@@ -527,7 +535,277 @@ export class BrowserdRequestHandler {
       return this.handleArtifact(req);
     }
 
+    // What the browser IS: every tab, which one is on screen, whether the
+    // history has anywhere to go, who holds it, and how big the page is.
+    //
+    // ITS OWN ENDPOINT rather than more fields on `/v1/status`, because it is
+    // asked at a completely different rate by a completely different caller: a
+    // status probe decides whether to reuse a daemon and runs once, while this
+    // backs a tab strip and runs several times a minute for as long as somebody
+    // is looking. Bolting it onto status would make the reuse probe pay for a
+    // CDP round trip per tab.
+    if (req.path === "/v1/state") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      return this.handleState(req);
+    }
+
+    // A PERSON's navigation, as distinct from the agent's `/v1/commands`.
+    //
+    // The separation is the attribution. Every command reaching `/v1/commands`
+    // is refused while a lease is held; a pane command ACQUIRES the lease as
+    // its first act, because that is what "click the page and it is yours"
+    // means. Sharing one path and deciding by which fields were present is the
+    // ambiguity the ledger's `source` column exists to remove.
+    if (req.path === "/v1/pane-command") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePaneCommand(req);
+    }
+
+    // The panel measured a size.
+    //
+    // A REQUEST, and the daemon's answer is the size it ended up at — which
+    // for a `fixed` session is the size it was already at. The caller does not
+    // get to distinguish "you were refused" from "somebody else's measurement
+    // won", because both mean the same thing to it: read the viewport out of
+    // the answer and use that.
+    if (req.path === "/v1/viewport") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleViewport(req);
+    }
+
     return { status: 404 };
+  }
+
+  /**
+   * The browser's whole state, for the pane's shell.
+   *
+   * LEASE-GATED exactly as the frames are, and for exactly the same reason:
+   * the tab titles and URLs of a browser somebody has taken over describe the
+   * page they are signing into. "Reset your password | Acme" is not a
+   * screenshot, but it is not nothing either, and a second pane that could
+   * read it while the frames were withheld would be a hole in a wall that is
+   * otherwise complete.
+   */
+  private async handleState(req: DaemonRequest): Promise<DaemonResponse> {
+    const holder = req.query?.get("holder") ?? undefined;
+    const refusal = this.watcherRefusal(holder);
+    if (refusal) {
+      return { status: 423, body: { error: refusal, bootId: this.bootId } };
+    }
+    if (!this.driver.stateSnapshot) {
+      return {
+        status: 501,
+        body: { error: "state_unsupported", bootId: this.bootId },
+      };
+    }
+    const snapshot = await this.driver.stateSnapshot();
+    const lease = this.lease.state();
+    return {
+      status: 200,
+      body: {
+        bootId: this.bootId,
+        ...snapshot,
+        control:
+          lease.state === "free"
+            ? { kind: "agent" }
+            : {
+                kind: lease.holderKind === "script" ? "script" : "human",
+                holder: lease.holder,
+                ...(lease.state === "parked" ? { parked: true } : {}),
+              },
+      },
+    };
+  }
+
+  /**
+   * One human navigation, taking the browser first if it is free.
+   *
+   * The order is the whole design and it is not negotiable: acquire, THEN
+   * re-check the anchor, THEN dispatch. Acquiring is a round trip — to another
+   * continent on the hosted engine — and a page that finished loading during
+   * it is a different page. Dispatching first would race the agent; checking
+   * the anchor first would check a page that could still move.
+   */
+  private async handlePaneCommand(
+    req: DaemonRequest,
+  ): Promise<DaemonResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    const body = parsed as {
+      holder?: unknown;
+      command?: unknown;
+      commandId?: unknown;
+      anchor?: unknown;
+    };
+    if (typeof body?.holder !== "string" || !body.holder) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId },
+      };
+    }
+    const command = parsePaneCommand(body.command);
+    if (!command) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId },
+      };
+    }
+    const holder = body.holder;
+    // AUTOMATIC TAKEOVER. `acquire` is idempotent for the same holder and
+    // refuses a different one, so this is both "take it" and "confirm I still
+    // have it" in one call — which is what lets the pane send a command
+    // without first knowing whether it is the holder.
+    const lease = this.lease.acquire(holder);
+    if (lease.state === "free" || lease.holder !== holder) {
+      return {
+        status: 423,
+        body: {
+          error: "lease_held",
+          holder:
+            lease.state === "free"
+              ? undefined
+              : {
+                  kind: lease.holderKind === "script" ? "script" : "human",
+                  id: lease.holder,
+                },
+          bootId: this.bootId,
+        },
+      };
+    }
+    this.lastActivityAt = Date.now();
+    // The anchor, checked AFTER the acquire. @see handlePaneCommand's docstring
+    const anchor = parseAnchor(body.anchor);
+    if (anchor) {
+      const fresh = await this.currentAnchor(anchor.tabId);
+      // A driver that cannot mint a token is not consulted; see currentAnchor.
+      const moved =
+        fresh !== "unsupported" &&
+        // HASHED on this side. The pane sends the URL it saw; the daemon's
+        // token carries a digest of the URL it has. Comparing in the digest's
+        // space keeps the hashing scheme internal — the pane never learns it —
+        // and costs one hash of a string the pane already sent.
+        (!fresh ||
+          fresh.urlHash !== shortHash(anchor.url) ||
+          fresh.navCounter !== anchor.navCounter);
+      if (moved) {
+        return {
+          status: 409,
+          body: { error: "page_changed", bootId: this.bootId },
+        };
+      }
+    }
+    const mapped = paneCommandToAction(command);
+    const outcome = await this.queue.submit({
+      // `manual` is the one source `leaseRefusalFor` admits while a lease is
+      // held, which is what lets this run at all now that the pane owns the
+      // browser.
+      source: "manual",
+      commandId:
+        typeof body.commandId === "string" && body.commandId
+          ? body.commandId
+          : `pane-${Math.random().toString(36).slice(2)}-${Date.now()}`,
+      ...(mapped.tabId !== undefined ? { tabId: mapped.tabId } : {}),
+      action: mapped.action,
+    });
+    const viewport = this.driver.sessionViewportState
+      ? this.driver.sessionViewportState()
+      : undefined;
+    if (outcome.status !== "ok") {
+      return {
+        status: outcome.status === "busy" ? 429 : 409,
+        body: {
+          error: `command_${outcome.status}`,
+          ...(viewport ? { viewport } : {}),
+          bootId: this.bootId,
+        },
+      };
+    }
+    return {
+      status: outcome.result.ok ? 200 : 409,
+      body: {
+        ok: outcome.result.ok,
+        ...(outcome.result.ok ? {} : { error: outcome.result.error }),
+        ...(viewport ? { viewport } : {}),
+        bootId: this.bootId,
+      },
+    };
+  }
+
+  /**
+   * The tab's identity as the pane's anchor describes it.
+   *
+   * The DRIVER's token rather than a fresh CDP read: it already carries the
+   * nav counter and the URL, it is the number the staleness guard compares,
+   * and asking twice would let the two disagree.
+   */
+  private async currentAnchor(
+    tabId: string,
+  ): Promise<
+    { urlHash: string; navCounter: number } | null | "unsupported"
+  > {
+    // UNSUPPORTED IS NOT NULL, and the difference is the whole point of this
+    // return type. A driver with no `currentStateToken` has not told us the
+    // page moved — it has told us nothing, and it is optional precisely so
+    // that older drivers keep working. Answering `null` there made the caller
+    // refuse EVERY anchored command with `page_changed`, so on such a driver
+    // clicking the page could never take the browser: the pane would report a
+    // page that had changed, forever, on a page sitting perfectly still.
+    if (!this.driver.currentStateToken) return "unsupported";
+    const token = await this.driver.currentStateToken(tabId);
+    // Null still means what it meant: the driver CAN answer and could not read
+    // this tab, which is a tab that has gone or is mid-navigation. Refusing is
+    // right there.
+    if (!token) return null;
+    return { urlHash: token.urlHash, navCounter: token.navCounter };
+  }
+
+  /** The panel measured a size; answer with the size the session is at. */
+  private async handleViewport(req: DaemonRequest): Promise<DaemonResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    const body = parsed as { width?: unknown; height?: unknown };
+    if (typeof body?.width !== "number" || typeof body?.height !== "number") {
+      return {
+        status: 400,
+        body: { error: "invalid_viewport", bootId: this.bootId },
+      };
+    }
+    if (!this.driver.requestViewport) {
+      return {
+        status: 501,
+        body: { error: "viewport_unsupported", bootId: this.bootId },
+      };
+    }
+    // NOT `lastActivityAt`. A panel that is being resized is a panel somebody
+    // can see, but the idle reap is about a browser nobody is USING, and a
+    // window left open on a second monitor sends a measurement every time the
+    // OS reflows it. Watching already defers the reap; this must not be a
+    // second, quieter way to keep a metered box awake forever.
+    const viewport = await this.driver.requestViewport({
+      width: body.width,
+      height: body.height,
+    });
+    return { status: 200, body: { viewport, bootId: this.bootId } };
   }
 
   private async handleProfileExport(): Promise<DaemonResponse> {
@@ -1139,13 +1417,32 @@ export class BrowserdRequestHandler {
       ...(what.capturePage && result?.stateToken
         ? { stateToken: result.stateToken as never }
         : {}),
-      ...(what.capturePage
-        ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } }
-        : {}),
+      // The SESSION's size, not the constant. The ledger row is what a replay
+      // is reconstructed from, so a row that recorded 1024x768 for a command
+      // executed at 1400x900 would produce an artifact whose coordinates
+      // cannot be read back — and there would be nothing in the row to say so.
+      ...(what.capturePage ? { viewport: this.publishedViewport() } : {}),
       ...(result?.cursors ? { cursors: result.cursors } : {}),
       ...(what.capturePage ? { capturePage: true } : {}),
       ...(this.captureTypedText ? { captureTypedText: true } : {}),
     });
+  }
+
+  /**
+   * The size to stamp on a published result.
+   *
+   * From the DRIVER, which is the only thing that knows whether a resize
+   * landed. A driver that cannot answer — a unit fake, an engine with no
+   * session viewport — falls back to the constant, which is the size it is
+   * necessarily running at.
+   */
+  private publishedViewport(): { width: number; height: number } {
+    const session = this.driver.sessionViewportState
+      ? this.driver.sessionViewportState()
+      : undefined;
+    return session
+      ? { width: session.width, height: session.height }
+      : { ...BROWSERD_OBSERVATION_VIEWPORT };
   }
 
   /**
