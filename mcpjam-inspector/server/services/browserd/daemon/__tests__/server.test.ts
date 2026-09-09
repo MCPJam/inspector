@@ -29,10 +29,13 @@ describe("browserd server adapter (over a real socket)", () => {
     const stack = buildBrowserdStack(stubDriver(), {
       token: TOKEN,
       bodyLimitBytes: 256,
+      profileExport: async () => new Uint8Array([31, 139, 8, 0]),
     });
     server = stack.server;
     bootId = stack.bootId;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const { port } = server.address() as AddressInfo;
     base = `http://127.0.0.1:${port}`;
   });
@@ -47,11 +50,27 @@ describe("browserd server adapter (over a real socket)", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("serves a profile export as raw gzip bytes", async () => {
+    const res = await fetch(`${base}/v1/profile/export`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(
+      new Uint8Array([31, 139, 8, 0]),
+    );
+  });
+
   it("401s a command with no bearer", async () => {
     const res = await fetch(`${base}/v1/commands`, {
       method: "POST",
       body: JSON.stringify({
-        command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+        command: {
+          commandId: "c1",
+          source: "chat",
+          action: { kind: "reload" },
+        },
       }),
     });
     expect(res.status).toBe(401);
@@ -82,7 +101,11 @@ describe("browserd server adapter (over a real socket)", () => {
       method: "POST",
       headers: { authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({
-        command: { commandId: "c1", source: "chat", action: { kind: "reload" } },
+        command: {
+          commandId: "c1",
+          source: "chat",
+          action: { kind: "reload" },
+        },
         expectedBootId: "some-old-boot",
       }),
     });

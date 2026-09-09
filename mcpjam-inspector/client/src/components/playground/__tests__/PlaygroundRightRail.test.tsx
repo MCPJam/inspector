@@ -121,6 +121,10 @@ vi.mock("@/hooks/useProjectComputer", () => ({
     token: "tok",
     expiresAt: Date.now() + 60_000,
   }),
+  useMintConversationBrowserToken: () => async () => ({
+    token: "tok",
+    expiresAt: Date.now() + 60_000,
+  }),
 }));
 
 import { PlaygroundRightRail } from "../PlaygroundRightRail";

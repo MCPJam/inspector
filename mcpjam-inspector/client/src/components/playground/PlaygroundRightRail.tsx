@@ -30,7 +30,12 @@ import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { fetchLocalBrowserStatus } from "@/lib/local-browser/client";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
+import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -103,7 +108,10 @@ function useLocalBrowserRunning(enabled: boolean): boolean {
       if (!cancelled && status) setRunning(status.running === true);
     };
     void probe();
-    const timer = window.setInterval(() => void probe(), LOCAL_BROWSER_PROBE_MS);
+    const timer = window.setInterval(
+      () => void probe(),
+      LOCAL_BROWSER_PROBE_MS,
+    );
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -161,13 +169,31 @@ function RightRailTabbed({
   const hasBrowser = Boolean(
     (hostConfig?.builtInToolIds?.includes("browser") &&
       (engine.selectedEngine === "local" || isAuthenticated)) ||
-      localBrowserRunning,
+    localBrowserRunning,
   );
   // Which body. Follows `selectedEngine` like the Shell above, so someone who
   // picked "This machine" but has not authorized it yet sees the local body's
   // pointer rather than a cloud browser they did not ask for.
   const isLocalBrowser = engine.selectedEngine === "local";
   const mintBrowserToken = useMintBrowserToken();
+  const mintConversationBrowserToken = useMintConversationBrowserToken();
+  const browserSessionsEnabled = useBrowserSessionsEnabled();
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const browserSessionId = browserSessionsEnabled
+    ? (activeChatSessionId ?? undefined)
+    : undefined;
+  const mintHostedBrowserToken = useCallback(
+    ({ projectId: tokenProjectId }: { projectId: string }) =>
+      browserSessionId
+        ? mintConversationBrowserToken({
+            projectId: tokenProjectId,
+            conversationId: browserSessionId,
+          })
+        : mintBrowserToken({ projectId: tokenProjectId }),
+    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+  );
 
   // A tab that disappears cannot stay selected. Only a host losing the browser
   // capability can do that now — the engine switch swaps the body instead —
@@ -254,6 +280,7 @@ function RightRailTabbed({
           {isLocalBrowser ? (
             <LocalBrowserBody
               projectId={projectId}
+              sessionId={browserSessionId}
               consentGranted={engine.consent.granted}
               consentToken={engine.consent.token}
               active={activeTab === "browser"}
@@ -261,7 +288,8 @@ function RightRailTabbed({
           ) : (
             <HostedBrowserBody
               projectId={projectId}
-              mintToken={mintBrowserToken}
+              sessionId={browserSessionId}
+              mintToken={mintHostedBrowserToken}
               active={activeTab === "browser"}
             />
           )}

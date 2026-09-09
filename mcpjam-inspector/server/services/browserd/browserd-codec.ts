@@ -74,8 +74,10 @@ export interface BrowserdIdentity {
    * looking at.
    */
   lease?: "free" | "held" | "parked";
+  leaseHeld?: boolean;
   watchers?: number;
   msSinceActivity?: number;
+  tabs?: Array<{ id: string; url: string }>;
 }
 
 export type BrowserdStatus =
@@ -342,8 +344,10 @@ function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
   const contextMode = body.contextMode;
   const startedBy = body.startedBy;
   const lease = body.lease;
+  const leaseHeld = body.leaseHeld;
   const watchers = body.watchers;
   const msSinceActivity = body.msSinceActivity;
+  const tabs = body.tabs;
   return {
     ...(typeof protocolVersion === "number" &&
     Number.isInteger(protocolVersion) &&
@@ -369,6 +373,7 @@ function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
     ...(lease === "free" || lease === "held" || lease === "parked"
       ? { lease }
       : {}),
+    ...(typeof leaseHeld === "boolean" ? { leaseHeld } : {}),
     ...(typeof watchers === "number" && Number.isFinite(watchers) && watchers >= 0
       ? { watchers }
       : {}),
@@ -376,6 +381,17 @@ function decodeIdentity(body: Record<string, unknown>): BrowserdIdentity {
     Number.isFinite(msSinceActivity) &&
     msSinceActivity >= 0
       ? { msSinceActivity }
+      : {}),
+    ...(Array.isArray(tabs)
+      ? {
+          tabs: tabs.flatMap((entry) => {
+            if (!entry || typeof entry !== "object") return [];
+            const value = entry as { id?: unknown; url?: unknown };
+            return typeof value.id === "string" && typeof value.url === "string"
+              ? [{ id: value.id, url: value.url }]
+              : [];
+          }),
+        }
       : {}),
   };
 }

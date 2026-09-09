@@ -263,6 +263,21 @@ export async function touchHostedBrowser(
   return decode<{ counted: boolean }>(res);
 }
 
+/** Export the hosted persistent profile after the daemon queue is drained. */
+export async function fetchHostedBrowserProfileArchive(
+  tokens: BrowserTokenCache,
+): Promise<{ archive: Blob; savedFrom?: string }> {
+  const res = await authorized(tokens, "/profile/export", { method: "POST" });
+  if (!res.ok) {
+    throw new HostedBrowserError(
+      "The hosted browser profile could not be exported.",
+      res.status,
+    );
+  }
+  const savedFrom = res.headers.get("x-browser-session-id") ?? undefined;
+  return { archive: await res.blob(), ...(savedFrom ? { savedFrom } : {}) };
+}
+
 /**
  * Open the frame socket.
  *

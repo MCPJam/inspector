@@ -24,7 +24,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserStream } from "./BrowserStream";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 
 /** Heartbeat cadence while holding the lease (the daemon TTL is 2 minutes). */
 const LEASE_HEARTBEAT_MS = 30_000;
@@ -38,6 +43,7 @@ type LeaseState =
   | { state: "unknown" };
 
 interface SessionInfo {
+  sessionId: string;
   bootId: string;
   lease: LeaseState;
   // No `streamUrl` or `streamPassword`: the route stopped returning them, and
@@ -46,13 +52,23 @@ interface SessionInfo {
 
 export interface BrowserPanelProps {
   projectId: string;
+  /** Durable logical browser session, when this panel belongs to a chat. */
+  sessionId?: string;
   /** Boot a browser if none is running yet. Off by default: opening a panel
    *  should not start a machine's browser behind the user's back. */
   ensure?: boolean;
 }
 
-export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
+export function BrowserPanel({
+  projectId,
+  sessionId,
+  ensure = false,
+}: BrowserPanelProps) {
   const mintBrowserToken = useMintBrowserToken();
+  const mintConversationBrowserToken = useMintConversationBrowserToken();
+  const markBrowserSessionActive = useActiveChatSessionStore(
+    (state) => state.markBrowserSessionActive,
+  );
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,20 +80,49 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
    *  panel's lifetime would just produce expiry failures. */
   /** A bare token for the stream socket, which cannot send an auth header. */
   const mintStreamToken = useCallback(async () => {
-    const { token } = await mintBrowserToken({ projectId });
+    const { token } = sessionId
+      ? await mintConversationBrowserToken({
+          projectId,
+          conversationId: sessionId,
+        })
+      : await mintBrowserToken({ projectId });
     return token;
-  }, [mintBrowserToken, projectId]);
+  }, [mintBrowserToken, mintConversationBrowserToken, projectId, sessionId]);
 
   const authorized = useCallback(
     async (path: string, init: RequestInit = {}): Promise<Response> => {
-      const { token } = await mintBrowserToken({ projectId });
+      const { token } = sessionId
+        ? await mintConversationBrowserToken({
+            projectId,
+            conversationId: sessionId,
+          })
+        : await mintBrowserToken({ projectId });
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${token}`);
       if (init.body) headers.set("content-type", "application/json");
       return fetch(`/api/web/computers/browser${path}`, { ...init, headers });
     },
-    [mintBrowserToken, projectId],
+    [mintBrowserToken, mintConversationBrowserToken, projectId, sessionId],
   );
+
+  const exportProfile = useCallback(async () => {
+    const response = await authorized("/profile/export", { method: "POST" });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        error?: unknown;
+      } | null;
+      throw new Error(
+        typeof body?.error === "string"
+          ? body.error
+          : "The hosted browser profile could not be exported.",
+      );
+    }
+    const savedFrom = response.headers.get("x-browser-session-id") ?? undefined;
+    return {
+      archive: await response.blob(),
+      ...(savedFrom ? { savedFrom } : {}),
+    };
+  }, [authorized]);
 
   const refresh = useCallback(async () => {
     try {
@@ -93,11 +138,12 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
         return;
       }
       setSession(body as SessionInfo);
+      if (sessionId) markBrowserSessionActive(sessionId);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [authorized, ensure]);
+  }, [authorized, ensure, markBrowserSessionActive, sessionId]);
 
   useEffect(() => {
     void refresh();
@@ -208,6 +254,11 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
           </span>
         )}
         <div className="ml-auto flex gap-2">
+          <BrowserProfileSaveButton
+            projectId={projectId}
+            exportArchive={exportProfile}
+            disabled={holding || busy}
+          />
           {holding ? (
             <button
               type="button"

@@ -71,6 +71,7 @@ import {
   type BrowserToolsResult,
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
+  type BrowserSessionScope,
 } from "./browser.js";
 import type {
   DeclaredToolProvider,
@@ -247,6 +248,12 @@ export interface BuiltInToolContext {
    * ephemeral one, keyed per run, with only the tools that policy permits.
    */
   browserApprovalDelivery?: BrowserApprovalDelivery;
+  /** Durable watched browser identity for an interactive conversation. */
+  browserSessionScope?: BrowserSessionScope;
+  /** Explicit profile pin from a host/eval config. */
+  browserProfileId?: string;
+  /** Surface notices while a conversation browser waits for capacity. */
+  onBrowserNotice?: (notice: string) => void;
   /**
    * The page tools this turn STARTS with, read before the turn began by
    * `peekPageTools`.
@@ -574,6 +581,7 @@ export function resolveHostTools(
         continue;
       }
       const isLocalBrowser = resolvedEngine === "local";
+      const conversationBrowser = ctx.browserSessionScope;
 
       // The local engine's own kill switch, read HERE and not only where a
       // session is started. Every other layer already honors it — the routes
@@ -732,7 +740,7 @@ export function resolveHostTools(
       // box IS the computer here, and it arrives on `ctx` rather than on the
       // host config — which is the whole point: nothing in a member-readable
       // snapshot can forge one.
-      if (!sandboxBrowser && !computer) {
+      if (!sandboxBrowser && !computer && !conversationBrowser) {
         logger.warn(
           "[built-in-tools] browser requested without a computer attached; skipping",
           { projectId: ctx.projectId },
@@ -766,13 +774,20 @@ export function resolveHostTools(
         // The run's own identity, falling back to the chat session when a
         // surface has one — both name a single run, which is all the ephemeral
         // profile key needs. Unused on an interactive turn.
-        ...(ctx.runKey ?? ctx.chatSessionId
+        ...((ctx.runKey ?? ctx.chatSessionId)
           ? { runKey: ctx.runKey ?? ctx.chatSessionId }
           : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
         // every surface which threads no approval safe without editing it.
         ...(ctx.browserApprovalDelivery
           ? { approvalDelivery: ctx.browserApprovalDelivery }
+          : {}),
+        ...(conversationBrowser ? { sessionScope: conversationBrowser } : {}),
+        ...(ctx.browserProfileId
+          ? { browserProfileId: ctx.browserProfileId }
+          : {}),
+        ...(ctx.onBrowserNotice
+          ? { onBrowserNotice: ctx.onBrowserNotice }
           : {}),
         ...(ctx.onToolSuppressed
           ? { onToolSuppressed: ctx.onToolSuppressed }

@@ -135,7 +135,7 @@ interface CommandRequestBody {
 }
 
 export interface BrowserdHandlerDeps {
-  queue: Pick<CommandQueue, "submit">;
+  queue: Pick<CommandQueue, "submit"> & Partial<Pick<CommandQueue, "isIdle">>;
   driver: Pick<
     BrowserDriver,
     | "health"
@@ -217,6 +217,8 @@ export interface BrowserdHandlerDeps {
    * status before asking never gets there.
    */
   recorder?: Pick<VideoRecorder, "start" | "stop" | "status">;
+  /** Export the persistent profile while the queue is drained. */
+  profileExport?: () => Promise<Uint8Array>;
 }
 
 /**
@@ -256,6 +258,7 @@ export class BrowserdRequestHandler {
   private readonly ledger: CommandLedger | undefined;
   private readonly captureTypedText: boolean;
   private readonly recorder: BrowserdHandlerDeps["recorder"];
+  private readonly profileExport: BrowserdHandlerDeps["profileExport"];
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -298,6 +301,7 @@ export class BrowserdRequestHandler {
     this.ledger = deps.ledger;
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
+    this.profileExport = deps.profileExport;
   }
 
   /**
@@ -404,10 +408,14 @@ export class BrowserdRequestHandler {
         // never as a verdict: the caller applies its own quiet threshold, so
         // changing that threshold does not need a daemon deploy.
         lease: this.lease.state().state,
+        leaseHeld: this.lease.state().state !== "free",
         ...(this.watchers ? { watchers: this.watchers() } : {}),
         ...(this.lastActivityAt === null
           ? {}
           : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }),
+        ...(this.tabsSnapshot()?.list
+          ? { tabs: this.tabsSnapshot()!.list }
+          : {}),
       };
       return health.ok
         ? { status: 200, body: { ok: true, ...identity } }
@@ -455,6 +463,17 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "GET, POST" } };
       }
       return this.handleRecord(req);
+    }
+
+    // Profile export is a snapshot of the on-disk Chromium user-data-dir. It
+    // is deliberately outside the command queue, but only available once the
+    // queue has drained and while nobody holds the human lease. Otherwise a
+    // click or a password entry can land halfway through the archive.
+    if (req.path === "/v1/profile/export") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleProfileExport();
     }
 
     // Human input, which does NOT travel with the frames.
@@ -511,6 +530,34 @@ export class BrowserdRequestHandler {
     return { status: 404 };
   }
 
+  private async handleProfileExport(): Promise<DaemonResponse> {
+    if (!this.profileExport || !this.queue.isIdle?.()) {
+      return { status: 409, body: { error: "profile_busy" } };
+    }
+    if (this.lease.state().state !== "free") {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    try {
+      const archive = await this.profileExport();
+      return {
+        status: 200,
+        body: archive,
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": "attachment; filename=browser-profile.tar.gz",
+        },
+      };
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error:
+            error instanceof Error ? error.message : "profile_export_failed",
+        },
+      };
+    }
+  }
+
   private handleTrace(req: DaemonRequest): DaemonResponse {
     if (!this.ledger) {
       // A daemon built without a ledger says so, rather than answering with an
@@ -543,7 +590,11 @@ export class BrowserdRequestHandler {
         body: { error: "ledger_unavailable", bootId: this.bootId },
       };
     }
-    let parsed: { command?: unknown; errorCode?: unknown; durationMs?: unknown };
+    let parsed: {
+      command?: unknown;
+      errorCode?: unknown;
+      durationMs?: unknown;
+    };
     try {
       parsed = JSON.parse(req.body || "{}") as typeof parsed;
     } catch {
@@ -561,13 +612,17 @@ export class BrowserdRequestHandler {
     const row = this.ledger.record({
       command: parsed.command,
       actor: parsed.command.actor ?? UNATTRIBUTED_ACTOR,
-      ...(parsed.command.sessionId ? { sessionId: parsed.command.sessionId } : {}),
+      ...(parsed.command.sessionId
+        ? { sessionId: parsed.command.sessionId }
+        : {}),
       ...(parsed.command.correlation
         ? { correlation: parsed.command.correlation }
         : {}),
       ts: Date.now(),
       durationMs:
-        typeof parsed.durationMs === "number" ? Math.max(0, parsed.durationMs) : 0,
+        typeof parsed.durationMs === "number"
+          ? Math.max(0, parsed.durationMs)
+          : 0,
       // Record-only means exactly one thing: NOTHING RAN. The inspector refused
       // it, so there is no page and no artifact to attach, and `capturePage`
       // stays off.
@@ -1011,7 +1066,10 @@ export class BrowserdRequestHandler {
     // row has aged out of the ring, which is recorded as a duplicate rather
     // than as a second click.
     if (outcome.deduped) {
-      const known = this.ledger.read({ commandId: command.commandId, limit: 1 });
+      const known = this.ledger.read({
+        commandId: command.commandId,
+        limit: 1,
+      });
       if (known.entries.length > 0) return;
       this.recordRow(command, startedAt, {
         outcome: "executed",
@@ -1036,7 +1094,13 @@ export class BrowserdRequestHandler {
       outcome: BrowserLedgerRow["outcome"];
       errorCode?: string;
       deduped?: boolean;
-      result?: { ok: boolean; error?: string; output?: unknown; stateToken?: unknown; cursors?: { console: number; errors: number } };
+      result?: {
+        ok: boolean;
+        error?: string;
+        output?: unknown;
+        stateToken?: unknown;
+        cursors?: { console: number; errors: number };
+      };
       /**
        * Artifacts are kept only for a command that actually looked at the page.
        * A refusal has no output by construction — the lease gate runs before
@@ -1067,7 +1131,9 @@ export class BrowserdRequestHandler {
       ...(what.capturePage && result?.stateToken
         ? { stateToken: result.stateToken as never }
         : {}),
-      ...(what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {}),
+      ...(what.capturePage
+        ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } }
+        : {}),
       ...(result?.cursors ? { cursors: result.cursors } : {}),
       ...(what.capturePage ? { capturePage: true } : {}),
       ...(this.captureTypedText ? { captureTypedText: true } : {}),

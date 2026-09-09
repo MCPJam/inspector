@@ -347,11 +347,11 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     const f = makeFakes({
       lookups: [liveLookup()],
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-someone-else",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-someone-else",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
     await expectRelaunch(f);
   });
@@ -371,11 +371,11 @@ describe("ensureBrowserSession — relaunch triggers", () => {
         return probes === 1
           ? { kind: "unhealthy", detail: "box is paused" }
           : {
-          kind: "ok",
-          bootId: ROW.bootId,
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        };
+              kind: "ok",
+              bootId: ROW.bootId,
+              protocolVersion: BROWSERD_PROTOCOL_VERSION,
+              bundleHash: HASH,
+            };
       },
     });
 
@@ -1098,11 +1098,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
       ],
       recordResult: { status: "conflict" },
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, ARGS);
 
@@ -1137,11 +1137,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
       ],
       bootError: new Error("port already in use"),
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
     const handle = await ensureBrowserSession(f.deps, ARGS);
     expect(handle.reused).toBe(true);
@@ -1166,11 +1166,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
     });
 
     const handle = await ensureBrowserSession(f.deps, ARGS);
@@ -1194,11 +1194,11 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       status: async () => ({
-          kind: "ok",
-          bootId: "boot-winner",
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }),
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        bundleHash: HASH,
+      }),
       leaseAction: leaseBackedBy(lease),
     });
 
@@ -1262,6 +1262,38 @@ describe("ensureBrowserSession — sandbox target", () => {
     });
     expect(recorded).not.toHaveProperty("computerId");
     expect(recorded).not.toHaveProperty("stream");
+  });
+
+  it("protects a watched Playground sandbox with the relaunch claim and stream", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, {
+      ...SANDBOX_ARGS,
+      contextMode: "persistent",
+      target: { ...SANDBOX_ARGS.target, watched: true },
+    });
+
+    expect(handle.target).toBe("sandbox");
+    expect(handle.watched).toBe(true);
+    expect(f.claimRelaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: SANDBOX_ROW,
+        watched: true,
+        claimId: expect.any(String),
+      }),
+    );
+    expect(f.releaseRelaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: SANDBOX_ROW,
+        watched: true,
+        claimId: f.claimRelaunch.mock.calls[0]![0].claimId,
+      }),
+    );
+    expect(f.sandbox.ensureStream).toHaveBeenCalledTimes(1);
+    expect(f.record.mock.calls[0]![0]).toMatchObject({
+      sandboxRowId: SANDBOX_ROW,
+      watched: true,
+      stream: { url: expect.any(String), password: expect.any(String) },
+    });
   });
 
   it("reuses a verified daemon with zero sandbox I/O", async () => {
@@ -1512,7 +1544,6 @@ describe("ensureBrowserSession — the caller went away (review follow-up)", () 
   });
 });
 
-
 /**
  * V-4a. The bundle hash used to be an admission test, and every daemon edit
  * rotates it — so a deploy carrying a comment change killed every live hosted
@@ -1670,7 +1701,6 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
   });
 });
 
-
 /**
  * V-8. The desktop image starts browserd itself, so on a fresh box there is a
  * healthy daemon listening before any inspector has done anything — and the
@@ -1814,17 +1844,19 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
   it("forwards record and recordStatus to the wrapped client", async () => {
     const spies = recordingClient();
     const f = makeFakes({ lookups: [liveLookup()] });
-    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      status: async () =>
-        ({
-          kind: "ok",
-          bootId: ROW.bootId,
-          protocolVersion: BROWSERD_PROTOCOL_VERSION,
-          bundleHash: HASH,
-        }) as BrowserdStatus,
-      sendCommand: async () => ({ kind: "ok" }) as never,
-      ...spies,
-    }));
+    (f.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({
+        status: async () =>
+          ({
+            kind: "ok",
+            bootId: ROW.bootId,
+            protocolVersion: BROWSERD_PROTOCOL_VERSION,
+            bundleHash: HASH,
+          }) as BrowserdStatus,
+        sendCommand: async () => ({ kind: "ok" }) as never,
+        ...spies,
+      }),
+    );
 
     const handle = await ensureBrowserSession(f.deps, ARGS);
 

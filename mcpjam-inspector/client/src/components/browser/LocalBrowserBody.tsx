@@ -12,6 +12,7 @@ import {
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
 import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
+import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
@@ -26,11 +27,13 @@ import {
   noteLocalBrowserWatch,
   openLocalBrowserFrameStream,
   sendLocalBrowserInput,
+  fetchLocalBrowserProfileArchive,
   startLocalBrowserInstall,
   type LocalBrowserLease,
   type LocalBrowserStatus,
   LocalBrowserRequestError,
 } from "@/lib/local-browser/client";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 
 /**
  * The frame socket's close codes, mirroring `routes/web/local-browser-frames`.
@@ -101,11 +104,14 @@ const LEASE_RECHECK_MS = 5_000;
 
 export function LocalBrowserBody({
   projectId,
+  sessionId,
   consentGranted,
   consentToken,
   active = true,
 }: {
   projectId: string | null;
+  /** Durable logical session, when this pane belongs to a conversation. */
+  sessionId?: string;
   consentGranted: boolean;
   consentToken: string | null;
   /**
@@ -128,6 +134,9 @@ export function LocalBrowserBody({
   // Bumped to re-open the frame socket after it was refused — see the 4401
   // branch below.
   const [streamAttempt, setStreamAttempt] = useState(0);
+  const markBrowserSessionActive = useActiveChatSessionStore(
+    (state) => state.markBrowserSessionActive,
+  );
   /**
    * This pane's identity as a lease holder.
    *
@@ -290,7 +299,7 @@ export function LocalBrowserBody({
     setBusy(true);
     setError(null);
     try {
-      const next = await ensureLocalBrowser(projectId, consentToken);
+      const next = await ensureLocalBrowser(projectId, consentToken, sessionId);
       // The project may have changed while this was in flight; a late answer
       // describes a browser this rail is no longer looking at.
       if (projectRef.current !== projectId) return;
@@ -298,6 +307,7 @@ export function LocalBrowserBody({
       // still in flight against the last one must not land on this one.
       railGeneration.current += 1;
       setSession({ bootId: next.bootId });
+      if (sessionId) markBrowserSessionActive(sessionId);
       setLease(next.lease);
     } catch (err) {
       if (projectRef.current !== projectId) return;
@@ -305,7 +315,23 @@ export function LocalBrowserBody({
     } finally {
       setBusy(false);
     }
-  }, [projectId, consentToken]);
+  }, [markBrowserSessionActive, projectId, consentToken, sessionId]);
+
+  const exportProfile = useCallback(async () => {
+    if (!session || !projectId) {
+      throw new Error("Open a browser before saving its profile.");
+    }
+    const result = await fetchLocalBrowserProfileArchive({
+      bootId: session.bootId,
+      projectId,
+      ...(sessionId ? { sessionId } : {}),
+      consentToken,
+    });
+    setSession(null);
+    setLease({ state: "free" });
+    setFrame(null);
+    return result;
+  }, [consentToken, projectId, session, sessionId]);
 
   // The frame socket. Re-opened when the browser changes; closed on unmount,
   // which is what tells the server to stop encoding JPEGs nobody is watching.
@@ -898,6 +924,15 @@ export function LocalBrowserBody({
             error={error}
             active={active}
             engine="local-native"
+            extra={
+              session && sessionId ? (
+                <BrowserProfileSaveButton
+                  projectId={projectId ?? ""}
+                  exportArchive={exportProfile}
+                  disabled={holding || busy}
+                />
+              ) : null
+            }
           />
         </div>
         <Activity
@@ -928,15 +963,22 @@ export function LocalBrowserBody({
               : undefined
           }
           onHandBack={
-            session && holding
-              ? () => void setLeaseAction("resume")
-              : undefined
+            session && holding ? () => void setLeaseAction("resume") : undefined
           }
           onInput={send}
           placeholder={placeholder}
           error={error}
           active={active}
           engine={status?.runtime ?? "local"}
+          controls={
+            session && sessionId ? (
+              <BrowserProfileSaveButton
+                projectId={projectId ?? ""}
+                exportArchive={exportProfile}
+                disabled={holding || busy}
+              />
+            ) : null
+          }
         />
       </div>
       <Activity

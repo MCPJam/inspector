@@ -55,6 +55,9 @@ import {
   resolveLocalBrowserSurface,
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
+import { exportBrowserProfileArchive } from "../../services/browserd/profile-archive.js";
+import { BrowserSessionService } from "../../services/browserd/session-service.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   pageToolsFromCommandResponse,
   webmcpToolsObserveCommand,
@@ -379,6 +382,76 @@ computers.post("/local-browser/ensure", async (c) => {
   }
 });
 
+/** Export one local persistent session, then leave it closed for a clean copy. */
+computers.post("/local-browser/profile/export", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+    projectId?: unknown;
+    sessionId?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const conversationId =
+    typeof body?.sessionId === "string" ? body.sessionId : "";
+  const session = findLocalBrowserSession(bootId);
+  if (!session) return c.json({ error: "No such local browser" }, 404);
+  const profileDir = session.handle.profileDir;
+  if (!profileDir) {
+    return c.json(
+      { error: "Profile export is unavailable for this local browser" },
+      409,
+    );
+  }
+  const closed = await closeLocalBrowserSession(bootId);
+  if (!closed.closed) {
+    return c.json(
+      {
+        error:
+          closed.reason === "lease_held"
+            ? "Hand back control before saving this browser profile"
+            : "No such local browser",
+      },
+      closed.reason === "lease_held" ? 423 : 404,
+    );
+  }
+  try {
+    const archive = await exportBrowserProfileArchive(profileDir);
+    let savedFrom: string | undefined;
+    if (projectId && conversationId) {
+      const bearer = await getConvexBearerForRequest(c);
+      const logical = await new BrowserSessionService().resolveSession({
+        owner: { kind: "conversation", id: conversationId },
+        projectId,
+        bearer,
+        engine: "local",
+        profile: "blank",
+      });
+      savedFrom = logical?.sessionId;
+    }
+    return new Response(Buffer.from(archive), {
+      status: 200,
+      headers: {
+        "content-type": "application/gzip",
+        "content-disposition": "attachment; filename=browser-profile.tar.gz",
+        ...(savedFrom ? { "x-browser-session-id": savedFrom } : {}),
+      },
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to export the browser profile",
+      },
+      500,
+    );
+  }
+});
+
 /**
  * Mint the single-use nonce that opens the frames socket.
  *
@@ -609,9 +682,7 @@ function isCorrelation(value: unknown): value is Record<string, string> {
 }
 
 /** The authenticated identity behind an agent command, or `anonymous`. */
-function agentUserId(c: {
-  get(key: string): unknown;
-}): string | undefined {
+function agentUserId(c: { get(key: string): unknown }): string | undefined {
   const candidates = ["mcpjamUserId", "workosUserId", "guestId"];
   for (const key of candidates) {
     const value = c.get(key);
@@ -642,7 +713,8 @@ async function resolveAgentSession(
     return { ok: false, status: 404, error: "invalid_session" };
   }
   if (!stored) return { ok: false, status: 404, error: "no_such_session" };
-  if (stored.closedAt) return { ok: false, status: 409, error: "session_closed" };
+  if (stored.closedAt)
+    return { ok: false, status: 409, error: "session_closed" };
   const live = liveBrowserFor(stored);
   if (!live) return { ok: false, status: 409, error: "no_browser_session" };
   return { ok: true, session: stored, live };
@@ -809,8 +881,7 @@ computers.post("/local-browser/session", async (c) => {
     return c.json(
       {
         error: "invalid_run_key",
-        detail:
-          "runKey must be 1-64 characters of A-Z a-z 0-9 and _ . : -",
+        detail: "runKey must be 1-64 characters of A-Z a-z 0-9 and _ . : -",
       },
       400,
     );
@@ -853,7 +924,9 @@ computers.post("/local-browser/session", async (c) => {
     browserKey,
     attach,
     ...(captureTypedText ? { captureTypedText: true } : {}),
-    ...(body?.captureScreenshots === false ? { captureScreenshots: false } : {}),
+    ...(body?.captureScreenshots === false
+      ? { captureScreenshots: false }
+      : {}),
   });
   if (!opened.ok) {
     if (opened.reason === "policy_mismatch") {
@@ -976,7 +1049,11 @@ computers.post("/local-browser/command", async (c) => {
   const projectId = typeof body?.projectId === "string" ? body.projectId : "";
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
   const command = body?.command as BrowserAgentCommand | undefined;
-  if (!command || typeof command !== "object" || typeof command.op !== "string") {
+  if (
+    !command ||
+    typeof command !== "object" ||
+    typeof command.op !== "string"
+  ) {
     return c.json({ error: "A command with an `op` is required" }, 400);
   }
   let resolved;
@@ -999,9 +1076,13 @@ computers.post("/local-browser/command", async (c) => {
       clientId: body?.clientId,
     }),
     command,
-    ...(typeof body?.commandId === "string" ? { commandId: body.commandId } : {}),
+    ...(typeof body?.commandId === "string"
+      ? { commandId: body.commandId }
+      : {}),
     ...(typeof body?.tabId === "string" ? { tabId: body.tabId } : {}),
-    ...(isCorrelation(body?.correlation) ? { correlation: body.correlation } : {}),
+    ...(isCorrelation(body?.correlation)
+      ? { correlation: body.correlation }
+      : {}),
   });
   // Driving the browser IS using it, refusals included: an idle reap between an
   // agent's refusal and its retry would be exactly as disruptive as one taken
@@ -1111,7 +1192,9 @@ computers.post("/local-browser/trace", async (c) => {
     projectId,
     sessionId: session.sessionId,
     ...(typeof body?.afterSeq === "number" ? { afterSeq: body.afterSeq } : {}),
-    ...(typeof body?.commandId === "string" ? { commandId: body.commandId } : {}),
+    ...(typeof body?.commandId === "string"
+      ? { commandId: body.commandId }
+      : {}),
     ...(typeof body?.limit === "number" ? { limit: body.limit } : {}),
   });
   return c.json({
@@ -1135,7 +1218,8 @@ computers.post("/local-browser/artifact", async (c) => {
   } | null;
   const projectId = typeof body?.projectId === "string" ? body.projectId : "";
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
-  const artifactId = typeof body?.artifactId === "string" ? body.artifactId : "";
+  const artifactId =
+    typeof body?.artifactId === "string" ? body.artifactId : "";
   if (!artifactId) return c.json({ error: "An artifactId is required" }, 400);
   let bytes: Buffer | undefined;
   // The media type comes from the ROW that named this artifact, never from the
@@ -1315,6 +1399,5 @@ computers.post("/local-browser/close", async (c) => {
   }
   return c.json({ session, terminated });
 });
-
 
 export default computers;

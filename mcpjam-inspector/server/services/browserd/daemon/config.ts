@@ -83,6 +83,8 @@ export interface BrowserdConfig {
   tokenFile?: string;
   /** Did the box start this daemon, or did an inspector replica? */
   startedBy: "prelaunch" | "inspector";
+  /** One-shot profile archive to unpack before launching Chromium. */
+  profileArchivePath?: string;
 }
 
 export const DEFAULT_BROWSERD_PORT = 8791;
@@ -168,6 +170,9 @@ export function readBrowserdConfig(
     // typo must not silently cost a run its evidence.
     recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...(tokenFile ? { tokenFile } : {}),
+    ...(env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim()
+      ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() }
+      : {}),
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector",
   };
@@ -201,7 +206,8 @@ function readRecordMaxBytes(env: NodeJS.ProcessEnv): number {
   // `< 1`, not `<= 0`: a positive fraction floors to zero, and `-fs 0` tells
   // ffmpeg to stop at the first byte — a switch meant to bound a recording
   // would silently abolish it. A cap under one byte cannot be meant.
-  if (!Number.isFinite(raw) || raw < 1) return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 
