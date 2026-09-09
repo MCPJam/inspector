@@ -54,6 +54,9 @@ function setup(
   return { rebuild, view, props };
 }
 
+/** The failure the signed-out-guest path produces: a refused mutation. */
+const REFUSED = new Error("Not authenticated");
+
 describe("useEnsureFirstAnalysis", () => {
   it("starts the analysis a cohort with sessions has never had", async () => {
     const { rebuild } = setup();
@@ -114,10 +117,53 @@ describe("useEnsureFirstAnalysis", () => {
     await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(2));
   });
 
-  it("releases the latch when the start fails, so a later update retries", async () => {
+  it("reports a refused start, with no further subscription update needed", async () => {
+    // The regression this pins: a rejection used to only clear a ref, which
+    // re-runs nothing. The caller was left promising an analysis that was
+    // never coming, and the diagram hides its rebuild button while it thinks
+    // one is on the way.
+    const rebuild = vi.fn().mockRejectedValue(REFUSED);
+    const props = {
+      enabled: true,
+      cohortKey: "scenario-1",
+      breakdown: breakdown(),
+      rebuild,
+    };
+    const view = renderHook((p: typeof props) => useEnsureFirstAnalysis(p), {
+      initialProps: props,
+    });
+
+    await waitFor(() => expect(view.result.current.failed).toBe(true));
+    // Nothing about the inputs changed — the failure surfaced on its own.
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not keep retrying a start that was refused", async () => {
+    // `rebuildScenarioInsights` authenticates, so a signed-out guest is
+    // refused every time. Re-attempting on each breakdown push would spend
+    // attempts to arrive at the same place; the recovery is the button.
+    const rebuild = vi.fn().mockRejectedValue(REFUSED);
+    const props = {
+      enabled: true,
+      cohortKey: "scenario-1",
+      breakdown: breakdown(),
+      rebuild,
+    };
+    const view = renderHook((p: typeof props) => useEnsureFirstAnalysis(p), {
+      initialProps: props,
+    });
+    await waitFor(() => expect(view.result.current.failed).toBe(true));
+
+    view.rerender({ ...props, breakdown: breakdown() });
+    view.rerender({ ...props, breakdown: breakdown({ totalSessions: 9 }) });
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    expect(view.result.current.failed).toBe(true);
+  });
+
+  it("does not carry one cohort's refusal over to the next", async () => {
     const rebuild = vi
       .fn()
-      .mockRejectedValueOnce(new Error("offline"))
+      .mockRejectedValueOnce(REFUSED)
       .mockResolvedValue(queued);
     const props = {
       enabled: true,
@@ -128,9 +174,17 @@ describe("useEnsureFirstAnalysis", () => {
     const view = renderHook((p: typeof props) => useEnsureFirstAnalysis(p), {
       initialProps: props,
     });
-    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(view.result.current.failed).toBe(true));
 
-    view.rerender({ ...props, breakdown: breakdown() });
+    // A different scenario is a clean slate: its analysis has not been refused.
+    view.rerender({ ...props, cohortKey: "scenario-2" });
     await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(2));
+    expect(view.result.current.failed).toBe(false);
+  });
+
+  it("reports no failure on a start that succeeded", async () => {
+    const { rebuild, view } = setup();
+    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(1));
+    expect(view.result.current.failed).toBe(false);
   });
 });

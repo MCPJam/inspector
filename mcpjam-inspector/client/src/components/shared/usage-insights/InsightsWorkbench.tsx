@@ -229,13 +229,23 @@ export function InsightsWorkbench({
    * benchmark flow is the one PAID analysis here — an action, not a mutation —
    * whose whole design is to wait to be asked.
    */
-  const analysisIsAutomatic = scope?.kind === "scenario";
-  useEnsureFirstAnalysis({
-    enabled: analysisIsAutomatic,
+  const scopeAnalyzesItself = scope?.kind === "scenario";
+  const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
+    enabled: scopeAnalyzesItself,
     cohortKey,
     breakdown,
     rebuild,
   });
+  /**
+   * A refused start WITHDRAWS the promise, handing the manual affordance back.
+   *
+   * `analysisIsAutomatic` makes the diagram read a missing run as work in
+   * progress and hide the rebuild button. If the start was refused there will
+   * never be a run, so keeping the promise would leave the viewer watching a
+   * spinner with the one control that could fix it hidden behind it — worst of
+   * all for the signed-out guest the rebuild mutation always refuses.
+   */
+  const analysisIsAutomatic = scopeAnalyzesItself && !firstAnalysisRefused;
 
   const { setView } = flow;
   const handleViewChange = useCallback(

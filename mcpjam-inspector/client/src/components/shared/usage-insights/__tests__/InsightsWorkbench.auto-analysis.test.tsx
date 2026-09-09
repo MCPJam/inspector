@@ -147,6 +147,22 @@ describe("InsightsWorkbench automatic analysis", () => {
     );
   });
 
+  it("withdraws the promise when the start is refused", async () => {
+    // The refusal a signed-out guest gets: `rebuildScenarioInsights`
+    // authenticates. There will never be a run, so continuing to promise that
+    // this surface analyzes itself would leave the guest watching a spinner
+    // with the rebuild button hidden behind it.
+    rebuild.mockRejectedValue(new Error("Not authenticated"));
+    renderWorkbench({ kind: "scenario", scenarioId: "sc-1" });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("analysis-is-automatic")).toHaveTextContent(
+        "false",
+      ),
+    );
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
   it("does not buy a benchmark flow analysis on open", () => {
     renderWorkbench({ kind: "benchmark", benchmarkRunId: "run-9" });
     expect(rebuild).not.toHaveBeenCalled();

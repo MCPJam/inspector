@@ -272,9 +272,23 @@ export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
  *
  * Deliberately NOT routed through {@link useInsightsRebuild}: that hook toasts
  * the result, and nobody asked for this one — a toast would report an outcome
- * for an action the user did not take. Failures release the ref so a later
- * breakdown update can try again, and the panel's own copy is what tells the
- * user where the analysis stands.
+ * for an action the user did not take.
+ *
+ * Returns `failed` when the start was REFUSED, which the caller must use to
+ * stop promising that this surface analyzes itself. Without that, a rejection
+ * strands the viewer: `latestRun` stays null forever, the diagram keeps saying
+ * "Analyzing sessions", and the state that hides the manual rebuild is the
+ * state that can no longer recover on its own.
+ *
+ * That is not a rare path. `rebuildScenarioInsights` authenticates, so a
+ * SIGNED-OUT GUEST on a shared scenario link is refused every time — and
+ * guests can read window signals, so they do reach this surface.
+ *
+ * The latch is kept SET on failure rather than released. Releasing it would
+ * re-attempt on the next breakdown push, and the refusal above is precisely
+ * the kind that will refuse again; a bounded retry would spend attempts to
+ * arrive at the same place. Handing the button back is the recovery, and it
+ * reports its own outcome because the manual path toasts.
  *
  * Shared rather than inlined in the workbench so a second User Testing surface
  * — the Findings tab — can adopt the same rule with one call.
@@ -291,8 +305,10 @@ export function useEnsureFirstAnalysis({
   cohortKey: string;
   breakdown: UsageBreakdown | null | undefined;
   rebuild: RebuildFn;
-}) {
+}): { failed: boolean } {
   const startedKeyRef = useRef<string | null>(null);
+  // State, not a ref: the caller has to re-render to withdraw the promise.
+  const [failedKey, setFailedKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -307,7 +323,11 @@ export function useEnsureFirstAnalysis({
     if (startedKeyRef.current === cohortKey) return;
     startedKeyRef.current = cohortKey;
     void rebuild().catch(() => {
-      startedKeyRef.current = null;
+      setFailedKey(cohortKey);
     });
   }, [enabled, breakdown, cohortKey, rebuild]);
+
+  // Keyed on the cohort rather than reset by an effect, so switching scenarios
+  // cannot show one scenario's refusal against another's data for a frame.
+  return { failed: failedKey === cohortKey };
 }
