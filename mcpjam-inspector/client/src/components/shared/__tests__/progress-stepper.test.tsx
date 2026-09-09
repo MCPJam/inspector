@@ -19,6 +19,15 @@ describe("progressStepperState", () => {
     expect(progressStepperState(1, 1)).toBe("current");
     expect(progressStepperState(2, 1)).toBe("upcoming");
   });
+
+  it("draws the active step as done when the flow has finished", () => {
+    // BB-161. A terminal flow is a STATE of its last step, so this is how the
+    // rail checks off "Run swarm" without inventing a step past the end —
+    // which `clampStepIndex` exists to refuse.
+    expect(progressStepperState(1, 1, true)).toBe("complete");
+    expect(progressStepperState(0, 1, true)).toBe("complete");
+    expect(progressStepperState(2, 1, true)).toBe("upcoming");
+  });
 });
 
 describe("ProgressStepper", () => {
@@ -85,6 +94,22 @@ describe("ProgressStepper", () => {
     expect(screen.getByText("2")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
+  it("checks off the last step, still saying where the user is", () => {
+    render(<ProgressStepper steps={STEPS} activeIndex={3} activeComplete />);
+
+    // Every numeral gone: all four are checks.
+    for (const numeral of ["1", "2", "3", "4"]) {
+      expect(screen.queryByText(numeral)).toBeNull();
+    }
+    // The marker changed, not the position. Losing `aria-current` here would
+    // leave assistive tech with a rail that no longer says where you are.
+    const current = screen
+      .getAllByRole("listitem")
+      .filter((item) => item.getAttribute("aria-current") === "step");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent("Findings");
   });
 
   it("draws one connector fewer than it has steps", () => {
