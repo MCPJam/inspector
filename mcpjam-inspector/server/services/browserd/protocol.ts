@@ -296,7 +296,23 @@ export type BrowserAction =
         | "select"
         | "fill_form"
         | "close_tab"
-        | "activate_tab";
+        | "activate_tab"
+        /**
+         * Answer the dialog this page is blocked on.
+         *
+         * SEPARATE FROM THE DEFAULTS the daemon applies. A default exists so a
+         * tab can never wedge, but it is a guess at what the caller meant —
+         * "Delete this account?" is cancelled because that is the safe answer
+         * for an absent user, not because it is the right one for every
+         * client. A client with its own rules (ask the person, always confirm
+         * a known flow) answers here instead, and runs the daemon with
+         * `dialogPolicy: "ask"` so nothing is decided for it.
+         *
+         * `accept_dialog` takes the prompt's reply in `value`, when the dialog
+         * is a `prompt` and the caller has one.
+         */
+        | "accept_dialog"
+        | "dismiss_dialog";
       target?: BrowserActTarget;
       value?: string;
       /**
@@ -345,6 +361,23 @@ export type BrowserAction =
         | "dom"
         | "a11y"
         | "console"
+        /**
+         * What the page asked the network for, and what came back.
+         *
+         * Metadata only: URLs with the query and fragment stripped, an
+         * allowlisted subset of response headers, statuses, sizes and timing.
+         * Bodies are never retained — `daemon/network.ts` says why — and
+         * `requestId` reads ONE exchange rather than the tail.
+         */
+        | "network"
+        /**
+         * The dialog this page is blocked on, or `null`.
+         *
+         * A cache read: it touches no page, which is what makes it answerable
+         * while a dialog has the renderer stopped. The point of asking is to
+         * DECIDE — see the `accept_dialog` / `dismiss_dialog` verbs.
+         */
+        | "dialog"
         | "url"
         | "webmcp_tools"
         /**
@@ -356,6 +389,8 @@ export type BrowserAction =
          * step and would itself change what it was measuring.
          */
         | "webmcp_revision";
+      /** `network` only: read this one exchange in full, not the tail. */
+      requestId?: string;
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
@@ -694,6 +729,17 @@ export const BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /**
+   * Something is on top of the target at its click point, so the input would
+   * land on that element instead. The detail names the covering element.
+   *
+   * Its own code because the recovery is specific and the model can perform
+   * it: dismiss the banner or the modal, then retry the original target. A
+   * click that silently hit the overlay reports success, and a bare
+   * `act_failed` sends the model back to re-observe a page that has not
+   * changed.
+   */
+  "target_covered",
   /** A ref this tab's last observation never issued. */
   "unknown_ref",
   /** The page could not answer an accessibility tree at all. */

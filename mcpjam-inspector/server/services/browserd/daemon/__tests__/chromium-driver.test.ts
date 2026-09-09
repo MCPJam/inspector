@@ -1594,14 +1594,18 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     }
   });
 
-  it("refuses a11yRef targeting explicitly rather than silently mis-clicking", async () => {
+  it("refuses a ref this tab never issued, naming the recovery", async () => {
+    // `node-7` is not even ref-shaped, which is the shape of the real mistake:
+    // a model quoting an id it read somewhere else. The refusal must send it
+    // to a fresh observation rather than to a selector.
     const { res } = await acted({
       kind: "act",
       verb: "click",
       target: { a11yRef: "node-7" },
     });
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("unsupported_target");
+    expect(res.error).toContain("unknown_ref");
+    expect(res.error).toContain("observe again");
   });
 
   it("refuses verbs that are missing what they need", async () => {
@@ -3661,5 +3665,731 @@ describe("ChromiumDriver — the page-tool revision on the heartbeat", () => {
     expect(snapshot).toBeDefined();
     expect(snapshot!.url!.length).toBeLessThanOrEqual(256);
     expect(long.length).toBeGreaterThan(256);
+  });
+});
+
+/**
+ * Acting on a ref — the target a model can produce without reading pixels.
+ *
+ * The whole point of these is the difference between a click that lands where
+ * the model looked and one that lands where it guessed. So they pin the two
+ * halves that make that true: the node is the one the tree named (identity,
+ * and recovery when the id dies under a re-render), and nothing is on top of
+ * it when the click goes out.
+ */
+describe("ChromiumDriver — acting on a ref", () => {
+  /** A box whose centre is (100, 50). */
+  const BOX = { model: { content: [80, 40, 120, 40, 120, 60, 80, 60] } };
+
+  /**
+   * Observe, then act — the real sequence, and the only one that mints a ref.
+   *
+   * `acted` cannot express it: a ref exists only because an observation put it
+   * in the tab's map, so the act has to follow one in the same driver.
+   */
+  async function observedThenActed(
+    action: Extract<Parameters<typeof cmd>[0], { kind: "act" }>,
+    replies: Record<string, unknown> = {},
+    opts: { navigateBetween?: string } = {},
+  ) {
+    // Replies go through `cdpReplies` rather than a hand-built session: the
+    // fake's default session carries the baseline every observation needs, and
+    // replacing it wholesale leaves the a11y read with nothing to answer from.
+    // The calls a test asserts on are recorded by wrapping those replies.
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> =
+      [];
+    const base: Record<string, unknown> = {
+      "Accessibility.getFullAXTree": axTree({
+        role: "RootWebArea",
+        children: [
+          { role: "button", name: "Sign in", id: 41 },
+          { role: "textbox", name: "Email", id: 42 },
+        ],
+      }),
+      "DOM.getBoxModel": BOX,
+      "DOM.resolveNode": { object: { objectId: "obj-1" } },
+      ...replies,
+    };
+    const recorded: Record<string, unknown> = { ...base };
+    for (const method of [
+      "DOM.scrollIntoViewIfNeeded",
+      "DOM.getBoxModel",
+      "DOM.focus",
+      "Input.insertText",
+      "Runtime.callFunctionOn",
+    ]) {
+      const reply = base[method] ?? {};
+      recorded[method] = (params?: Record<string, unknown>) => {
+        sent.push({ method, ...(params ? { params } : {}) });
+        return typeof reply === "function"
+          ? (reply as (p?: Record<string, unknown>) => unknown)(params)
+          : reply;
+      };
+    }
+    const page = fakePage({ url: "https://x.test/", cdpReplies: recorded });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y" }),
+    );
+    if (opts.navigateBetween) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: opts.navigateBetween }),
+      );
+    }
+    const res = await driver.execute(cmd(action));
+    return { res, page, driver, observed, sent };
+  }
+
+  it("clicks the centre of the node the tree named", async () => {
+    const { res, page, observed } = await observedThenActed({
+      kind: "act",
+      verb: "click",
+      target: { a11yRef: "e1" },
+    });
+    // e1 is the button, so the ref the model read is the node that got clicked.
+    expect(
+      (observed.output as { refs: Record<string, { name: string }> }).refs.e1,
+    ).toMatchObject({ role: "button", name: "Sign in" });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:100,50");
+  });
+
+  it("aims at the node's box, not at the coordinates of anything else", async () => {
+    const { page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e2" } },
+      {
+        // The textbox sits somewhere else on the page; a ref that ignored the
+        // box model would still click the first element's centre.
+        "DOM.getBoxModel": (params?: Record<string, unknown>) =>
+          params?.backendNodeId === 42
+            ? { model: { content: [10, 200, 30, 200, 30, 220, 10, 220] } }
+            : BOX,
+      },
+    );
+    expect(page.calls.acts).toContain("click:20,210");
+  });
+
+  it("scrolls the target into view before measuring it", async () => {
+    const { sent } = await observedThenActed({
+      kind: "act",
+      verb: "click",
+      target: { a11yRef: "e1" },
+    });
+    // Off-screen is the common case on a real page, and a click at unscrolled
+    // coordinates lands on whatever is actually at those pixels.
+    const order = sent.map((call) => call.method);
+    expect(order).toContain("DOM.scrollIntoViewIfNeeded");
+    expect(order.indexOf("DOM.scrollIntoViewIfNeeded")).toBeLessThan(
+      order.lastIndexOf("DOM.getBoxModel"),
+    );
+  });
+
+  it("RECOVERS by exact role and name when the node id died under a re-render", async () => {
+    // The React case: same button, same label, new backend id. Refusing here
+    // would cost the model an observe/act round trip to arrive at the element
+    // it already named.
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      {
+        "DOM.describeNode": (params?: Record<string, unknown>) => {
+          if (params?.backendNodeId === 41) throw new Error("no node with id");
+          return {};
+        },
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            { role: "button", name: "Sign in", id: 91 },
+            { role: "textbox", name: "Email", id: 92 },
+          ],
+        }),
+        "DOM.getBoxModel": (params?: Record<string, unknown>) =>
+          params?.backendNodeId === 91 ? BOX : {},
+      },
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:100,50");
+  });
+
+  it("REFUSES rather than recovering when the page itself has changed", async () => {
+    // A backend node id is only unique within a document, and a new page can
+    // reuse the number. Recovering by name across a navigation would click a
+    // same-labelled control on a page the model never asked about.
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      {},
+      { navigateBetween: "https://y.test/" },
+    );
+    expect(res.ok).toBe(false);
+    // Either refusal is correct and both send the model to a fresh
+    // observation: a navigation drops the tab's ref map outright, and the
+    // token check behind it catches a map that somehow outlived its page.
+    expect(res.error).toMatch(/stale_ref|unknown_ref/);
+    expect(res.error).toContain("observe again");
+    expect(page.calls.acts).not.toContain("click:100,50");
+  });
+
+  it("refuses when neither the id nor the role and name are still there", async () => {
+    const { res } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      (() => {
+        // First read mints the refs; the second is the recovery's, against a
+        // page that has replaced the button with a confirmation.
+        let reads = 0;
+        return {
+          "DOM.describeNode": () => {
+            throw new Error("no node with id");
+          },
+          "Accessibility.getFullAXTree": () => {
+            reads += 1;
+            return reads === 1
+              ? axTree({
+                  role: "RootWebArea",
+                  children: [{ role: "button", name: "Sign in", id: 41 }],
+                })
+              : axTree({
+                  role: "RootWebArea",
+                  children: [{ role: "heading", name: "Signed in", id: 99 }],
+                });
+          },
+        };
+      })(),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("stale_ref");
+    expect(res.error).toContain("Sign in");
+  });
+
+  it("REFUSES a click on a covered target, naming what is on top", async () => {
+    const { res, page } = await observedThenActed(
+      { kind: "act", verb: "click", target: { a11yRef: "e1" } },
+      {
+        "Runtime.callFunctionOn": {
+          result: { value: "div.cookie-bar inside div#consent" },
+        },
+      },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("target_covered");
+    expect(res.error).toContain("div.cookie-bar inside div#consent");
+    // Named the recovery, and did not click.
+    expect(res.error).toMatch(/Dismiss or interact/);
+    expect(page.calls.acts).not.toContain("click:100,50");
+  });
+
+  it("never runs the occlusion check on a coordinate target", async () => {
+    // Coordinates are the model's own claim about where to click. There is no
+    // element to ask about, and refusing a bare point would be inventing one.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Runtime.callFunctionOn": { result: { value: "div.overlay" } },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [7, 9] } }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toContain("click:7,9");
+  });
+
+  it("REPLACES a field's contents when typing at a ref", async () => {
+    // The same meaning `type` already has at a selector. A ref that appended
+    // would make one verb mean two things depending on how the target was named.
+    const { res, sent } = await observedThenActed({
+      kind: "act",
+      verb: "type",
+      target: { a11yRef: "e2" },
+      value: "someone@example.com",
+    });
+    expect(res.ok).toBe(true);
+    expect(sent.map((c) => c.method)).toContain("DOM.focus");
+    const inserted = sent.find((c) => c.method === "Input.insertText");
+    expect(inserted?.params).toMatchObject({ text: "someone@example.com" });
+  });
+
+  it("focuses the ref before pressing a key, so Enter lands where it was aimed", async () => {
+    const { res, page, sent } = await observedThenActed({
+      kind: "act",
+      verb: "press",
+      target: { a11yRef: "e2" },
+      value: "Enter",
+    });
+    expect(res.ok).toBe(true);
+    expect(sent.map((c) => c.method)).toContain("DOM.focus");
+    expect(page.calls.acts).toContain("press:Enter");
+  });
+
+  it("names the page's own options when a select has no such value", async () => {
+    // Recoverable in one turn: a model told only "no such option" guesses
+    // again; told what the control offers, it picks.
+    const { res } = await observedThenActed(
+      {
+        kind: "act",
+        verb: "select",
+        target: { a11yRef: "e1" },
+        value: "XL",
+      },
+      { "Runtime.callFunctionOn": { result: { value: "no_option:S, M, L" } } },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("S, M, L");
+  });
+
+  it("answers unsupported_target when the engine has no CDP session at all", async () => {
+    // An engine that cannot resolve nodes can still be driven by selector and
+    // coordinates, so this is a capability answer rather than a fault.
+    const page = fakePage({ url: "https://x.test/" });
+    // `null` is the fake's "this engine has no CDP session at all", as opposed
+    // to `undefined`, which takes its default one.
+    page.cdpSession = null;
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: "e1" } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unknown_ref|unsupported_target/);
+  });
+});
+
+/**
+ * JavaScript dialogs.
+ *
+ * A dialog stops the renderer. Before this the daemon did not know what one
+ * was, so a page that called `confirm()` on a click left the tab blocked for
+ * the life of the browser and every command afterwards reported the page
+ * "unsettled" — true, and no help at all. These pin the three things that make
+ * that recoverable: it is answered, the answer is recorded, and it is never
+ * answered on behalf of the person who is holding the browser.
+ */
+describe("ChromiumDriver — JavaScript dialogs", () => {
+  const CONFIRM = {
+    kind: "confirm" as const,
+    message: "Delete this account?",
+    at: 1,
+  };
+
+  it("CANCELS a confirm on the agent's behalf, and says so", async () => {
+    // Cancel, not accept: a dialog is the one place a page asks a question
+    // whose default answer we are choosing for an absent user, and "Delete
+    // this account?" defaults to no.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+    expect(res.output).toMatchObject({
+      dialog: {
+        kind: "confirm",
+        message: "Delete this account?",
+        choice: "dismissed",
+        auto: true,
+      },
+    });
+  });
+
+  it("ACCEPTS a beforeunload, because the agent asked to navigate", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    // Raised the way a real one is: the page asks on the way OUT, so the tab
+    // already exists and the next navigate is what meets it.
+    page.setDialog({ kind: "beforeunload", message: "Leave site?", at: 1 });
+    await driver.execute(cmd({ kind: "navigate", url: "https://y.test/" }));
+    expect(page.dialogAnswers).toEqual([{ accept: true }]);
+  });
+
+  it("reports the decision ONCE, not on every later result", async () => {
+    // It describes one moment. Repeating it would tell the model a dialog
+    // keeps appearing on a page where nothing is happening.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    // `dom` rather than `url`: a URL read does not need the page unblocked, so
+    // it deliberately does NOT answer the dialog (see the safe set).
+    const first = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    const second = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(first.output).toMatchObject({ dialog: { kind: "confirm" } });
+    expect(second.output).not.toHaveProperty("dialog");
+  });
+
+  it("answers a dialog the ACT ITSELF raised, before settling on it", async () => {
+    // The real sequence: the click runs, the page calls `confirm()`, and the
+    // renderer stops. Settling against that burns the whole budget to report
+    // a page "unsettled", so the dialog is answered first.
+    const page = fakePage({
+      url: "https://x.test/",
+      dialogOnAct: CONFIRM,
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { coordinates: [5, 6] } }),
+    );
+    expect(page.calls.acts).toContain("click:5,6");
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+    expect(res.output).toMatchObject({ dialog: { choice: "dismissed" } });
+  });
+
+  it("NEVER answers the dialog of a person who is holding the browser", async () => {
+    // Their dialog, their answer. Dismissing it out from under someone signing
+    // in is exactly the surprise the handoff exists to prevent.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("someone-else");
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(res.ok).toBe(false);
+    expect(page.dialogAnswers).toEqual([]);
+    // A lease refusal is the one the caller gets, because it is the one that
+    // says who to wait for.
+    expect(res.leaseBlocked ?? String(res.error)).toBeTruthy();
+  });
+
+  it("still answers a screenshot and a URL while a dialog is open", async () => {
+    // The page is blocked, so anything that touches it hangs or lies — but the
+    // frame and the URL are exactly what a caller needs to make sense of the
+    // refusal it just got. This is checked with the lease HELD so the dialog
+    // stays pending for the duration.
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("holder");
+    // As the HOLDER, which is what the lease is for: their own commands run.
+    const shot = await driver.execute({
+      commandId: "c-shot",
+      source: "manual",
+      holder: "holder",
+      action: { kind: "observe", mode: "screenshot" },
+    });
+    expect(shot.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([]);
+  });
+
+  it("does nothing at all on a page with no dialog", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([]);
+    expect(res.output).not.toHaveProperty("dialog");
+  });
+});
+
+/**
+ * `observe {mode:"network"}` — the question the other modes cannot answer.
+ *
+ * A page whose layout is right, whose list is empty and whose console is
+ * silent. The cause is on the wire, and until this existed a model could only
+ * re-read a page that would keep looking exactly the same.
+ */
+describe("ChromiumDriver — observing the network", () => {
+  const ROWS = [
+    {
+      requestId: "r1",
+      method: "GET",
+      url: "https://x.test/api/items",
+      status: 401,
+      at: 10,
+    },
+    {
+      requestId: "r2",
+      method: "GET",
+      url: "https://x.test/logo.png",
+      status: 200,
+      at: 20,
+    },
+  ];
+
+  it("lists what the page requested and what came back", async () => {
+    const page = fakePage({ url: "https://x.test/", network: ROWS });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(true);
+    expect((res.output as { network: unknown[] }).network).toHaveLength(2);
+    expect(
+      (res.output as { network: Array<{ status?: number }> }).network[0],
+    ).toMatchObject({ status: 401 });
+  });
+
+  it("reads ONE exchange when asked for a request id", async () => {
+    const page = fakePage({ url: "https://x.test/", network: ROWS });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "network", requestId: "r1" }),
+    );
+    const rows = (res.output as { network: Array<{ requestId: string }> })
+      .network;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.requestId).toBe("r1");
+  });
+
+  it("says the row has scrolled off rather than reporting no such request", async () => {
+    const page = fakePage({ url: "https://x.test/", network: ROWS });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "network", requestId: "gone" }),
+    );
+    expect((res.output as { network: unknown[] }).network).toHaveLength(0);
+    expect(res.output).toMatchObject({ omitted: 1 });
+  });
+
+  it("distinguishes 'this browser cannot tell you' from 'no requests'", async () => {
+    // Two very different facts. An empty list for the first sends a model
+    // looking for a cause that was never captured in the first place.
+    const page = fakePage({ url: "https://x.test/", network: null });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("does not record network requests");
+  });
+
+  it("answers an empty list for a page that genuinely requested nothing", async () => {
+    const page = fakePage({ url: "https://x.test/", network: [] });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(true);
+    expect((res.output as { network: unknown[] }).network).toEqual([]);
+  });
+
+  it("PURGES what a person's session requested when they hand the browser back", async () => {
+    // The same guarantee the console ring has, and this ring needs it more: it
+    // records the URLs someone visited and the requests their signing-in
+    // produced. Purging one and not the other would make the lease's promise
+    // "you must wait to read it" rather than "it is private".
+    const page = fakePage({ url: "https://x.test/", network: [] });
+    const { context } = fakeContext({ pages: [page] });
+    const lease = new HandoffLease();
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    lease.acquire("someone");
+    page.pushNetwork({
+      requestId: "login",
+      method: "POST",
+      url: "https://x.test/session",
+      at: Date.now() + 5,
+    });
+    lease.release("someone");
+    lease.resume("someone");
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "network" }));
+    expect(res.ok).toBe(true);
+    expect((res.output as { network: unknown[] }).network).toEqual([]);
+  });
+});
+
+/**
+ * Review catches — the two windows the ref and dialog work opened.
+ *
+ * Both are the same shape of mistake: a new `await` between the last check and
+ * the thing the check was protecting. Worth their own block because the
+ * guarantee they restore is the one the whole handoff design rests on.
+ */
+describe("ChromiumDriver — the lease across the awaits refs added", () => {
+  it("does NOT click when a person takes the browser during ref resolution", async () => {
+    // Resolving a ref is a node lookup, sometimes a whole AX tree re-read, a
+    // scroll and a box measurement. The permit check used to be the last word
+    // only because nothing yielded between it and the click; these awaits
+    // changed that, and a person taking control inside them would have got the
+    // agent's click in their own browser a beat later.
+    const lease = new HandoffLease();
+    let resolves = 0;
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "Sign in", id: 41 }],
+        }),
+        "DOM.resolveNode": { object: { objectId: "obj-1" } },
+        "DOM.getBoxModel": () => {
+          // The handoff lands while the target is being MEASURED — after the
+          // node resolved and before the click goes out, which is the window
+          // that had no check in it.
+          resolves += 1;
+          lease.acquire("someone-else");
+          return { model: { content: [80, 40, 120, 40, 120, 60, 80, 60] } };
+        },
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "click", target: { a11yRef: "e1" } }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.leaseBlocked).toBe(true);
+    // The whole point: nothing reached the page.
+    expect(page.calls.acts).not.toContain("click:100,50");
+  });
+
+  it("REPORTS a dialog the act raised rather than settling through it", async () => {
+    // A person's own click raising `confirm()`. Their dialog, so it is not
+    // answered — and the settle and capture that used to follow would each
+    // spend their full budget against a stopped renderer and then describe the
+    // frame from before, which reads as an action that quietly did nothing.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://x.test/",
+      dialogOnAct: { kind: "confirm", message: "Delete this account?", at: 1 },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    lease.acquire("holder");
+
+    const res = await driver.execute({
+      commandId: "c-manual",
+      source: "manual",
+      holder: "holder",
+      action: { kind: "act", verb: "click", target: { coordinates: [5, 6] } },
+    });
+    // The act RAN, so this is not a refusal — a caller told nothing happened
+    // would do it again.
+    expect(res.ok).toBe(true);
+    expect(res.settled).toBe(false);
+    expect(page.calls.acts).toContain("click:5,6");
+    // Unanswered, and named.
+    expect(page.dialogAnswers).toEqual([]);
+    expect(res.output).toMatchObject({
+      dialog: { kind: "confirm", pending: true },
+    });
+  });
+});
+
+/**
+ * Deciding about a dialog, as a capability rather than a policy.
+ *
+ * The defaults exist so a tab can never wedge, and that is worth having — but
+ * a default is a guess at what the caller meant, and cancelling every
+ * `confirm` decides for a client that may have its own rules. So the answer is
+ * available explicitly, under either policy, and the guessing can be turned
+ * off.
+ */
+describe("ChromiumDriver — who decides about a dialog", () => {
+  const CONFIRM = { kind: "confirm" as const, message: "Delete?", at: 1 };
+
+  function withDialog(options: { dialogPolicy?: "auto" | "ask" } = {}) {
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, options);
+    return { page, driver };
+  }
+
+  it('"ask" decides NOTHING and refuses the command instead', async () => {
+    const { page, driver } = withDialog({ dialogPolicy: "ask" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("dialog_pending");
+    // The refusal names what the caller can do about it.
+    expect(String(res.error)).toContain("accept_dialog");
+    expect(page.dialogAnswers).toEqual([]);
+  });
+
+  it('"auto" is still the default, so a tab can never wedge', async () => {
+    const { page, driver } = withDialog();
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+  });
+
+  it("reads the pending dialog without answering it, under either policy", async () => {
+    // How a client learns what it is being asked to decide.
+    for (const dialogPolicy of ["auto", "ask"] as const) {
+      const { page, driver } = withDialog({ dialogPolicy });
+      await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+      const res = await driver.execute(cmd({ kind: "observe", mode: "dialog" }));
+      expect(res.ok, dialogPolicy).toBe(true);
+      expect(res.output).toMatchObject({
+        dialog: { kind: "confirm", message: "Delete?" },
+      });
+      expect(page.dialogAnswers, dialogPolicy).toEqual([]);
+    }
+  });
+
+  it("ANSWERS explicitly, and the client's choice is not the default", async () => {
+    // The point of the verb: the default for a `confirm` is cancel, and a
+    // client that knows this flow can say yes.
+    const { page, driver } = withDialog({ dialogPolicy: "ask" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "accept_dialog" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([{ accept: true }]);
+    // Recorded, and NOT as an automatic choice — a reader should be able to
+    // tell what the page asked from who answered it.
+    expect(res.output).toMatchObject({
+      dialog: { kind: "confirm", choice: "accepted" },
+    });
+    expect((res.output as { dialog: { auto?: true } }).dialog.auto).toBeUndefined();
+  });
+
+  it("carries a prompt's reply", async () => {
+    const page = fakePage({
+      url: "https://x.test/",
+      dialog: { kind: "prompt", message: "Your name?", at: 1 },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { dialogPolicy: "ask" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(
+      cmd({ kind: "act", verb: "accept_dialog", value: "Ada" }),
+    );
+    expect(page.dialogAnswers).toEqual([{ accept: true, promptText: "Ada" }]);
+  });
+
+  it("answering works under `auto` too — the policy governs the FALLBACK", async () => {
+    const { page, driver } = withDialog({ dialogPolicy: "auto" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "dismiss_dialog" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+  });
+
+  it("says so plainly when there is no dialog to answer", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "accept_dialog" }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("no dialog open");
   });
 });
