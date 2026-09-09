@@ -45,14 +45,14 @@ export const FINDINGS_FAILURE_COPY: Record<
   { title: string; detail: string }
 > = {
   notFound: {
-    title: "No per-trial diagnostics for this run",
+    title: "No per-iteration diagnostics for this run",
     detail:
       "This project has no run with that id, or it is no longer visible here.",
   },
   routeUnavailable: {
-    title: "Per-trial diagnostics are not available on this deployment",
+    title: "Per-iteration diagnostics are not available on this deployment",
     detail:
-      "The API this app is talking to does not serve the run decision summary contract, so the trials behind these stage counts are not listed.",
+      "The API this app is talking to does not serve the run decision summary contract, so the iterations behind these stage counts are not listed.",
   },
   invalidContract: {
     title: "The decision summary did not match its contract",
@@ -60,9 +60,9 @@ export const FINDINGS_FAILURE_COPY: Record<
       "The API answered with a payload this build cannot validate, so nothing from it is shown here. The stage counts above come from a different document and are unaffected.",
   },
   requestFailed: {
-    title: "Couldn't load the trial evidence",
+    title: "Couldn't load the iteration evidence",
     detail:
-      "The read did not complete, so the trials behind these stage counts are not listed here. It will be retried automatically.",
+      "The read did not complete, so the iterations behind these stage counts are not listed here. It will be retried automatically.",
   },
 };
 

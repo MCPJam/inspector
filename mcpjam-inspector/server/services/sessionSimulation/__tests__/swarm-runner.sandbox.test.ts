@@ -100,6 +100,47 @@ vi.mock("../../swarm-agent.js", async () => {
   };
 });
 
+// The hosted recording: an attempt's box is the only place its video ever
+// exists, so the collect has to happen while that box is still alive.
+const collectHostedRecordingMock = vi.fn();
+vi.mock("../../browserd/hosted-recording.js", () => ({
+  collectHostedRecordingBeforeRelease: (...args: unknown[]) =>
+    collectHostedRecordingMock(...args),
+}));
+
+// The outbox the collected video is staged on — the SAME one the local
+// harness's replay rides.
+const stageVideoMock = vi.fn();
+const outboxFlushMock = vi.fn();
+vi.mock("../../browser-artifact-outbox.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../browser-artifact-outbox.js")
+  >("../../browser-artifact-outbox.js");
+  return {
+    ...actual,
+    createBrowserArtifactOutbox: (...args: unknown[]) => {
+      const real = (
+        actual.createBrowserArtifactOutbox as never as (
+          ...a: unknown[]
+        ) => Record<string, unknown>
+      )(...args);
+      return {
+        ...real,
+        stageVideo: (...a: unknown[]) => stageVideoMock(...a),
+        flush: (...a: unknown[]) => {
+          // THE SPY'S ANSWER WINS when a test gives it one. Returning the real
+          // flush unconditionally would discard a `mockImplementation`, and a
+          // test that stubs a never-settling flush would silently exercise the
+          // real one instead — passing while testing nothing.
+          const stubbed = outboxFlushMock(...a);
+          if (stubbed !== undefined) return stubbed;
+          return (real.flush as (...b: unknown[]) => unknown)(...a);
+        },
+      };
+    },
+  };
+});
+
 vi.mock("../../../utils/computers/control-plane-client.js", async () => {
   const actual = await vi.importActual<
     typeof import("../../../utils/computers/control-plane-client.js")
@@ -322,6 +363,9 @@ beforeEach(() => {
     };
   });
   releaseSandboxMock.mockReset().mockResolvedValue(undefined);
+  collectHostedRecordingMock.mockReset().mockResolvedValue(null);
+  stageVideoMock.mockReset().mockResolvedValue(undefined);
+  outboxFlushMock.mockReset();
   dataPlaneConfiguredMock.mockReset().mockReturnValue(true);
   resolveHostToolsMock.mockReset();
   resolveHarnessSandboxMock.mockReset();
@@ -1314,5 +1358,157 @@ describe("swarm runner — a bad target cannot take the run down with it", () =>
       expect(String(t.errorMessage)).toMatch(/enterprise-managed/i);
     }
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * R-3. Video evidence for an unattended attempt.
+ *
+ * The file only ever exists on the attempt's box, so the collect has to run
+ * BEFORE the release — and it must never be able to prevent one. A swarm leaks
+ * money for as long as a box outlives its attempt.
+ */
+describe("swarm runner — the attempt's recording comes off before the box does", () => {
+  const RECORDING = {
+    bytes: Buffer.from("mp4-bytes"),
+    mime: "video/mp4" as const,
+    durationMs: 9_000,
+    distinctFrames: 42,
+    fps: 15,
+    truncated: true,
+    startedAtMs: 1_700_000_000_000,
+  };
+
+  it("collects before the release, and stages it on the outbox", async () => {
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+
+    await startJourneyRun(baseOpts());
+
+    expect(collectHostedRecordingMock).toHaveBeenCalledWith("row_1");
+    // ORDER, not just presence: after the release there is nothing to read.
+    expect(
+      collectHostedRecordingMock.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(releaseSandboxMock.mock.invocationCallOrder[0]!);
+
+    expect(stageVideoMock).toHaveBeenCalledWith(RECORDING.bytes, {
+      mime: "video/mp4",
+      meta: {
+        source: "hosted",
+        fps: 15,
+        durationMs: 9_000,
+        distinctFrames: 42,
+        truncated: true,
+      },
+    });
+    expect(outboxFlushMock).toHaveBeenCalled();
+  });
+
+  it("stages nothing for an attempt that never recorded", async () => {
+    collectHostedRecordingMock.mockResolvedValue(null);
+    await startJourneyRun(baseOpts());
+    expect(stageVideoMock).not.toHaveBeenCalled();
+    expect(releaseSandboxMock).toHaveBeenCalled();
+  });
+
+  it("still releases the box when the collect throws", async () => {
+    // The collector is contractually total, but the release must not DEPEND on
+    // that: a leaked box costs money until the GC cron reaps it.
+    collectHostedRecordingMock.mockRejectedValue(new Error("daemon gone"));
+
+    await startJourneyRun(baseOpts());
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  });
+
+  it("still releases the box when the artifact flush never settles", async () => {
+    // THE MONEY ONE. `ConvexHttpClient.mutation` carries no timeout, and this
+    // flush sits inside the `finally` that must reach `releaseAttemptSandbox`.
+    // Unbounded, a hung attach holds a paid box open for as long as it hangs.
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+    // Releasable, so the cleanup below can let the run finish. A flush that
+    // can only ever hang would strand the run in the FAILING case, which is
+    // exactly the case this test is written to report clearly.
+    let flushReleased = false;
+    const waiting: Array<() => void> = [];
+    outboxFlushMock.mockImplementation(() =>
+      flushReleased
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            waiting.push(resolve);
+          }),
+    );
+    const releaseFlush = () => {
+      flushReleased = true;
+      for (const resolve of waiting.splice(0)) resolve();
+    };
+
+    // CAPTURED BEFORE THE CLOCK IS FAKED. `vi.useFakeTimers()` replaces the
+    // global, so a `setTimeout` called below would be a FAKE timer — and in
+    // the one case this guard exists for (the run never settles) nothing is
+    // left to advance the fake clock, so the guard would never fire and the
+    // test would hang to vitest's own timeout with no useful message.
+    const realSetTimeout = setTimeout;
+    vi.useFakeTimers();
+    // Declared out here so the `finally` can await it.
+    let run: Promise<unknown> = Promise.resolve();
+    try {
+      run = startJourneyRun(baseOpts());
+      // ADVANCED BY A BOUNDED AMOUNT, not drained. `runAllTimersAsync()` walks
+      // the timer chain until it is empty, and an unbounded flush keeps that
+      // chain alive — so it aborts on its own 10k-timer heuristic before the
+      // guard below ever runs, reporting "infinite loop" instead of naming
+      // what broke. This is simply long enough to clear the runner's own
+      // flush deadline.
+      await vi.advanceTimersByTimeAsync(120_000);
+      // RACED, not simply awaited. Without the deadline in the runner, `run`
+      // never settles — and a test that hangs stalls CI with no failure
+      // signal, which is a worse regression report than none.
+      await Promise.race([
+        run,
+        new Promise((_resolve, reject) => {
+          realSetTimeout(
+            () =>
+              reject(
+                new Error(
+                  "the attempt never finished: the artifact flush is unbounded again, so `releaseAttemptSandbox` is unreachable",
+                ),
+              ),
+            2_000,
+          ).unref?.();
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+      // LET THE RUN END EVEN WHEN THE GUARD WON. `startJourneyRun` drops its
+      // entry from the runner's module-level `runningJourneyRuns` only in its
+      // own `finally`, which an unreleased flush never reaches — so a failing
+      // test would leave a live run behind for every test after it, turning
+      // one clear regression report into a cascade of confusing ones. Bounded
+      // on the real clock so cleanup itself can never hang the suite.
+      releaseFlush();
+      await Promise.race([
+        run.catch(() => {}),
+        new Promise((resolve) => {
+          realSetTimeout(resolve, 1_000).unref?.();
+        }),
+      ]);
+    }
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
+  }, 15_000);
+
+  it("still releases the box when staging the video throws", async () => {
+    collectHostedRecordingMock.mockResolvedValue(RECORDING);
+    stageVideoMock.mockRejectedValue(new Error("convex down"));
+
+    await startJourneyRun(baseOpts());
+
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_1" }),
+    );
   });
 });

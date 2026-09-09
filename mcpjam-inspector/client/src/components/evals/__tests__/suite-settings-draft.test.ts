@@ -37,12 +37,12 @@ const BASE: SuiteSettingsValues = {
   minIterations: 3,
   computerEnvironmentId: undefined,
   defaultMatchOptions: undefined,
-    defaultPredicates: [],
-    judgeConfig: undefined,
-    judgeRubric: undefined,
-    verdictPolicyVersion: undefined,
-    verdictPolicyDefaults: undefined,
-    gatePolicy: undefined,
+  defaultPredicates: [],
+  judgeConfig: undefined,
+  judgeRubric: undefined,
+  verdictPolicyVersion: undefined,
+  verdictPolicyDefaults: undefined,
+  gatePolicy: undefined,
 };
 
 const SUITE_ID = "suite-a";

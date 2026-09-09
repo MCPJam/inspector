@@ -72,7 +72,7 @@ export function describeValidity(
   if (!validity) return "Contract defaults";
   const parts: string[] = [];
   if (validity.minEligibleTrials !== undefined) {
-    parts.push(`at least ${validity.minEligibleTrials} trials`);
+    parts.push(`at least ${validity.minEligibleTrials} iterations`);
   }
   if (validity.minCompletionRate !== undefined) {
     parts.push(`${formatFraction(validity.minCompletionRate)} completed`);

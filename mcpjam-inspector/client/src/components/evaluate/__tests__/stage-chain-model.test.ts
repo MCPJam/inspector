@@ -51,7 +51,7 @@ describe("deriveStageChip", () => {
       name: "some passed and some failed is MIXED, before either pure verdict",
       input: { applicable: 3, reached: 3, measured: 3, passed: 1, failed: 2 },
       kind: "mixed",
-      contains: "mixed — 1 passed, 2 failed of 3 measured",
+      contains: "mixed. 1 passed, 2 failed of 3 measured",
     },
     {
       name: "everything measured failed",
@@ -81,7 +81,7 @@ describe("deriveStageChip", () => {
       name: "nothing measured, nothing captured",
       input: { applicable: 2, reachUnknown: 2 },
       kind: "unmeasured",
-      contains: "nothing captured — reach undecidable",
+      contains: "nothing captured. Reach undecidable",
     },
     {
       name: "the stage does not apply to any case here",
@@ -93,7 +93,7 @@ describe("deriveStageChip", () => {
       name: "nothing at all",
       input: {},
       kind: "noTrials",
-      contains: "no trials",
+      contains: "no iterations",
     },
   ];
 

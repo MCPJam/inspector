@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Hammer,
   House,
@@ -47,6 +47,8 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { InviteTeamSignUpDialog } from "@/components/auth/InviteTeamSignUpDialog";
+import { consumePendingInviteDialog } from "@/lib/pending-invite-dialog";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
@@ -544,6 +546,7 @@ export function MCPSidebar({
     }
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [showInviteSignUpNudge, setShowInviteSignUpNudge] = useState(false);
   const learnMore = useLearnMore();
   const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
@@ -560,7 +563,22 @@ export function MCPSidebar({
       ),
     );
   }, [activeProject?.organizationId, projects]);
-  const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
+  const canOpenInviteDialog = isAuthenticated && !!user && !!activeProject;
+  // Guests get the CTA too (hosted only — a local/self-hosted install has no
+  // WorkOS to sign up through). The click opens a sign-up nudge instead of the
+  // share dialog, and the nudge's marker reopens it after the round trip.
+  // Hidden while auth resolves so signed-in users never see a guest control.
+  const showGuestInviteCta = HOSTED_MODE && !user && !authResolving;
+  const shouldShowInviteCta = canOpenInviteDialog || showGuestInviteCta;
+  // Reopen the invite dialog for a guest who left through the sign-up nudge:
+  // the marker outlives the WorkOS page reload in sessionStorage, and this
+  // effect holds off consuming it until everything the dialog needs (authed
+  // user + active project) has actually resolved.
+  useEffect(() => {
+    if (!canOpenInviteDialog) return;
+    if (!consumePendingInviteDialog()) return;
+    setShowInviteDialog(true);
+  }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
     { enabled: billingUiEnabled && !!activeProject?.organizationId },
@@ -837,7 +855,11 @@ export function MCPSidebar({
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="Invite team members"
-                  onClick={() => setShowInviteDialog(true)}
+                  onClick={() =>
+                    showGuestInviteCta
+                      ? setShowInviteSignUpNudge(true)
+                      : setShowInviteDialog(true)
+                  }
                 >
                   <UserPlus className="h-4 w-4" />
                   <span className="group-data-[collapsible=icon]:hidden">
@@ -847,7 +869,7 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
-          {shouldShowInviteCta && trialActive && trialBilling?.trialEndsAt ? (
+          {canOpenInviteDialog && trialActive && trialBilling?.trialEndsAt ? (
             <SidebarTrialCountdown
               trialEndsAt={trialBilling.trialEndsAt}
               trialStartedAt={trialBilling.trialStartedAt}
@@ -869,7 +891,7 @@ export function MCPSidebar({
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
         </SidebarFooter>
       </Sidebar>
-      {shouldShowInviteCta && user && activeProject ? (
+      {canOpenInviteDialog && user && activeProject ? (
         <ShareProjectDialog
           isOpen={showInviteDialog}
           onClose={() => setShowInviteDialog(false)}
@@ -883,6 +905,12 @@ export function MCPSidebar({
           onProjectShared={onProjectShared}
           availableProjects={inviteableProjects}
           activeProjectId={activeProjectId}
+        />
+      ) : null}
+      {showGuestInviteCta ? (
+        <InviteTeamSignUpDialog
+          isOpen={showInviteSignUpNudge}
+          onClose={() => setShowInviteSignUpNudge(false)}
         />
       ) : null}
       {learnMoreEnabled && (

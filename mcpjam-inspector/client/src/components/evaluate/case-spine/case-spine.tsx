@@ -49,6 +49,7 @@ import {
   type AvailableTool,
 } from "@/components/evals/step-fields";
 import { SuiteScorerLibraryMenu } from "@/components/evals/suite-scorer-library-menu";
+import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import {
   buildCaseScorecard,
   spineLibraryKinds,
@@ -262,6 +263,12 @@ export function CaseSpine({
   );
 
   const checkPolicy = capabilities?.scorers?.checkPolicy === true;
+  // What this DEPLOYMENT can evaluate, intersected by the menu with what
+  // this SURFACE offers. A kind an older backend rejects is a failed save;
+  // one an older runner cannot evaluate fails closed on every trial.
+  const authorableKinds = authorablePredicateKinds(
+    capabilities?.scorers?.predicateKinds,
+  );
   const showUnsetError = validationAttempted && card.unsetBlockReason !== null;
   const promptReady = view.prompt.trim().length > 0;
   const quiet = useMemo(
@@ -632,6 +639,7 @@ export function CaseSpine({
             {readOnly ? null : (
               <SuiteScorerLibraryMenu
                 kinds={spineLibraryKinds()}
+                authorableKinds={authorableKinds}
                 triggerLabel="Add a check after this"
                 onAdd={(kind) =>
                   addCheckAfter(action.step.id, blankPredicate(kind))
@@ -649,6 +657,7 @@ export function CaseSpine({
       </ul>
 
       <AfterTheRunSection
+        authorableKinds={authorableKinds}
         card={card}
         availableTools={availableTools.map((tool) => tool.name)}
         readOnly={readOnly}

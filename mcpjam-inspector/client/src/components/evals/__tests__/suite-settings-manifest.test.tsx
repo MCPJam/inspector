@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
+  SETTINGS_PAGE_HIDDEN_KEYS,
   EVAL_SUITE_SETTING_KEYS,
   type EvalSuiteSettingKey,
 } from "@/shared/eval-suite-settings-manifest";
@@ -101,6 +102,9 @@ vi.mock("../suite-header", () => ({
   ),
 }));
 
+vi.mock("@/components/evals/suite-clients-settings", () => ({
+  SuiteClientsSettings: () => <div data-testid="suite-clients-table">Client table</div>,
+}));
 vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
   SuiteEnvironmentComposerBar: () => (
     <div data-testid="suite-environment-bar">composer</div>
@@ -114,9 +118,8 @@ vi.mock("@/state/app-state-context", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => mocks.capabilities(),
@@ -256,7 +259,10 @@ describe("eval suite settings manifest — render parity", () => {
       unmount();
     }
     const orphaned = EVAL_SUITE_SETTINGS_MANIFEST.filter(
-      (row) => !("excluded" in row) && !rendered.has(row.key),
+      (row) =>
+        !("excluded" in row) &&
+        !(row.key in SETTINGS_PAGE_HIDDEN_KEYS) &&
+        !rendered.has(row.key),
     ).map((row) => `${row.key} (${row.label})`);
     expect(
       orphaned,
@@ -279,9 +285,6 @@ describe("eval suite settings manifest — render parity", () => {
     for (const key of [
       "policy",
       "environments",
-      "schedule",
-      "githubChecks",
-      "deleteSuite",
     ] as const) {
       showSettingsKey(container, key);
       const row = container.querySelector(`[data-setting-key="${key}"]`);
@@ -304,7 +307,7 @@ describe("eval suite settings manifest — render parity", () => {
       const { container, unmount } = renderSettingsSheet(overrides);
       const suite = overrides.suite ?? undefined;
       for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
-        if ("excluded" in row) continue;
+        if ("excluded" in row || row.key in SETTINGS_PAGE_HIDDEN_KEYS) continue;
         const suite = overrides.suite ?? baseSuite;
         const isV2 = suite.verdictPolicyVersion === 2;
         if (
@@ -328,7 +331,7 @@ describe("eval suite settings manifest — render parity", () => {
       unmount();
     }
     for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
-      if ("excluded" in row) continue;
+      if ("excluded" in row || row.key in SETTINGS_PAGE_HIDDEN_KEYS) continue;
       const text = seen.get(row.key);
       expect(text, `no rendered row for ${row.key}`).toBeDefined();
       // The environments row is titled for the axes it actually edits: the
@@ -371,6 +374,8 @@ describe("eval suite settings manifest — render parity", () => {
     expect(v2.has("minimumAccuracy")).toBe(false);
     expect(v2.has("minimumIterations")).toBe(false);
     expect(v2.has("qualityGateBaseline")).toBe(true);
+    // Stored on `v2Suite`, so the simplified page lists it read-only. A
+    // condition the page cannot edit is still a condition the run enforces.
     expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(true);
   });
 
@@ -379,9 +384,9 @@ describe("eval suite settings manifest — render parity", () => {
     const legacy = new Set(collectAllSettingKeys(container));
     expect(legacy.has("qualityGateBaseline")).toBe(true);
     expect(legacy.has("qualityGateAllowedDrop")).toBe(true);
-    expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(true);
-    expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(true);
-    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(true);
+    expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(false);
+    expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(false);
+    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(false);
     expect(legacy.has("validity")).toBe(false);
   });
 
@@ -394,54 +399,18 @@ describe("eval suite settings manifest — render parity", () => {
    * A person looking at a page that simply does not mention the setting they
    * were told to configure cannot tell which one they have.
    */
-  it("renders a refused feature disabled, with the reason", () => {
-    mocks.capabilities.mockReturnValue(
-      readyCapabilities({
-        features: {
-          computers: { enabled: false, reason: "flag_false" },
-          scheduledEvals: { enabled: true },
-        },
-      }),
-    );
+  it("keeps the computer environment control on the Clients tab", () => {
+    // It edits `computerEnvironmentId`, which still reaches the backend and
+    // still decides which image every trial boots. Unmounting it left the field
+    // writable only through the API.
     const { container } = renderSettingsSheet();
     showSettingsKey(container, "computerEnvironment");
-    const row = container.querySelector(
-      '[data-setting-key="computerEnvironment"]',
-    );
-    expect(row).toBeTruthy();
-    expect(row?.getAttribute("data-disabled-reason")).toBe(
-      "Not enabled for this organization",
-    );
-    // Native disabling through a `fieldset`, so Radix triggers (which are
-    // buttons underneath) are reached too, not just the `select`. Asserted with
-    // `toBeDisabled`, which walks the fieldset ancestry — the `.disabled` IDL
-    // property reflects only an element's OWN attribute and reads false for a
-    // control that a browser will not let anyone touch.
-    const select = row?.querySelector("select");
-    expect(select).toBeDisabled();
-  });
-
-  it("keeps a flag-service outage distinct from a flag that said no", () => {
-    mocks.capabilities.mockReturnValue(
-      readyCapabilities({
-        features: {
-          computers: { enabled: false, reason: "flag_unavailable" },
-          scheduledEvals: { enabled: true },
-        },
-      }),
-    );
-    const { container } = renderSettingsSheet();
-    showSettingsKey(container, "computerEnvironment");
-    // Collapsing these two is how a temporary outage teaches somebody their
-    // organization does not have a feature it has.
     expect(
-      container
-        .querySelector('[data-setting-key="computerEnvironment"]')
-        ?.getAttribute("data-disabled-reason"),
-    ).toBe("Could not check availability right now");
+      container.querySelector('[data-setting-key="computerEnvironment"]'),
+    ).toBeTruthy();
   });
 
-  it("disables the schedule and delete rows without permission", () => {
+  it("keeps triggers hidden without schedule permission", () => {
     mocks.capabilities.mockReturnValue(
       readyCapabilities({
         permissions: {
@@ -458,15 +427,8 @@ describe("eval suite settings manifest — render parity", () => {
       }),
     );
     const { container } = renderSettingsSheet();
-    for (const key of ["schedule", "deleteSuite"] as const) {
-      showSettingsKey(container, key);
-      expect(
-        container
-          .querySelector(`[data-setting-key="${key}"]`)
-          ?.getAttribute("data-disabled-reason"),
-        key,
-      ).toBe("You don't have permission to change this");
-    }
+    expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
+    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).not.toContain("Triggers");
   });
 
   it("behaves exactly as before when capabilities are unavailable", () => {
@@ -478,17 +440,24 @@ describe("eval suite settings manifest — render parity", () => {
       0,
     );
     const keys = collectAllSettingKeys(container);
+    // Restored to its pre-#4739 assertion: the image row keeps its ORIGINAL
+    // flag gate when capabilities cannot be read, so it renders exactly as it
+    // did before capabilities existed rather than disappearing.
     expect(keys).toContain("computerEnvironment");
-    expect(keys).toContain("schedule");
+    // `schedule` stays absent, and NOT because a capability refused it: the
+    // triggers group is filtered out of the visible tabs, and its row is also
+    // gated on a PostHog flag that does not exist in the project. See the note
+    // on VISIBLE_SUITE_SETTINGS_GROUPS.
+    expect(keys).not.toContain("schedule");
   });
 
-  it("puts the environment composer on the Environments row", () => {
+  it("puts the setup client table on the Clients row", () => {
     const { container } = renderSettingsSheet();
     showSettingsKey(container, "environments");
     const row = container.querySelector('[data-setting-key="environments"]');
     expect(row).toBeTruthy();
     expect(
-      row?.querySelector('[data-testid="suite-environment-bar"]'),
+      row?.querySelector('[data-testid="suite-clients-table"]'),
     ).toBeTruthy();
   });
 });

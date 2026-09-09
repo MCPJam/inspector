@@ -256,7 +256,7 @@ function DecisionSummaryBody({
         <p className="text-[11px] text-muted-foreground">
           counted in {unit}
           {summary.verdictSource === "legacy"
-            ? " — a legacy percent-threshold run, so these are trials, not cases"
+            ? " — a legacy percent-threshold run, so these are iterations, not cases"
             : ""}
         </p>
       ) : null}
@@ -347,7 +347,7 @@ function DecisionSummaryBody({
           disabled={isLoadingMore}
           data-testid="run-decision-load-more"
         >
-          {isLoadingMore ? "Loading…" : "Load more trials"}
+          {isLoadingMore ? "Loading…" : "Load more iterations"}
         </Button>
       ) : null}
     </>
@@ -431,7 +431,7 @@ function DiagnosticRow({
       </p>
       <p className="text-xs text-muted-foreground">{chain.failureCategoryLine}</p>
       {chain.trustNote ? (
-        <p className="text-xs text-amber-700 dark:text-amber-400">
+        <p className="text-xs text-warning">
           {chain.trustNote}
         </p>
       ) : null}

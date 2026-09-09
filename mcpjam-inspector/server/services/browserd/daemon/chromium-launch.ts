@@ -19,6 +19,8 @@ import {
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
 import { PAGE_TEXT_FN } from "./page-text";
+import type { PendingDialog } from "./dialogs";
+import { NetworkRing } from "./network";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -107,6 +109,38 @@ export type AnyPage = {
 const CONSOLE_RING_SIZE = 200;
 /** Per-entry cap at CAPTURE time; the observe budget caps again for output. */
 const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
+/**
+ * Per-dialog message cap at capture time.
+ *
+ * A dialog's text is page-authored and reaches the model, so it is bounded
+ * here for the same reason console entries are — and generously, because the
+ * whole value of the message is that a person or a model can recognise which
+ * dialog it is.
+ */
+const DIALOG_MESSAGE_BYTES = 2_000;
+
+/** The shapes Playwright's `Request`/`Response` give us. Structural, like `AnyPage`. */
+interface PlaywrightRequest {
+  url?(): string;
+  method?(): string;
+  resourceType?(): string;
+  failure?(): { errorText?: string } | null;
+}
+interface PlaywrightResponse {
+  status?(): number;
+  statusText?(): string;
+  headers?(): Record<string, string>;
+  request?(): PlaywrightRequest;
+}
+
+/** The shape Playwright's `Dialog` gives us. Structural, like `AnyPage`. */
+interface PlaywrightDialog {
+  type?(): string;
+  message?(): string;
+  defaultValue?(): string | undefined;
+  accept(promptText?: string): Promise<void>;
+  dismiss(): Promise<void>;
+}
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
@@ -122,6 +156,13 @@ export function wrapPage(page: AnyPage): DriverPage {
   // The console ring. Attached once per wrapped page; entries are captured
   // eagerly because a console message is gone the moment it is emitted.
   const consoleRing: ConsoleEntry[] = [];
+  // Monotonic totals, never decremented when the ring evicts or a handoff
+  // purges. They are CURSORS: a ledger row records where they stood after a
+  // command, and two rows bracket the output that command produced. Counting
+  // only what is still readable would make a lost window indistinguishable
+  // from a quiet one.
+  let consoleTotal = 0;
+  let errorsTotal = 0;
   page.on("console", (message: { type?: () => string; text?: () => string }) => {
     try {
       const text = message.text?.() ?? "";
@@ -130,9 +171,102 @@ export function wrapPage(page: AnyPage): DriverPage {
         text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
         at: Date.now(),
       });
+      consoleTotal += 1;
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
       // A console listener must never take the page down.
+    }
+  });
+  // THE NETWORK RING. Playwright hands back objects rather than CDP ids, so
+  // the ring's own id is minted here and remembered against the Request — the
+  // same object the response reports, which is what folds the two events into
+  // one row. A WeakMap so a page that runs for hours does not accumulate ids
+  // for requests nobody will ask about again.
+  const network = new NetworkRing();
+  const requestIds = new WeakMap<object, string>();
+  let nextRequestId = 0;
+  const idFor = (request: object): string => {
+    const known = requestIds.get(request);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request, minted);
+    return minted;
+  };
+  page.on("request", (request: PlaywrightRequest) => {
+    try {
+      network.started({
+        requestId: idFor(request as unknown as object),
+        method: request.method?.() ?? "GET",
+        url: request.url?.() ?? "",
+        ...(request.resourceType?.()
+          ? { resourceType: request.resourceType() }
+          : {}),
+      });
+    } catch {
+      // A network listener must never take the page down.
+    }
+  });
+  page.on("response", (response: PlaywrightResponse) => {
+    try {
+      const request = response.request?.();
+      if (!request) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        ...(response.status ? { status: response.status() } : {}),
+        ...(response.statusText?.()
+          ? { statusText: response.statusText() }
+          : {}),
+        ...(Number.isFinite(length) ? { bytes: length } : {}),
+        ...(headers ? { headers } : {}),
+      });
+    } catch {
+      // As above.
+    }
+  });
+  page.on("requestfailed", (request: PlaywrightRequest) => {
+    try {
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        failure: request.failure?.()?.errorText ?? "request failed",
+      });
+    } catch {
+      // As above.
+    }
+  });
+
+  // DIALOGS ARE CAPTURED, NOT ANSWERED HERE.
+  //
+  // Registering any `dialog` listener turns OFF Playwright's own auto-dismiss,
+  // which is what makes this possible at all: the dialog stays open, and the
+  // driver decides. That decision needs the lease — a dialog raised while a
+  // person is driving is theirs to answer, and dismissing it out from under
+  // them is exactly the surprise the handoff exists to prevent — and the lease
+  // is not something a page wrapper can see.
+  let pending: { dialog: PendingDialog; handle: PlaywrightDialog } | null =
+    null;
+  page.on("dialog", (dialog: PlaywrightDialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: (dialog.type?.() ?? "alert") as PendingDialog["kind"],
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...(dialog.defaultValue?.()
+            ? {
+                defaultPrompt: capText(
+                  dialog.defaultValue()!,
+                  DIALOG_MESSAGE_BYTES,
+                ),
+              }
+            : {}),
+          at: Date.now(),
+        },
+      };
+    } catch {
+      // A dialog listener must never take the page down.
     }
   });
   page.on("pageerror", (error: unknown) => {
@@ -144,13 +278,26 @@ export function wrapPage(page: AnyPage): DriverPage {
       ),
       at: Date.now(),
     });
+    // Counted in BOTH: a page error is a console entry (the ring holds one) and
+    // it is also the thing `errors` names. A reader asking "did this command
+    // throw" wants the second number, and deriving it from the first would mean
+    // scanning entries the ring may already have dropped.
+    consoleTotal += 1;
+    errorsTotal += 1;
     if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
   });
 
-  // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
-  // page tool should not pay for a CDP session. It reuses the memoized session
-  // below rather than attaching its own — a page serving both a tool call and
-  // the pane would otherwise hold two.
+  // The WebMCP bridge is attached ONCE and memoized here. It USED to be
+  // attached lazily, on the first `webmcp_*` action, on the reasoning that a
+  // tab which never calls a page tool should not pay for a CDP session. The
+  // driver now attaches it eagerly on tab creation instead (see
+  // `ChromiumDriver.getOrCreateTab`), because the tool set became something
+  // READ between model steps: a bridge that attaches on first use knows
+  // nothing about what the page registered before it existed, so a tool
+  // registered during page load would be invisible until something else
+  // happened to touch WebMCP. It still reuses the memoized session below
+  // rather than attaching its own — a page serving both a tool call and the
+  // pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
   // The CDP session itself is memoized separately and shared: the WebMCP
   // bridge and the viewport both want one, and attaching twice to the same
@@ -260,7 +407,29 @@ export function wrapPage(page: AnyPage): DriverPage {
         return "";
       }
     },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since: number) => network.dropSince(since),
+    networkCursor: () => network.count(),
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept: boolean, promptText?: string) {
+      const open = pending;
+      // CLEARED BEFORE THE ANSWER IS SENT, not after. `accept()` resolves once
+      // the renderer has taken the answer and started running again, and any
+      // command that arrives in that window must see an unblocked page rather
+      // than refuse against a dialog that is already on its way out.
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+        // Already gone — the page closed it, or the tab navigated. Answered
+        // either way, as far as the caller is concerned.
+      }
+      return true;
+    },
     consoleEntries: () => consoleRing,
+    consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
     dropConsoleSince: (since: number) => {
       // Walk from the end: the ring is chronological, so the tail is the
       // window to drop.
@@ -304,15 +473,22 @@ async function attachWebMcp(
   session: CdpLike,
 ): Promise<WebMcpBridge | null> {
   try {
-    const bridge = new WebMcpBridge(session);
-    await bridge.start(async () => {
+    // ONE probe closure, used for the initial `start()` AND re-run on every
+    // main-frame navigation. `document.modelContext` is a property of the
+    // DOCUMENT, not of the session: a bridge that probed once reported "this
+    // browser has no WebMCP" forever after opening on a page that had none,
+    // including on the WebMCP page the model navigated to next.
+    const probe = async () => {
       // `WebMCP.enable` resolves even where the feature is off — the page API
       // is the only honest probe (same reasoning as the local inspector's).
       const supported = await page
         .evaluate<boolean>(`(() => ${PAGE_API_PROBE})()`)
         .catch(() => false);
       return supported === true;
-    });
+    };
+    const bridge = new WebMcpBridge(session);
+    bridge.resupport(probe);
+    await bridge.start(probe);
     return bridge;
   } catch {
     return null;

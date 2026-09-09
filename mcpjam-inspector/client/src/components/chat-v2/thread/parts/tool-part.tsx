@@ -32,9 +32,11 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
+import { resolvePageToolAttribution } from "@/lib/webmcp-page-tools/attribution";
 import {
   getToolNameFromType,
   getToolStateMeta,
+  readTraceDisplayText,
   type ToolState,
   isDynamicTool,
 } from "../thread-helpers";
@@ -64,7 +66,6 @@ import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-t
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
-type TraceDisplayMode = "markdown" | "json-markdown";
 
 export function ToolPart({
   part,
@@ -165,7 +166,16 @@ export function ToolPart({
   // through the shared app-tool registry/log helper so UI never leaks the
   // model-facing alias when a human-readable tool name is available.
   const appToolAttribution = useAppToolAttribution(label, chatSessionId);
-  const displayLabel = appToolAttribution?.rawName ?? label;
+  // WebMCP page tools: read from the RESULT, never from a live store. A store
+  // answers for the browser as it is now, so a card scrolled back after the
+  // model navigated elsewhere would be attributed to whatever tool happens to
+  // carry that name today — the card would change its own history.
+  const pageToolAttribution = resolvePageToolAttribution({
+    toolName: label,
+    output: (part as any).output,
+  });
+  const displayLabel =
+    pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
@@ -243,17 +253,14 @@ export function ToolPart({
   const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
   const errorText = (part as any).errorText ?? (part as any).error;
-  const traceDisplayText =
-    typeof (part as unknown as { traceDisplayText?: unknown })
-      .traceDisplayText === "string"
-      ? (part as unknown as { traceDisplayText: string }).traceDisplayText
-      : undefined;
-  const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
-    .traceDisplayMode;
-  const hasAttachedTraceDisplay = Boolean(
-    traceDisplayText &&
-    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
-  );
+  // Through the package's shared reader rather than a local copy of the same
+  // field test. This channel had three hand-rolled readers with three
+  // different gates — this one required a recognised mode, `PartSwitch`
+  // ignored the mode and accepted whitespace, `ToolCallPart` rejected it —
+  // which is how BB-198 stayed open on one surface while this one rendered
+  // the same field fine.
+  const traceDisplayText = readTraceDisplayText(part);
+  const hasAttachedTraceDisplay = traceDisplayText !== undefined;
   const hasInput = inputData !== undefined && inputData !== null;
   const paramCount = useMemo(() => {
     if (!hasInput) return 0;
@@ -864,6 +871,11 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            {pageToolAttribution?.origin && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                from {pageToolAttribution.origin.replace(/^https?:\/\//, "")}
+              </span>
+            )}
 
             {approvalVisualState === "pending" && (
               <>
@@ -970,6 +982,15 @@ export function ToolPart({
             {appToolAttribution && (
               <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0">
                 from {appToolAttribution.appName}
+              </span>
+            )}
+            {pageToolAttribution?.origin && (
+              <span
+                data-testid="page-tool-origin"
+                title="This tool was declared by the page the browser had open."
+                className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0"
+              >
+                from {pageToolAttribution.origin.replace(/^https?:\/\//, "")}
               </span>
             )}
             {runLocation && (

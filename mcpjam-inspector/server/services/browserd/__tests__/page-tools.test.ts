@@ -18,7 +18,7 @@ import {
 const TOKEN = { tabId: "@session", navCounter: 1, urlHash: "u", domHash: "d" };
 
 describe("webmcpToolsObserveCommand", () => {
-  it("sends the same observation the model's browser_webmcp_tools sends", () => {
+  it("sends the observation the chat turn's own page-tool peek sends", () => {
     const command = webmcpToolsObserveCommand({ source: "inspector" });
     expect(command.action).toEqual({ kind: "observe", mode: "webmcp_tools" });
     expect(command.source).toBe("inspector");

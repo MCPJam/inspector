@@ -429,6 +429,45 @@ describe("the numbers beside it", () => {
     expect(view.stats.iterations).toEqual({ passed: 1, total: 1 });
   });
 
+  it("attaches no deltas when this is the first run", () => {
+    expect(buildRunVerdictHero(input()).deltas).toBeNull();
+  });
+
+  it("compares iteration measurements to the previous run", () => {
+    const view = buildRunVerdictHero(
+      input({
+        decision: { status: "disabled", summary: null, diagnostics: [] },
+        iterations: [
+          iteration({
+            tokensUsed: 2000,
+            actualToolCalls: [
+              { toolName: "a", arguments: {} },
+              { toolName: "b", arguments: {} },
+            ],
+          }),
+        ],
+        previous: {
+          iterations: [
+            iteration({
+              _id: "it_prev",
+              result: "failed",
+              tokensUsed: 1000,
+              actualToolCalls: [{ toolName: "create_view", arguments: {} }],
+            }),
+          ],
+        },
+      }),
+    );
+    expect(view.deltas?.passed).toMatchObject({
+      label: "+1",
+      tone: "progress",
+    });
+    expect(view.deltas?.tokens).toMatchObject({
+      direction: "up",
+      tone: "regression",
+    });
+  });
+
   it("sums tokens and tool calls, and leaves them absent when unrecorded", () => {
     const withData = buildRunVerdictHero(
       input({ iterations: [iteration(), iteration({ tokensUsed: 500 })] }),

@@ -185,7 +185,7 @@ describe("run header", () => {
   it("names the population on the trial count", () => {
     const header = toRunHeaderView(GOLDEN_STAGE_ANALYTICS);
     // Never "cases" — the unit is a trial and the count says so.
-    expect(header.populationLabel).toContain("trials in this run");
+    expect(header.populationLabel).toContain("iterations in this run");
     expect(header.populationLabel).not.toContain("case");
   });
 
@@ -308,6 +308,6 @@ describe("the fine-grained exclusion detail", () => {
     const header = toRunHeaderView(GOLDEN_STAGE_ANALYTICS);
     // 3 of 7 excluded. A list of reasons with no denominator lets a reader
     // take three excluded trials out of seven for three out of three hundred.
-    expect(excludedDetailSummary(header)).toContain("3 of 7 trials excluded");
+    expect(excludedDetailSummary(header)).toContain("3 of 7 iterations excluded");
   });
 });

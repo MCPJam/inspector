@@ -45,9 +45,8 @@ vi.mock("convex/react", () => ({
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -192,15 +191,21 @@ describe("nothing is written until the person says so", () => {
   });
 });
 
-describe("adding a check does not break the sheet", () => {
-  it("Add check appends a check and the sheet keeps rendering", async () => {
+describe("adding a scorer", () => {
+  it("Add scorer appends a check and the sheet keeps rendering", async () => {
+    // Restored with the scorer table. The test that displaced it asserted the
+    // sheet sent `disabledStageChecks` — an argument `applySuiteSettings` has
+    // never declared — against a mock that validates nothing, so it certified
+    // a save that throws in production.
+    //
+    // The regression THIS covers is real: the menu passes an UPDATER, and a
+    // setter that stored it verbatim put a function where a list belongs.
+    // Everything that iterates `defaultPredicates` then threw, taking the
+    // sheet down.
     const user = userEvent.setup();
     const { container } = renderSettingsSheet();
     openSettingsRow(container, "checks");
 
-    // The regression this covers: the menu passes an UPDATER, and a setter
-    // that stored it verbatim put a function where a list belongs. Everything
-    // that iterates `defaultPredicates` then threw, taking the sheet down.
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
     await user.click(await screen.findByTestId("add-scorer-noToolErrors"));
 
@@ -217,7 +222,6 @@ describe("saving sends exactly what changed", () => {
     editName("Renamed");
     editMinIterations("5");
 
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() =>
@@ -239,74 +243,41 @@ describe("saving sends exactly what changed", () => {
     expect(args.revision).toMatchObject({ source: "ui" });
   });
 
-  it("one toast, naming the revision the save produced", async () => {
+  it("one concise confirmation toast without a revision number", async () => {
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledTimes(1));
-    expect(mocks.toastSuccess.mock.calls[0][0]).toContain("r4");
+    expect(mocks.toastSuccess.mock.calls[0][0]).toBe("Settings saved");
   });
 
-  it("the review lists what will change, before and after", () => {
+  it("saves directly without opening a confirmation dialog", async () => {
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
-
-    const list = screen.getByTestId("review-change-list");
-    expect(list.textContent).toContain("Test Suite");
-    expect(list.textContent).toContain("Renamed");
-  });
-
-  it("a note travels with the save", async () => {
-    renderSettingsSheet();
-    editName("Renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
-    fireEvent.change(screen.getByLabelText("Why you are making this change"), {
-      target: { value: "Tightening the gate before launch" },
-    });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-
-    await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
-    const args = mocks.applySuiteSettings.mock.calls[0][0] as {
-      revision: { note?: string };
-    };
-    // The next person reading the history gets a reason rather than a diff
-    // they have to interpret.
-    expect(args.revision.note).toBe("Tightening the gate before launch");
-  });
-});
-
-describe("a note belongs to one change", () => {
-  it("does not carry the previous save's reason into the next one", async () => {
-    renderSettingsSheet();
-    editName("First");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
-    fireEvent.change(screen.getByLabelText("Why you are making this change"), {
-      target: { value: "First reason" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
-
-    // Second change, no note typed. The dialog is mounted unconditionally by
-    // the sheet, so without a reset the first reason would be filed against
-    // this revision — the opposite of what the note is for.
-    editName("Second");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    expect(screen.queryByTestId("review-change-list")).toBeNull();
     expect(
-      (
-        screen.getByLabelText(
-          "Why you are making this change",
-        ) as HTMLTextAreaElement
-      ).value,
-    ).toBe("");
+      screen.queryByLabelText("Why you are making this change"),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(mocks.applySuiteSettings).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("saves with the keyboard shortcut", async () => {
+    renderSettingsSheet();
+    editName("Renamed");
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    await waitFor(() =>
+      expect(mocks.applySuiteSettings).toHaveBeenCalledTimes(1),
+    );
+    expect(screen.queryByTestId("review-change-list")).toBeNull();
   });
 
   it("a trimmed name is what the sheet shows after saving", async () => {
     renderSettingsSheet();
     editName("  Renamed  ");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(mocks.applySuiteSettings).toHaveBeenCalled());
@@ -333,7 +304,6 @@ describe("a note belongs to one change", () => {
   it("a saved draft stops reporting unsaved changes immediately", async () => {
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     // The Convex subscription has not delivered the new document yet.
@@ -355,7 +325,6 @@ describe("degrading and refusing", () => {
     );
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     // The inspector deploys ahead of the backend. The sheet still works there,
@@ -371,7 +340,6 @@ describe("degrading and refusing", () => {
     mocks.applySuiteSettings.mockRejectedValueOnce(conflict);
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(mocks.toastError).toHaveBeenCalled());

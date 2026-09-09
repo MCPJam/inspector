@@ -120,6 +120,51 @@ describe("ScenarioShareSection", () => {
     expect(screen.getByText(creditNotice)).toBeInTheDocument();
   });
 
+  // BB-205: an invite grants nothing a public link hasn't already granted, and
+  // the second ask is what testers read as a step they still owe. Asserted
+  // here rather than only on ShareSection because the gate depends on the
+  // scenario mode mapping onto the `link_guests` preset.
+  it("drops the email invite when the link is open to anyone", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioShareSection
+        scenario={createScenario({
+          allowGuestAccess: true,
+          mode: "anyone_with_link",
+          // Invited before the switch. Hiding the field must not orphan them,
+          // so the roster row and its revoke control are what this asserts —
+          // the "Has access" heading alone renders over an empty roster too.
+          members: [
+            {
+              _id: "m1",
+              scenarioId: "cb-1",
+              projectId: "ws-1",
+              email: "tester@example.com",
+              userId: "u-2",
+              role: "chat",
+              invitedBy: "u1",
+              invitedAt: 1,
+              user: { name: "Tester" },
+            },
+          ],
+        })}
+        projectName="Acme"
+      />,
+    );
+
+    expect(screen.queryByText("Invite with email")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Invite", exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("scenario-copy-tester-link")).toBeInTheDocument();
+
+    expect(screen.getByText("Has access")).toBeInTheDocument();
+    expect(screen.getByText("Tester")).toBeInTheDocument();
+    expect(screen.getByText("tester@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Member/i }));
+    expect(screen.getByText("Remove access")).toBeInTheDocument();
+  });
+
   /**
    * The other end of "a scenario that cannot run must not be shareable": the
    * create flow refuses to publish without an environment, and a scenario whose

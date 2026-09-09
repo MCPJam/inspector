@@ -48,7 +48,7 @@ export function reviewErrorMessage(error: unknown): string {
     return "The judge has not graded this trial yet.";
   }
   if (message.includes("JUDGE_REVIEW_NO_RUN")) {
-    return "Only trials from a suite run can be labelled.";
+    return "Only iterations from a suite run can be labelled.";
   }
   if (message.includes("EVAL_JUDGE_REVIEW_NOTE_TOO_LONG")) {
     return "That note is too long — 500 characters at most.";
