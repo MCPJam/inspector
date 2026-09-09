@@ -347,9 +347,11 @@ An expired OAuth access token could not be refreshed.
 - Refresh token was revoked.
 - Refresh token expired.
 - Server returned `invalid_grant` to the refresh attempt.
+- Server returned a non-conforming error code (e.g. `invalid_request`) instead of `invalid_grant` — the toast names the exact code and cites the RFC 6749 requirement so you can fix it on your authorization server.
 
 **Next steps**
 - Click **Reconnect** on the server card to run a fresh OAuth flow.
+- If the toast names a wrong error code, update your authorization server to return `invalid_grant` when rejecting an unknown or expired refresh token.
 
 ### Missing bearer
 
