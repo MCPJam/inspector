@@ -1,3 +1,4 @@
+import { refuseGithubCredentialAccess } from "../../services/github-checks/credential-policy.js";
 /**
  * Host tool resolver: resolved host config → AI SDK ToolSet.
  *
@@ -382,6 +383,7 @@ export function resolveHostTools(
 ): ToolSet | undefined {
   const ids = config.builtInToolIds ?? [];
   if (ids.length === 0) return undefined;
+  refuseGithubCredentialAccess();
   if (!ctx) {
     logger.debug(
       "[built-in-tools] builtInToolIds requested without Convex auth context; omitting",
@@ -766,7 +768,7 @@ export function resolveHostTools(
         // The run's own identity, falling back to the chat session when a
         // surface has one — both name a single run, which is all the ephemeral
         // profile key needs. Unused on an interactive turn.
-        ...(ctx.runKey ?? ctx.chatSessionId
+        ...((ctx.runKey ?? ctx.chatSessionId)
           ? { runKey: ctx.runKey ?? ctx.chatSessionId }
           : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
