@@ -422,20 +422,26 @@ computers.post("/local-browser/profile/export", async (c) => {
       409,
     );
   }
-  const closed = await closeLocalBrowserSession(bootId);
-  if (!closed.closed) {
-    return c.json(
-      {
-        error:
-          closed.reason === "lease_held"
-            ? "Hand back control before saving this browser profile"
-            : "No such local browser",
-      },
-      closed.reason === "lease_held" ? 423 : 404,
-    );
-  }
   try {
-    const archive = await exportBrowserProfileArchive(profileDir);
+    let archive!: Uint8Array;
+    const closed = await closeLocalBrowserSession(bootId, async () => {
+      archive = await exportBrowserProfileArchive(profileDir);
+    });
+    if (!closed.closed) {
+      return c.json(
+        {
+          error:
+            closed.reason === "busy"
+              ? "Wait for the browser action to finish before saving"
+              : "Hand back control before saving this browser profile",
+        },
+        closed.reason === "not_found"
+          ? 404
+          : closed.reason === "busy"
+          ? 409
+          : 423,
+      );
+    }
     let savedFrom: string | undefined;
     if (projectId && conversationId) {
       // ISOLATED from the export. The browser is already closed and the
@@ -571,6 +577,7 @@ computers.post("/local-browser/input", async (c) => {
     holder?: unknown;
     tabId?: unknown;
     events?: unknown;
+    anchor?: unknown;
   } | null;
   const bootId = typeof body?.bootId === "string" ? body.bootId : "";
   const holder = typeof body?.holder === "string" ? body.holder : "";
@@ -595,6 +602,7 @@ computers.post("/local-browser/input", async (c) => {
   if (!session) return c.json({ error: "No such local browser" }, 404);
   const result = await session.handler.dispatchInput({
     holder,
+    ...(body?.anchor !== undefined ? { anchor: body.anchor } : {}),
     ...(typeof body?.tabId === "string" ? { tabId: body.tabId } : {}),
     events,
   });
@@ -603,7 +611,11 @@ computers.post("/local-browser/input", async (c) => {
     // else has the browser, or nobody has taken it yet.
     return c.json(
       { error: result.error },
-      result.error === "unknown_tab" ? 404 : 423,
+      result.error === "page_changed"
+        ? 409
+        : result.error === "unknown_tab"
+        ? 404
+        : 423,
     );
   }
   touchLocalBrowserSession(session.handle);
@@ -734,6 +746,7 @@ computers.post("/local-browser/viewport", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     bootId?: unknown;
     width?: unknown;
+    policy?: unknown;
     height?: unknown;
   } | null;
   if (typeof body?.width !== "number" || typeof body?.height !== "number") {
@@ -748,6 +761,9 @@ computers.post("/local-browser/viewport", async (c) => {
     return c.json({ error: "viewport_unsupported" }, 501);
   }
   const viewport = await client.paneViewport({
+    ...(body.policy === "fixed" || body.policy === "followPane"
+      ? { policy: body.policy }
+      : {}),
     width: body.width,
     height: body.height,
   });
@@ -1525,7 +1541,7 @@ computers.post("/local-browser/close", async (c) => {
       session,
       dispose: () =>
         closeLocalBrowserSession(live.handle.bootId).catch(
-          () => ({ closed: false, reason: "not_found" }) as const,
+          () => ({ closed: false, reason: "not_found" } as const),
         ),
     });
     if (!outcome.disposed) {

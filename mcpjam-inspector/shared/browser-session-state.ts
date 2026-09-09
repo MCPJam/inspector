@@ -35,6 +35,7 @@ import {
 
 /** One tab, as the strip draws it. */
 export interface BrowserTabState {
+  navCounter?: number;
   /** The daemon's tab id. Stable for the tab's life; never reused. */
   id: string;
   /**
@@ -308,7 +309,7 @@ function applyDelta(
       // address field and the page area until the next snapshot arrived.
       const activeTabId =
         state.activeTabId === event.tabId
-          ? (tabs[index]?.id ?? tabs[index - 1]?.id ?? null)
+          ? tabs[index]?.id ?? tabs[index - 1]?.id ?? null
           : state.activeTabId;
       return { ...state, tabs, activeTabId };
     }

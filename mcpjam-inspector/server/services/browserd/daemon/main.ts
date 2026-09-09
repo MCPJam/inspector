@@ -57,7 +57,7 @@ function runShell(
       { timeout: 10_000 },
       (error, _stdout, stderr) => {
         resolve({
-          exitCode: error ? ((error as { code?: number }).code ?? 1) : 0,
+          exitCode: error ? (error as { code?: number }).code ?? 1 : 0,
           stderr: typeof stderr === "string" ? stderr : undefined,
         });
       },
@@ -115,6 +115,18 @@ async function main(): Promise<void> {
    * encoder when that geometry moves.
    */
   let encoder: ReturnType<typeof createVideoEncoder> | undefined;
+  // Old Xvfb images remain fixed. New/prelaunched TigerVNC sessions negotiate
+  // responsiveness when the enabled pane first reports its size.
+  const canResize =
+    config.contextMode === "persistent" &&
+    config.kiosk &&
+    (
+      await runShell(
+        `xrandr --display ${
+          process.env.DISPLAY || ":0"
+        } --current | awk '$1 == "VNC-0" { found = 1 } END { exit !found }'`,
+      )
+    ).exitCode === 0;
   const driver = new ChromiumDriver(context, {
     lease,
     viewport: {
@@ -128,6 +140,7 @@ async function main(): Promise<void> {
        * the first time somebody dragged a panel.
        */
       policy: config.viewportPolicy,
+      allowPaneResize: canResize,
       // KIOSK IS THE TEST for "does this box have a display of its own". It is
       // the switch that makes "the display IS the page" true for the encoder,
       // and it is set only on the hosted image; a local Chromium's page is a
@@ -249,7 +262,15 @@ async function main(): Promise<void> {
     ...(video ? { video } : {}),
     ...(recorder ? { recorder } : {}),
     ...(config.contextMode === "persistent"
-      ? { profileExport: () => exportBrowserProfileArchive(config.userDataDir) }
+      ? {
+          profileExport: async () => {
+            // Closing Chromium flushes cookies/LevelDB before the archive is read.
+            // The handler holds the export lease until the bytes are complete.
+            await context.close();
+            await driver.close();
+            return exportBrowserProfileArchive(config.userDataDir);
+          },
+        }
       : {}),
     // THE DISPLAY AS IT IS NOW, not as it booted.
     //

@@ -53,6 +53,7 @@ interface ElectronAPI {
     setViewport: (request: {
       bootId: string;
       holder?: string;
+      takeover?: boolean;
       visible: boolean;
       bounds?: { x: number; y: number; width: number; height: number };
     }) => Promise<{

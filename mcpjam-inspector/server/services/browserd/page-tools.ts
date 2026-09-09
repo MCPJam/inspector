@@ -27,6 +27,7 @@ export function webmcpToolsObserveCommand(args: {
 }): BrowserCommand {
   return {
     commandId: randomUUID(),
+    responsiveViewport: true,
     source: args.source,
     ...(args.holder ? { holder: args.holder } : {}),
     ...(args.tabId ? { tabId: args.tabId } : {}),

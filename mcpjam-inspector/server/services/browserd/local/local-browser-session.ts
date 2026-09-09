@@ -531,7 +531,9 @@ async function startSession(
           ...(persistent
             ? {
                 partitionKey: args.sessionId
-                  ? `${validateLocalProjectKey(args.projectId)}--session-${validateLogicalSessionId(args.sessionId)}`
+                  ? `${validateLocalProjectKey(
+                      args.projectId,
+                    )}--session-${validateLogicalSessionId(args.sessionId)}`
                   : validateLocalProjectKey(args.projectId),
               }
             : {}),
@@ -592,6 +594,7 @@ async function startSession(
      */
     viewport: {
       policy: args.viewportPolicy ?? "fixed",
+      allowPaneResize: contextMode === "persistent",
       onChange: (viewport) =>
         surface?.setViewport({
           width: viewport.width,
@@ -642,7 +645,13 @@ async function startSession(
     contextMode,
     ...(args.captureTypedText ? { captureTypedText: true } : {}),
     ...(profileDir
-      ? { profileExport: () => exportBrowserProfileArchive(profileDir) }
+      ? {
+          profileExport: async () => {
+            await context.close();
+            await driver.close();
+            return exportBrowserProfileArchive(profileDir);
+          },
+        }
       : {}),
   });
   const client = createInProcessBrowserdClient(stack, token);
@@ -969,11 +978,15 @@ const TEARDOWN_HOLDER = "browserd:teardown";
  */
 export async function closeLocalBrowserSession(
   bootId: string,
+  whileClosed?: () => Promise<void>,
 ): Promise<
-  { closed: true } | { closed: false; reason: "not_found" | "lease_held" }
+  | { closed: true }
+  | { closed: false; reason: "not_found" | "lease_held" | "busy" }
 > {
   for (const session of sessions.values()) {
     if (session.stack.bootId !== bootId) continue;
+    if (whileClosed && !session.stack.queue.isIdle())
+      return { closed: false, reason: "busy" };
     // CLAIMED, not merely checked. A read says who held the lease a moment ago;
     // `acquire` says who holds it now and keeps holding it. It returns the
     // OTHER holder's state unchanged when somebody already has the browser, so
@@ -989,9 +1002,20 @@ export async function closeLocalBrowserSession(
     // `session`/`ensure` arriving a moment later either reuses an entry that is
     // already disposing or launches straight into the profile's singleton lock
     // that Chromium has not yet released, and the caller sees `profile_in_use`.
-    await withKeyedLock(`local-browser:${session.key}`, () =>
-      disposeSession(session),
-    );
+    await withKeyedLock(`local-browser:${session.key}`, async () => {
+      // Export must observe a successful flush and keep ensure() out until
+      // the archive is complete, even after the live entry is removed.
+      if (whileClosed) {
+        try {
+          await session.context.close();
+        } catch (error) {
+          session.lease.resume(TEARDOWN_HOLDER);
+          throw error;
+        }
+      }
+      await disposeSession(session);
+      await whileClosed?.();
+    });
     return { closed: true };
   }
   return { closed: false, reason: "not_found" };

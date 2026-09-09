@@ -181,7 +181,8 @@ async function authorized(
 
 async function decode<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => null)) as
-    (T & { error?: string; detail?: string }) | null;
+    | (T & { error?: string; detail?: string })
+    | null;
   if (!res.ok) {
     throw new HostedBrowserError(
       body?.detail ?? body?.error ?? "The browser could not be reached.",
@@ -260,7 +261,11 @@ export async function actOnHostedBrowserLease(
 /** Forward a batch of the person's pointer and key events. */
 export async function sendHostedBrowserInput(
   tokens: BrowserTokenCache,
-  args: { events: unknown[]; tabId?: string },
+  args: {
+    events: unknown[];
+    tabId?: string;
+    anchor?: import("../../../../shared/browser-pane-command").InteractionAnchor;
+  },
 ): Promise<{ ok: true }> {
   const res = await authorized(tokens, "/input", {
     method: "POST",
@@ -317,7 +322,7 @@ export async function sendHostedPaneCommand(
 
 export async function reportHostedPaneViewport(
   tokens: BrowserTokenCache,
-  size: { width: number; height: number },
+  size: { width: number; policy?: "fixed" | "followPane"; height: number },
 ): Promise<SessionViewport | null> {
   const res = await authorized(tokens, "/viewport", {
     method: "POST",

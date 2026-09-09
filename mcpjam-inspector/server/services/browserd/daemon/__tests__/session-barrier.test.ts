@@ -151,27 +151,34 @@ describe("SessionBarrier", () => {
     expect(ran).toBe(true);
   });
 
-  it("gives up waiting for work that blew its own budget", async () => {
-    // A browser stuck at the wrong size behind one hung command, whose own
-    // timeout is minutes, is worse than a resize the command did not expect.
-    const h = harness({ maxWaitMs: 500 });
-    void h.barrier.run(() => new Promise<void>(() => {}));
-    await flush();
-
-    void h.barrier.request({ width: 1400, height: 900 });
-    h.advance(100);
-    await flush();
-    expect(h.applied).toEqual([]);
-
-    // THE CLOCK ALONE. Nothing else happens: the command is still hung, the
-    // debounce already fired, nobody is dragging and no second measurement
-    // arrives. If the ceiling needed one of those to notice it had expired it
-    // would not be a ceiling, and the browser would sit at the wrong size for
-    // as long as the command took.
-    h.advance(500);
-    await flush();
-    expect(h.applied).toEqual([{ width: 1400, height: 900 }]);
-  });
+  it.each(["action", "drag"])(
+    "keeps the barrier closed past the timeout for %s",
+    async (kind) => {
+      const h = harness({ maxWaitMs: 500 });
+      let finish!: () => void;
+      const work =
+        kind === "action"
+          ? h.barrier.run(
+              () =>
+                new Promise<void>((resolve) => {
+                  finish = resolve;
+                }),
+            )
+          : Promise.resolve();
+      if (kind === "drag") h.barrier.beginDrag();
+      const resized = h.barrier.request({ width: 1400, height: 900 });
+      h.advance(100);
+      await flush();
+      h.advance(500);
+      await flush();
+      expect(h.applied).toEqual([]);
+      if (kind === "drag") h.barrier.endDrag();
+      else finish();
+      await work;
+      await resized;
+      expect(h.applied).toEqual([{ width: 1400, height: 900 }]);
+    },
+  );
 
   it("applies a measurement that arrived during a transition", async () => {
     const h = harness();
