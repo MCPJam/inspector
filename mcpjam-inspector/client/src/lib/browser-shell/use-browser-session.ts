@@ -73,6 +73,15 @@ export interface UseBrowserSessionArgs {
 }
 
 const DEFAULT_POLL_MS = 2_000;
+/**
+ * How long a panel measurement waits for a quieter one to replace it.
+ *
+ * Shorter than the barrier's own debounce on the far side, deliberately: this
+ * one is only removing requests that would be coalesced anyway, and making it
+ * longer would add latency to the common case — one resize, nobody dragging —
+ * for no saving at all.
+ */
+const RESIZE_COALESCE_MS = 80;
 
 export interface BrowserSessionHandle {
   state: BrowserSessionState;
@@ -208,12 +217,64 @@ export function useBrowserSession({
       });
   }, []);
 
+  /**
+   * Report a panel measurement, coalesced BEFORE the network.
+   *
+   * The barrier on the far side already coalesces — that is what stops a
+   * resize landing mid-action — but it coalesces requests that have already
+   * been sent. A `ResizeObserver` fires once per animation frame while
+   * somebody drags a divider, so without this the client posts sixty requests
+   * a second, each of which is an authorized fetch and, on the hosted engine,
+   * a round trip against a metered box. Coalescing here costs one timer and
+   * removes fifty-nine of them.
+   *
+   * The LAST measurement wins, not the first: a drag's earlier sizes are
+   * places the divider passed through, not places anybody left it.
+   */
+  const pendingSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const resizeTimerRef = useRef<number | undefined>(undefined);
+  const sentSizeRef = useRef<{ width: number; height: number } | null>(null);
+  useEffect(
+    () => () => {
+      if (resizeTimerRef.current !== undefined) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+    },
+    [],
+  );
   const reportViewport = useCallback(
     (size: { width: number; height: number }) => {
-      // Fire and forget. The barrier upstream coalesces a drag into one
-      // transition and answers with the size it settled on; the next poll
-      // carries that back, so there is nothing here worth awaiting.
-      void transportRef.current?.reportViewport?.(size).catch(() => {});
+      // Rounded before comparing, because CSS layout is fractional and a
+      // sub-pixel wobble is not a resize. The server rounds too; agreeing here
+      // is what makes "the size did not change" mean the same on both sides.
+      const next = {
+        width: Math.round(size.width),
+        height: Math.round(size.height),
+      };
+      const sent = sentSizeRef.current;
+      if (sent && sent.width === next.width && sent.height === next.height) {
+        return;
+      }
+      pendingSizeRef.current = next;
+      if (resizeTimerRef.current !== undefined) {
+        window.clearTimeout(resizeTimerRef.current);
+      }
+      resizeTimerRef.current = window.setTimeout(() => {
+        resizeTimerRef.current = undefined;
+        const pending = pendingSizeRef.current;
+        pendingSizeRef.current = null;
+        if (!pending) return;
+        sentSizeRef.current = pending;
+        // Fire and forget: the far side answers with the size it settled on,
+        // and the next poll carries that back, so there is nothing here worth
+        // awaiting.
+        void transportRef.current?.reportViewport?.(pending).catch(() => {
+          // A failed report must not stick: the next measurement has to be
+          // sent even if it is the same size, or a transient failure freezes
+          // the session at a stale one.
+          sentSizeRef.current = null;
+        });
+      }, RESIZE_COALESCE_MS);
     },
     [],
   );
