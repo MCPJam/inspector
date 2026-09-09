@@ -25,31 +25,74 @@ vi.mock("@/hooks/useComputerEngine", () => ({
   }),
 }));
 
+const sessionState = {
+  enabled: true,
+  sessionId: "chat-1" as string | null,
+};
+
+// Which mint the panel reached for is the whole question, so the two are told
+// apart by the token they return rather than by a call count.
 vi.mock("@/hooks/useProjectComputer", () => ({
   useMintBrowserToken: () => async () => ({
-    token: "tok",
+    token: "project-tok",
     expiresAt: Date.now() + 60_000,
   }),
+  useMintConversationBrowserToken: () => async () => ({
+    token: "conversation-tok",
+    expiresAt: Date.now() + 60_000,
+  }),
+}));
+
+vi.mock("@/hooks/useBrowserSessionsEnabled", () => ({
+  useBrowserSessionsEnabled: () => sessionState.enabled,
+}));
+
+vi.mock("@/stores/active-chat-session-store", () => ({
+  useActiveChatSessionStore: (select: (s: { sessionId: string | null }) => unknown) =>
+    select({ sessionId: sessionState.sessionId }),
 }));
 
 // Both bodies are exercised in their own suites; here they only have to say
 // which one the panel mounted and whether it considers itself watched.
 vi.mock("@/components/browser/LocalBrowserBody", () => ({
-  LocalBrowserBody: ({ active }: { active?: boolean }) => (
+  LocalBrowserBody: ({
+    active,
+    sessionId,
+  }: {
+    active?: boolean;
+    sessionId?: string;
+  }) => (
     <div
       data-testid="browser-pane"
       data-engine="local"
       data-active={String(active)}
+      data-session={sessionId ?? ""}
     />
   ),
 }));
 
 vi.mock("@/components/browser/HostedBrowserBody", () => ({
-  HostedBrowserBody: ({ active }: { active?: boolean }) => (
+  HostedBrowserBody: ({
+    active,
+    sessionId,
+    mintToken,
+  }: {
+    active?: boolean;
+    sessionId?: string;
+    mintToken?: (args: { projectId: string }) => Promise<{ token: string }>;
+  }) => (
     <div
       data-testid="browser-pane"
       data-engine="hosted"
       data-active={String(active)}
+      data-session={sessionId ?? ""}
+      onClick={() => {
+        void mintToken?.({ projectId: "proj-1" }).then((t) => {
+          document
+            .querySelector("[data-testid=browser-pane]")
+            ?.setAttribute("data-token", t.token);
+        });
+      }}
     />
   ),
 }));
@@ -78,6 +121,8 @@ beforeEach(() => {
   engineState.engine = "local";
   engineState.selectedEngine = "local";
   engineState.granted = true;
+  sessionState.enabled = true;
+  sessionState.sessionId = "chat-1";
   useBrowserWorkspaceStore.setState({
     open: true,
     size: DEFAULT_BROWSER_PANEL_SIZE,
@@ -225,5 +270,61 @@ describe("browserPanelAvailable", () => {
         localBrowserRunning: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("the browser a chat owns", () => {
+  /**
+   * The panel REPLACES the rail's Browser tab whenever the workspace flag is
+   * on, so anything the tab wired and the panel does not is not a difference
+   * between two surfaces — it is a capability that disappears the moment the
+   * flag flips. Durable sessions and saved profiles both hang off the chat's
+   * session id travelling with the browser, and the panel shipped without it:
+   * turning the workspace on quietly handed you a fresh anonymous browser.
+   */
+  it("hands the local body the chat's session", () => {
+    renderPanel();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-session",
+      "chat-1",
+    );
+  });
+
+  it("hands the hosted body the chat's session", () => {
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    renderPanel();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-session",
+      "chat-1",
+    );
+  });
+
+  it("mints the CONVERSATION token, not the project one", async () => {
+    // The identity rides on the token. A project-scoped mint returns a browser
+    // with no memory of this chat, which is the same bug one layer down.
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    renderPanel();
+    const pane = screen.getByTestId("browser-pane");
+    fireEvent.click(pane);
+    await vi.waitFor(() =>
+      expect(pane).toHaveAttribute("data-token", "conversation-tok"),
+    );
+  });
+
+  it("falls back to the project token when sessions are off", async () => {
+    // `browser-sessions` off is not "no browser" — it is the old shared
+    // project browser, which is exactly what the project mint returns.
+    sessionState.enabled = false;
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    renderPanel();
+    const pane = screen.getByTestId("browser-pane");
+    expect(pane).toHaveAttribute("data-session", "");
+    fireEvent.click(pane);
+    await vi.waitFor(() =>
+      expect(pane).toHaveAttribute("data-token", "project-tok"),
+    );
   });
 });
