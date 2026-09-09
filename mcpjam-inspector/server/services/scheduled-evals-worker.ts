@@ -144,9 +144,10 @@ async function reportComplete(args: {
 
 /**
  * Map a setup-phase failure to the completion reason the backend pauses
- * schedules on. Deliberately anchored to the two CANONICAL markers — the
- * backend's `billing_limit_reached` billing-error code and this server's
- * own delegated-mint failure message — because pausing a schedule on a
+ * schedules on. Deliberately anchored to CANONICAL markers — the backend's
+ * `billing_limit_reached` and `spend_budget_reached` codes and this
+ * server's own delegated-mint failure message — because pausing a
+ * schedule on a
  * loose substring (an MCP server error that merely mentions "quota")
  * would stop monitoring for a transient, retryable failure. Everything
  * else records a plain failure and the schedule tries again next window.
@@ -154,6 +155,14 @@ async function reportComplete(args: {
 export function classifyFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/billing_limit_reached/i.test(message)) return "quota_exhausted";
+  // The org's admin-set spend budget refused the launch. Same outcome as a
+  // billing limit — pause the schedule rather than retry into the same cap
+  // every window — so it shares `quota_exhausted`. Both canonical markers
+  // are matched: the `/stream` wire code and the launch mutation's
+  // ConvexError code, since either can be what stringifies into `message`.
+  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+    return "quota_exhausted";
+  }
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
     return "auth";
   }

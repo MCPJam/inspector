@@ -4,8 +4,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
   DECISION_LABEL_VOCABULARIES,
+  FRICTION_NOT_MEASURED_REASON_LABELS,
+  FRICTION_SIGNAL_LABELS,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
+  SUSPECTED_CONDITION_LABELS,
 } from "@mcpjam/sdk/contract";
 
 /**
@@ -89,6 +92,31 @@ const SITES = [
     vocabulary: "failureCategories",
   },
   { schema: "EvalRunDecisionEvidence", path: ["stage"], vocabulary: "stages" },
+  {
+    schema: "EvalFrictionSignal",
+    path: ["kind"],
+    vocabulary: "frictionSignalKinds",
+  },
+  {
+    schema: "EvalTrialFrictionSignals",
+    path: ["notMeasuredReason"],
+    vocabulary: "frictionNotMeasuredReasons",
+  },
+  // The SAME vocabulary a second time, one level down. It is spelled out
+  // twice in the spec because the two answer different questions — why the
+  // whole trial was not measured, and why only its identifier half was — and
+  // the completeness assertion below would flag the second copy as unguarded
+  // if this entry were left off.
+  {
+    schema: "EvalTrialFrictionSignals",
+    path: ["identifierSignals", "reason"],
+    vocabulary: "frictionNotMeasuredReasons",
+  },
+  {
+    schema: "EvalSuspectedConditionVerdict",
+    path: ["condition"],
+    vocabulary: "suspectedConditions",
+  },
 ] as const satisfies readonly {
   schema: string;
   path: readonly string[];
@@ -101,6 +129,9 @@ const LABELS: Partial<
 > = {
   stageStates: STAGE_STATE_LABELS,
   stageReasons: STAGE_REASON_LABELS,
+  frictionSignalKinds: FRICTION_SIGNAL_LABELS,
+  frictionNotMeasuredReasons: FRICTION_NOT_MEASURED_REASON_LABELS,
+  suspectedConditions: SUSPECTED_CONDITION_LABELS,
 };
 
 function resolveSite(site: (typeof SITES)[number]): Schema {

@@ -18,7 +18,8 @@
  *
  * Per-tool gates (all inside this module, by design):
  *   - web_search: requires Convex auth ctx (bills MCPJam credits server-side;
- *     guests are rejected by the Convex route at execute time).
+ *     guests are rejected by the Convex route at execute time). Inherits the
+ *     host's `requireToolApproval` via ctx, like bash.
  *   - bash: TWO paths. With `ctx.sandboxBinding` (a trusted, in-process-only
  *     binding to an already-provisioned EPHEMERAL sandbox) it binds to that
  *     disposable box and the personal computer is never consulted. Without one
@@ -66,10 +67,15 @@ import { buildSandboxBashTool } from "./sandbox-bash.js";
 import { buildMcpjamTool, isMcpjamToolId } from "./mcpjam.js";
 import {
   buildBrowserTools,
+  type BrowserPageToolsSnapshot,
+  type BrowserToolsResult,
   BROWSER_BUILT_IN_TOOL_ID,
   type BrowserApprovalDelivery,
 } from "./browser.js";
-import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-tools";
+import type {
+  DeclaredToolProvider,
+  MintedDeclaredTool,
+} from "@/shared/declared-tools";
 
 /**
  * A binding to an EPHEMERAL sandbox the caller has ALREADY PROVISIONED.
@@ -89,6 +95,25 @@ import type { UiToolApprovalClassification } from "@/shared/client-fulfilled-too
 export interface TrustedSandboxBinding {
   /** Vendor sandbox id the bash tool execs against. */
   sandboxId: string;
+  /**
+   * The CONTROL-PLANE row for the same box.
+   *
+   * The vendor id above is what a command execs against; this is what the
+   * browser session is RECORDED against, and what every teardown path keys on.
+   * A browser needs both — a daemon addressable by nothing durable is one no
+   * replica can find and nothing can ever release.
+   *
+   * Optional only because bash never needed it; a browser binding always
+   * carries it.
+   */
+  sandboxRowId?: string;
+  /**
+   * WHICH IMAGE this box booted, so the resolver can tell a browser-capable
+   * machine from a shell. Absent ⇒ `terminal`, which is every binding that
+   * predates desktop boxes. A `browser` tool on a terminal box would fail with
+   * nothing saying why (no X server), so this is checked rather than assumed.
+   */
+  runtimeKind?: "terminal" | "desktop-browser";
   /** Working directory for commands (the personal path's semantics). */
   workdir?: string;
   /**
@@ -210,21 +235,69 @@ export interface BuiltInToolContext {
    */
   mcpjamPlatformClient?: PlatformApiClient;
   /**
-   * How approval reaches the user for `browser_*` tools this turn. ABSENT ⇒
+   * Whether a person is watching this turn, for `browser_*` tools. ABSENT ⇒
    * the browser capability is NOT advertised, whatever the host config says
-   * (see `built-in-tools/browser.ts`): approval on the hosted engines is
-   * classified by name, and a surface that threads nothing would let a model
-   * drive a real browser ungated. Interactive surfaces pass `attested` and
-   * thread the returned classification; unattended runs pass their declared
-   * policy.
+   * (see `built-in-tools/browser.ts`).
+   *
+   * Nothing is threaded back: each tool carries its own build-time
+   * `needsApproval`, and every engine reads that. What this answers is the
+   * question the builder cannot answer for itself — an interactive surface
+   * passes `attested` and gets a persistent, signed-in browser whose every
+   * verb asks first; an unattended run passes its declared policy and gets an
+   * ephemeral one, keyed per run, with only the tools that policy permits.
    */
   browserApprovalDelivery?: BrowserApprovalDelivery;
   /**
-   * Receives the approval classification for the browser tools that were
-   * built, so the caller can merge it into the engine's single
-   * `uiToolApprovals` slot. Absent on surfaces that do not advertise them.
+   * The page tools this turn STARTS with, read before the turn began by
+   * `peekPageTools`.
+   *
+   * Read-only and pre-resolved on purpose: this resolver is synchronous, and a
+   * browser read inside it would put a daemon round trip on the critical path
+   * of every turn that merely MENTIONS the browser capability. The route does
+   * the read (and decides whether to do it at all) and hands the answer down.
    */
-  onBrowserApprovals?: (approvals: UiToolApprovalClassification) => void;
+  browserPageTools?: BrowserPageToolsSnapshot;
+  /**
+   * This turn's engine can grow its tool set between model steps. Decides
+   * whether a mid-turn refresher is built and how observations describe the
+   * page's tools.
+   */
+  browserDynamicPageTools?: boolean;
+  /**
+   * Whether to retire `browser_webmcp_invoke` here.
+   *
+   * Split from the flag above for callers that cannot yet say which engine
+   * will run the turn — see `BrowserToolsOptions.retireInvokeVerb`. Absent ⇒
+   * follow `browserDynamicPageTools`.
+   */
+  browserRetireInvokeVerb?: boolean;
+  /** Which provider's tool-schema subset page schemas are reported against. */
+  browserProvider?: DeclaredToolProvider;
+  /**
+   * What the browser capability actually advertised from the page, so the turn
+   * can PERSIST it. Deriving it later from the live browser would attribute a
+   * reopened conversation's cards to whatever page the browser is on now.
+   */
+  onBrowserPageTools?: (info: {
+    minted: MintedDeclaredTool[];
+    notices: Array<{ rawName: string; reason: string }>;
+  }) => void;
+  /**
+   * Receives the mid-turn page-tool refresher, when this turn built one.
+   *
+   * The route hands it to the engine's `refreshTools` hook. It exists here
+   * rather than being returned because the browser is one built-in among
+   * several and this resolver's return value is a plain `ToolSet` — the same
+   * reason `onBrowserPageTools` is a callback.
+   */
+  onBrowserToolsRefresh?: (refresh: {
+    refreshPageTools: NonNullable<BrowserToolsResult["refreshPageTools"]>;
+    currentPageTools: NonNullable<BrowserToolsResult["currentPageTools"]>;
+    /** The generation those tools are bound to; moves with them. */
+    currentPageToolsBinding: NonNullable<
+      BrowserToolsResult["currentPageToolsBinding"]
+    >;
+  }) => void;
   /**
    * Accept the bash/browser co-tenancy trust boundary for this turn. Both
    * drive the SAME computer as the same uid, so a shell can read the driven
@@ -332,6 +405,7 @@ export function resolveHostTools(
         // session — so without this it is offered to the model and then
         // fails at execution for every link visitor.
         ...(ctx.scenarioId ? { scenarioId: ctx.scenarioId } : {}),
+        requireToolApproval: ctx.requireToolApproval,
       });
       continue;
     }
@@ -564,6 +638,39 @@ export function resolveHostTools(
         });
         continue;
       }
+      // ── WHICH BOX, decided FIRST (mirrors the bash branch) ────────────
+      //
+      // A run that brought its OWN box is a different machine from the
+      // member's project computer, and almost every gate below is about the
+      // project computer. Reading the binding first is what lets those gates
+      // stay about the thing they describe instead of accumulating "…unless a
+      // sandbox" clauses.
+      const sandboxBrowser =
+        !isLocalBrowser && ctx.sandboxBinding?.sandboxRowId
+          ? ctx.sandboxBinding
+          : undefined;
+      if (
+        !isLocalBrowser &&
+        ctx.sandboxBinding &&
+        (!sandboxBrowser ||
+          ctx.sandboxBinding.runtimeKind !== "desktop-browser")
+      ) {
+        // The run HAS a box, and it is the wrong kind (or predates the row id
+        // a browser session needs). A browser on a terminal image fails with
+        // nothing saying why — there is no X server for Chromium to draw on —
+        // so say it here rather than let the model spend a turn discovering it.
+        logger.warn(
+          "[built-in-tools] browser suppressed: this run's sandbox is not a desktop box",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not advertised: this run's sandbox is not a desktop " +
+            "(browser) box, and a browser cannot run on a terminal image.",
+        });
+        continue;
+      }
       // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep
       // `bash` (behavior-preserving for hosts that already have it) and drop
       // `browser`, unless this deployment accepted the boundary.
@@ -576,8 +683,17 @@ export function resolveHostTools(
       // calls its handler in-process). The boundary here is device consent
       // plus per-action approval, and refusing the pair would only mean a user
       // who attached both gets neither of the two things they asked for.
+      //
+      // NOT applied to a PER-RUN BOX either, and for a different reason: the
+      // risk is a shell reading a HUMAN's cookies and daemon token, and a
+      // disposable box holds no human profile — it is created for one run,
+      // signed into nothing, and destroyed with it. (The backend cannot even
+      // persist the pair: `validateBuiltInToolScope` refuses bash + browser on
+      // one host config, so this arm is unreachable today and stated so the
+      // exemption is a decision rather than an accident if that ever changes.)
       if (
         !isLocalBrowser &&
+        !sandboxBrowser &&
         ids.includes(BASH_TOOL_NAME) &&
         !ctx.allowComputerToolCoTenancy
       ) {
@@ -591,18 +707,32 @@ export function resolveHostTools(
         ctx.onToolSuppressed?.({ id, reason });
         continue;
       }
-      if (ctx.isJourneySession && !ctx.sandboxBinding) {
-        // Same reasoning as bash: every session in a run would otherwise share
-        // the LAUNCHER's single computer — and therefore one browser profile.
+      // AN UNATTENDED RUN NEEDS A BOX OF ITS OWN, whatever surface it came
+      // from. Generalized from the journey-only gate it replaces: an eval is
+      // in exactly the same position, and the hosted engine has ONE computer
+      // per project+member — so without a binding every unattended run in a
+      // project would drive the same Chromium and the same cookie jar, and the
+      // ephemeral request that isolation needs would relaunch the daemon a
+      // person may be using.
+      if (
+        !isLocalBrowser &&
+        !sandboxBrowser &&
+        (ctx.isJourneySession ||
+          ctx.browserApprovalDelivery?.kind === "unattended")
+      ) {
         ctx.onToolSuppressed?.({
           id,
           reason:
-            "browser is disabled in simulated (swarm) sessions without a disposable " +
-            "sandbox of their own: sessions would share one browser profile.",
+            "browser is not advertised to an unattended run without a disposable " +
+            "sandbox of its own: runs would share one browser profile.",
         });
         continue;
       }
-      if (!computer) {
+      // A COMPUTER attachment, for the project-computer path only. A per-run
+      // box IS the computer here, and it arrives on `ctx` rather than on the
+      // host config — which is the whole point: nothing in a member-readable
+      // snapshot can forge one.
+      if (!sandboxBrowser && !computer) {
         logger.warn(
           "[built-in-tools] browser requested without a computer attached; skipping",
           { projectId: ctx.projectId },
@@ -647,10 +777,47 @@ export function resolveHostTools(
         ...(ctx.onToolSuppressed
           ? { onToolSuppressed: ctx.onToolSuppressed }
           : {}),
+        // The run's OWN box, when it has one. Trusted by construction: it
+        // rides `ctx`, never `config`, so only an in-process caller that just
+        // provisioned can set it.
+        ...(sandboxBrowser
+          ? {
+              sandboxTarget: {
+                sandboxRowId: sandboxBrowser.sandboxRowId!,
+                sandboxId: sandboxBrowser.sandboxId,
+              },
+            }
+          : {}),
+        // ABSENT ⇒ no `webmcp_*` tools, whatever the flag says. A turn only
+        // gets them when its route decided to read the page and got an answer.
+        ...(ctx.browserPageTools ? { pageTools: ctx.browserPageTools } : {}),
+        ...(ctx.browserDynamicPageTools
+          ? { dynamicPageTools: true as const }
+          : {}),
+        ...(ctx.browserRetireInvokeVerb !== undefined
+          ? { retireInvokeVerb: ctx.browserRetireInvokeVerb }
+          : {}),
+        ...(ctx.browserProvider ? { provider: ctx.browserProvider } : {}),
       });
       if (browser) {
         Object.assign(out, browser.tools);
-        ctx.onBrowserApprovals?.(browser.approvals);
+        if (browser.pageTools || browser.pageToolNotices) {
+          ctx.onBrowserPageTools?.({
+            minted: browser.pageTools ?? [],
+            notices: browser.pageToolNotices ?? [],
+          });
+        }
+        if (
+          browser.refreshPageTools &&
+          browser.currentPageTools &&
+          browser.currentPageToolsBinding
+        ) {
+          ctx.onBrowserToolsRefresh?.({
+            refreshPageTools: browser.refreshPageTools,
+            currentPageTools: browser.currentPageTools,
+            currentPageToolsBinding: browser.currentPageToolsBinding,
+          });
+        }
       }
       continue;
     }

@@ -19,6 +19,7 @@
  *          when one is supplied (a delayed revoke must not sever a newer
  *          grant's rotated capability), unconditional otherwise.
  */
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
@@ -43,12 +44,47 @@ import {
 import {
   ensureLocalBrowserSession,
   findLocalBrowserSession,
+  findLocalBrowserSessionByKey,
+  findLocalBrowserSessionForProject,
+  type LiveLocalBrowser,
+  localBrowserKeyFor,
+  closeLocalBrowserSession,
   listLocalBrowserSessions,
   LocalBrowserUnavailableError,
   resolveLocalBrowserRuntime,
+  resolveLocalBrowserSurface,
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
+import {
+  pageToolsFromCommandResponse,
+  webmcpToolsObserveCommand,
+} from "../../services/browserd/page-tools.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  isBrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
+import {
+  parseSessionPolicy,
+  resolveAgentActor,
+  runAgentCommand,
+} from "../../services/browserd/local/agent-door.js";
+import {
+  appendNote,
+  findOpenSession,
+  leaveAgentSession,
+  disposeBrowserIfUnshared,
+  listAgentSessions,
+  mirrorLedger,
+  openAgentSession,
+  artifactMediaType,
+  readArtifact,
+  readLedger,
+  readSession,
+  validateSessionId,
+  type AgentSessionRecord,
+} from "../../services/browserd/local/agent-session-store.js";
+import type { BrowserAgentCommand } from "../../../shared/browser-agent-contract.js";
 
 const computers = new Hono();
 
@@ -59,7 +95,16 @@ const computers = new Hono();
  * moves; this is the server's own bound so a hostile or broken caller cannot
  * hand the browser an unbounded array to replay.
  */
-const INPUT_BATCH_LIMIT = 64;
+const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
+
+/**
+ * The only media types the agent artifact store writes.
+ *
+ * Anything else is served as `application/octet-stream`: the type rides on a
+ * row alongside page-derived content, and a browser that will render whatever
+ * a `content-type` claims is one redirect away from executing it.
+ */
+const ARTIFACT_MEDIA_TYPES = new Set(["image/jpeg", "text/plain"]);
 
 computers.use("/local-consent/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-consent/*", async (c, next) => {
@@ -203,6 +248,11 @@ computers.get("/local-browser/status", async (c) => {
   const sessions = listLocalBrowserSessions();
   return c.json({
     runtime,
+    // Whether the pane gets the page itself or a picture of it. The pane
+    // BRANCHES on this — a native surface has no frame socket to open — so it
+    // is answered by the same function the session layer builds the context
+    // with, rather than re-derived from `runtime` here.
+    surface: resolveLocalBrowserSurface(process.env, runtime),
     installed: electron ? true : await isChromiumInstalled(),
     install,
     running: sessions.length > 0,
@@ -255,6 +305,45 @@ async function requireConsent(c: {
 }): Promise<string | null> {
   return verifyAndFingerprintLocalConsent(c.req.header(LOCAL_CONSENT_HEADER));
 }
+
+/**
+ * "Somebody is looking at this browser."
+ *
+ * The idle reap closes a browser nobody has used for ten minutes, and until
+ * now WATCHING was reported by the frame socket's own heartbeat: a pane with a
+ * stream open was, by definition, a pane somebody had open. The NATIVE Electron
+ * surface has no such socket — the page is a real view in the app's window,
+ * with no frames to carry a heartbeat — so without this a person who is
+ * watching the agent work, and not holding the lease, has their browser closed
+ * underneath them while they are looking at it.
+ *
+ * Deliberately not a lease action: watching is not holding, and a route that
+ * conflated the two would let a viewer block the agent by doing nothing.
+ */
+computers.post("/local-browser/watch", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const session = findLocalBrowserSession(bootId);
+  // A browser that has already gone is not an error worth showing anybody: the
+  // pane's next measure will discover it for itself.
+  if (!session) return c.json({ watching: false }, 404);
+  touchLocalBrowserSession(session.handle);
+  // AND who has it. A pane that has been refused its input needs to know when
+  // the other holder gives the browser back, and nothing on the frame socket
+  // says so — the frames were flowing the whole time. Answering here rather
+  // than making the pane call `ensure` is the difference between asking and
+  // STARTING: `ensure` launches a Chromium when the watched browser has gone,
+  // which is a browser nobody asked for on a machine whose own just crashed.
+  // This route is keyed by `bootId`, so it can only ever describe the browser
+  // the caller is actually looking at.
+  const lease = await session.client.lease?.();
+  return c.json({ watching: true, lease: lease ?? { state: "free" } });
+});
 
 /**
  * Start (or find) this project's browser and report how to reach it.
@@ -400,6 +489,14 @@ computers.post("/local-browser/input", async (c) => {
       400,
     );
   }
+  // Refused WHOLE rather than filtered, and by the same allowlist the frame
+  // socket and the hosted panel use: dropping the bad ones would deliver a
+  // drag missing its release, leaving the page holding a button down. The
+  // daemon ignores a type it does not know, which is a 200 that did nothing —
+  // and on a metered box a 200 defers the idle sweep.
+  if (!events.every(isBrowserPaneInputEvent)) {
+    return c.json({ error: "invalid_input" }, 400);
+  }
   const session = findLocalBrowserSession(bootId);
   if (!session) return c.json({ error: "No such local browser" }, 404);
   const result = await session.handler.dispatchInput({
@@ -418,5 +515,806 @@ computers.post("/local-browser/input", async (c) => {
   touchLocalBrowserSession(session.handle);
   return c.json({ ok: true });
 });
+
+/**
+ * The WebMCP tools of the page THIS MACHINE'S browser is on — the local half of
+ * the hosted panel's `GET /page-tools`, feeding the same Tools pane.
+ *
+ * READS, NEVER STARTS. `ensureLocalBrowserSession` would launch a Chromium, and
+ * a tool list appearing in a side panel must not be what opens a browser window
+ * on somebody's desk — so a project with nothing running answers
+ * `no_browser_session` and the pane says so.
+ *
+ * POST rather than GET because every local-browser route is: the project id
+ * travels in the body alongside the consent capability, and the shared `post`
+ * helper on the client is what attaches that header.
+ */
+computers.post("/local-browser/page-tools", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    tabId?: unknown;
+    holder?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const tabId = typeof body?.tabId === "string" ? body.tabId : undefined;
+  const holder = typeof body?.holder === "string" ? body.holder : undefined;
+  let session: ReturnType<typeof findLocalBrowserSessionForProject>;
+  try {
+    session = findLocalBrowserSessionForProject(projectId);
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+  if (!session) {
+    return c.json({ ok: false, error: "no_browser_session" }, 409);
+  }
+  const observe = (source: "inspector" | "manual", actingAs?: string) =>
+    session!.client.sendCommand(
+      webmcpToolsObserveCommand({
+        source,
+        ...(actingAs ? { holder: actingAs } : {}),
+        ...(tabId ? { tabId } : {}),
+      }),
+      session!.handle.bootId,
+    );
+  try {
+    let response = await observe("inspector");
+    // The pane holding the lease is still allowed to look. Re-sent as this
+    // holder's own `manual` command, which the daemon checks against the live
+    // lease — an unauthenticated `manual` is refused there, so a body that
+    // merely claims a holder buys nothing.
+    if (response.status === "lease_blocked" && holder) {
+      response = await observe("manual", holder);
+    }
+    const mapped = pageToolsFromCommandResponse(response);
+    return c.json(mapped.body, mapped.status);
+  } catch {
+    return c.json({ ok: false, error: "unreachable" }, 502);
+  }
+});
+
+/* -------------------------------------------------------------------------
+ * The agent surface — an outside coding agent driving this machine's browser.
+ *
+ * Beside `ensure`/`lease`/`input` rather than under `/v1`, deliberately: these
+ * are the LOCAL loop and they inherit the gates this file already applies —
+ * the inspector session token, a verified sign-in, the kill switch, and device
+ * consent. `/v1` is the hosted shape (M2) and brings its own ratchets with it.
+ *
+ * The one thing these routes must never do is take `source` or `actor` from a
+ * body. `manual` is the single source the handoff lease does not block, so a
+ * caller able to choose its own source could drive and observe a browser
+ * somebody is signing into. `runAgentCommand` stamps `source: "agent"` itself
+ * and the actor is composed from the authenticated context here.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A correlation object, or nothing.
+ *
+ * Echoed onto the ledger row and never interpreted, so the only question is
+ * whether it is a flat string map — a nested object here would be an
+ * unbounded blob riding into every row.
+ */
+function isCorrelation(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  return (
+    entries.length <= 10 &&
+    entries.every(([, v]) => typeof v === "string" && v.length <= 200)
+  );
+}
+
+/** The authenticated identity behind an agent command, or `anonymous`. */
+function agentUserId(c: {
+  get(key: string): unknown;
+}): string | undefined {
+  const candidates = ["mcpjamUserId", "workosUserId", "guestId"];
+  for (const key of candidates) {
+    const value = c.get(key);
+    if (typeof value === "string" && value) return value;
+  }
+  // A self-hosted inspector with no AuthKit passes verified-auth by design, so
+  // there is genuinely nobody to name. The ledger says `anonymous` and the
+  // trace SHOWS it rather than inventing a plausible id.
+  return undefined;
+}
+
+/** Everything an agent route needs about the live browser, or a typed refusal. */
+async function resolveAgentSession(
+  projectId: string,
+  sessionId: string,
+): Promise<
+  | {
+      ok: true;
+      session: AgentSessionRecord;
+      live: NonNullable<ReturnType<typeof findLocalBrowserSessionForProject>>;
+    }
+  | { ok: false; status: 404 | 409; error: string }
+> {
+  let stored: AgentSessionRecord | undefined;
+  try {
+    stored = await readSession(projectId, validateSessionId(sessionId));
+  } catch {
+    return { ok: false, status: 404, error: "invalid_session" };
+  }
+  if (!stored) return { ok: false, status: 404, error: "no_such_session" };
+  if (stored.closedAt) return { ok: false, status: 409, error: "session_closed" };
+  const live = liveBrowserFor(stored);
+  if (!live) return { ok: false, status: 409, error: "no_browser_session" };
+  return { ok: true, session: stored, live };
+}
+
+/**
+ * THE SESSION'S OWN BROWSER, not the project's.
+ *
+ * An ephemeral context is keyed by the run that owns it, so looking one up by
+ * project found the persistent browser instead — the person's real logged-in
+ * Chromium, read and written under an ephemeral session's name. A record from
+ * before `browserKey` existed has only its profile to go on: a persistent one
+ * is the project's browser by definition, and an ephemeral one resolves to
+ * nothing rather than to a browser that is not it.
+ *
+ * ONE RULE, USED EVERYWHERE. Three routes ask this question — command, trace
+ * and close — and the first version of this answered it in the command path
+ * alone, which left `trace` mirroring one browser's ring into another
+ * session's history and `close --terminate` shutting the wrong window. A rule
+ * with three copies is a rule with two that are wrong.
+ *
+ * READS, NEVER STARTS. Launching a Chromium because a request named a session
+ * whose browser has gone would put a window on someone's desk for a session
+ * they may have finished with; the caller re-opens explicitly.
+ */
+function liveBrowserFor(
+  stored: AgentSessionRecord,
+): LiveLocalBrowser | undefined {
+  const live = stored.browserKey
+    ? findLocalBrowserSessionByKey(stored.browserKey)
+    : stored.profile === "persistent"
+      ? findLocalBrowserSessionForProject(stored.projectId)
+      : undefined;
+  // The key is stored, not parsed, so this is the one place that can still
+  // catch a record pointing at another project's browser. `stored.projectId` is
+  // the validated key the session was opened under.
+  if (!live || live.projectKey !== stored.projectId) return undefined;
+  return live;
+}
+
+/**
+ * Open a browser session, attaching to this project's live one by default.
+ *
+ * ATTACHING IS THE DEFAULT because the ask is a browser an agent and a person
+ * SHARE. An agent that always created its own would give the user a second
+ * browser to watch and a second history to read.
+ */
+computers.post("/local-browser/session", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    attach?: unknown;
+    policy?: unknown;
+    profile?: unknown;
+    client?: unknown;
+    clientId?: unknown;
+    captureTypedText?: unknown;
+    captureScreenshots?: unknown;
+    observe?: unknown;
+    runKey?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const policy = parseSessionPolicy(body?.policy);
+  if (!policy) {
+    // A refusal, not a default. The one thing worse than a session that cannot
+    // use the browser is a session using it under a policy nobody wrote.
+    return c.json(
+      {
+        error: "invalid_policy",
+        detail:
+          "declare a policy: mode allow_all | read_only | allowlist, with a " +
+          "non-empty originAllowlist or toolAllowlist for allowlist",
+      },
+      400,
+    );
+  }
+  // REFUSED, not defaulted. Reading anything-but-`ephemeral` as `persistent`
+  // meant `--profile ephermal` opened the project's real logged-in Chromium —
+  // the precise mix-up this surface exists to prevent, reachable by a typo.
+  // An omitted profile still means `persistent`; a misspelled one is an error.
+  if (
+    body?.profile !== undefined &&
+    body?.profile !== "ephemeral" &&
+    body?.profile !== "persistent"
+  ) {
+    return c.json(
+      {
+        error: "invalid_profile",
+        detail: "profile must be 'persistent' or 'ephemeral'",
+      },
+      400,
+    );
+  }
+  const profile = body?.profile === "ephemeral" ? "ephemeral" : "persistent";
+  const captureTypedText = body?.captureTypedText === true;
+  if (captureTypedText && profile === "persistent") {
+    // A persistent profile is somebody's real, logged-in browser. Recording
+    // what they type into it is the wrong default in the one place it matters
+    // most, and there is no opt-in that makes it right.
+    return c.json(
+      {
+        error: "capture_typed_text_requires_ephemeral",
+        detail:
+          "captureTypedText records passwords as well as search terms; it is " +
+          "available on ephemeral profiles only",
+      },
+      400,
+    );
+  }
+  const attach =
+    body?.attach === "never" || body?.attach === "require"
+      ? body.attach
+      : "prefer";
+  // ASKED BEFORE ANYTHING IS LAUNCHED. `require` means "join or fail", so
+  // starting a Chromium and then answering `nothing_to_attach` leaves a browser
+  // on somebody's desk that no session owns and nothing will close until the
+  // idle reaper notices.
+  //
+  // An EPHEMERAL profile has nothing to attach to by construction — a throwaway
+  // context belongs to one run — so `require` is unsatisfiable there whatever
+  // else is open. Checking only for a live persistent session let that pair
+  // through whenever the project happened to have one, and the store's refusal
+  // then arrived one launched browser too late.
+  if (attach === "require") {
+    const live =
+      profile === "persistent"
+        ? await findOpenSession(projectId).catch(() => undefined)
+        : undefined;
+    if (!live) {
+      return c.json(
+        {
+          error: "nothing_to_attach",
+          detail:
+            profile === "ephemeral"
+              ? "attach: 'require' cannot be satisfied by an ephemeral " +
+                "profile, which is never shared; ask for a persistent " +
+                "profile or pass attach: 'never'"
+              : "attach: 'require' was asked for and this project has no open " +
+                "persistent browser session",
+        },
+        409,
+      );
+    }
+  }
+  // An EPHEMERAL browser needs an owner key or `ensureLocalBrowserSession`
+  // refuses outright: two unattended runs on one project must not share a
+  // profile, and without a key they would collide on the project alone. The
+  // caller may name its run; otherwise one is minted, which is the honest
+  // default for a throwaway browser nobody else will attach to.
+  // A runKey the caller SENT is either used or refused, never quietly swapped.
+  // Replacing a malformed one with a fresh uuid meant two `open` calls naming
+  // the same run got two different browsers, and neither could be reattached by
+  // repeating the key the caller actually sent — a caller that named its run
+  // deserves to be told the name was unusable.
+  if (
+    body?.runKey !== undefined &&
+    !(
+      typeof body.runKey === "string" &&
+      /^[A-Za-z0-9_.:-]{1,64}$/.test(body.runKey)
+    )
+  ) {
+    return c.json(
+      {
+        error: "invalid_run_key",
+        detail:
+          "runKey must be 1-64 characters of A-Z a-z 0-9 and _ . : -",
+      },
+      400,
+    );
+  }
+  const runKey =
+    typeof body?.runKey === "string" ? body.runKey : `agent-${randomUUID()}`;
+  // ONE description of the browser, used to start it AND to name it on the
+  // session record, so the two cannot drift into a session pointing at a
+  // browser nobody opened.
+  const browserArgs = {
+    projectId,
+    contextMode: profile,
+    ...(profile === "ephemeral" ? { ownerKey: runKey } : {}),
+    ...(captureTypedText ? { captureTypedText: true } : {}),
+  } as const;
+  let handle;
+  let browserKey: string;
+  try {
+    browserKey = localBrowserKeyFor(browserArgs);
+    handle = await ensureLocalBrowserSession(browserArgs);
+  } catch (error) {
+    if (error instanceof LocalBrowserUnavailableError) {
+      return c.json({ error: error.code, detail: error.message }, 409);
+    }
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+  const actor = resolveAgentActor({
+    userId: agentUserId(c),
+    clientKind: body?.client,
+    clientId: body?.clientId,
+  });
+  const opened = await openAgentSession({
+    projectId,
+    engine: "local",
+    profile,
+    policy,
+    createdBy: actor.label ?? "anonymous",
+    actor: { actorId: actor.id, kind: actor.kind },
+    bootId: handle.bootId,
+    browserKey,
+    attach,
+    ...(captureTypedText ? { captureTypedText: true } : {}),
+    ...(body?.captureScreenshots === false ? { captureScreenshots: false } : {}),
+  });
+  if (!opened.ok) {
+    if (opened.reason === "policy_mismatch") {
+      // Neither widening the running session nor pretending the caller's policy
+      // was accepted is ours to choose: the caller either accepts the live
+      // policy (by declaring it) or opens its own session with `attach: never`.
+      return c.json(
+        {
+          error: "policy_mismatch",
+          detail:
+            "this project's open browser session runs under a different " +
+            "policy; declare the same policy to attach, or pass " +
+            "attach: 'never' to open a separate session",
+          policy: opened.session.policy,
+        },
+        409,
+      );
+    }
+    // THE RACE, not the ordinary refusal. `require` on an ephemeral profile is
+    // turned down before anything launches, and a project with no open session
+    // fails the pre-check — so reaching here means the session that pre-check
+    // found was closed while this request was starting a browser. A browser
+    // reaped for idleness while its logical session stayed open makes that a
+    // real sequence, not a theoretical one.
+    //
+    // A browser THIS request started is therefore owned by nobody, and would
+    // sit on somebody's desk until the idle reaper noticed. One we merely
+    // reused belongs to whoever was already using it and is not ours to close.
+    if (!handle.reused) {
+      await closeLocalBrowserSession(handle.bootId).catch(() => undefined);
+    }
+    return c.json(
+      {
+        error: "nothing_to_attach",
+        detail:
+          "attach: 'require' was asked for and this project's open browser " +
+          "session was closed while this one was starting; try again",
+      },
+      409,
+    );
+  }
+  touchLocalBrowserSession(handle);
+
+  // The INITIAL OBSERVATION, so a caller can act without a second round trip.
+  const live = findLocalBrowserSession(handle.bootId);
+  let page;
+  let session = opened.session;
+  if (live && body?.observe !== "none") {
+    const ran = await runAgentCommand({
+      session,
+      client: live.client,
+      ledger: live.ledger,
+      bootId: handle.bootId,
+      actor,
+      command: {
+        op: "observe",
+        mode: body?.observe === "screenshot" ? "screenshot" : "a11y",
+      },
+    });
+    session = ran.session;
+    if (ran.result.status === "executed") page = ran.result.page;
+  }
+  return c.json({
+    session,
+    attached: opened.attached,
+    bootId: handle.bootId,
+    ...(page ? { page } : {}),
+  });
+});
+
+/**
+ * This project's browser sessions, so a WATCHER can find the one to show.
+ *
+ * The rail knows the project, not the session: an agent opened it, possibly
+ * from another process. Without this the Activity list would have nothing to
+ * read, and asking a person to paste a session id into a side panel is not a
+ * side panel anybody would use.
+ *
+ * A read, and it starts nothing.
+ */
+computers.post("/local-browser/sessions", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  try {
+    const sessions = await listAgentSessions(projectId);
+    return c.json({
+      sessions: sessions.sort((a, b) => b.createdAt - a.createdAt),
+    });
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+});
+
+/**
+ * One browser command from an agent.
+ *
+ * Everything interesting happens in `runAgentCommand`; this route's job is the
+ * part that must not be delegated — establishing WHO is asking from the
+ * authenticated context, rather than from anything in the body.
+ */
+computers.post("/local-browser/command", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+    command?: unknown;
+    commandId?: unknown;
+    tabId?: unknown;
+    client?: unknown;
+    clientId?: unknown;
+    correlation?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  const command = body?.command as BrowserAgentCommand | undefined;
+  if (!command || typeof command !== "object" || typeof command.op !== "string") {
+    return c.json({ error: "A command with an `op` is required" }, 400);
+  }
+  let resolved;
+  try {
+    resolved = await resolveAgentSession(projectId, sessionId);
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+  if (!resolved.ok) {
+    return c.json({ error: resolved.error }, resolved.status);
+  }
+  const ran = await runAgentCommand({
+    session: resolved.session,
+    client: resolved.live.client,
+    ledger: resolved.live.ledger,
+    bootId: resolved.live.handle.bootId,
+    actor: resolveAgentActor({
+      userId: agentUserId(c),
+      clientKind: body?.client,
+      clientId: body?.clientId,
+    }),
+    command,
+    ...(typeof body?.commandId === "string" ? { commandId: body.commandId } : {}),
+    ...(typeof body?.tabId === "string" ? { tabId: body.tabId } : {}),
+    ...(isCorrelation(body?.correlation) ? { correlation: body.correlation } : {}),
+  });
+  // Driving the browser IS using it, refusals included: an idle reap between an
+  // agent's refusal and its retry would be exactly as disruptive as one taken
+  // mid-turn.
+  touchLocalBrowserSession(resolved.live.handle);
+  return c.json(ran.result, ran.status as 200);
+});
+
+/**
+ * A marker in the trace, and nothing else.
+ *
+ * Costs nothing now and is what makes replay video useful the day it lands: a
+ * ledger `seq` maps to a frame offset the way the widget harness's replay
+ * already maps steps.
+ */
+computers.post("/local-browser/note", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+    text?: unknown;
+    client?: unknown;
+    clientId?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  const text = typeof body?.text === "string" ? body.text.slice(0, 4000) : "";
+  if (!text) return c.json({ error: "A note needs text" }, 400);
+  let resolved;
+  try {
+    resolved = await resolveAgentSession(projectId, sessionId);
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+  if (!resolved.ok) return c.json({ error: resolved.error }, resolved.status);
+  const session = await appendNote({
+    session: resolved.session,
+    text,
+    actor: resolveAgentActor({
+      userId: agentUserId(c),
+      clientKind: body?.client,
+      clientId: body?.clientId,
+    }),
+    bootId: resolved.live.handle.bootId,
+  });
+  return c.json({ seq: session.lastSeq });
+});
+
+/**
+ * The session's durable trace, read forward from a cursor.
+ *
+ * MIRRORS FIRST. The daemon's ring is bounded and per-boot; copying it into the
+ * durable sink on every read is what keeps the ring from ever being the thing
+ * that loses history — and it is how a model-driven command, which never went
+ * through the door, still reaches the rail and the CLI.
+ */
+computers.post("/local-browser/trace", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+    afterSeq?: unknown;
+    commandId?: unknown;
+    limit?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  let stored: AgentSessionRecord | undefined;
+  try {
+    stored = await readSession(projectId, validateSessionId(sessionId));
+  } catch {
+    return c.json({ error: "invalid_session" }, 404);
+  }
+  if (!stored) return c.json({ error: "no_such_session" }, 404);
+
+  let session = stored;
+  let historyWarning: string | undefined;
+  // A CLOSED session's history is FINISHED. Its trace still reads — that is
+  // the point of a durable record — but mirroring into it would append rows
+  // for commands issued after it ended, by whoever is using the browser now,
+  // filing somebody else's browsing under a session that had already left.
+  const live = stored.closedAt ? undefined : liveBrowserFor(stored);
+  if (live) {
+    try {
+      const mirrored = await mirrorLedger({
+        session,
+        ledger: live.ledger,
+        bootId: live.handle.bootId,
+        ...(session.captureScreenshots === false
+          ? { captureScreenshots: false }
+          : {}),
+      });
+      session = mirrored.session;
+    } catch (error) {
+      // Never silent: a reader looking at a trace with a hole in it is told the
+      // hole is ours rather than concluding nothing happened.
+      historyWarning =
+        "the newest rows could not be written to this session's history " +
+        `(${error instanceof Error ? error.message : String(error)})`;
+    }
+  }
+  const trace = await readLedger({
+    projectId,
+    sessionId: session.sessionId,
+    ...(typeof body?.afterSeq === "number" ? { afterSeq: body.afterSeq } : {}),
+    ...(typeof body?.commandId === "string" ? { commandId: body.commandId } : {}),
+    ...(typeof body?.limit === "number" ? { limit: body.limit } : {}),
+  });
+  return c.json({
+    entries: trace.entries,
+    headSeq: trace.headSeq,
+    session,
+    ...(historyWarning ? { historyWarning } : {}),
+  });
+});
+
+/** One artifact payload, by the id a row names. */
+computers.post("/local-browser/artifact", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+    artifactId?: unknown;
+    mediaType?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  const artifactId = typeof body?.artifactId === "string" ? body.artifactId : "";
+  if (!artifactId) return c.json({ error: "An artifactId is required" }, 400);
+  let bytes: Buffer | undefined;
+  // The media type comes from the ROW that named this artifact, never from the
+  // request. A caller's `mediaType` is what it hopes to get; echoing it into a
+  // `content-type` is how page-derived text ends up served as `text/html`.
+  let mediaType: string | undefined;
+  try {
+    const validSession = validateSessionId(sessionId);
+    // THE DESCRIPTOR IS THE AUTHORIZATION, and it has to be acted on.
+    //
+    // The payload store is the PROJECT's — one copy of a screenshot two
+    // sessions share — so the path no longer scopes a read the way it did when
+    // every session had its own directory. Reading the descriptor and then
+    // reading the bytes regardless left the only check as decoration: a valid
+    // session id plus a guessed artifact id returned another session's
+    // screenshot out of the shared store.
+    mediaType = await artifactMediaType({
+      projectId,
+      sessionId: validSession,
+      artifactId,
+    });
+    // Not in THIS session's ledger: as far as this caller is concerned the id
+    // does not exist, and saying anything more precise would confirm that it
+    // does somewhere else.
+    if (mediaType === undefined) {
+      return c.json({ error: "no_such_artifact", id: artifactId }, 404);
+    }
+    bytes = await readArtifact({
+      projectId,
+      sessionId: validSession,
+      artifactId,
+    });
+  } catch {
+    return c.json({ error: "invalid_session" }, 404);
+  }
+  if (!bytes) {
+    // 410 rather than 404: the row names this id, so it was real and its
+    // payload has aged out — which points the caller at the row's `evicted`
+    // marker rather than at a typo.
+    return c.json({ error: "artifact_evicted", id: artifactId }, 410);
+  }
+  // `Uint8Array`, not `Buffer`: a `Buffer` is one, but the response body type
+  // is the web `BodyInit` and naming the web type keeps this honest about what
+  // is actually being written.
+  return c.body(new Uint8Array(bytes), 200, {
+    // Narrowed to what the store actually writes, whatever the row says. A
+    // media type is metadata that travelled with page content, and this
+    // response is served from the Inspector's own origin.
+    "content-type": ARTIFACT_MEDIA_TYPES.has(mediaType ?? "")
+      ? (mediaType as string)
+      : "application/octet-stream",
+    "content-length": String(bytes.byteLength),
+    // Belt and braces: even a narrowed type should not be re-interpreted.
+    "x-content-type-options": "nosniff",
+  });
+});
+
+/**
+ * Leave the session. The browser lives on for everyone else.
+ *
+ * DETACHES BY DEFAULT because a session is shared: an agent finishing its work
+ * must not close the window a person is still watching. `terminate` is the
+ * explicit form, and it is refused while somebody holds the lease — closing the
+ * browser out from under a person mid-login is the one thing this must never do.
+ */
+computers.post("/local-browser/close", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+    sessionId?: unknown;
+    terminate?: unknown;
+    client?: unknown;
+    clientId?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+  const terminate = body?.terminate === true;
+  let stored: AgentSessionRecord | undefined;
+  try {
+    stored = await readSession(projectId, validateSessionId(sessionId));
+  } catch {
+    return c.json({ error: "invalid_session" }, 404);
+  }
+  if (!stored) return c.json({ error: "no_such_session" }, 404);
+  const live = liveBrowserFor(stored);
+  if (terminate && live) {
+    const lease = await live.client.lease?.();
+    if (lease && lease.state !== "free") {
+      return c.json(
+        {
+          error: "lease_held",
+          detail:
+            "somebody holds this browser; terminating it would close the " +
+            "window they are using",
+          holder: lease.holder,
+        },
+        423,
+      );
+    }
+  }
+  const actor = resolveAgentActor({
+    userId: agentUserId(c),
+    clientKind: body?.client,
+    clientId: body?.clientId,
+  });
+  const session = await leaveAgentSession({
+    projectId,
+    sessionId,
+    actorId: actor.id,
+    ...(terminate ? { terminate: true } : {}),
+  });
+  let terminated = false;
+  if (terminate && live) {
+    // THIS browser, not every browser on the machine: another project's has
+    // nothing to do with this session ending. The ordinary case needs none of
+    // this — the idle reaper handles it, and a recent ledger row is activity.
+    //
+    // And only when no OTHER open logical session is still using it. Two
+    // sessions can share one project browser, so closing on the first one's
+    // terminate would take the browser out from under the second.
+    //
+    // THE SAME browser, though: a project's ephemeral runs each have their own
+    // Chromium, so counting every open session in the project let an unrelated
+    // throwaway run keep a persistent browser alive — and reported that as the
+    // reason. Sessions written before `browserKey` existed are matched by
+    // profile, which is what the key encoded for them.
+    //
+    // The count AND the disposal under one lock; see `disposeBrowserIfUnshared`.
+    // A record we could not read leaves us unable to say WHICH browser this
+    // session was on, so every other open session counts and the browser is
+    // left running. Erring the other way closes somebody's window on a guess.
+    const outcome = await disposeBrowserIfUnshared({
+      projectId,
+      sessionId,
+      session,
+      dispose: () =>
+        closeLocalBrowserSession(live.handle.bootId).catch(
+          () => ({ closed: false, reason: "not_found" }) as const,
+        ),
+    });
+    if (!outcome.disposed) {
+      return c.json({
+        session,
+        terminated: false,
+        detail:
+          `${outcome.others} other open session(s) still use this browser; ` +
+          "this one was detached and the browser left running",
+      });
+    }
+    const closed = outcome.result;
+    if (!closed.closed && closed.reason === "lease_held") {
+      // Somebody took the browser between the read above and the claim inside
+      // `closeLocalBrowserSession`. The BROWSER is safe either way — that claim
+      // is atomic and is held through disposal, so a leased browser is never
+      // torn down — but this session has already been closed by the
+      // `leaveAgentSession` above, and saying only "left running" would let a
+      // caller believe nothing had changed.
+      //
+      // So the answer carries the session, and says both halves. Re-opening the
+      // session here to undo the close would be a third write racing the same
+      // two writers; telling the truth about what happened is the smaller and
+      // more honest fix.
+      return c.json(
+        {
+          error: "lease_held",
+          session,
+          detail:
+            "somebody took this browser while the session was closing; the " +
+            "session is closed and the browser was left running",
+        },
+        423,
+      );
+    }
+    terminated = closed.closed;
+  }
+  return c.json({ session, terminated });
+});
+
 
 export default computers;

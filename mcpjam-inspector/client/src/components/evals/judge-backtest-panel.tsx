@@ -162,7 +162,7 @@ export function JudgeBacktestPanel({
                   key={row.gradingKey}
                   className={`flex items-baseline justify-between gap-2 text-[11px] ${
                     row.flipped
-                      ? "font-medium text-amber-700 dark:text-amber-400"
+                      ? "font-medium text-warning"
                       : "text-muted-foreground"
                   }`}
                   data-backtest-case={row.gradingKey}

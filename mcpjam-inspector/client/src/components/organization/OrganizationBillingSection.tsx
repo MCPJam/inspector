@@ -253,6 +253,32 @@ function PlanPriceDisplay({ label }: { label: string }) {
   );
 }
 
+/**
+ * Chrome's built-in page translation swaps each text node for a `<font>`
+ * wrapper holding the translation. React keeps a reference to the original
+ * node, so removing a bare text child later throws NotFoundError from
+ * `removeChild`. Keeping both branches inside an element means React only ever
+ * removes elements, which the translator leaves where they are.
+ */
+function PlanCtaContent({
+  showSpinner,
+  label,
+}: {
+  showSpinner: boolean;
+  label: string;
+}) {
+  if (showSpinner) {
+    return (
+      <>
+        <Loader2 className="size-4 animate-spin" />
+        <span>Loading...</span>
+      </>
+    );
+  }
+
+  return <span>{label}</span>;
+}
+
 const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   string,
   { ariaLabel: string; content: string; contentClassName?: string }
@@ -582,14 +608,7 @@ function FreePlanTeamUpsell({
               tabIndex={0}
               onClick={undefined}
             >
-              {showCtaSpinner ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                cta.label
-              )}
+              <PlanCtaContent showSpinner={showCtaSpinner} label={cta.label} />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-[14rem] text-center">
@@ -604,14 +623,7 @@ function FreePlanTeamUpsell({
           disabled={cta.disabled}
           onClick={cta.onClick}
         >
-          {showCtaSpinner ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              Loading...
-            </>
-          ) : (
-            cta.label
-          )}
+          <PlanCtaContent showSpinner={showCtaSpinner} label={cta.label} />
         </Button>
       )}
     </div>
@@ -1171,14 +1183,10 @@ export function OrganizationBillingSection({
                                           tabIndex={0}
                                           onClick={undefined}
                                         >
-                                          {showCtaSpinner ? (
-                                            <>
-                                              <Loader2 className="size-4 animate-spin" />
-                                              Loading...
-                                            </>
-                                          ) : (
-                                            cta.label
-                                          )}
+                                          <PlanCtaContent
+                                            showSpinner={showCtaSpinner}
+                                            label={cta.label}
+                                          />
                                         </Button>
                                       </TooltipTrigger>
                                       <TooltipContent
@@ -1196,14 +1204,10 @@ export function OrganizationBillingSection({
                                       disabled={cta.disabled}
                                       onClick={cta.onClick}
                                     >
-                                      {showCtaSpinner ? (
-                                        <>
-                                          <Loader2 className="size-4 animate-spin" />
-                                          Loading...
-                                        </>
-                                      ) : (
-                                        cta.label
-                                      )}
+                                      <PlanCtaContent
+                                        showSpinner={showCtaSpinner}
+                                        label={cta.label}
+                                      />
                                     </Button>
                                   )}
                                 </div>

@@ -11,6 +11,8 @@
  */
 
 import type { ConsoleEntry } from "./observation-budget";
+import type { PendingDialog } from "./dialogs";
+import type { NetworkEntry } from "./network";
 import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
 
 /**
@@ -52,7 +54,25 @@ export interface DriverPage {
   hoverSelector(selector: string): Promise<void>;
   /** Type into the focused element (a click usually precedes this). */
   typeText(text: string): Promise<void>;
-  /** Type into a specific element, replacing its current value. */
+  /**
+   * Type into a specific element, replacing its current value.
+   *
+   * CONTRACT, in Playwright's own words because it is the reference engine:
+   *
+   *   - a `<select>` REJECTS with "not an `<input>`, `<textarea>` or
+   *     `[contenteditable]`" — a list that does NOT offer `<select>`;
+   *   - anything else unfillable REJECTS with a list that DOES.
+   *
+   * The one-item difference is load-bearing: `fill_form` falls back to
+   * `selectOption` on the first and must not on the second, or a `fill` aimed
+   * at a button is answered with whatever `selectOption` then fails for.
+   *
+   * An engine that fills by synthesising keystrokes has to check for itself,
+   * because those keystrokes land on a `<select>` and change nothing at all —
+   * and on a button they land after a CLICK, which is a side effect nobody
+   * asked for. An engine that fails silently makes the fallback unreachable
+   * there while it works everywhere else.
+   */
   fillSelector(selector: string, text: string): Promise<void>;
   /** Press one key or chord ("Enter", "Control+A"). */
   press(key: string): Promise<void>;
@@ -82,6 +102,57 @@ export interface DriverPage {
    * "delayed".
    */
   dropConsoleSince(since: number): void;
+  /**
+   * How many console messages and page errors this page has EVER captured.
+   *
+   * Monotonic across the ring's own eviction and across a handoff purge, which
+   * is the property that makes it a cursor: two ledger rows' values bracket the
+   * window of console output a command produced, and the reader fetches that
+   * window on demand instead of every row carrying a copy of the page's log.
+   *
+   * The counters keep climbing when entries are DROPPED, on purpose — the gap
+   * between what a cursor promises and what the ring can still hand back is
+   * real, and hiding it by decrementing would turn "48 messages you can no
+   * longer read" into "nothing happened".
+   *
+   * Optional: an engine or a test fake that does not track them omits the
+   * method, and the ledger simply records no cursor rather than a wrong one.
+   */
+  consoleCursor?(): { console: number; errors: number };
+  /**
+   * The dialog this page is currently blocked on, if any.
+   *
+   * A JavaScript dialog stops the renderer, so this is asked BEFORE anything
+   * that would touch the page — a settle that runs against a blocked renderer
+   * simply burns its whole budget and reports the page unsettled, which is a
+   * true statement that explains nothing.
+   *
+   * Optional, like `consoleCursor`: an engine that does not track dialogs
+   * omits it, and the driver behaves exactly as it did before rather than
+   * refusing everything.
+   */
+  /**
+   * What this page asked the network for, oldest first.
+   *
+   * Optional for the same reason `consoleCursor` is: an engine that does not
+   * track requests omits it, and the observe mode reports that this browser
+   * cannot answer rather than that the page made no requests. Those are very
+   * different facts and a model acts differently on each.
+   */
+  networkEntries?(): readonly NetworkEntry[];
+  /** Discard requests captured at or after `since` — the handoff purge. */
+  dropNetworkSince?(since: number): void;
+  /** How many requests this page has EVER captured. Monotonic, like console. */
+  networkCursor?(): number;
+  pendingDialog?(): PendingDialog | null;
+  /**
+   * Answer the pending dialog, unblocking the renderer.
+   *
+   * Resolves `false` when there was nothing to answer — a dialog the page
+   * closed on its own, or a race with another answer. Never throws for that
+   * case, because "it is already gone" is success from the caller's side.
+   */
+  resolveDialog?(accept: boolean, promptText?: string): Promise<boolean>;
   /**
    * The page's WebMCP bridge, attached lazily on first use (attaching a CDP
    * session to every tab that may never invoke a page tool is wasted work).

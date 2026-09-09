@@ -29,6 +29,7 @@
  * capped before they reach model context (`MODEL_OUTPUT_CAP`).
  */
 import { tool, type ToolSet } from "ai";
+import { needsApprovalFor } from "@/shared/tool-approval";
 import {
   callServerToolOperation,
   connectProjectServerOperation,
@@ -37,6 +38,7 @@ import {
   cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
   listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
@@ -47,7 +49,9 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -182,7 +186,9 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // The measured description beside the decision: how much of the run was
   // measured at all, per stage. Reads, so they ride with the run read.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
+  getEvalRunServerFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,
@@ -196,6 +202,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
   listEvalCheckReposOperation,
   listScenariosOperation,
   getScenarioOperation,
@@ -296,8 +303,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
-  connect_eval_check_repo:
+  connect_eval_github_repo:
     "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
+  connect_eval_check_repo:
+    "The pre-rename spelling of connect_eval_github_repo, excluded for the same reason and by the same line.",
   launch_journey_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:
@@ -746,8 +755,13 @@ export function buildMcpjamTool(
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;
 
-  const needsApproval =
-    APPROVAL_REQUIRED_IDS.has(id) && opts.requireToolApproval === true;
+  // Floors: the ops that open a connection, spend credits or write a server row
+  // follow the switch; everything else is a read of the user's own workspace,
+  // which pausing cannot make safer.
+  const needsApproval = needsApprovalFor(
+    APPROVAL_REQUIRED_IDS.has(id) ? "setting" : "never",
+    opts.requireToolApproval === true,
+  );
 
   const clamp = WORKSPACE_INPUT_CLAMPS[id];
 

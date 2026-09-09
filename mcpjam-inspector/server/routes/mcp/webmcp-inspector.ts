@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { HostedBrowserSessionHandle } from "../../services/browserd/browser-session.js";
+import type { ComputerHostedBrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import { z } from "zod";
 import "../../types/hono";
 import {
   HOSTED_MODE,
-  WEBMCP_INSPECTOR_ENABLED,
   hostedBrowserEnabled,
   webmcpInspectorHostedEnabled,
+  webmcpInspectorReachable,
 } from "../../config";
 import {
   hostedSessionId,
@@ -364,17 +364,10 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   );
 }
 
-/**
- * Is this router reachable at all?
- *
- * Two independent switches, both of which answer 404 rather than 403: a
- * capability that is off should not be discoverable, and a 403 tells a prober
- * that the route exists and is merely closed to them.
- */
-function webmcpInspectorReachable(): boolean {
-  if (!WEBMCP_INSPECTOR_ENABLED) return false;
-  return !HOSTED_MODE || webmcpInspectorHostedEnabled();
-}
+// Reachability — the two switches, composed — lives in `config.ts`, because the
+// chat routes ask the same question before advertising a page's tools and must
+// not import a router to do it. Off means 404, never 403: a capability that is
+// off should not be discoverable, and a 403 tells a prober the route is there.
 
 webmcpInspector.use("*", async (c, next) => {
   if (!webmcpInspectorReachable()) {
@@ -593,7 +586,9 @@ webmcpInspector.post("/sessions", async (c) => {
 
   let provider;
   /** Set on the hosted path: the reserved daemon, and who it belongs to. */
-  let handle: HostedBrowserSessionHandle | undefined;
+  // COMPUTER-typed: this route opens the member's own browser for a person
+  // looking at it. A per-run box has no inspector panel to open.
+  let handle: ComputerHostedBrowserSessionHandle | undefined;
   let ownerId: string | undefined;
   if (webContentsId !== undefined) {
     // Both refusals are 400s that name what the caller got wrong, because both

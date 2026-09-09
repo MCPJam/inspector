@@ -1,3 +1,6 @@
+import { promoteEvalDraftChat } from "@/lib/mcpjam-agent/eval-scope";
+import { useEvalAgentDraft } from "@/lib/mcpjam-agent/use-eval-agent-draft";
+import { getEvalDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import {
   useCallback,
   useEffect,
@@ -10,6 +13,7 @@ import {
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
+import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import {
   Circle,
@@ -58,7 +62,10 @@ import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
 import { IterationDetails } from "./iteration-details";
 import { TrialChainPanel } from "@/components/evaluate/trial-chain-panel";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
-import { resolveIterationJudge } from "./goal-completion-presentation";
+import {
+  JudgeVerdictPanel,
+  resolveIterationJudge,
+} from "./goal-completion-presentation";
 import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
 import {
@@ -68,6 +75,11 @@ import {
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
 import type { RemoteServer } from "@/hooks/useProjects";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "@/lib/inspector-command-handlers";
+import type { EditEvalCaseDraftInspectorCommand } from "@/shared/inspector-command.js";
 import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
@@ -94,6 +106,9 @@ import {
   resolveDisplayExpectedToolCalls,
   stepAssertionToWidgetAssertion,
   stepsToPromptTurns,
+  insertStepAfter,
+  lastStepIdOfTurn,
+  newStepId,
   stepTurnIndices,
   WIDGET_ASSERTION_LABELS,
   type InteractAction,
@@ -124,6 +139,7 @@ function loadSteps(testCase: unknown): TestStep[] {
 }
 import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
+  resolveCasePredicates,
   resolveMatchOptions,
   type EvalMatchOptions,
   type CasePredicates,
@@ -174,6 +190,7 @@ import type {
   EvalIteration,
   EvalSuiteRun,
   RunColumnTab,
+  EvalJudgeConfigOverride,
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -215,12 +232,55 @@ import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
+import { CaseSpine } from "../evaluate/case-spine/case-spine";
+import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
+import {
+  appendCaseScorer,
+  buildCaseScorecard,
+  type CaseScorecardInput,
+} from "../evaluate/case-scorecard/case-scorecard-model";
+import { coverageDetailByStage } from "../evaluate/case-scorecard/case-coverage";
+import { NextQuestionLine } from "../evaluate/case-scorecard/next-question-line";
+import { groupCaseIterations } from "./runs/group-case-iterations";
+import {
+  SuggestedFromRunSection,
+  useSuggestedScorers,
+} from "../evaluate/case-scorecard/suggested-from-run-section";
+import type { Suggestion } from "../evaluate/case-scorecard/suggest-from-run";
 import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
+  caseHasOwnAssertion,
   deriveCaseKind,
+  initialToolsChoice,
   isSimpleCaseShape,
+  isToolCalledWithAssert,
+  readSimpleCase,
+  readStepChecks,
+  writeSimpleCase,
+  type SimpleCaseTool,
+  resolveToolsQuestion,
+  UNSET_TOOLS_BLOCK_REASON,
+  type ToolsChoice,
 } from "../evaluate/simple-case/simple-case-model";
+import { WorkspaceStepsPane } from "../evaluate/simple-case/workspace-steps-pane";
+import { CaseWorkspaceLayout } from "../evaluate/case-workspace/case-workspace-layout";
+import { DescribeCaseWorkspace } from "../evaluate/case-workspace/describe-case-workspace";
+import { InspectStrip } from "../evaluate/case-workspace/inspect-strip";
+import { TrialHeader } from "../evaluate/case-workspace/trial-header";
+import {
+  createAttemptId,
+  leftViewFor,
+  paneViewFor,
+  selectedTrialIteration,
+  trialVerdict,
+  type SelectedTrial,
+} from "../evaluate/case-workspace/selected-trial";
+import { signaturesMatch } from "../evaluate/case-workspace/case-snapshot-signature";
+import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
+import { TrialJudgeReviewPanel } from "./trial-judge-review";
+import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 import { RouteRollupCard } from "../evaluate/simple-case/route-rollup-card";
 import {
   adoptRouteFromIteration,
@@ -239,6 +299,11 @@ interface TestTemplate {
   predicates?: CasePredicates;
   /** Authored rubric for the model judge. Empty string clears it. */
   expectedOutput?: string;
+  /**
+   * The one per-case judge override the backend admits: opt out. No per-case
+   * model, threshold or role exists to write.
+   */
+  judgeConfigOverride?: EvalJudgeConfigOverride;
   kind?: "capability" | "regression";
 }
 
@@ -282,6 +347,25 @@ interface TestTemplateEditorProps {
    * host produced each batch (via `namedHostId` on suite runs).
    */
   suiteRuns?: EvalSuiteRun[];
+  /**
+   * Renders the case as a SPINE — numbered actions with their checks nested
+   * under the action each one follows — instead of the form plus the Steps
+   * hatch plus the header gear. Arrives as a prop, resolved once on the
+   * Evaluate surface, so `/evals` cannot reach it and a test toggles it
+   * without a flag mock.
+   */
+  observeFirst?: boolean;
+  /**
+   * Launch a run of THIS case only, as a suite run.
+   *
+   * "Run test" needs a suite run because the judge is keyed by `suiteRunId`
+   * end to end; a quick run cannot be graded. Absent on a surface that cannot
+   * launch one, and Run test then does not render.
+   */
+  onRunCase?: (
+    caseId: string,
+    opts?: { iterationOverride?: number; skipJudge?: boolean },
+  ) => void | Promise<void>;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   /** Route-driven tab switch. Editor reflects {@link openCompareFromRoute} after the URL changes. */
@@ -389,14 +473,6 @@ function buildDraftTestCase(
     models,
     caseType: "prompt",
   };
-}
-
-// Monotonic id for recorder-appended widget steps (interact/assert). Mirrors
-// the StepListEditor's scheme so appended rows get a stable React key.
-let widgetStepIdCounter = 0;
-function newWidgetStepId(kind: string): string {
-  widgetStepIdCounter += 1;
-  return `${kind}-${Date.now()}-${widgetStepIdCounter}`;
 }
 
 const validateExpectedToolCalls = (
@@ -885,6 +961,8 @@ export function TestTemplateEditor({
   openCompareIterationId = null,
   trialChainEnabled = false,
   simpleCaseEditor = false,
+  observeFirst = false,
+  onRunCase,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -896,9 +974,21 @@ export function TestTemplateEditor({
   const getAccessToken = useConvexAccessToken();
   const simpleCaseEditorEnabled = simpleCaseEditor;
   const [deepEditor, setDeepEditor] = useState(false);
-  const [toolsChoiceBlockReason, setToolsChoiceBlockReason] = useState<
-    string | null
-  >(null);
+  /**
+   * The tool question's stored answer for the workspace form.
+   *
+   * The EDITOR owns it, not the form: it decides `isNegativeTest` on save and
+   * on quick run, so a value the form reported back through an effect would
+   * trail by one render — long enough for a save to send the wrong flag. It is
+   * seeded from the persisted case in the case-switch effect, in the same
+   * commit as `editForm`.
+   */
+  const [simpleToolsChoice, setSimpleToolsChoice] =
+    useState<ToolsChoice>("unset");
+  /** Lifted with the choice, so "Use tools instead" survives the Steps pane. */
+  const [simpleStashedTools, setSimpleStashedTools] = useState<
+    SimpleCaseTool[]
+  >([]);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // Guards the first-Save insert of a prompt draft so a double-click can't
@@ -947,7 +1037,9 @@ export function TestTemplateEditor({
   }, [liveStatusRecord]);
   // PR5: per-step status keyed by stepId (present once the step engine emits
   // per-step `step_status`). Takes precedence over the turn-derived map above.
-  const liveStepStatusById = useMemo<Map<string, EvalStepStatus> | undefined>(() => {
+  const liveStepStatusById = useMemo<
+    Map<string, EvalStepStatus> | undefined
+  >(() => {
     const status = liveStatusRecord?.streamingStepStatus;
     if (!status) return undefined;
     const map = new Map<string, EvalStepStatus>();
@@ -967,6 +1059,11 @@ export function TestTemplateEditor({
   // Left↔right Steps sync: the step hovered in either the left step list or the
   // right replay pane; highlights the matching card/row in both.
   const [syncedStepId, setSyncedStepId] = useState<string | null>(null);
+  const [trialTabRequest, setTrialTabRequest] = useState<{
+    iterationId: string;
+    mode: "steps";
+  } | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
   const [mobileVisibleModelValue, setMobileVisibleModelValue] = useState<
     string | null
   >(null);
@@ -996,6 +1093,14 @@ export function TestTemplateEditor({
   // frozen trace. No grading — the eval runner is out of this path. Past-run
   // review (`replayIteration`) still wins, so opening a run shows its trace.
   const [liveRecordMode, setLiveRecordMode] = useState<boolean>(false);
+  const [inspectIterationId, setInspectIterationId] = useState<string | null>(
+    null,
+  );
+  const [simpleValidationAttempted, setSimpleValidationAttempted] =
+    useState(false);
+  const [missingAppEvidenceStepId, setMissingAppEvidenceStepId] = useState<
+    string | null
+  >(null);
   // A past iteration selected from the Runs tab to replay in the Preview pane.
   const [replayIteration, setReplayIteration] = useState<EvalIteration | null>(
     null,
@@ -1140,6 +1245,9 @@ export function TestTemplateEditor({
     initializedSelectionCaseRef.current = null;
     appliedReplayAnchorRef.current = null;
     setReplayIteration(null);
+    setInspectIterationId(null);
+    setSimpleValidationAttempted(false);
+    setMissingAppEvidenceStepId(null);
   }, [selectedTestCaseId]);
 
   useEffect(() => {
@@ -1159,6 +1267,7 @@ export function TestTemplateEditor({
     if (routeCompareAnchorIteration == null) return; // still loading / not found
     appliedReplayAnchorRef.current = anchorId;
     setReplayIteration(routeCompareAnchorIteration);
+    setInspectIterationId(routeCompareAnchorIteration._id);
     setShowSpecOverride(false);
     setPreviewTab("preview");
   }, [
@@ -1206,12 +1315,26 @@ export function TestTemplateEditor({
       matchOptions: currentTestCase.matchOptions,
       predicates: currentTestCase.predicates,
       expectedOutput: currentTestCase.expectedOutput ?? "",
+      judgeConfigOverride: currentTestCase.judgeConfigOverride,
       kind: currentTestCase.kind,
     });
     // Seed the transient picker from the persisted runs so a user who saved
     // runs=N still sees N selected when the editor opens. Clamp to [1, 10]
     // — the picker only exposes that range.
     setIterationOverride(Math.max(1, Math.min(10, currentTestCase.runs ?? 1)));
+    // Seed the tool question from what the case ALREADY says, in the same
+    // commit as `editForm`: the persisted `isNegativeTest` (never re-derived
+    // from step shape) plus its tool asserts. Without this, opening a positive
+    // CLI case would default to "unset" and its first save would rewrite the
+    // flag the author never touched.
+    const seededTools = readSimpleCase(steps).tools;
+    setSimpleToolsChoice(
+      initialToolsChoice({
+        tools: seededTools,
+        isNegativeTest: currentTestCase.isNegativeTest,
+      }),
+    );
+    setSimpleStashedTools(seededTools);
     setDeepEditor(false);
   }, [currentTestCase?._id]);
 
@@ -1308,25 +1431,79 @@ export function TestTemplateEditor({
    * run id, so the same projection + assembler runs locally on the doc
    * the client already holds.
    */
+  const nextQuestionForTrial = (iteration: EvalIteration | null) => {
+    return useSpine && iteration ? (
+      <NextQuestionLine
+        state={{
+          hasTrial: true,
+          judgedPass: Boolean(
+            iteration.suiteRunId &&
+              resolveIterationJudge(iteration, suiteRuns)?.passed,
+          ),
+          hasFailure: iteration.result === "failed",
+          trials: suggestionBatch?.iterations.length ?? 1,
+          hasChecks:
+            Boolean(editForm?.predicates?.list?.length) ||
+            (editForm?.steps ?? []).some((step) => step.kind === "assert"),
+          hasSuggestions: chainSuggestions.output.suggestions.length > 0,
+          suiteHasGate: Boolean(
+            suite?.defaultPredicates?.some(
+              (p: Predicate) => p.role !== "advisory",
+            ),
+          ),
+        }}
+        onAct={(action) => {
+          if (action === "trials" || action === "models") {
+            // The next-run sheet left with the workspace redesign: the run
+            // controls sit in the header now, so the action primes the count
+            // there and leaves the model choice to that same control.
+            if (action === "trials") {
+              setEditForm((current) =>
+                current ? { ...current, runs: 3 } : current,
+              );
+              setIterationOverride((current) => Math.max(current, 3));
+            }
+          } else if (action === "gate") onOpenSuiteSettings?.();
+          else if (action === "failure") {
+            setTrialTabRequest({ iterationId: iteration._id, mode: "steps" });
+          } else if (action === "harden") {
+            suggestionsRef.current?.scrollIntoView?.({
+              block: "nearest",
+              behavior: "smooth",
+            });
+          }
+        }}
+      />
+    ) : null;
+  };
+
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
     let chain: ReactNode = null;
-    if (iteration && chainSlotEnabled) {
+    // On the spine the chain lives INSIDE the Scorecard as a chip strip: the
+    // trial header already carries the verdict on every tab, and the stage
+    // detail only makes sense beside the rows it explains. Above the tabs it
+    // showed half the story on Chat and Raw.
+    if (iteration && chainSlotEnabled && !useSpine) {
       if (iteration.suiteRunId) {
         const assembled = trialChains.chains.get(iteration._id);
         chain = assembled ? (
-          <TrialChainPanel chain={assembled} resetKey={iteration._id} />
+          <TrialChainPanel
+            chain={assembled}
+            resetKey={iteration._id}
+            detailByStage={useSpine ? chainDetailByStage : undefined}
+          />
         ) : null;
       } else {
         // The record handed in may be the SSE `complete` snapshot. A judge
         // landing after that rewrites the chain's last link, and the Convex
         // subscription carries the newer doc — so prefer it when present.
         const live =
-          recentIterations.find((it) => it._id === iteration._id) ??
-          iteration;
+          recentIterations.find((it) => it._id === iteration._id) ?? iteration;
         chain = (
           <TrialChainPanel
             chain={chainForQuickRunIteration(live)}
             resetKey={iteration._id}
+            detailByStage={useSpine ? chainDetailByStage : undefined}
           />
         );
       }
@@ -1343,6 +1520,7 @@ export function TestTemplateEditor({
     const showRollup = !!rollup && rollup.total > 1;
     const showRecordAdopt =
       !!rollup && draftKind === "record" && !!iteration && rollup.total >= 1;
+
     if (!chain && !showRollup && !showRecordAdopt) return null;
 
     const resolvedMatch = resolveMatchOptions(
@@ -1455,11 +1633,11 @@ export function TestTemplateEditor({
   const { isAuthenticated } = useConvexAuth();
   const { host: selectedQuickRunHost } = useHost({
     isAuthenticated,
-    hostId: hasHostAttachments ? (selectedQuickRunHostId ?? null) : null,
+    hostId: hasHostAttachments ? selectedQuickRunHostId ?? null : null,
   });
   const suiteRunHarnessId = hasHostAttachments
-    ? (selectedQuickRunHost?.config?.harness ?? null)
-    : (hostConfigBaseline?.harness ?? null);
+    ? selectedQuickRunHost?.config?.harness ?? null
+    : hostConfigBaseline?.harness ?? null;
   const { tools: harnessBuiltinCatalog } =
     useHarnessBuiltinToolCatalog(suiteRunHarnessId);
   // MCP-server tools plus the harness's native built-ins — what the expected
@@ -1604,6 +1782,68 @@ export function TestTemplateEditor({
     return fingerprint(snapshotSteps) !== fingerprint(currentSteps);
   }, [replayIteration, currentSteps]);
 
+  /**
+   * The Evaluate surface has ONE chrome for every case: the workspace. It used
+   * to mount only for `isSimpleCaseShape`, so every CLI- and SDK-authored case
+   * (checks stored as assert steps) fell through to the old page. The form now
+   * renders those checks, and the deep step list lives inside the same
+   * workspace, so neither the shape nor the deep toggle swaps the page.
+   */
+  const useWorkspace = Boolean(simpleCaseEditorEnabled && editForm);
+  /**
+   * The spine replaces the form, the Steps hatch AND the header gear at once —
+   * a case cannot be half on it, because the gear's envelope writer and the
+   * spine's would disagree about which surface owns `replace`.
+   */
+  const useSpine = useWorkspace && observeFirst;
+
+  /**
+   * Whether this deployment accepts a role on a check.
+   *
+   * Three states, and two of them behave identically: `unavailable` (the query
+   * was refused) and `loading` both render the read-only chip, which is the
+   * page exactly as it was before roles existed. A settings surface that
+   * offered the control while it could not know is worse than one that waits.
+   */
+  const caseCapabilities = useSuiteCapabilities(
+    useWorkspace ? suiteId ?? null : null,
+  );
+
+  /**
+   * The tool question as shown, resolved from the stored choice plus what the
+   * case carries. `"unset"` is the only answer that blocks: a brand-new draft
+   * that asserts nothing would pass vacuously, and the backend rejects it
+   * (`POSITIVE_TEST_NO_ASSERTION`).
+   */
+  const workspaceToolsQuestion = useMemo(() => {
+    if (!useWorkspace || !editForm) return null;
+    // A model-free case (a pinned `toolCall` render check) has no model turn
+    // for a route claim to be about, and the form locks the question for it.
+    // Asking it anyway would block Save on a shape that used to save fine —
+    // the old page never showed this question at all.
+    if (isModelFree(editForm.steps)) return null;
+    return resolveToolsQuestion({
+      choice: simpleToolsChoice,
+      hasToolAsserts: editForm.steps.some(isToolCalledWithAssert),
+      hasOwnAssertion: caseHasOwnAssertion({
+        steps: editForm.steps,
+        expectedOutput: editForm.expectedOutput,
+        predicates: editForm.predicates,
+      }),
+    });
+  }, [useWorkspace, editForm, simpleToolsChoice]);
+
+  /**
+   * Negative is what the author CHOSE, never an inference from step shape.
+   * Deriving it (see `deriveIsNegativeTestFromSteps`, still used by /evals)
+   * reads "no toolCalledWith assert" as "expects no tools", which is true of
+   * every case whose route check is a `firstToolWas` step — flipping positive
+   * CLI cases to negative on save and failing them on the route at run time.
+   */
+  const workspaceIsNegative = workspaceToolsQuestion === "noTool";
+  const simpleToolsBlock =
+    workspaceToolsQuestion === "unset" ? UNSET_TOOLS_BLOCK_REASON : null;
+
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
 
@@ -1623,10 +1863,15 @@ export function TestTemplateEditor({
     const normalizedScenario = (editForm.scenario ?? "").trim();
     const normalizedCurrentScenario = (currentTestCase.scenario ?? "").trim();
 
-    const effectiveNegativeOnServer =
-      deriveIsNegativeTestFromSteps(currentSteps);
+    // What THIS editor would save as the negative flag. On the workspace that
+    // is the author's answer to the tool question; on /evals it stays derived.
+    // Using the derivation on the workspace would mark every positive CLI case
+    // dirty the moment it opened, and offer a Save that flips its flag.
+    const effectiveNegativeFlag = useWorkspace
+      ? workspaceIsNegative
+      : deriveIsNegativeTestFromSteps(currentSteps);
     const serverNegativeFlagMismatch =
-      (currentTestCase.isNegativeTest ?? false) !== effectiveNegativeOnServer;
+      (currentTestCase.isNegativeTest ?? false) !== effectiveNegativeFlag;
 
     const normalizedMatchOptions = JSON.stringify(
       normalizeForComparison(editForm.matchOptions ?? null),
@@ -1646,6 +1891,12 @@ export function TestTemplateEditor({
     ).trim();
     const formKind = editForm.kind ?? null;
     const currentKind = currentTestCase.kind ?? null;
+    const normalizedJudgeOverride = JSON.stringify(
+      normalizeForComparison(editForm.judgeConfigOverride ?? null),
+    );
+    const normalizedCurrentJudgeOverride = JSON.stringify(
+      normalizeForComparison(currentTestCase.judgeConfigOverride ?? null),
+    );
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -1657,9 +1908,221 @@ export function TestTemplateEditor({
       normalizedPredicates !== normalizedCurrentPredicates ||
       normalizedExpectedOutput !== normalizedCurrentExpectedOutput ||
       formKind !== currentKind ||
+      normalizedJudgeOverride !== normalizedCurrentJudgeOverride ||
       serverNegativeFlagMismatch
     );
-  }, [editForm, currentAdvancedConfig, currentSteps, currentTestCase]);
+  }, [
+    editForm,
+    currentAdvancedConfig,
+    currentSteps,
+    currentTestCase,
+    useWorkspace,
+    workspaceIsNegative,
+  ]);
+  // ── suggestions ────────────────────────────────────────────────────────────
+  const suggestionBatch = useMemo(
+    () => groupCaseIterations(recentIterations)[0] ?? null,
+    [recentIterations],
+  );
+  /**
+   * The coverage line under each chain card, and the suggestions it counts.
+   *
+   * Derived here, at the top level, because both the card below the scorecard
+   * and the chain above it must read ONE list — a chain that says "2
+   * suggested" while the card shows three is worse than a chain that says
+   * nothing.
+   */
+  const chainCoverageInput = useMemo<CaseScorecardInput>(
+    () => ({
+      steps: editForm?.steps ?? [],
+      toolsChoice: simpleToolsChoice,
+      kind: editForm?.kind,
+      matchOptions: editForm?.matchOptions,
+      suiteDefaultMatchOptions: suite?.defaultMatchOptions,
+      predicates: editForm?.predicates,
+      suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+      expectedOutput: editForm?.expectedOutput,
+      judgeConfigOverride: editForm?.judgeConfigOverride,
+      suiteJudgeConfig: suite?.judgeConfig,
+      suiteJudgeRubric: suite?.judgeRubric,
+      numbering: "action",
+    }),
+    [editForm, simpleToolsChoice, suite],
+  );
+  const chainSuggestions = useSuggestedScorers({
+    enabled: useSpine,
+    batch: suggestionBatch,
+    authored: chainCoverageInput,
+    prompts: (editForm?.steps ?? [])
+      .filter((step) => step.kind === "prompt")
+      .map((step) => ("prompt" in step ? step.prompt : "")),
+  });
+  const chainDetailByStage = useMemo(
+    () =>
+      coverageDetailByStage(
+        buildCaseScorecard(chainCoverageInput),
+        chainSuggestions.output.suggestions,
+      ),
+    [chainCoverageInput, chainSuggestions.output.suggestions],
+  );
+
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const [acceptedSuggestions, setAcceptedSuggestions] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+
+  /**
+   * Accept one or more suggestions, in ONE draft update.
+   *
+   * "Add all" cannot be a loop of single accepts: `editFormStepsRef` only
+   * refreshes after a render, so the second insert would compute its anchor
+   * from the pre-insert list and the two would collide. Folding them means a
+   * later anchor still resolves against the steps the earlier one produced.
+   */
+  const acceptSuggestions = useCallback(
+    (list: Suggestion[], via: "row" | "all" | "chain") => {
+      if (list.length === 0) return;
+      const batchKey = suggestionBatch?.key ?? "";
+      setEditForm((current) => {
+        if (!current) return current;
+        let steps = current.steps;
+        let predicates = current.predicates;
+        for (const suggestion of list) {
+          if (suggestion.kind === "route" && suggestion.route) {
+            // "No tool should be called" is a CASE-LEVEL claim, not a step.
+            // `adoptRouteFromIteration` only removes tool assertions for an
+            // empty observed route, which leaves the case unrestricted — the
+            // row said "Added" while nothing was saved. The tool question is
+            // what carries it, and it is what `buildSavePayload` reads to send
+            // `isNegativeTest`.
+            if (suggestion.route.noTool) {
+              setSimpleToolsChoice("noTool");
+            } else {
+              setSimpleToolsChoice("tools");
+            }
+            const iteration = recentIterations.find(
+              (it) => it._id === suggestion.route!.iterationId,
+            );
+            if (iteration) {
+              steps = adoptRouteFromIteration(
+                steps,
+                iteration,
+                deriveCaseKind(
+                  resolveMatchOptions(
+                    suite?.defaultMatchOptions,
+                    current.matchOptions,
+                  ),
+                ),
+              );
+            }
+            continue;
+          }
+          if (suggestion.placement.kind === "afterStep") {
+            const anchor = suggestion.placement.anchorStepId;
+            const assertion =
+              suggestion.predicate ?? suggestion.widgetAssertion;
+            if (!assertion) continue;
+            // The anchor came from the trial's frozen snapshot; a draft edited
+            // since may no longer contain it. A turn-scoped check still means
+            // something as a whole-run check, so it falls back rather than
+            // being dropped; a widget assertion does not, and is skipped.
+            if (!steps.some((step) => step.id === anchor)) {
+              if (suggestion.predicate) {
+                predicates = appendCaseScorer(predicates, suggestion.predicate);
+              }
+              continue;
+            }
+            steps = insertStepAfter(steps, anchor, {
+              id: newStepId("assert"),
+              kind: "assert",
+              assertion,
+            } as TestStep);
+            continue;
+          }
+          if (suggestion.predicate) {
+            predicates = appendCaseScorer(predicates, suggestion.predicate);
+          }
+        }
+        return { ...current, steps, predicates };
+      });
+      setAcceptedSuggestions((current) => {
+        const next = new Set(current);
+        for (const suggestion of list) {
+          next.add(`${batchKey}|${suggestion.key}`);
+        }
+        return next;
+      });
+      for (const suggestion of list) {
+        track("eval_suggestion_accepted", {
+          kind: suggestion.predicate?.type ?? suggestion.kind,
+          role: suggestion.role,
+          stability_held: suggestion.stability.held,
+          stability_of: suggestion.stability.of,
+          placement: suggestion.placement.kind,
+          stage: suggestion.stage,
+          via,
+        });
+      }
+    },
+    [suggestionBatch?.key, recentIterations, suite?.defaultMatchOptions],
+  );
+
+  const dismissSuggestion = useCallback(
+    (suggestion: Suggestion) => {
+      const batchKey = suggestionBatch?.key ?? "";
+      setDismissedSuggestions((current) =>
+        new Set(current).add(`${batchKey}|${suggestion.key}`),
+      );
+      track("eval_suggestion_dismissed", {
+        kind: suggestion.predicate?.type ?? suggestion.kind,
+        role: suggestion.role,
+        placement: suggestion.placement.kind,
+        stage: suggestion.stage,
+      });
+    },
+    [suggestionBatch?.key],
+  );
+
+  /** Save the current draft before launching a judged, case-scoped run. */
+  const [runTestPending, setRunTestPending] = useState(false);
+  /**
+   * `handleSave` closes over `editForm` and is rebuilt every render, so the
+   * copy captured by a memoized callback goes stale the moment the deps stop
+   * changing — which they do as soon as `hasUnsavedChanges` flips true. Run
+   * test then saved the draft as it stood at the FIRST edit and ran that,
+   * while the pane showed the latest. A ref always holds the current one.
+   */
+  const handleSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const runTest = useCallback(async () => {
+    const caseId = currentTestCase?._id;
+    if (!onRunCase || !caseId || isDraft) return;
+    setRunTestPending(true);
+    try {
+      if (hasUnsavedChanges) {
+        // A refused save (an unset tool question, an invalid step list) must
+        // not launch: the run executes the PERSISTED case, so it would grade
+        // a version of the case the author is not looking at.
+        const saved = await handleSaveRef.current?.();
+        if (!saved) return;
+      }
+      await onRunCase(caseId, {
+        iterationOverride,
+        skipJudge:
+          editForm?.judgeConfigOverride?.goalCompletion?.enabled === false,
+      });
+    } finally {
+      setRunTestPending(false);
+    }
+  }, [
+    onRunCase,
+    currentTestCase?._id,
+    isDraft,
+    hasUnsavedChanges,
+    iterationOverride,
+    editForm?.judgeConfigOverride?.goalCompletion?.enabled,
+  ]);
 
   const arePromptTurnsValid = useMemo(() => {
     if (!editForm) return true;
@@ -1684,17 +2147,23 @@ export function TestTemplateEditor({
     return areAllChecksValid(editForm.predicates.list);
   }, [editForm?.predicates]);
 
-  const useSimpleForm = Boolean(
-    simpleCaseEditorEnabled &&
-      editForm &&
-      isSimpleCaseShape(editForm.steps) &&
-      !deepEditor,
-  );
-  const simpleToolsBlock = useSimpleForm ? toolsChoiceBlockReason : null;
+  /**
+   * Step-authored checks are editable in the workspace form now, so an empty
+   * needle or tool name can be typed there. Gate on it the way case predicates
+   * are gated — workspace only, so /evals keeps saving inline asserts exactly
+   * as it does today.
+   */
+  const areStepChecksValid = useMemo(() => {
+    if (!useWorkspace || !editForm) return true;
+    return areAllChecksValid(
+      readStepChecks(editForm.steps).map((check) => check.predicate),
+    );
+  }, [useWorkspace, editForm]);
 
   const savePrimaryDisabled =
     !arePromptTurnsValid ||
     !arePredicatesValid ||
+    !areStepChecksValid ||
     isRunningCompare ||
     isSavingDraft ||
     Boolean(simpleToolsBlock);
@@ -1712,7 +2181,7 @@ export function TestTemplateEditor({
     if (!arePromptTurnsValid && editForm) {
       return getStepsBlockReason(editForm.steps);
     }
-    if (!arePredicatesValid) {
+    if (!arePredicatesValid || !areStepChecksValid) {
       return "Fix invalid checks before saving.";
     }
     return null;
@@ -1738,7 +2207,9 @@ export function TestTemplateEditor({
         new Map(
           selectedModelValues
             .map((modelValue) => parseModelValue(modelValue))
-            .filter((parsed) => Boolean(parsed.provider) && Boolean(parsed.model))
+            .filter(
+              (parsed) => Boolean(parsed.provider) && Boolean(parsed.model),
+            )
             .map(
               (parsed) =>
                 [`${parsed.provider}/${parsed.model}`, parsed] as const,
@@ -1770,6 +2241,7 @@ export function TestTemplateEditor({
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid ||
+    !areStepChecksValid ||
     Boolean(simpleToolsBlock);
 
   const runDisabledTooltip = useMemo(() => {
@@ -1838,6 +2310,78 @@ export function TestTemplateEditor({
     editFormStepsRef.current = editForm?.steps ?? [];
   }, [editForm?.steps]);
 
+  // Mirrors `editForm` itself (not just its steps) so the agent command
+  // handler below can tell "no case is open" apart from "a case with zero
+  // steps is open" — registered once at mount, so it must read live state
+  // through a ref rather than close over a stale `editForm`.
+  const editFormRef = useRef(editForm);
+  useEffect(() => {
+    editFormRef.current = editForm;
+  }, [editForm]);
+
+  const evalAgent = useEvalAgentDraft({
+    // Evaluate owns the suite bridge used by scoped tools. The legacy editor
+    // continues to use its existing general-agent command bridge below.
+    projectId: simpleCaseEditorEnabled ? projectId : null,
+    suiteId,
+    suiteName: suite?.name ?? "Eval suite",
+    caseId: selectedTestCaseId,
+    draft: editForm,
+    setDraft: setEditForm,
+    tools: availableTools,
+    autoOpen: draftKind === "describe",
+  });
+
+  // `ui_edit_eval_case_draft` (client/src/lib/webmcp/groups/evals.ts): lets
+  // the MCPJam agent write into whatever case this editor currently has
+  // open — the same prompt/tool-assertion shape the Describe workspace and
+  // SimpleCaseForm already write through `writeSimpleCase`. Scoped to this
+  // component's own mount lifecycle (not the shared `useSurfaceAgentBridge`
+  // call, which belongs to EvalsTab for the whole /evals surface) so the
+  // tool only works while a case editor is actually on screen.
+  useEffect(() => {
+    return registerInspectorCommandHandler("editEvalCaseDraft", (command) => {
+      const current = editFormRef.current;
+      if (!current) {
+        throw createInspectorCommandClientError(
+          "unsupported_in_mode",
+          "No test case is currently open for editing. Open or create a case first.",
+        );
+      }
+      const { payload } = command as EditEvalCaseDraftInspectorCommand;
+      const simple = readSimpleCase(current.steps);
+      const nextTools: Array<{
+        id?: string;
+        toolName: string;
+        arguments?: Record<string, unknown>;
+      }> = payload.addToolAssertion
+        ? [
+            ...simple.tools,
+            {
+              toolName: payload.addToolAssertion.toolName,
+              arguments: payload.addToolAssertion.arguments ?? {},
+            },
+          ]
+        : simple.tools;
+      const nextPrompt =
+        payload.prompt !== undefined ? payload.prompt : simple.prompt;
+      const nextNoTool =
+        payload.noTool !== undefined ? payload.noTool : simple.noTool;
+      const nextSteps = writeSimpleCase(current.steps, {
+        prompt: nextPrompt,
+        tools: nextTools,
+        noTool: nextNoTool,
+      });
+      setEditForm((prev) => (prev ? { ...prev, steps: nextSteps } : prev));
+      return {
+        status: "updated",
+        prompt: nextPrompt,
+        toolAssertionCount: nextTools.length,
+        noTool: nextNoTool,
+      };
+    });
+  }, []);
+
   // Append a recorder-captured widget step (interact or assert) to the END of
   // turn `turnIndex`'s block in the flat step list. The recorder reports a
   // turn-granular `promptIndex`; `stepTurnIndices` maps each step to its
@@ -1846,16 +2390,19 @@ export function TestTemplateEditor({
   const appendWidgetStepToTurn = useCallback(
     (turnIndex: number, step: TestStep) => {
       const currentSteps = editFormStepsRef.current;
-      const turnOf = stepTurnIndices(currentSteps);
-      let insertAt = currentSteps.length;
-      for (let i = currentSteps.length - 1; i >= 0; i--) {
-        if (turnOf[i] === turnIndex) {
-          insertAt = i + 1;
-          break;
-        }
-      }
-      const next = [...currentSteps];
-      next.splice(insertAt, 0, step);
+      // `lastStepIdOfTurn` names the turn's last step and `insertStepAfter`
+      // puts the recorded step right behind it — the same position the local
+      // reverse scan produced, pinned against that loop by a property test in
+      // `shared/__tests__/steps-spine.test.ts`. When the turn has no steps yet
+      // (or does not exist), the fallback anchors on the list's last step,
+      // which appends, as before.
+      const next = insertStepAfter(
+        currentSteps,
+        lastStepIdOfTurn(currentSteps, turnIndex) ??
+          currentSteps[currentSteps.length - 1]?.id ??
+          null,
+        step,
+      );
       setEditForm((current) =>
         current ? { ...current, steps: next } : current,
       );
@@ -1878,7 +2425,7 @@ export function TestTemplateEditor({
       setPendingPick((pick) => {
         if (!pick) return null;
         appendWidgetStepToTurn(pick.promptIndex, {
-          id: newWidgetStepId("wassert"),
+          id: newStepId("wassert"),
           kind: "assert",
           assertion: stepAssertionToWidgetAssertion(pick.toolName, assertion),
         });
@@ -1898,7 +2445,8 @@ export function TestTemplateEditor({
       const authoredTurns = groupStepsIntoTurns(
         editFormStepsRef.current,
       ).length;
-      const saved = shouldSaveLiveRecorderStep(event) && turnIndex < authoredTurns;
+      const saved =
+        shouldSaveLiveRecorderStep(event) && turnIndex < authoredTurns;
       recorderDebug("editor recorder step received", {
         eventToolName: event.toolName,
         eventPromptIndex: event.promptIndex,
@@ -1921,7 +2469,7 @@ export function TestTemplateEditor({
         return;
       }
       appendWidgetStepToTurn(turnIndex, {
-        id: newWidgetStepId("interact"),
+        id: newStepId("interact"),
         kind: "interact",
         toolName: event.toolName,
         action: step as unknown as InteractAction,
@@ -1955,9 +2503,14 @@ export function TestTemplateEditor({
     [editForm?.steps],
   );
 
-
   const buildSavePayload = (form: TestTemplate) => {
-    const isNegativeTest = deriveIsNegativeTestFromSteps(form.steps);
+    // On the workspace the author answers the tool question outright. Only the
+    // legacy /evals editor, which has no such control, still infers the flag
+    // from step shape — an inference that reads every `firstToolWas`-only case
+    // as "expects no tools".
+    const isNegativeTest = useWorkspace
+      ? workspaceIsNegative
+      : deriveIsNegativeTestFromSteps(form.steps);
     // `query`/`expectedToolCalls`/`expectedOutput` are denormalized display
     // projections of `steps` (the runner reads `steps`, never these). A
     // negative test expects no model tool calls, so its flattened display list
@@ -1995,6 +2548,11 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
+      // Omitted when undefined: `createTestCase` admits no `null` for this
+      // field, and `handleSave` supplies the null-clear on the update path.
+      ...(form.judgeConfigOverride !== undefined
+        ? { judgeConfigOverride: form.judgeConfigOverride }
+        : {}),
       ...(form.kind !== undefined ? { kind: form.kind } : {}),
     };
   };
@@ -2028,8 +2586,9 @@ export function TestTemplateEditor({
     if (!editForm || isSavingDraft) return;
 
     if (simpleToolsBlock) {
+      setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
-      return;
+      return false;
     }
 
     if (!validateSteps(editForm.steps)) {
@@ -2037,7 +2596,7 @@ export function TestTemplateEditor({
         getStepsBlockReason(editForm.steps) ??
           "Fix the test configuration before saving.",
       );
-      return;
+      return false;
     }
 
     setIsSavingDraft(true);
@@ -2060,6 +2619,17 @@ export function TestTemplateEditor({
         num_steps: editForm.steps?.length ?? 0,
       });
       toast.success("Test case created");
+      if (simpleCaseEditorEnabled && projectId) {
+        promoteEvalDraftChat(
+          {
+            projectId,
+            suiteId,
+            suiteName: suite?.name ?? "Eval suite",
+            caseId: selectedTestCaseId,
+          },
+          newTestCaseId,
+        );
+      }
       onDraftSaved?.(newTestCaseId);
     } catch (error) {
       console.error("Failed to create test case:", error);
@@ -2070,16 +2640,26 @@ export function TestTemplateEditor({
     }
   };
 
-  const handleSave = async () => {
+  /**
+   * Returns whether the draft was actually persisted.
+   *
+   * It refuses on its own validation — an unset tool question, an invalid step
+   * list — and used to do so by returning normally, which reads as success to
+   * anything that awaits it. "Run test" awaited it and launched the PREVIOUSLY
+   * saved case, so a refused save silently ran something the author was not
+   * looking at.
+   */
+  const handleSave = async (): Promise<boolean> => {
     if (isDraft) {
       await handleCreateFromDraft();
-      return;
+      return true;
     }
-    if (!editForm || !currentTestCase) return;
+    if (!editForm || !currentTestCase) return false;
 
     if (simpleToolsBlock) {
+      setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
-      return;
+      return false;
     }
 
     if (!validateSteps(editForm.steps)) {
@@ -2087,7 +2667,7 @@ export function TestTemplateEditor({
         getStepsBlockReason(editForm.steps) ??
           "Fix the test configuration before saving.",
       );
-      return;
+      return false;
     }
 
     try {
@@ -2100,6 +2680,9 @@ export function TestTemplateEditor({
         matchOptions: savePayload.matchOptions ?? null,
         // Same null-clears-the-field convention for the predicate override.
         predicates: savePayload.predicates ?? null,
+        // And for the judge opt-out, so turning the switch back off actually
+        // removes the stored override rather than leaving it in place.
+        judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
       });
       track("eval_test_case_edited", {
         location: "test_template_editor",
@@ -2111,12 +2694,15 @@ export function TestTemplateEditor({
         has_predicates: savePayload.predicates != null,
       });
       toast.success("Changes saved");
+      return true;
     } catch (error) {
       console.error("Failed to save:", error);
       toast.error(getBillingErrorMessage(error, "Failed to save changes"));
       throw error;
     }
   };
+  // Kept current so `runTest` never awaits a save built from a stale draft.
+  handleSaveRef.current = handleSave;
 
   const buildSelectedCompareModels = (
     modelValues: string[],
@@ -2163,6 +2749,7 @@ export function TestTemplateEditor({
             // previously-persisted case-level matchOptions override.
             matchOptions: savePayload.matchOptions ?? null,
             predicates: savePayload.predicates ?? null,
+            judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -2399,6 +2986,7 @@ export function TestTemplateEditor({
     }
 
     if (simpleToolsBlock) {
+      setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
       return;
     }
@@ -2509,7 +3097,9 @@ export function TestTemplateEditor({
             query: savePayload.query,
             expectedToolCalls: savePayload.expectedToolCalls,
             isNegativeTest: savePayload.isNegativeTest,
-            runs: iterationOverride,
+            // The workspace owns the count (saved with the case, edited in the
+            // Next run sheet); only the old page has the per-run override.
+            runs: useWorkspace ? editForm.runs ?? 1 : iterationOverride,
             expectedOutput: savePayload.expectedOutput,
             steps: savePayload.steps,
             advancedConfig,
@@ -2572,13 +3162,16 @@ export function TestTemplateEditor({
     // the Steps replay — the 1:1 mirror of the authored steps. Pure prompt+grade
     // cases keep Chat: a transcript predicate like `toolCalledWith` (derived
     // from expectedToolCalls) is a grade, NOT a recorded widget step.
-    const defaultRunColumnTab: RunColumnTab = normalizeSteps(
-      savePayload.steps,
-    ).some(
-      (s) =>
-        s.kind === "interact" ||
-        (s.kind === "assert" && isWidgetAssertion(s.assertion)),
-    )
+    // On the workspace the run opens on its Scorecard — the question a person
+    // pressed Run to answer. The interact/assert heuristic below stays for
+    // /evals, which has no scorecard to open on.
+    const defaultRunColumnTab: RunColumnTab = useWorkspace
+      ? "scorecard"
+      : normalizeSteps(savePayload.steps).some(
+          (s) =>
+            s.kind === "interact" ||
+            (s.kind === "assert" && isWidgetAssertion(s.assertion)),
+        )
       ? "steps"
       : "chat";
     setRunColumnTabByModel((previous) => ({
@@ -2596,6 +3189,15 @@ export function TestTemplateEditor({
         }
       }
       const startedAt = Date.now();
+      const launchSnapshot = {
+        steps: savePayload.steps,
+        predicates: savePayload.predicates,
+        matchOptions: savePayload.matchOptions,
+        expectedOutput: savePayload.expectedOutput,
+        isNegativeTest: savePayload.isNegativeTest,
+        runs: useWorkspace ? editForm.runs ?? 1 : iterationOverride,
+        namedHostId: quickRunHostPlan.namedHostId,
+      };
       for (const { modelValue, modelLabel } of preparedRuns) {
         const prior = previous[modelValue];
         const isRetrying =
@@ -2617,6 +3219,8 @@ export function TestTemplateEditor({
           error: null,
           previewTrace: comparePreviewTrace,
           previewExpectedToolCalls,
+          attemptId: createAttemptId(),
+          launchSnapshot: { ...launchSnapshot, modelValue },
         };
       }
       for (const { modelValue, modelLabel, error } of preparationFailures) {
@@ -2632,6 +3236,8 @@ export function TestTemplateEditor({
       return next;
     });
     setReplayIteration(null);
+    setInspectIterationId(null);
+    setMissingAppEvidenceStepId(null);
     if (selectedModelValues.length > 1) {
       // Multi-model compare keeps the dedicated side-by-side grid view.
       openRunView("run_compare");
@@ -2778,7 +3384,8 @@ export function TestTemplateEditor({
                         existing.streamingMetrics?.toolCallCount ?? 0,
                       currentTurnIndex: initialEvalStreamState.currentTurnIndex,
                       stepStatus: existing.streamingStepStatus ?? {},
-                      liveBrowserSteps: existing.streamingLiveBrowserSteps ?? [],
+                      liveBrowserSteps:
+                        existing.streamingLiveBrowserSteps ?? [],
                       liveBrowserFrameSequence:
                         existing.streamingLiveBrowserFrameSequence ?? 0,
                     },
@@ -3086,6 +3693,173 @@ export function TestTemplateEditor({
     suiteRuns,
   );
 
+  const inspectIteration =
+    inspectIterationId == null
+      ? null
+      : [
+          replayIteration,
+          routeCompareAnchorIteration,
+          ...recentIterations,
+        ].find((it) => it?._id === inspectIterationId) ?? null;
+  const workspaceDraft = {
+    steps: editForm?.steps,
+    predicates: resolveCasePredicates(
+      (suite?.defaultPredicates ?? []) as Predicate[],
+      editForm?.predicates,
+    ),
+    matchOptions: resolveMatchOptions(
+      suite?.defaultMatchOptions,
+      editForm?.matchOptions,
+    ),
+    expectedOutput: editForm?.expectedOutput ?? "",
+    isNegativeTest: simpleToolsChoice === "noTool",
+  };
+  const workspacePaneView = paneViewFor({
+    explicit: replayIteration
+      ? {
+          iteration: replayIteration,
+          source:
+            replayIteration._id === routeCompareAnchorIteration?._id
+              ? "route"
+              : "history",
+        }
+      : null,
+    liveRecordMode,
+    showLive: showRunInPreview,
+    liveRecord: previewRecord,
+    latestCandidates: [
+      routeCompareAnchorIteration,
+      ...recentIterations,
+      lastSavedIteration,
+    ],
+    specTrace: specPreviewTrace,
+    showSpecOverride,
+  });
+  const workspaceSelectedTrial: SelectedTrial | null =
+    workspacePaneView.kind === "trial" ? workspacePaneView.trial : null;
+  const workspaceLeftView = leftViewFor({
+    inspect: inspectIteration,
+    draft: workspaceDraft,
+    selected: workspaceSelectedTrial,
+  });
+  const workspaceOverlayTrial =
+    workspaceLeftView.kind === "editing"
+      ? workspaceLeftView.overlay?.trial
+      : null;
+  const workspaceOverlayIteration = selectedTrialIteration(
+    workspaceOverlayTrial ?? null,
+  );
+  // Narrowed once here: TypeScript does not carry a discriminant narrowed on
+  // `workspacePaneView.trial.kind` into the JSX callbacks below.
+  const workspaceLiveRecord =
+    workspacePaneView.kind === "trial" &&
+    workspacePaneView.trial.kind === "live"
+      ? workspacePaneView.trial.record
+      : null;
+  const workspacePersistedIteration =
+    workspacePaneView.kind === "trial" &&
+    workspacePaneView.trial.kind === "persisted"
+      ? workspacePaneView.trial.iteration
+      : null;
+  const workspaceOverlay = workspaceOverlayIteration
+    ? {
+        stepStatusById: parseStepStatusById(
+          workspaceOverlayIteration.metadata as
+            | Parameters<typeof parseStepStatusById>[0]
+            | undefined,
+        ),
+      }
+    : null;
+  /**
+   * Per-step verdicts for the workspace's deep step list, gated exactly like
+   * the form's overlay — only while the selected trial still matches the
+   * draft, so a stale run never paints ticks onto edited steps. The persisted
+   * map wins once it lands; `parseStepStatusById` returns an EMPTY map (never
+   * undefined) for an iteration with no per-step metadata, so fall back on
+   * `.size`, not on nullishness.
+   */
+  const workspaceStepStatusById = workspaceOverlayTrial
+    ? (workspaceOverlay?.stepStatusById?.size ?? 0) > 0
+      ? workspaceOverlay?.stepStatusById
+      : liveStepStatusById
+    : undefined;
+  const workspaceStepStatusByTurn =
+    workspaceOverlayTrial?.kind === "live" ? liveStepStatusByTurn : undefined;
+  /**
+   * "Inspecting <trial>" banner, shared by both left-column editors: the form
+   * hosts it in `inspectHeader`, the deep step list in its own pane header.
+   */
+  const workspaceInspectStrip =
+    workspaceLeftView.kind === "inspecting" ? (
+      <InspectStrip
+        iteration={workspaceLeftView.iteration}
+        edited={
+          !signaturesMatch(workspaceDraft, {
+            steps: workspaceLeftView.iteration.testCaseSnapshot?.steps,
+            predicates:
+              workspaceLeftView.iteration.testCaseSnapshot?.predicates,
+            matchOptions:
+              workspaceLeftView.iteration.testCaseSnapshot?.matchOptions,
+            expectedOutput:
+              workspaceLeftView.iteration.testCaseSnapshot?.expectedOutput,
+            isNegativeTest:
+              workspaceLeftView.iteration.testCaseSnapshot?.isNegativeTest,
+          })
+        }
+        onEditCase={() => setInspectIterationId(null)}
+      />
+    ) : null;
+  const workspaceInspectSteps =
+    workspaceLeftView.kind === "inspecting"
+      ? workspaceLeftView.iteration.testCaseSnapshot?.steps
+      : undefined;
+  /**
+   * The chain for the selected trial, as an object rather than a slot.
+   *
+   * `trialChainSlotFor` renders it; the scorecard's route row needs to READ
+   * it, because on a run with no score rows the analyzer's selection verdict
+   * is the only fact about whether the route held.
+   *
+   * A plain const, not a `useMemo`: everything in this region runs after the
+   * component's early return for a missing case, so a hook here would change
+   * the hook count between renders. `TrialScorecard` memoizes its own build.
+   */
+  const workspaceTrialChain = (() => {
+    const iteration = workspacePersistedIteration;
+    if (!iteration || !chainSlotEnabled) return null;
+    if (iteration.suiteRunId) {
+      return trialChains.chains.get(iteration._id) ?? null;
+    }
+    const live =
+      recentIterations.find((it) => it._id === iteration._id) ?? iteration;
+    return chainForQuickRunIteration(live);
+  })();
+
+  /** What the LEFT pane is showing, as the scorecard model's input. */
+  const workspaceDraftScorecardInput = {
+    numbering: useSpine ? ("action" as const) : ("flat" as const),
+    steps: editForm?.steps ?? [],
+    toolsChoice: simpleToolsChoice,
+    kind: editForm?.kind,
+    matchOptions: editForm?.matchOptions,
+    suiteDefaultMatchOptions: suite?.defaultMatchOptions,
+    predicates: editForm?.predicates,
+    suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+    expectedOutput: editForm?.expectedOutput,
+    judgeConfigOverride: editForm?.judgeConfigOverride,
+    suiteJudgeConfig: suite?.judgeConfig,
+    suiteJudgeRubric: suite?.judgeRubric,
+  };
+
+  const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
+    ?.suiteRunId
+    ? suiteRuns.find(
+        (run) =>
+          run._id ===
+          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+      ) ?? null
+    : null;
+
   const latestAvailableResult = latestAvailableIteration
     ? computeIterationResult(latestAvailableIteration)
     : null;
@@ -3124,6 +3898,46 @@ export function TestTemplateEditor({
   // (see `casePinnedOnly` below).
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      {simpleCaseEditorEnabled &&
+        editForm &&
+        (draftKind !== "describe" || evalAgent.change) && (
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs">
+            <span className="text-muted-foreground" aria-live="polite">
+              {evalAgent.change
+                ? `Draft updated: ${evalAgent.change.fields.join(
+                    ", ",
+                  )}. Review before saving.`
+                : "Edit the case or refine it with Ask MCPJam."}
+            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              {evalAgent.change && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!evalAgent.canUndo}
+                  onClick={() => {
+                    try {
+                      getEvalDraft(evalAgent.scope).undo(
+                        evalAgent.change!.revision,
+                      );
+                    } catch (error) {
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "Could not undo edit",
+                      );
+                    }
+                  }}
+                >
+                  Undo
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={evalAgent.open}>
+                Ask MCPJam
+              </Button>
+            </div>
+          </div>
+        )}
       {/* Assert-mode pick chooser: opens when a click is captured in "Add
           checks" mode, builds a widget assertion seeded with the derived
           locator. Portaled, so its position here doesn't affect layout. */}
@@ -3132,7 +3946,40 @@ export function TestTemplateEditor({
         onConfirm={handleAssertPickConfirm}
         onCancel={() => setPendingPick(null)}
       />
-      {editorMode === "config" ? (
+      {draftKind === "describe" &&
+      editForm &&
+      !deepEditor &&
+      !liveRecordMode ? (
+        <DescribeCaseWorkspace
+          title={editForm.title}
+          onTitleChange={(title) =>
+            setEditForm((current) =>
+              current ? { ...current, title } : current,
+            )
+          }
+          onAsk={evalAgent.open}
+          onSave={() => void handleSave()}
+          saveDisabled={savePrimaryDisabled}
+          caseForm={
+            <StepListEditor
+              steps={editForm.steps}
+              onStepsChange={setSteps}
+              availableTools={assertableTools}
+              argumentMatching={
+                resolveMatchOptions(
+                  suite?.defaultMatchOptions,
+                  editForm.matchOptions,
+                ).argumentMatching
+              }
+              suiteServers={effectiveSuiteServers}
+              projectServers={projectServers}
+              evalValidationBorderClass={evalValidationBorderClass}
+              syncedStepId={syncedStepId}
+              onHoverStep={setSyncedStepId}
+            />
+          }
+        />
+      ) : editorMode === "config" ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="border-b border-border px-4 py-2.5 sm:px-6">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
@@ -3240,7 +4087,10 @@ export function TestTemplateEditor({
                     </Button>
                   )
                 ) : null}
-                {editForm ? (
+                {/* The gear duplicated the whole check list and owned the one
+                    control the spine did not have a home for (argument
+                    matching). On the spine it is gone; `/evals` keeps it. */}
+                {editForm && !useSpine ? (
                   <CasePassCriteriaPopover
                     matchOptions={editForm.matchOptions}
                     onMatchOptionsChange={(next) =>
@@ -3273,74 +4123,93 @@ export function TestTemplateEditor({
                     }}
                   />
                 ) : null}
-                {useSimpleForm ? (
+                {useWorkspace ? (
                   <CaseSuiteChips
                     models={selectedModelValues}
+                    modelLabelByValue={modelLabelByValue}
+                    availableModels={availableModels}
+                    disabled={isRunningCompare}
+                    onModelChange={(value) => setSelectedModelValues([value])}
                     trials={editForm?.runs ?? 1}
+                    onTrialsChange={(next) =>
+                      setEditForm((current) =>
+                        current ? { ...current, runs: next } : current,
+                      )
+                    }
                     hostLabel={
                       selectedQuickRunHostOption?.label ?? suiteHostLabel
                     }
+                    hostValue={
+                      quickRunHostOptions.length > 0
+                        ? quickRunHostSelection ?? ""
+                        : suiteHostLabel
+                    }
+                    hostOptions={quickRunHostOptions.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
+                    onHostChange={setQuickRunHostSelection}
                     onOpenSuiteSettings={onOpenSuiteSettings}
                   />
                 ) : quickRunHostOptions.length > 0 ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <label className="inline-flex cursor-pointer items-center">
-                          <span className="sr-only">Client</span>
-                          <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
-                            <HostChipLogo
-                              logoSrc={selectedQuickRunHostLogoSrc}
-                              name={selectedQuickRunHostOption?.label ?? "Client"}
-                              size="sm"
-                            />
-                            <select
-                              className="min-w-0 max-w-[5.5rem] truncate bg-transparent text-xs text-foreground outline-none"
-                              value={quickRunHostSelection ?? ""}
-                              onChange={(event) =>
-                                setQuickRunHostSelection(event.target.value)
-                              }
-                              aria-label="Client for the next run"
-                              disabled={isRunningCompare}
-                            >
-                              {quickRunHostOptions.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </span>
-                        </label>
-                      </TooltipTrigger>
-                      <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        Client for the next run
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    // Attachment-less suite: the run uses the suite's own host
-                    // config (defaulting to MCPJam). Show it read-only so the
-                    // host is always visible — never an empty/hostless state.
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span
-                          className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5 text-xs text-foreground"
-                          aria-label="Client for the next run"
-                        >
-                          {suiteHostLogoSrc ? (
-                            <img
-                              src={suiteHostLogoSrc}
-                              alt=""
-                              className="size-3.5 shrink-0 object-contain"
-                            />
-                          ) : null}
-                          <span className="truncate">{suiteHostLabel}</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <label className="inline-flex cursor-pointer items-center">
+                        <span className="sr-only">Client</span>
+                        <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
+                          <HostChipLogo
+                            logoSrc={selectedQuickRunHostLogoSrc}
+                            name={selectedQuickRunHostOption?.label ?? "Client"}
+                            size="sm"
+                          />
+                          <select
+                            className="min-w-0 max-w-[5.5rem] truncate bg-transparent text-xs text-foreground outline-none"
+                            value={quickRunHostSelection ?? ""}
+                            onChange={(event) =>
+                              setQuickRunHostSelection(event.target.value)
+                            }
+                            aria-label="Client for the next run"
+                            disabled={isRunningCompare}
+                          >
+                            {quickRunHostOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
                         </span>
-                      </TooltipTrigger>
-                      <TooltipContent variant="muted" side="top" sideOffset={6}>
-                        Client for the next run
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                  {useSimpleForm ? null : (
+                      </label>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Client for the next run
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  // Attachment-less suite: the run uses the suite's own host
+                  // config (defaulting to MCPJam). Show it read-only so the
+                  // host is always visible — never an empty/hostless state.
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5 text-xs text-foreground"
+                        aria-label="Client for the next run"
+                      >
+                        {suiteHostLogoSrc ? (
+                          <img
+                            src={suiteHostLogoSrc}
+                            alt=""
+                            className="size-3.5 shrink-0 object-contain"
+                          />
+                        ) : null}
+                        <span className="truncate">{suiteHostLabel}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      Client for the next run
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <label className="inline-flex cursor-pointer items-center">
@@ -3368,38 +4237,42 @@ export function TestTemplateEditor({
                       Iterations for the next run
                     </TooltipContent>
                   </Tooltip>
-                  )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant={liveRecordMode ? "secondary" : "outline"}
-                      size="sm"
-                      className="h-8"
-                      aria-pressed={liveRecordMode}
-                      onClick={() => {
-                        // Turning ON: leave the spec override so the live panel
-                        // shows. The preview gate keeps past-run review
-                        // (`replayIteration`) winning over Record mode.
-                        if (!liveRecordMode) setShowSpecOverride(false);
-                        setLiveRecordMode((v) => !v);
-                      }}
-                    >
-                      <Circle
-                        className={
-                          "size-3.5" +
-                          (liveRecordMode ? " fill-red-500 text-red-500" : "")
-                        }
-                      />
-                      {liveRecordMode ? "Recording" : "Record"}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent variant="muted" side="top" sideOffset={6}>
-                    {liveRecordMode
-                      ? "Live record mode — click widgets to interact (no grading)"
-                      : "Record: open a live playground to click widgets"}
-                  </TooltipContent>
-                </Tooltip>
+                )}
+                {useWorkspace ? null : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant={liveRecordMode ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-8"
+                        aria-pressed={liveRecordMode}
+                        onClick={() => {
+                          // Turning ON: leave the spec override so the live panel
+                          // shows. The preview gate keeps past-run review
+                          // (`replayIteration`) winning over Record mode.
+                          if (!liveRecordMode) setShowSpecOverride(false);
+                          setLiveRecordMode((v) => !v);
+                        }}
+                      >
+                        <Circle
+                          className={
+                            "size-3.5" +
+                            (liveRecordMode
+                              ? " fill-destructive text-destructive"
+                              : "")
+                          }
+                        />
+                        {liveRecordMode ? "Recording" : "Record"}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="top" sideOffset={6}>
+                      {liveRecordMode
+                        ? "Live record mode — click widgets to interact (no grading)"
+                        : "Record: open a live playground to click widgets"}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 {runDisabledTooltip ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -3486,7 +4359,7 @@ export function TestTemplateEditor({
                     a render check, or no model selected. */}
                 <QuickCaseRunCostEstimateHint
                   suiteId={suiteId}
-                  caseId={draftKind ? null : (currentTestCase?._id ?? null)}
+                  caseId={draftKind ? null : currentTestCase?._id ?? null}
                   models={draftRunEstimateModels}
                   runs={iterationOverride}
                   draft={draftRunEstimateHeuristic}
@@ -3514,91 +4387,26 @@ export function TestTemplateEditor({
               </div>
             </div>
           </div>
-          <div className="flex min-h-0 min-w-0 flex-1">
-            <div className="flex w-1/2 min-h-0 flex-col gap-5 overflow-y-auto overscroll-y-contain border-r border-border px-4 py-5 sm:px-6">
-              {replayIteration && !showSpecOverride ? (
-                <ReplayedScenarioPane
-                  iteration={replayIteration}
-                  edited={replaySnapshotEdited}
-                  onBackToEditing={() => setReplayIteration(null)}
-                />
-              ) : (
-                <>
-                  {runPrimaryDisabled &&
-                  !isRunningCompare &&
-                  runDisabledTooltip ? (
-                    <p
-                      className="text-xs leading-snug text-muted-foreground sm:text-right"
-                      data-testid="test-template-run-blocked-hint"
+          {useWorkspace ? (
+            <>
+              <CaseWorkspaceLayout
+                left={
+                  editForm && deepEditor ? (
+                    // The Steps hatch stays INSIDE the workspace: same trial on
+                    // the right, one click back. It used to swap the whole page
+                    // for the old editor with no way back until the case
+                    // changed.
+                    <WorkspaceStepsPane
+                      header={workspaceInspectStrip}
+                      onBackToForm={() => setDeepEditor(false)}
                     >
-                      {runDisabledTooltip}
-                    </p>
-                  ) : null}
-
-                  <div className="space-y-4 pt-1">
-                    {editForm && useSimpleForm ? (
-                      // Keyed by case: the form holds the tools tri-state and
-                      // the stashed tools in local state, and carrying either
-                      // across a case switch would let a fresh prompt-only
-                      // draft inherit "tools" and save as a negative test.
-                      <SimpleCaseForm
-                        key={`simple-case:${currentTestCase?._id ?? "none"}`}
-                        steps={editForm.steps}
-                        onStepsChange={setSteps}
-                        matchOptions={editForm.matchOptions}
-                        kind={editForm.kind}
-                        onKindChange={(next) =>
-                          setEditForm((current) =>
-                            current ? { ...current, kind: next } : current,
-                          )
-                        }
-                        onMatchOptionsChange={(next) =>
-                          setEditForm((current) =>
-                            current
-                              ? { ...current, matchOptions: next }
-                              : current,
-                          )
-                        }
-                        suiteDefaultMatchOptions={suite?.defaultMatchOptions}
-                        expectedOutput={editForm.expectedOutput}
-                        onExpectedOutputChange={(next) =>
-                          setEditForm((current) =>
-                            current
-                              ? { ...current, expectedOutput: next }
-                              : current,
-                          )
-                        }
-                        predicates={editForm.predicates}
-                        onPredicatesChange={(next) =>
-                          setEditForm((current) =>
-                            current
-                              ? { ...current, predicates: next }
-                              : current,
-                          )
-                        }
-                        suiteDefaultPredicates={
-                          (suite?.defaultPredicates ?? []) as Predicate[]
-                        }
-                        availableTools={assertableTools.map((tool) =>
-                          typeof tool === "string" ? tool : tool.name,
-                        )}
-                        isNegativeTest={currentTestCase.isNegativeTest}
-                        onOpenDeepEditor={() => setDeepEditor(true)}
-                        onToolsChoiceBlockReasonChange={
-                          setToolsChoiceBlockReason
-                        }
-                        evalValidationBorderClass={evalValidationBorderClass}
-                        autoFocusPrompt={draftKind === "record"}
-                      />
-                    ) : editForm ? (
                       <StepListEditor
-                        steps={editForm.steps}
-                        onStepsChange={setSteps}
+                        steps={workspaceInspectSteps ?? editForm.steps}
+                        onStepsChange={
+                          workspaceInspectSteps ? () => undefined : setSteps
+                        }
+                        readOnly={Boolean(workspaceInspectSteps)}
                         availableTools={assertableTools}
-                        // Thread the effective argumentMatching mode (suite
-                        // default merged with case override) so the per-leaf
-                        // placeholder picker offers the right options and
-                        // disables itself in `ignore` mode.
                         argumentMatching={
                           resolveMatchOptions(
                             suite?.defaultMatchOptions,
@@ -3608,74 +4416,280 @@ export function TestTemplateEditor({
                         suiteServers={effectiveSuiteServers}
                         projectServers={projectServers}
                         evalValidationBorderClass={evalValidationBorderClass}
-                        stepStatusByTurn={liveStepStatusByTurn}
-                        stepStatusById={liveStepStatusById}
+                        stepStatusByTurn={
+                          workspaceInspectSteps
+                            ? undefined
+                            : workspaceStepStatusByTurn
+                        }
+                        stepStatusById={
+                          workspaceInspectSteps
+                            ? undefined
+                            : workspaceStepStatusById
+                        }
                         syncedStepId={syncedStepId}
                         onHoverStep={setSyncedStepId}
                       />
-                    ) : null}
-                  </div>
-
-                  {!isDraft && currentTestCase._id ? (
-                    <div className="pt-1">
-                      <EvalAttachmentsEditor
-                        suiteId={suiteId}
-                        testCaseId={currentTestCase._id}
-                        value={
-                          (currentTestCase.attachments as
-                            | EvalAttachment[]
-                            | undefined) ?? []
-                        }
-                      />
-                    </div>
-                  ) : null}
-
-                  {currentTestCase.lastMessageRun ? (
-                    <div className="flex items-center justify-end">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs text-muted-foreground"
-                        onClick={() => void handleClearSavedResult()}
-                      >
-                        Clear saved latest result
-                      </Button>
-                    </div>
-                  ) : null}
-                </>
-              )}
-            </div>
-            <CasePreviewPane
-              tab={previewTab}
-              onTabChange={setPreviewTab}
-              runsCount={recentIterations.length}
-              runsDotClass={
-                latestAvailableIteration ? latestRunNavCue.dotClass : undefined
-              }
-              previewSlot={
-                replayIteration && !showSpecOverride ? (
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                    <IterationDetails
-                      iteration={replayIteration}
-                      testCase={currentTestCase}
-                      serverNames={effectiveSuiteServers}
-                      layoutMode="full"
-                      judgeCase={replayJudgeCase}
-                      // A trial from a real suite run: labellable. The
-                      // backend refuses a quick-run trial anyway
-                      // (`JUDGE_REVIEW_NO_RUN`), and the panel renders that
-                      // refusal rather than pretending.
-                      enableJudgeReview
-                      trialChainSlot={trialChainSlotFor(replayIteration)}
+                    </WorkspaceStepsPane>
+                  ) : editForm && workspaceLeftView.kind === "inspecting" ? (
+                    <SimpleCaseForm
+                      key={`simple-case-inspect:${workspaceLeftView.iteration._id}`}
+                      steps={
+                        workspaceLeftView.iteration.testCaseSnapshot?.steps ??
+                        editForm.steps
+                      }
+                      onStepsChange={() => undefined}
+                      matchOptions={
+                        workspaceLeftView.iteration.testCaseSnapshot
+                          ?.matchOptions
+                      }
+                      onMatchOptionsChange={() => undefined}
+                      expectedOutput={
+                        workspaceLeftView.iteration.testCaseSnapshot
+                          ?.expectedOutput
+                      }
+                      onExpectedOutputChange={() => undefined}
+                      onPredicatesChange={() => undefined}
+                      availableTools={assertableTools.map((tool) =>
+                        typeof tool === "string" ? tool : tool.name,
+                      )}
+                      onOpenDeepEditor={() => setDeepEditor(true)}
+                      readOnly
+                      onSelectInAppStep={setSyncedStepId}
+                      inspectHeader={workspaceInspectStrip}
+                      snapshotPredicates={
+                        workspaceLeftView.iteration.testCaseSnapshot
+                          ?.predicates as Predicate[] | undefined
+                      }
+                      suiteJudgeConfig={
+                        workspaceTrialRun?.configSnapshot?.judgeConfig ??
+                        suite?.judgeConfig
+                      }
+                      suiteJudgeRubric={suite?.judgeRubric}
+                      capabilities={caseCapabilities.capabilities}
                     />
-                  </div>
-                ) : liveRecordMode && !showSpecOverride ? (
-                  // Record mode: a LIVE, auto-connected playground bound to this
-                  // case. Click live widgets; no grading (runner is out of this
-                  // path). Stable key = case id so the session/cart survives
-                  // re-renders within a case.
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                  ) : editForm && useSpine ? (
+                    <CaseSpine
+                      key={`spine:${currentTestCase?._id ?? "none"}`}
+                      steps={editForm.steps}
+                      onStepsChange={setSteps}
+                      matchOptions={editForm.matchOptions}
+                      onMatchOptionsChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, matchOptions: next }
+                            : current,
+                        )
+                      }
+                      suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                      kind={editForm.kind}
+                      onKindChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, kind: next } : current,
+                        )
+                      }
+                      expectedOutput={editForm.expectedOutput}
+                      onExpectedOutputChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, expectedOutput: next }
+                            : current,
+                        )
+                      }
+                      predicates={editForm.predicates}
+                      onPredicatesChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, predicates: next } : current,
+                        )
+                      }
+                      suiteDefaultPredicates={
+                        (suite?.defaultPredicates ?? []) as Predicate[]
+                      }
+                      availableTools={assertableTools}
+                      suiteServers={effectiveSuiteServers}
+                      projectServers={projectServers}
+                      isNegativeTest={currentTestCase.isNegativeTest}
+                      toolsChoice={simpleToolsChoice}
+                      onToolsChoiceChange={setSimpleToolsChoice}
+                      stashedTools={simpleStashedTools}
+                      onStashedToolsChange={setSimpleStashedTools}
+                      judgeConfigOverride={editForm.judgeConfigOverride}
+                      onJudgeConfigOverrideChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, judgeConfigOverride: next }
+                            : current,
+                        )
+                      }
+                      suiteJudgeConfig={suite?.judgeConfig}
+                      suiteJudgeRubric={suite?.judgeRubric}
+                      capabilities={caseCapabilities.capabilities}
+                      onOpenSuiteSettings={onOpenSuiteSettings}
+                      evalValidationBorderClass={evalValidationBorderClass}
+                      autoFocusPrompt={draftKind === "record"}
+                      validationAttempted={simpleValidationAttempted}
+                      recording={liveRecordMode}
+                      recordEntryPrimary={draftKind === "record"}
+                      onStartRecording={() => {
+                        setShowSpecOverride(false);
+                        setCaptureMode("record");
+                        setLiveRecordMode(true);
+                      }}
+                      onStopRecording={() => setLiveRecordMode(false)}
+                      onAddCheck={() => setCaptureMode("assert")}
+                      stepStatusById={workspaceStepStatusById}
+                      stepStatusByTurn={workspaceStepStatusByTurn}
+                      syncedStepId={syncedStepId}
+                      onHoverStep={setSyncedStepId}
+                      onSelectStep={(stepId) => {
+                        setSyncedStepId(stepId);
+                        const liveSteps =
+                          workspaceSelectedTrial?.kind === "live"
+                            ? workspaceSelectedTrial.record
+                                .streamingLiveBrowserSteps
+                            : undefined;
+                        if (
+                          workspaceSelectedTrial?.kind === "live" &&
+                          (liveSteps?.length ?? 0) === 0
+                        ) {
+                          setMissingAppEvidenceStepId(stepId);
+                        } else {
+                          setMissingAppEvidenceStepId(null);
+                        }
+                      }}
+                      runControl={
+                        onRunCase ? (
+                          <div className="space-y-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8"
+                              data-testid="case-run-test"
+                              disabled={
+                                isDraft ||
+                                runTestPending ||
+                                Boolean(simpleToolsBlock)
+                              }
+                              onClick={() => void runTest()}
+                            >
+                              <Play className="size-3.5 fill-current" />
+                              Run test
+                            </Button>
+                            <p className="text-[11px] text-muted-foreground">
+                              {isDraft
+                                ? "Save this case to run it."
+                                : "Runs this case using the selected models and trial count, then judges the results."}
+                            </p>
+                          </div>
+                        ) : null
+                      }
+                    />
+                  ) : editForm ? (
+                    <SimpleCaseForm
+                      key={`simple-case:${currentTestCase?._id ?? "none"}`}
+                      steps={editForm.steps}
+                      onStepsChange={setSteps}
+                      matchOptions={editForm.matchOptions}
+                      kind={editForm.kind}
+                      onKindChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, kind: next } : current,
+                        )
+                      }
+                      onMatchOptionsChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, matchOptions: next }
+                            : current,
+                        )
+                      }
+                      suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                      expectedOutput={editForm.expectedOutput}
+                      onExpectedOutputChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, expectedOutput: next }
+                            : current,
+                        )
+                      }
+                      predicates={editForm.predicates}
+                      onPredicatesChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, predicates: next } : current,
+                        )
+                      }
+                      suiteDefaultPredicates={
+                        (suite?.defaultPredicates ?? []) as Predicate[]
+                      }
+                      availableTools={assertableTools.map((tool) =>
+                        typeof tool === "string" ? tool : tool.name,
+                      )}
+                      isNegativeTest={currentTestCase.isNegativeTest}
+                      onOpenDeepEditor={() => setDeepEditor(true)}
+                      toolsChoice={simpleToolsChoice}
+                      onToolsChoiceChange={setSimpleToolsChoice}
+                      stashedTools={simpleStashedTools}
+                      onStashedToolsChange={setSimpleStashedTools}
+                      judgeConfigOverride={editForm.judgeConfigOverride}
+                      onJudgeConfigOverrideChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, judgeConfigOverride: next }
+                            : current,
+                        )
+                      }
+                      suiteJudgeConfig={suite?.judgeConfig}
+                      suiteJudgeRubric={suite?.judgeRubric}
+                      capabilities={caseCapabilities.capabilities}
+                      onOpenSuiteSettings={onOpenSuiteSettings}
+                      evalValidationBorderClass={evalValidationBorderClass}
+                      autoFocusPrompt={draftKind === "record"}
+                      validationAttempted={simpleValidationAttempted}
+                      recording={liveRecordMode}
+                      recordEntryPrimary={draftKind === "record"}
+                      onStartRecording={() => {
+                        setShowSpecOverride(false);
+                        setCaptureMode("record");
+                        setLiveRecordMode(true);
+                      }}
+                      onStopRecording={() => setLiveRecordMode(false)}
+                      onAddCheck={() => setCaptureMode("assert")}
+                      overlay={workspaceOverlay}
+                      onSelectInAppStep={(stepId) => {
+                        setSyncedStepId(stepId);
+                        const liveSteps =
+                          workspaceSelectedTrial?.kind === "live"
+                            ? workspaceSelectedTrial.record
+                                .streamingLiveBrowserSteps
+                            : undefined;
+                        if (
+                          workspaceSelectedTrial?.kind === "live" &&
+                          (liveSteps?.length ?? 0) === 0
+                        ) {
+                          setMissingAppEvidenceStepId(stepId);
+                        } else {
+                          setMissingAppEvidenceStepId(null);
+                        }
+                      }}
+                    />
+                  ) : null
+                }
+                leftFooter={
+                  // Attachments used to hang off the old page only, so a case
+                  // opened on the workspace could not reach its own files.
+                  !isDraft && currentTestCase._id ? (
+                    <EvalAttachmentsEditor
+                      suiteId={suiteId}
+                      testCaseId={currentTestCase._id}
+                      value={
+                        (currentTestCase.attachments as
+                          | EvalAttachment[]
+                          | undefined) ?? []
+                      }
+                    />
+                  ) : null
+                }
+                header={
+                  workspacePaneView.kind === "recording" ? (
                     <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
                       <span className="text-[11px] text-muted-foreground">
                         Click widgets to record ·
@@ -3684,13 +4698,59 @@ export function TestTemplateEditor({
                         mode={captureMode}
                         onChange={setCaptureMode}
                       />
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {captureMode === "assert"
-                          ? "Click an element to add a check about it."
-                          : "Click inside a view to record actions."}
-                      </span>
                     </div>
-                    <div className="min-h-0 flex-1">
+                  ) : (
+                    <TrialHeader
+                      trial={workspaceSelectedTrial}
+                      chain={
+                        selectedTrialIteration(workspaceSelectedTrial)
+                          ?.suiteRunId
+                          ? trialChains.chains.get(
+                              selectedTrialIteration(workspaceSelectedTrial)!
+                                ._id,
+                            )
+                          : selectedTrialIteration(workspaceSelectedTrial)
+                          ? chainForQuickRunIteration(
+                              recentIterations.find(
+                                (it) =>
+                                  it._id ===
+                                  selectedTrialIteration(workspaceSelectedTrial)
+                                    ?._id,
+                              ) ??
+                                selectedTrialIteration(workspaceSelectedTrial)!,
+                            )
+                          : null
+                      }
+                      run={workspaceTrialRun}
+                      judgeCase={resolveIterationJudge(
+                        selectedTrialIteration(workspaceSelectedTrial),
+                        suiteRuns,
+                      )}
+                      iterations={recentIterations}
+                      suiteRuns={suiteRuns}
+                      hostNamesById={hostNamesById}
+                      defaultHostLabel={suiteHostLabel}
+                      hasHostAttachments={hasHostAttachments}
+                      onSelectIteration={(it) => {
+                        setReplayIteration(it);
+                        setInspectIterationId(it._id);
+                        setShowSpecOverride(false);
+                        setMissingAppEvidenceStepId(null);
+                      }}
+                    />
+                  )
+                }
+                evidence={
+                  <>
+                    {missingAppEvidenceStepId ? (
+                      <div
+                        className="border-b border-border px-4 py-2 text-[11px] text-muted-foreground"
+                        data-testid="case-workspace-no-app-evidence"
+                      >
+                        No app evidence was captured for this step
+                      </div>
+                    ) : null}
+                    {workspacePaneView.kind === "recording" ? (
                       <EvalLiveChatPanel
                         key={`eval-live:${currentTestCase?._id ?? "none"}`}
                         projectId={projectId}
@@ -3701,120 +4761,527 @@ export function TestTemplateEditor({
                         evalChatHandoff={liveChatHandoff}
                         recorder={previewRecorder}
                       />
-                    </div>
-                  </div>
-                ) : showRunInPreview && previewRecord ? (
-                  <div className="flex h-full min-h-0 flex-col">
-                    {!isRunningCompare ? (
-                      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-1.5 text-[12px] text-muted-foreground">
-                        <span className="truncate">
-                          Last run · {previewRecord.modelLabel}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 shrink-0 px-2 text-[11px]"
-                          onClick={() => setShowSpecOverride(true)}
-                        >
-                          View spec
-                        </Button>
-                      </div>
-                    ) : null}
-                    <div className="min-h-0 flex-1">
+                    ) : workspaceLiveRecord ? (
                       <RunColumn
-                        record={previewRecord}
+                        record={workspaceLiveRecord}
                         testCase={currentTestCase}
                         authoredSteps={editForm?.steps ?? currentSteps}
                         trialChainSlot={trialChainSlotFor(
-                          previewRecord.iteration ?? null,
+                          workspaceLiveRecord.iteration ?? null,
                         )}
                         serverNames={connectedServerList}
                         projectId={projectId}
                         onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
-                          clearCompareStreamingState(previewRecord.modelValue)
+                          clearCompareStreamingState(
+                            workspaceLiveRecord.modelValue,
+                          )
                         }
                         activeTab={
-                          runColumnTabByModel[previewRecord.modelValue] ??
-                          "chat"
+                          runColumnTabByModel[workspaceLiveRecord.modelValue] ??
+                          "scorecard"
                         }
                         onTabChange={(tab) =>
                           handleRunColumnTabChange(
-                            previewRecord.modelValue,
+                            workspaceLiveRecord.modelValue,
                             tab,
                           )
                         }
                         onRetry={() =>
                           void handleRunCompare({
-                            modelValues: [previewRecord.modelValue],
+                            modelValues: [workspaceLiveRecord.modelValue],
                             sessionMode: "reuse",
                           })
                         }
                         baselineHostStyle={hostConfigBaseline?.hostStyle}
                         syncedStepId={syncedStepId}
                         onSyncStep={setSyncedStepId}
+                        scorecardSlot={
+                          <TrialScorecard
+                            authored={
+                              authoredForTrial({
+                                trial: workspaceSelectedTrial,
+                                draft: workspaceDraftScorecardInput,
+                                run: null,
+                              }).authored
+                            }
+                            iteration={workspaceLiveRecord.iteration ?? null}
+                            steps={
+                              workspaceLiveRecord.launchSnapshot?.steps ??
+                              editForm?.steps ??
+                              []
+                            }
+                            chain={
+                              workspaceLiveRecord.iteration
+                                ? chainForQuickRunIteration(
+                                    workspaceLiveRecord.iteration,
+                                  )
+                                : null
+                            }
+                            liveStepStatusById={liveStepStatusById}
+                            syncedStepId={syncedStepId}
+                            onSyncStep={setSyncedStepId}
+                          />
+                        }
                       />
-                    </div>
-                  </div>
-                ) : latestTracedIteration ? (
-                  // No in-memory run loaded (e.g. fresh open / reload) but the
-                  // case has a past run WITH a trace: default the Preview to that
-                  // run's trace, not the spec — that's the surface users expect
-                  // here. (A brand-new case, or one whose only runs are traceless,
-                  // falls through to the spec.)
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                    ) : workspacePersistedIteration ? (
                       <IterationDetails
-                        iteration={latestTracedIteration}
+                        iteration={workspacePersistedIteration}
+                        requestedTab={trialTabRequest}
                         testCase={currentTestCase}
                         serverNames={effectiveSuiteServers}
                         layoutMode="full"
-                        judgeCase={latestTracedJudgeCase}
+                        judgeCase={resolveIterationJudge(
+                          workspacePersistedIteration,
+                          suiteRuns,
+                        )}
                         enableJudgeReview
-                        trialChainSlot={trialChainSlotFor(latestTracedIteration)}
+                        trialChainSlot={trialChainSlotFor(
+                          workspacePersistedIteration,
+                        )}
+                        syncedStepId={syncedStepId}
+                        onSyncStep={setSyncedStepId}
+                        trialVerdictWord={
+                          workspaceSelectedTrial
+                            ? trialVerdict(workspaceSelectedTrial).word
+                            : undefined
+                        }
+                        scorecard={{
+                          render: (ctx) => (
+                            <TrialScorecard
+                              authored={
+                                authoredForTrial({
+                                  trial: workspaceSelectedTrial,
+                                  draft: workspaceDraftScorecardInput,
+                                  run: workspaceTrialRun ?? null,
+                                  forceSnapshot:
+                                    workspaceLeftView.kind === "inspecting",
+                                }).authored
+                              }
+                              iteration={workspacePersistedIteration}
+                              steps={
+                                workspacePersistedIteration.testCaseSnapshot
+                                  ?.steps ??
+                                editForm?.steps ??
+                                []
+                              }
+                              chain={workspaceTrialChain}
+                              judgeCase={resolveIterationJudge(
+                                workspacePersistedIteration,
+                                suiteRuns,
+                              )}
+                              nextQuestionSlot={nextQuestionForTrial(
+                                workspacePersistedIteration,
+                              )}
+                              envelope={ctx.envelope}
+                              judgeHidden={ctx.reviewActive && ctx.judgeHidden}
+                              suggestionsSlot={
+                                useSpine ? (
+                                  <div ref={suggestionsRef}>
+                                    <SuggestedFromRunSection
+                                      enabled
+                                      batch={suggestionBatch}
+                                      authored={
+                                        authoredForTrial({
+                                          trial: workspaceSelectedTrial,
+                                          draft: workspaceDraftScorecardInput,
+                                          run: workspaceTrialRun ?? null,
+                                        }).authored
+                                      }
+                                      judgeFor={(iteration) =>
+                                        resolveIterationJudge(
+                                          iteration,
+                                          suiteRuns,
+                                        )
+                                      }
+                                      selectedBlob={
+                                        ctx.envelope
+                                          ? {
+                                              iterationId:
+                                                workspacePersistedIteration._id,
+                                              blob: ctx.envelope as never,
+                                            }
+                                          : null
+                                      }
+                                      prompts={(editForm?.steps ?? [])
+                                        .filter(
+                                          (step) => step.kind === "prompt",
+                                        )
+                                        .map((step) =>
+                                          "prompt" in step ? step.prompt : "",
+                                        )}
+                                      dismissed={dismissedSuggestions}
+                                      accepted={acceptedSuggestions}
+                                      onAccept={(suggestion) =>
+                                        acceptSuggestions([suggestion], "row")
+                                      }
+                                      onAcceptAll={(all) =>
+                                        acceptSuggestions(all, "all")
+                                      }
+                                      onDismiss={dismissSuggestion}
+                                    />
+                                  </div>
+                                ) : null
+                              }
+                              judgeSlot={
+                                // The tab owns launch-triggered judging; this
+                                // row owns presentation and the review control.
+                                useSpine ? (
+                                  <CaseJudgeAnswer
+                                    run={workspaceTrialRun ?? null}
+                                    iteration={workspacePersistedIteration}
+                                    isQuickRun={
+                                      !workspacePersistedIteration.suiteRunId
+                                    }
+                                    skippedForCase={
+                                      editForm?.judgeConfigOverride
+                                        ?.goalCompletion?.enabled === false
+                                    }
+                                    hidden={Boolean(
+                                      ctx.reviewActive && ctx.judgeHidden,
+                                    )}
+                                    onOpenSuiteSettings={onOpenSuiteSettings}
+                                  >
+                                    {ctx.reviewActive &&
+                                    resolveIterationJudge(
+                                      workspacePersistedIteration,
+                                      suiteRuns,
+                                    ) ? (
+                                      <TrialJudgeReviewPanel
+                                        key={workspacePersistedIteration._id}
+                                        iterationId={
+                                          workspacePersistedIteration._id
+                                        }
+                                        judgeCase={
+                                          resolveIterationJudge(
+                                            workspacePersistedIteration,
+                                            suiteRuns,
+                                          )!
+                                        }
+                                        onVisibilityChange={
+                                          ctx.onJudgeVisibilityChange
+                                        }
+                                      />
+                                    ) : null}
+                                  </CaseJudgeAnswer>
+                                ) : ctx.reviewActive &&
+                                  resolveIterationJudge(
+                                    workspacePersistedIteration,
+                                    suiteRuns,
+                                  ) ? (
+                                  // Keyed by trial: a switch remounts the
+                                  // panel, so no read or label state from the
+                                  // previous trial survives into this one.
+                                  <TrialJudgeReviewPanel
+                                    key={workspacePersistedIteration._id}
+                                    iterationId={
+                                      workspacePersistedIteration._id
+                                    }
+                                    judgeCase={
+                                      resolveIterationJudge(
+                                        workspacePersistedIteration,
+                                        suiteRuns,
+                                      )!
+                                    }
+                                    onVisibilityChange={
+                                      ctx.onJudgeVisibilityChange
+                                    }
+                                  />
+                                ) : resolveIterationJudge(
+                                    workspacePersistedIteration,
+                                    suiteRuns,
+                                  ) ? (
+                                  <JudgeVerdictPanel
+                                    judgeCase={
+                                      resolveIterationJudge(
+                                        workspacePersistedIteration,
+                                        suiteRuns,
+                                      )!
+                                    }
+                                  />
+                                ) : null
+                              }
+                              scoresSection={ctx.scoresSection}
+                              syncedStepId={syncedStepId}
+                              onSyncStep={setSyncedStepId}
+                            />
+                          ),
+                        }}
+                      />
+                    ) : workspacePaneView.kind === "spec" &&
+                      specPreviewTrace ? (
+                      <div className="flex h-full min-h-0 flex-col overflow-hidden p-3">
+                        <TraceViewer
+                          trace={specPreviewTrace}
+                          forcedViewMode="chat"
+                          hideToolbar
+                          fillContent
+                          chromeDensity="compact"
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground">
+                        Start typing a prompt — the conversation will build
+                        here.
+                      </div>
+                    )}
+                  </>
+                }
+              />
+            </>
+          ) : (
+            <div className="flex min-h-0 min-w-0 flex-1">
+              <div className="flex w-1/2 min-h-0 flex-col gap-5 overflow-y-auto overscroll-y-contain border-r border-border px-4 py-5 sm:px-6">
+                {replayIteration && !showSpecOverride ? (
+                  <ReplayedScenarioPane
+                    iteration={replayIteration}
+                    edited={replaySnapshotEdited}
+                    onBackToEditing={() => setReplayIteration(null)}
+                  />
+                ) : (
+                  <>
+                    {runPrimaryDisabled &&
+                    !isRunningCompare &&
+                    runDisabledTooltip ? (
+                      <p
+                        className="text-xs leading-snug text-muted-foreground sm:text-right"
+                        data-testid="test-template-run-blocked-hint"
+                      >
+                        {runDisabledTooltip}
+                      </p>
+                    ) : null}
+
+                    <div className="space-y-4 pt-1">
+                      {editForm ? (
+                        <StepListEditor
+                          steps={editForm.steps}
+                          onStepsChange={setSteps}
+                          availableTools={assertableTools}
+                          // Thread the effective argumentMatching mode (suite
+                          // default merged with case override) so the per-leaf
+                          // placeholder picker offers the right options and
+                          // disables itself in `ignore` mode.
+                          argumentMatching={
+                            resolveMatchOptions(
+                              suite?.defaultMatchOptions,
+                              editForm.matchOptions,
+                            ).argumentMatching
+                          }
+                          suiteServers={effectiveSuiteServers}
+                          projectServers={projectServers}
+                          evalValidationBorderClass={evalValidationBorderClass}
+                          stepStatusByTurn={liveStepStatusByTurn}
+                          stepStatusById={liveStepStatusById}
+                          syncedStepId={syncedStepId}
+                          onHoverStep={setSyncedStepId}
+                        />
+                      ) : null}
+                    </div>
+
+                    {!isDraft && currentTestCase._id ? (
+                      <div className="pt-1">
+                        <EvalAttachmentsEditor
+                          suiteId={suiteId}
+                          testCaseId={currentTestCase._id}
+                          value={
+                            (currentTestCase.attachments as
+                              | EvalAttachment[]
+                              | undefined) ?? []
+                          }
+                        />
+                      </div>
+                    ) : null}
+
+                    {currentTestCase.lastMessageRun ? (
+                      <div className="flex items-center justify-end">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs text-muted-foreground"
+                          onClick={() => void handleClearSavedResult()}
+                        >
+                          Clear saved latest result
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+              <CasePreviewPane
+                tab={previewTab}
+                onTabChange={setPreviewTab}
+                runsCount={recentIterations.length}
+                runsDotClass={
+                  latestAvailableIteration
+                    ? latestRunNavCue.dotClass
+                    : undefined
+                }
+                previewSlot={
+                  replayIteration && !showSpecOverride ? (
+                    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                      <IterationDetails
+                        iteration={replayIteration}
+                        testCase={currentTestCase}
+                        serverNames={effectiveSuiteServers}
+                        layoutMode="full"
+                        judgeCase={replayJudgeCase}
+                        // A trial from a real suite run: labellable. The
+                        // backend refuses a quick-run trial anyway
+                        // (`JUDGE_REVIEW_NO_RUN`), and the panel renders that
+                        // refusal rather than pretending.
+                        enableJudgeReview
+                        trialChainSlot={trialChainSlotFor(replayIteration)}
                       />
                     </div>
-                  </div>
-                ) : specPreviewTrace ? (
-                  // Pre-run preview: the forming spec rendered through the same
-                  // chat surface as a real run (user bubble + expected tool-call
-                  // chips). Read-only — editing lives in the left step list, and
-                  // the widget appears once a Quick Run produces output.
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden p-3">
-                    <TraceViewer
-                      trace={specPreviewTrace}
-                      forcedViewMode="chat"
-                      hideToolbar
-                      fillContent
-                      chromeDensity="compact"
+                  ) : liveRecordMode && !showSpecOverride ? (
+                    // Record mode: a LIVE, auto-connected playground bound to this
+                    // case. Click live widgets; no grading (runner is out of this
+                    // path). Stable key = case id so the session/cart survives
+                    // re-renders within a case.
+                    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                      <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
+                        <span className="text-[11px] text-muted-foreground">
+                          Click widgets to record ·
+                        </span>
+                        <CaptureModeToggle
+                          mode={captureMode}
+                          onChange={setCaptureMode}
+                        />
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {captureMode === "assert"
+                            ? "Click an element to add a check about it."
+                            : "Click inside a view to record actions."}
+                        </span>
+                      </div>
+                      <div className="min-h-0 flex-1">
+                        <EvalLiveChatPanel
+                          key={`eval-live:${currentTestCase?._id ?? "none"}`}
+                          projectId={projectId}
+                          caseServerNames={effectiveSuiteServers}
+                          initialPrompt={liveChatFirstPrompt}
+                          autoRun={!!liveChatFirstPrompt}
+                          ensureServersReady={ensureServersReady}
+                          evalChatHandoff={liveChatHandoff}
+                          recorder={previewRecorder}
+                        />
+                      </div>
+                    </div>
+                  ) : showRunInPreview && previewRecord ? (
+                    <div className="flex h-full min-h-0 flex-col">
+                      {!isRunningCompare ? (
+                        <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-1.5 text-[12px] text-muted-foreground">
+                          <span className="truncate">
+                            Last run · {previewRecord.modelLabel}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 px-2 text-[11px]"
+                            onClick={() => setShowSpecOverride(true)}
+                          >
+                            View spec
+                          </Button>
+                        </div>
+                      ) : null}
+                      <div className="min-h-0 flex-1">
+                        <RunColumn
+                          record={previewRecord}
+                          testCase={currentTestCase}
+                          authoredSteps={editForm?.steps ?? currentSteps}
+                          trialChainSlot={trialChainSlotFor(
+                            previewRecord.iteration ?? null,
+                          )}
+                          serverNames={connectedServerList}
+                          projectId={projectId}
+                          onContinueInChat={onContinueInChat}
+                          onStreamingTraceLoaded={() =>
+                            clearCompareStreamingState(previewRecord.modelValue)
+                          }
+                          activeTab={
+                            runColumnTabByModel[previewRecord.modelValue] ??
+                            "chat"
+                          }
+                          onTabChange={(tab) =>
+                            handleRunColumnTabChange(
+                              previewRecord.modelValue,
+                              tab,
+                            )
+                          }
+                          onRetry={() =>
+                            void handleRunCompare({
+                              modelValues: [previewRecord.modelValue],
+                              sessionMode: "reuse",
+                            })
+                          }
+                          baselineHostStyle={hostConfigBaseline?.hostStyle}
+                          syncedStepId={syncedStepId}
+                          onSyncStep={setSyncedStepId}
+                        />
+                      </div>
+                    </div>
+                  ) : latestTracedIteration ? (
+                    // No in-memory run loaded (e.g. fresh open / reload) but the
+                    // case has a past run WITH a trace: default the Preview to that
+                    // run's trace, not the spec — that's the surface users expect
+                    // here. (A brand-new case, or one whose only runs are traceless,
+                    // falls through to the spec.)
+                    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                        <IterationDetails
+                          iteration={latestTracedIteration}
+                          testCase={currentTestCase}
+                          serverNames={effectiveSuiteServers}
+                          layoutMode="full"
+                          judgeCase={latestTracedJudgeCase}
+                          enableJudgeReview
+                          trialChainSlot={trialChainSlotFor(
+                            latestTracedIteration,
+                          )}
+                        />
+                      </div>
+                    </div>
+                  ) : specPreviewTrace ? (
+                    // Pre-run preview: the forming spec rendered through the same
+                    // chat surface as a real run (user bubble + expected tool-call
+                    // chips). Read-only — editing lives in the left step list, and
+                    // the widget appears once a Quick Run produces output.
+                    <div className="flex h-full min-h-0 flex-col overflow-hidden p-3">
+                      <TraceViewer
+                        trace={specPreviewTrace}
+                        forcedViewMode="chat"
+                        hideToolbar
+                        fillContent
+                        chromeDensity="compact"
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground">
+                      Start typing a prompt — the conversation will build here.
+                    </div>
+                  )
+                }
+                runsSlot={
+                  <div className="h-full overflow-y-auto">
+                    <CaseRunsHistory
+                      iterations={recentIterations}
+                      selectedIterationId={replayIteration?._id ?? null}
+                      suiteRuns={suiteRuns}
+                      hostNamesById={hostNamesById}
+                      defaultHostLabel={suiteHostLabel}
+                      hasHostAttachments={hasHostAttachments}
+                      onSelectIteration={(it) => {
+                        setReplayIteration(it);
+                        setShowSpecOverride(false);
+                        setPreviewTab("preview");
+                      }}
                     />
                   </div>
-                ) : (
-                  <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground">
-                    Start typing a prompt — the conversation will build here.
-                  </div>
-                )
-              }
-              runsSlot={
-                <div className="h-full overflow-y-auto">
-                  <CaseRunsHistory
-                    iterations={recentIterations}
-                    selectedIterationId={replayIteration?._id ?? null}
-                    suiteRuns={suiteRuns}
-                    hostNamesById={hostNamesById}
-                    defaultHostLabel={suiteHostLabel}
-                    hasHostAttachments={hasHostAttachments}
-                    onSelectIteration={(it) => {
-                      setReplayIteration(it);
-                      setShowSpecOverride(false);
-                      setPreviewTab("preview");
-                    }}
-                  />
-                </div>
-              }
-            />
-          </div>
+                }
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -4048,6 +5515,7 @@ function RunColumn({
   authoredSteps,
   onRenderedWidgetTargets,
   trialChainSlot,
+  scorecardSlot,
 }: {
   record: CompareRunRecord;
   testCase: any;
@@ -4083,6 +5551,13 @@ function RunColumn({
    */
   baselineHostStyle: string | undefined;
   trialChainSlot?: ReactNode;
+  /**
+   * The scorers for the attempt in flight, keyed to the snapshot it was
+   * LAUNCHED with. A quick run stays in this column after it finishes
+   * (`showRunInPreview`), so without this the most common trial on the page
+   * would be the one with no scorecard.
+   */
+  scorecardSlot?: ReactNode;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const globalPreferenceHostStyle = usePreferencesStore(
@@ -4161,7 +5636,7 @@ function RunColumn({
   // back to "timeline") until the blob arrives.
   const browserBlob = persistedTraceBlob as TraceEnvelope | null;
   const showBrowserTab = hasReplayArtifacts(
-    browserBlob ?? streamingTraceEnvelope ?? {}
+    browserBlob ?? streamingTraceEnvelope ?? {},
   );
 
   // Report the widgets THIS run rendered (per turn) up to the editor, which
@@ -4205,7 +5680,9 @@ function RunColumn({
     return loadSteps(testCase);
   }, [authoredSteps, record.iteration?.testCaseSnapshot, testCase]);
   const showStepsTab = caseSteps.length > 0;
-  const runStepStatusById = useMemo<Map<string, EvalStepStatus> | undefined>(() => {
+  const runStepStatusById = useMemo<
+    Map<string, EvalStepStatus> | undefined
+  >(() => {
     const status = record.streamingStepStatus;
     if (!status) return undefined;
     const map = new Map<string, EvalStepStatus>();
@@ -4222,6 +5699,8 @@ function RunColumn({
       ? "timeline"
       : activeTab === "steps" && !showStepsTab
       ? "chat"
+      : activeTab === "scorecard" && !scorecardSlot
+      ? "chat"
       : activeTab;
   const traceMode =
     effectiveActiveTab === "chat"
@@ -4235,6 +5714,7 @@ function RunColumn({
       : effectiveActiveTab === "steps"
       ? "steps"
       : "tools";
+  const showScorecard = effectiveActiveTab === "scorecard" && scorecardSlot;
   const continueInChatPayload = useMemo(() => {
     if (!onContinueInChat) {
       return null;
@@ -4542,7 +6022,8 @@ function RunColumn({
           allSummaries={[runColumnSummary]}
           mode={
             effectiveActiveTab === "browser" ||
-            effectiveActiveTab === "steps"
+            effectiveActiveTab === "steps" ||
+            effectiveActiveTab === "scorecard"
               ? "timeline"
               : effectiveActiveTab
           }
@@ -4552,6 +6033,9 @@ function RunColumn({
           compactCompareHeader={false}
           result={runColumnResult}
           showToolsTab={showToolsTab}
+          showScorecardTab={Boolean(scorecardSlot)}
+          scorecardActive={effectiveActiveTab === "scorecard"}
+          onSelectScorecard={() => onTabChange("scorecard")}
           showStepsTab={showStepsTab}
           stepsActive={effectiveActiveTab === "steps"}
           onSelectSteps={() => onTabChange("steps")}
@@ -4592,7 +6076,9 @@ function RunColumn({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-1.5">
         {trialChainSlot}
-        {shouldRenderChatShell ? (
+        {showScorecard ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">{scorecardSlot}</div>
+        ) : shouldRenderChatShell ? (
           <ScenarioHostStyleProvider value={hostStyle}>
             <ScenarioHostThemeProvider value={themeMode}>
               <div

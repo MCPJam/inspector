@@ -28,6 +28,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
+import { fetchLocalBrowserStatus } from "@/lib/local-browser/client";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
 import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -74,6 +75,43 @@ export function PlaygroundRightRail({
 
 type RightRailTab = "logs" | "shell" | "browser";
 
+/** How often to ask whether this machine has a browser open. */
+const LOCAL_BROWSER_PROBE_MS = 5_000;
+
+/**
+ * Is there a live browser on this machine right now?
+ *
+ * Polled rather than derived from the host config, because the thing that
+ * opens one may not be this app: an agent running `mcpjam browser open` in
+ * another process starts a browser this rail should show. The status route is
+ * consent-free and machine-anonymous — no paths, no profile directories, no
+ * process ids — so asking it costs nothing a person has not already agreed to.
+ *
+ * Off entirely on the hosted engine, where this route describes a machine that
+ * is not the one running the browser.
+ */
+function useLocalBrowserRunning(enabled: boolean): boolean {
+  const [running, setRunning] = useState(false);
+  useEffect(() => {
+    if (!enabled) {
+      setRunning(false);
+      return;
+    }
+    let cancelled = false;
+    const probe = async () => {
+      const status = await fetchLocalBrowserStatus().catch(() => null);
+      if (!cancelled && status) setRunning(status.running === true);
+    };
+    void probe();
+    const timer = window.setInterval(() => void probe(), LOCAL_BROWSER_PROBE_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [enabled]);
+  return running;
+}
+
 function RightRailTabbed({
   onClose,
   projectId,
@@ -110,9 +148,20 @@ function RightRailTabbed({
   // calls carries a minted browser token, so before authentication is ready it
   // can only fail — and it would fail into an "unreachable" state with nothing
   // to retry it once auth arrives. The Shell's cloud body gates the same way.
+  //
+  // A LOCAL BROWSER THAT IS ALREADY RUNNING also shows the tab, whatever the
+  // host config says. An outside coding agent can now open a session through
+  // `mcpjam browser open` without the host carrying the built-in at all, and
+  // hiding the tab in that case would mean the browser somebody is driving is
+  // visible in no window in this app — which is exactly the "an agent driving
+  // a browser you cannot see" problem the pane exists to solve.
+  const localBrowserRunning = useLocalBrowserRunning(
+    engine.selectedEngine === "local",
+  );
   const hasBrowser = Boolean(
-    hostConfig?.builtInToolIds?.includes("browser") &&
-    (engine.selectedEngine === "local" || isAuthenticated),
+    (hostConfig?.builtInToolIds?.includes("browser") &&
+      (engine.selectedEngine === "local" || isAuthenticated)) ||
+      localBrowserRunning,
   );
   // Which body. Follows `selectedEngine` like the Shell above, so someone who
   // picked "This machine" but has not authorized it yet sees the local body's
@@ -156,9 +205,10 @@ function RightRailTabbed({
           isActive={activeTab === "shell"}
           onClick={() => handleTabClick("shell")}
         />
-        {/* Only when this host actually has the browser capability: a tab
-            offering a browser the model cannot use would be a promise the
-            host config does not keep. */}
+        {/* When this host has the browser capability — a tab offering a
+            browser the model cannot use would be a promise the host config
+            does not keep — OR when this machine simply has one running, which
+            an outside agent can now arrange without the host's help. */}
         {hasBrowser ? (
           <TabButton
             icon={Globe}

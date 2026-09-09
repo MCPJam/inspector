@@ -26,6 +26,9 @@ Readiness checks and eval-suite targets build on this; they are not here yet.
 
 ```
 client/src/components/webmcp-inspector/   the /webmcp workspace
+  ├ WebmcpInspectorTab.tsx                 three-panel workspace (Tools-shaped)
+  ├ WebmcpToolsSidebar.tsx                 URL + tools list / invoke form
+  ├ ActivityTimeline.tsx                   activity as a log rail
   └ ElectronWebviewPane.tsx                the ONLY <webview> in the app
 client/src/stores/webmcp-inspector-store  session state, SSE stream
 client/src/lib/webmcp-inspector/          aliases, chat dispatch, export
@@ -34,6 +37,19 @@ server/routes/mcp/webmcp-inspector.ts     /api/mcp/webmcp/*
 server/services/webmcp-inspector/         providers, runtime, registry, hub
 src/main.ts                               the switch, webviewTag, the guest guard
 ```
+
+The workspace shares `ThreePanelLayout` with Tools / Resources / Prompts / Tasks:
+
+- **Left** — URL field, tool list (searchable), and on select the invoke form.
+- **Center** — the live page (webview, hosted Browser panel, or frame stream).
+- **Right** — session activity as logs (search, copy, JSON / OTLP export).
+
+The right rail is a custom slot, not the JSON-RPC `LoggerView`. Activity is
+WebMCP evidence (registrations, invocations, before/after screenshots), not MCP
+traffic. Session state and JSON-RPC traffic stay in separate stores. What is
+shared is the chrome: `LogRow`, `LogToolbar`, `ToolDetailsAccordion`, and
+`SelectedToolHeader` (tools identified by `{ id, label, description }`, so two
+frames that both register `submit` stay distinct).
 
 `provider.ts` is the browser boundary. Everything above it — runtime, registry,
 routes — is written against that interface and never imports Playwright, so the
@@ -84,7 +100,7 @@ silent fall-through to window behaviour.
 
 ## Watching the page inside the product
 
-The inspector's left pane shows the page as it paints, over the same session
+The inspector's center pane shows the page as it paints, over the same session
 that carries tools and invocations:
 
 ```text
@@ -383,6 +399,65 @@ own desktop — and both live in one process whenever the local inspector runs a
 hosted browser, so counting them together let two hosted handles fill the local
 limit and refuse to open a window.
 
+## Unattended runs drive their OWN box, not the member's
+
+Everything above is about ONE hosted browser per `(project, member)` — the
+Playground's computer, with their logins, a panel that can watch it and a lease
+a person can take. `hosted:<projectId>:<computerId>` says so in its shape.
+
+That identity is wrong for work nobody is watching. N parallel eval iterations
+or swarm sessions in a project all resolve to the SAME computer, so they would
+share one daemon, one tab and one cookie jar — and an `ephemeral` request
+against the box a member is using mid-session is a mode mismatch, which means a
+relaunch, which `pkill`s their Chromium.
+
+So `ensureBrowserSession` takes a TARGET:
+
+| Target             | Reserves         | Stream | Relaunch claim / lease fence | Lifetime          |
+| ------------------ | ---------------- | ------ | ---------------------------- | ----------------- |
+| `computer` (default) | yes, per member | yes    | yes                          | the member's box  |
+| `sandbox`          | no — already provisioned | no | no                     | the run           |
+
+`ensureBrowserSession` REFUSES `ephemeral` on a computer target by name
+(`ephemeral_requires_sandbox`), mirroring the local engine's
+`owner_key_required`. A `sandbox` target names a per-run desktop box the caller
+already provisioned — both its control-plane row and its vendor id — so this
+path reserves nothing and bills nothing.
+
+The omissions on the sandbox arm are decisions, not gaps. A relaunch claim and
+a lease fence exist to stop two parties fighting over one SHARED box: another
+replica, or a person at a keyboard. A per-run box has one run and one driving
+process, and no panel can reach it. The record compare-and-swap stays as the
+cross-replica backstop. There is no stream because nobody is watching, and the
+handle and record TYPES are unions rather than shapes with optional fields —
+so a `streamUrl: ""` placeholder that some future panel would render cannot be
+constructed.
+
+`persistent` on a sandbox target is refused too: a durable profile on a box
+that dies with the run could keep nothing.
+
+### Shipping ahead of the backend
+
+A control plane that does not know the target answers 400. That is a TYPED
+`unsupported_target` outcome, not a generic "unreachable", and `ensureOnSandbox`
+refuses on it BEFORE it connects. The two need opposite behaviour: unreachable
+means relaunch, and relaunching here would pay a cold desktop boot — the most
+expensive thing on this path — on every attempt to reach the same dead end.
+
+### Boot-to-ready is measured, not assumed
+
+One cold desktop per iteration is the cost this design does not hide: every
+iteration pays a boot before its first `browser_navigate`. Each fresh sandbox
+boot logs `browser.sandbox_boot` with `connectMs`, `bootMs` and `totalMs`, so
+the number exists from the first staging run rather than being guessed later —
+and so a warm pool is scoped against a measurement rather than a hunch.
+
+### Which run, as well as which box
+
+`unattendedOwnerKey` stays an INDEPENDENT assertion. The target says which box;
+the owner key says which run. The local engine has no target at all and keys on
+the run alone, so dropping either would silently share something.
+
 ## The daemon takes a tool NAME, not the inspector's key
 
 V1 keys a tool as `origin::name`, because two origins on one page can offer the
@@ -439,6 +514,14 @@ applies its own 2-hour ceiling to presence touches, so a tab left open over a
 weekend cannot hold a machine awake indefinitely. Closing the tab does **not**
 hibernate: only the 30-minute sweep does, because there is no browser-close hook
 the way there is for a terminal.
+
+A per-run box has no hibernation clock of its own, but it does have a REAPER
+that decides by activity — and the only things that touch one are a bash exec
+and a reserve. A browser-only run makes neither: it drives the daemon over
+HTTP. So a `command` touch on a sandbox-target session bumps
+`evalSandboxes.lastUsedAt` in the same transaction, and a backend test pins the
+inspector's once-a-minute throttle against the shortest sandbox TTL so a future
+TTL cut cannot silently reap a box mid-turn.
 
 ## The tool poll has a budget
 

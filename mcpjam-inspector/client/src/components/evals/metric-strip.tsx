@@ -7,6 +7,7 @@ import {
   type MetricStripData,
   type MetricStripPoint,
 } from "./metric-strip-data";
+import { formatCost, formatCostOrDash } from "./helpers";
 
 export function LatencyTrendMetric({
   p50,
@@ -104,7 +105,12 @@ export function LatencyTrendMetric({
         ) : null}
       </div>
       {showTrend ? (
-        <div className={cn("relative overflow-visible", matrixCell ? "mt-1.5" : "mt-2.5")}>
+        <div
+          className={cn(
+            "relative overflow-visible",
+            matrixCell ? "mt-1.5" : "mt-2.5",
+          )}
+        >
           <EvalDualSparkline
             primary={p50Series}
             secondary={p95Series}
@@ -154,7 +160,11 @@ export function TrendMetric({
         <div
           className={cn(
             "mt-1 font-semibold leading-none tabular-nums tracking-tight text-foreground",
-            matrixCell ? "truncate text-[12px]" : compact ? "text-[15px]" : "text-[17px]",
+            matrixCell
+              ? "truncate text-[12px]"
+              : compact
+              ? "text-[15px]"
+              : "text-[17px]",
           )}
         >
           {value}
@@ -166,7 +176,12 @@ export function TrendMetric({
         ) : null}
       </div>
       {chart ? (
-        <div className={cn("relative overflow-visible", matrixCell ? "mt-1.5" : "mt-2.5")}>
+        <div
+          className={cn(
+            "relative overflow-visible",
+            matrixCell ? "mt-1.5" : "mt-2.5",
+          )}
+        >
           {chart}
         </div>
       ) : null}
@@ -180,6 +195,7 @@ export function MetricStrip({
   layout = "horizontal",
   surface = "card",
   testId = "metric-strip",
+  context,
 }: {
   data: MetricStripData | null;
   density?: "default" | "compact";
@@ -187,6 +203,8 @@ export function MetricStrip({
   /** `embedded` drops outer card chrome (matrix cells). */
   surface?: "card" | "embedded";
   testId?: string;
+  /** Suite history captions name the measured population explicitly. */
+  context?: "history";
 }) {
   if (!data) return null;
 
@@ -203,15 +221,64 @@ export function MetricStrip({
   const seriesOf = (pick: (p: MetricStripPoint) => number) => series.map(pick);
   const tokenSeries = seriesOf((p) => p.tokens);
   const tokenHeadline = latest.tokens;
-  const tokenSub = "per run";
+  const tokenSub = context === "history" ? "avg tokens / iteration" : "per run";
+  /**
+   * The cost trend is drawn ONLY when every run in the window was fully
+   * priced.
+   *
+   * A sparkline's whole content is its SHAPE, and there is no number that
+   * honestly stands for "we did not price this run". Plotting an unpriced or
+   * partly-priced run at 0 draws a dip that never happened, and reads as the
+   * run getting cheaper exactly when we measured less of it — the same lie
+   * `formatCostOrDash` exists to prevent in the headline.
+   *
+   * So an incomplete window gets no line. The headline still shows the latest
+   * run's cost (or an em dash), and the sub-label says how much of it was
+   * priced.
+   */
+  const costFullyPriced = series.every(
+    (p) => p.costUsd !== null && p.costedIterations >= p.total,
+  );
+  const costSeries = costFullyPriced ? seriesOf((p) => p.costUsd ?? 0) : [];
+  const costHeadline = formatCostOrDash(latest.costUsd);
+  // "per run" is a claim that MCPJam measured the whole thing. It is only
+  // true when every trial was priced AND none of the figures came from a
+  // customer's runner; otherwise the sub-label says which of those is not so.
+  const costSub =
+    latest.costUsd === null
+      ? "not priced"
+      : latest.costedIterations < latest.total
+      ? `${latest.costedIterations} of ${latest.total} iterations`
+      : latest.hasRunnerReportedCost
+      ? "includes runner-reported"
+      : "per run";
   const toolCallSeries = seriesOf((p) => p.toolCalls);
   const toolCallHeadline = latest.toolCalls;
-  const toolCallSub = "per run";
+  const toolCallSub = context === "history" ? "tool calls / run" : "per run";
   const runLabels =
     runLabelsOverride ?? series.map((_, index) => `Run ${index + 1}`);
 
   const failing = latest.failed > 0;
-  const verdict = failing ? `${latest.failed} failing` : "All passing";
+  const verdict =
+    context === "history"
+      ? failing
+        ? `${latest.failed} failed ${
+            latest.failed === 1 ? "iteration" : "iterations"
+          }`
+        : latest.total > 0 && latest.passed === latest.total
+        ? "All iterations passed"
+        : "No failed iterations"
+      : failing
+      ? `${latest.failed} failing`
+      : "All passing";
+  // Missing timings are not zero-second runs. The history trend connects
+  // recorded timings only, with the original run labels on each point.
+  const latencyPoints = series.flatMap((point, index) =>
+    context !== "history" ||
+    (point.latencyP50 != null && point.latencyP95 != null)
+      ? [{ point, label: runLabels[index] }]
+      : [],
+  );
 
   const deltaBadge =
     delta != null && delta !== 0 ? (
@@ -223,6 +290,7 @@ export function MetricStrip({
       >
         {delta > 0 ? "↑" : "↓"}
         {Math.abs(delta)}
+        {context === "history" ? " pp" : ""}
       </span>
     ) : null;
 
@@ -234,14 +302,24 @@ export function MetricStrip({
           ? cn("text-[10px]", failing ? "text-destructive" : "text-success")
           : cn(
               "rounded-full px-2 py-0.5 text-[11px] text-foreground",
-              failing ? "bg-destructive/50" : "bg-success/50",
+              context === "history"
+                ? failing
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-muted text-foreground"
+                : failing
+                ? "bg-destructive/50"
+                : "bg-success/50",
             ),
       )}
     >
       <span
         className={cn(
           "h-1.5 w-1.5 rounded-full",
-          failing ? "bg-destructive" : "bg-success",
+          failing
+            ? "bg-destructive"
+            : context === "history" && latest.passed !== latest.total
+            ? "bg-muted-foreground"
+            : "bg-success",
         )}
       />
       {verdict}
@@ -255,10 +333,10 @@ export function MetricStrip({
         matrixCell
           ? "text-[14px]"
           : compact
-            ? vertical
-              ? "text-[15px]"
-              : "text-[22px]"
-            : "text-[28px]",
+          ? vertical
+            ? "text-[15px]"
+            : "text-[22px]"
+          : "text-[28px]",
       )}
     >
       {latest.passRate}%
@@ -274,8 +352,14 @@ export function MetricStrip({
   const passSection = (
     <div
       className={cn(
-        "flex flex-col justify-between",
-        matrixCell ? "gap-1.5 px-3 py-2" : compact ? "gap-3 px-3.5 py-2.5" : "gap-3 px-5 py-3.5",
+        "flex min-w-0 flex-col justify-between",
+        context === "history" &&
+          "col-span-2 @min-[960px]/history-metrics:col-span-1",
+        matrixCell
+          ? "gap-1.5 px-3 py-2"
+          : compact
+          ? "gap-3 px-3.5 py-2.5"
+          : "gap-3 px-5 py-3.5",
         vertical && !matrixCell && "gap-2",
       )}
       data-testid="metric-strip-pass-rate"
@@ -302,10 +386,12 @@ export function MetricStrip({
         )
       ) : (
         <>
-          <div className="flex items-center gap-2">
-            {verdictBadge}
-            {deltaBadge}
-          </div>
+          {context !== "history" && (
+            <div className="flex flex-wrap items-center gap-2">
+              {verdictBadge}
+              {deltaBadge}
+            </div>
+          )}
           <div className="flex items-baseline gap-2">
             {passRateHeadline}
             <span className="text-[11px] tabular-nums text-muted-foreground">
@@ -332,13 +418,34 @@ export function MetricStrip({
       <LatencyTrendMetric
         p50={latest.latencyP50}
         p95={latest.latencyP95}
-        p50Series={series.map((p) => p.latencyP50 ?? 0)}
-        p95Series={series.map((p) => p.latencyP95 ?? 0)}
-        pointLabels={runLabels}
-        showTrend={showTrend}
+        p50Series={latencyPoints.map(({ point }) => point.latencyP50 ?? 0)}
+        p95Series={latencyPoints.map(({ point }) => point.latencyP95 ?? 0)}
+        pointLabels={latencyPoints.map(({ label }) => label)}
+        showTrend={showTrend && latencyPoints.length >= 2}
+        subLabel={context === "history" ? "latency / iteration" : "per run"}
         compact={compact}
         layout={layout}
         matrixCell={matrixCell}
+      />
+      <TrendMetric
+        label="Cost"
+        value={costHeadline}
+        sub={costSub}
+        compact={compact}
+        layout={layout}
+        matrixCell={matrixCell}
+        chart={
+          // Empty when the window is not fully priced; `EvalSparkline` renders
+          // nothing below two points, which is the intended suppression.
+          showTrend && costSeries.length > 0 ? (
+            <EvalSparkline
+              points={costSeries}
+              pointLabels={runLabels}
+              formatValue={formatCost}
+              testId="metric-sparkline-cost"
+            />
+          ) : null
+        }
       />
       <TrendMetric
         label="Tokens"
@@ -384,17 +491,23 @@ export function MetricStrip({
       data-testid={testId}
       className={cn(
         surface === "card" && evalSurfaceCardClass,
-        showTrend ? "overflow-visible" : surface === "card" ? "overflow-hidden" : "overflow-visible",
+        showTrend
+          ? "overflow-visible"
+          : surface === "card"
+          ? "overflow-hidden"
+          : "overflow-visible",
         vertical
           ? "flex flex-col divide-y divide-border/60"
+          : context === "history"
+          ? "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-[1.5fr_1.3fr_0.8fr_1fr_0.9fr]"
           : compact
-            ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr]"
-            : "grid grid-cols-[1.4fr_1fr_1fr_1fr]",
+          ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]"
+          : "grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr]",
       )}
     >
       {passSection}
       {vertical ? (
-        <div className="grid min-w-0 grid-cols-3 divide-x divide-border/60 [&>*]:min-w-0">
+        <div className="grid min-w-0 grid-cols-4 divide-x divide-border/60 [&>*]:min-w-0">
           {metricSections}
         </div>
       ) : (

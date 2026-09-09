@@ -243,6 +243,10 @@ export const ANALYTICS_EVENTS = {
   eval_suite_duplicated: { source: "client" },
   eval_suite_run_start_requests_completed: { source: "client" },
   eval_suite_server_changed: { source: "client" },
+  eval_case_run_test: { source: "client" },
+  eval_suggestion_accepted: { source: "client" },
+  eval_suggestion_dismissed: { source: "client" },
+  eval_suggestion_shown: { source: "client" },
   eval_test_case_created: { source: "client" },
   eval_test_case_deleted: { source: "client" },
   eval_test_case_duplicated: { source: "client" },
@@ -271,6 +275,12 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
+  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
+  // on hosted): shown/dismissed measure the gate's conversion funnel; the
+  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
+  // `login_button_clicked` with location "invite_signup_nudge".
+  invite_signup_nudge_shown: { source: "client" },
+  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
@@ -474,6 +484,12 @@ export const ANALYTICS_EVENTS = {
   project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // `browser_pane_session_summary`   props: engine, transport, tier, fps,
+  //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
+  //   on unmount — a per-frame event would be tens of thousands of captures an
+  //   hour, and the question ("did the viewport work move the numbers?") is
+  //   answered by the session, not the frame.
+  browser_pane_session_summary: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

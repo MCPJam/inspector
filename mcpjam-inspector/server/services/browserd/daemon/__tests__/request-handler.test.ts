@@ -4,7 +4,11 @@ import {
   type DaemonRequest,
 } from "../request-handler";
 import { HandoffLease } from "../lease";
-import type { BrowserCommand, BrowserCommandOutcome } from "../../protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  type BrowserCommand,
+  type BrowserCommandOutcome,
+} from "../../protocol";
 
 const TOKEN = "s3cr3t-per-boot-token";
 const BOOT = "boot-abc";
@@ -14,6 +18,10 @@ function makeHandler(over: {
   submit?: (c: BrowserCommand) => Promise<BrowserCommandOutcome>;
   health?: () => Promise<{ ok: boolean; detail?: string }>;
   lease?: HandoffLease;
+  setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
+  viewport?: (tabId?: string) => Promise<unknown>;
+  viewportIfWatched?: (tabId?: string) => unknown;
+  recorder?: unknown;
 } = {}) {
   const submit: (c: BrowserCommand) => Promise<BrowserCommandOutcome> =
     over.submit ??
@@ -25,10 +33,18 @@ function makeHandler(over: {
   const lease = over.lease ?? new HandoffLease();
   const handler = new BrowserdRequestHandler({
     queue: { submit },
-    driver: { health },
+    driver: {
+      health,
+      ...(over.viewport ? { viewport: over.viewport as never } : {}),
+      ...(over.viewportIfWatched
+        ? { viewportIfWatched: over.viewportIfWatched as never }
+        : {}),
+    },
     bootId: BOOT,
     token: TOKEN,
     lease,
+    ...(over.setVideoTier ? { setVideoTier: over.setVideoTier } : {}),
+    ...(over.recorder ? { recorder: over.recorder as never } : {}),
   });
   return { handler, submit, lease };
 }
@@ -227,7 +243,14 @@ describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
     const { handler } = makeHandler();
     const res = await handler.handle(statusReq());
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, bootId: BOOT });
+    expect(res.body).toMatchObject({ ok: true, bootId: BOOT });
+    // The compatibility fields ride along: what the reuse ladder keys off is
+    // the WIRE, and it has to be readable from the same probe that proves the
+    // daemon is alive.
+    expect(res.body).toMatchObject({
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      lease: "free",
+    });
   });
 
   it("keeps the bootId out of the unauthenticated healthz, but 401s status without the bearer", async () => {
@@ -245,7 +268,7 @@ describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
     });
     const res = await handler.handle(statusReq());
     expect(res.status).toBe(503);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       ok: false,
       detail: "chromium exited",
       bootId: BOOT,
@@ -789,5 +812,652 @@ describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
     expect(result).toEqual({ ok: true });
     // Two, not four: the tail belongs to whoever holds the browser now.
     expect(delivered).toHaveLength(2);
+  });
+});
+
+
+/**
+ * V-7. The tier endpoint. Not lease-gated on purpose — it changes how the
+ * picture is encoded, not what it shows.
+ */
+describe("BrowserdRequestHandler — POST /v1/policy", () => {
+  function policyReq(body: unknown) {
+    return {
+      method: "POST",
+      path: "/v1/policy",
+      origin: undefined,
+      authorization: `Bearer ${TOKEN}`,
+      body: JSON.stringify(body),
+    };
+  }
+
+  it("passes a valid tier to the encoder", async () => {
+    const tiers: string[] = [];
+    const { handler } = makeHandler({
+      setVideoTier: (tier: string) => tiers.push(tier),
+    });
+    const res = await handler.handle(policyReq({ tier: "saver" }));
+    expect(res.status).toBe(200);
+    expect(tiers).toEqual(["saver"]);
+  });
+
+  it("refuses a tier the encoder has no preset for", async () => {
+    const tiers: string[] = [];
+    const { handler } = makeHandler({
+      setVideoTier: (tier: string) => tiers.push(tier),
+    });
+    expect((await handler.handle(policyReq({ tier: "mjpeg" }))).status).toBe(400);
+    expect((await handler.handle(policyReq({}))).status).toBe(400);
+    expect(tiers).toEqual([]);
+  });
+
+  it("answers 200 on a box with no encoder", async () => {
+    // The caller's picture is a JPEG, whose quality this endpoint does not
+    // govern; reporting a failure would send a pane looking for a problem it
+    // does not have.
+    const { handler } = makeHandler();
+    expect((await handler.handle(policyReq({ tier: "sharp" }))).status).toBe(200);
+  });
+
+  it("still needs the bearer", async () => {
+    const { handler } = makeHandler();
+    const res = await handler.handle({
+      ...policyReq({ tier: "sharp" }),
+      authorization: undefined,
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("BrowserdRequestHandler — WebMCP capabilities and cancellation", () => {
+  it("announces the WebMCP features on /v1/status", async () => {
+    // A feature flag rather than a protocol bump: both additions are additive
+    // on the wire, and bumping the protocol version would have killed every
+    // live hosted browser on deploy to gain a capability the server can ask
+    // about instead.
+    const { handler } = makeHandler();
+    const res = await handler.handle(
+      req({ method: "GET", path: "/v1/status", body: undefined }),
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { features?: string[]; protocolVersion?: number };
+    expect(body.features).toEqual(
+      expect.arrayContaining(["webmcp-eager", "webmcp-binding"]),
+    );
+    expect(body.protocolVersion).toBe(BROWSERD_PROTOCOL_VERSION);
+  });
+
+  it("passes a webmcp_cancel that names only a commandId straight through", async () => {
+    // The envelope validator is structural, so this is really a guard AGAINST
+    // a future per-action check that would reject the field the whole cancel
+    // path depends on.
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-cancel",
+            source: "chat",
+            action: { kind: "webmcp_cancel", commandId: "c-invoke" },
+          },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0].action).toEqual({
+      kind: "webmcp_cancel",
+      commandId: "c-invoke",
+    });
+  });
+
+  it("passes an expectedBinding through unaltered", async () => {
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const binding = {
+      bootId: BOOT,
+      tabId: "@session",
+      navCounter: 3,
+      frameId: "frame-main",
+      registrationSeq: 9,
+    };
+    await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-invoke",
+            source: "chat",
+            action: {
+              kind: "webmcp_invoke",
+              toolKey: "pay",
+              input: { amount: 1 },
+              expectedBinding: binding,
+            },
+          },
+        }),
+      }),
+    );
+    expect(
+      (seen[0].action as { expectedBinding?: unknown }).expectedBinding,
+    ).toEqual(binding);
+  });
+
+  it("refuses a binding minted on ANOTHER boot as stale, before the queue", async () => {
+    // `expectedBootId` is the caller's idea of the daemon and is refreshed
+    // whenever it re-acquires a handle; the binding's `bootId` is the daemon
+    // the tool was LISTED on. After a relaunch the two differ, and the driver
+    // (which does not know its own boot) would compare a fresh daemon's
+    // `navCounter: 0` against a previous life's. Checked here, where the boot
+    // is known — and as a command RESULT, the same `stale_binding` the driver
+    // answers, so the caller's one recovery path handles both.
+    const seen: BrowserCommand[] = [];
+    const { handler } = makeHandler({
+      submit: async (command) => {
+        seen.push(command);
+        return { status: "ok", result: { ok: true }, bootId: BOOT };
+      },
+    });
+    const res = await handler.handle(
+      req({
+        body: JSON.stringify({
+          command: {
+            commandId: "c-invoke",
+            source: "chat",
+            action: {
+              kind: "webmcp_invoke",
+              toolKey: "pay",
+              input: { amount: 1 },
+              expectedBinding: {
+                bootId: "boot-previous-life",
+                tabId: "@session",
+                navCounter: 0,
+                frameId: "frame-main",
+                registrationSeq: 1,
+              },
+            },
+          },
+          expectedBootId: BOOT,
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = res.body as { result?: { ok: boolean; error?: string } };
+    expect(body.result?.ok).toBe(false);
+    expect(body.result?.error).toMatch(/^stale_binding/);
+    // Nothing reached the page.
+    expect(seen).toEqual([]);
+  });
+});
+
+/**
+ * R-1. Motion looks the same whoever is driving.
+ *
+ * A person's input already bought 30fps for a second and a half; an agent's
+ * `navigate` or `act` did not, so watching the model scroll a long page was a
+ * 10fps slideshow on the throttle's floor. These pin the three things that
+ * would silently come apart: which commands buy it, that an unwatched tab
+ * never pays for one, and that a boost is never allowed to change a command's
+ * answer.
+ */
+describe("BrowserdRequestHandler — the frame rate follows the page, not the hand", () => {
+  function boostSpy() {
+    const boosts: Array<[number, number]> = [];
+    const viewport = {
+      boost: (intervalMs: number, windowMs: number) =>
+        boosts.push([intervalMs, windowMs]),
+    };
+    return { boosts, viewport };
+  }
+
+  function commandReq(action: BrowserCommand["action"], tabId?: string) {
+    return req({
+      body: JSON.stringify({
+        command: { commandId: `c-${Math.random()}`, tabId, source: "chat", action },
+      }),
+    });
+  }
+
+  it("boosts a watched tab after a command that moved the page", async () => {
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    for (const action of [
+      { kind: "navigate", url: "https://x.test/" },
+      { kind: "back" },
+      { kind: "reload" },
+      { kind: "act", verb: "scroll" },
+    ] as Array<BrowserCommand["action"]>) {
+      expect((await handler.handle(commandReq(action))).status).toBe(200);
+    }
+
+    // 33ms is 30fps, the ceiling the transports carry; 1.5s covers the settle
+    // after the command without holding a page at full rate for a whole turn.
+    expect(boosts).toEqual([
+      [33, 1_500],
+      [33, 1_500],
+      [33, 1_500],
+      [33, 1_500],
+    ]);
+  });
+
+  it("does not boost after an observe, which changed nothing on the page", async () => {
+    // Reading the page moves no pixels. Boosting after one buys 45 extra JPEG
+    // encodes of a picture that did not change, on cores the agent is using.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "observe", mode: "url" }));
+    await handler.handle(
+      commandReq({ kind: "webmcp_cancel", invocationId: "i-1" }),
+    );
+
+    expect(boosts).toEqual([]);
+  });
+
+  it("never CREATES a viewport for a tab nobody is watching", async () => {
+    // The load-bearing one. `viewport()` opens a tab and attaches a CDP
+    // screencast on a miss; if the boost went through it, every agent command
+    // on an unattended box would start encoding JPEGs for an audience of
+    // nobody. Revert `viewportIfWatched` back to `viewport` and this fails.
+    const viewport = vi.fn(async () => ({ boost: () => {} }));
+    const { handler } = makeHandler({
+      viewport,
+      viewportIfWatched: () => null,
+    });
+
+    const res = await handler.handle(
+      commandReq({ kind: "navigate", url: "https://x.test/" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(viewport).not.toHaveBeenCalled();
+  });
+
+  it("asks about the command's own tab", async () => {
+    const asked: Array<string | undefined> = [];
+    const { handler } = makeHandler({
+      viewportIfWatched: (tabId?: string) => {
+        asked.push(tabId);
+        return null;
+      },
+    });
+
+    await handler.handle(
+      commandReq({ kind: "navigate", url: "https://x.test/" }, "tab-7"),
+    );
+
+    expect(asked).toEqual(["tab-7"]);
+  });
+
+  it("does not boost a command the lease refused", async () => {
+    // Nothing ran and nothing was captured, so there is no repaint to cover —
+    // and the person holding the browser should not have their pane's rate
+    // decided by somebody else's refused command.
+    const { boosts, viewport } = boostSpy();
+    const lease = new HandoffLease();
+    lease.acquire("rail-1");
+    const { handler } = makeHandler({
+      lease,
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    const res = await handler.handle(
+      commandReq({ kind: "navigate", url: "https://x.test/" }),
+    );
+
+    expect(res.status).toBe(423);
+    expect(boosts).toEqual([]);
+  });
+
+  it("does not boost an outcome in which nothing ran", async () => {
+    // `busy` was refused at the depth cap, `expired` lost its result to
+    // eviction, `at_capacity` was never admitted. No page moved in any of
+    // them, so boosting spends 45 JPEG encodes on a still picture — on the
+    // cores the agent is using.
+    for (const outcome of [
+      { status: "busy" as const, bootId: BOOT },
+      { status: "expired" as const, bootId: BOOT },
+      { status: "at_capacity" as const, bootId: BOOT },
+    ]) {
+      const { boosts, viewport } = boostSpy();
+      const { handler } = makeHandler({
+        outcome,
+        viewportIfWatched: () => Promise.resolve(viewport),
+      });
+
+      await handler.handle(commandReq({ kind: "reload" }));
+
+      expect(boosts, `status=${outcome.status}`).toEqual([]);
+    }
+  });
+
+  it("does not boost a command refused BEFORE it ran", async () => {
+    // A stale observation: the guard read the tab's token, saw the page had
+    // moved under the model, and declined to act. The page is untouched.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      outcome: {
+        status: "ok",
+        result: { ok: false, staleObservation: true, error: "stale_observation" },
+        bootId: BOOT,
+      },
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "act", verb: "scroll" }));
+
+    expect(boosts).toEqual([]);
+  });
+
+  it("does not boost once a person holds the browser", async () => {
+    // `leaseBlocked` can arrive AFTER the verb ran — the driver re-asks the
+    // lease before every capture — but the agent's path stays out from the
+    // moment they hold it, and their own input already buys them this boost
+    // through `dispatchInput`.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      outcome: {
+        status: "ok",
+        result: { ok: false, leaseBlocked: true, error: "lease_held" },
+        bootId: BOOT,
+      },
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "act", verb: "click" }));
+
+    expect(boosts).toEqual([]);
+  });
+
+  it("does not boost a failed act, which may never have touched the page", async () => {
+    // DELIBERATELY CONSERVATIVE, and the comment on the gate says why: an
+    // `act_failed` carrying a fresh stateToken is what BOTH a pre-dispatch
+    // refusal (`out_of_viewport`) and a ran-then-threw click look like — the
+    // driver's catch classifies by message and snapshots either way. Nothing
+    // here can separate them, so the gate takes the side that never spends
+    // 1.5s of 30fps encoding on a page that did not move.
+    const { boosts, viewport } = boostSpy();
+    const { handler } = makeHandler({
+      outcome: {
+        status: "ok",
+        result: {
+          ok: false,
+          error: "act_failed: out_of_viewport: (2000, 40) is outside the …",
+          stateToken: {
+            tabId: "@session",
+            navCounter: 2,
+            urlHash: "u",
+            domHash: "d",
+          },
+        },
+        bootId: BOOT,
+      },
+      viewportIfWatched: () => Promise.resolve(viewport),
+    });
+
+    await handler.handle(commandReq({ kind: "act", verb: "click" }));
+
+    expect(boosts).toEqual([]);
+  });
+
+  it("still answers the command when the boost throws", async () => {
+    // A viewport whose page closed under it rejects here. The command already
+    // succeeded and its result is already owed to the caller; a frame-rate
+    // hint must never turn that into a 500.
+    const { handler } = makeHandler({
+      viewportIfWatched: () => Promise.reject(new Error("page closed")),
+    });
+
+    const res = await handler.handle(
+      commandReq({ kind: "reload" }),
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it("works against a driver too old to answer the question", async () => {
+    const { handler } = makeHandler();
+    expect((await handler.handle(commandReq({ kind: "reload" }))).status).toBe(200);
+  });
+});
+
+/**
+ * R-2. Recording control.
+ *
+ * A daemon ROUTE, not a `BrowserAction`: a recording outlives lease handoffs,
+ * must not be refused while a person holds the browser, and must never enter
+ * the at-most-once command queue, where a retried `stop` would be answered
+ * from a cache instead of stopping anything.
+ *
+ * Every validation case asserts the recorder was NOT touched. An id becomes a
+ * filename and an fps becomes an x11grab rate: getting either wrong after the
+ * process is running means a file in the wrong place or an encoder at a rate
+ * the box cannot sustain, and neither is visible from the 200 that comes back.
+ */
+describe("BrowserdRequestHandler — /v1/record", () => {
+  function fakeRecorder(
+    over: {
+      start?: (args: { id: string; fps: number }) => unknown;
+      stop?: () => Promise<unknown>;
+      status?: () => unknown;
+    } = {},
+  ) {
+    const started: Array<{ id: string; fps: number }> = [];
+    const start = vi.fn((args: { id: string; fps: number }) => {
+      started.push(args);
+      return over.start ? over.start(args) : { ok: true };
+    });
+    const stop = vi.fn(over.stop ?? (async () => null));
+    const status = vi.fn(over.status ?? (() => ({ active: false })));
+    return { recorder: { start, stop, status }, start, stop, status, started };
+  }
+
+  function recordReq(body: unknown, method = "POST") {
+    return {
+      method,
+      path: "/v1/record",
+      origin: undefined,
+      authorization: `Bearer ${TOKEN}`,
+      body: JSON.stringify(body),
+    };
+  }
+
+  it("starts a take at the fps it was asked for and echoes both back", async () => {
+    const { recorder, started } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    const res = await handler.handle(recordReq({ action: "start", id: "run-1", fps: 15 }));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, id: "run-1", fps: 15 });
+    expect(started).toEqual([{ id: "run-1", fps: 15 }]);
+  });
+
+  it("defaults fps to 15 rather than leaving the recorder to guess", async () => {
+    const { recorder, started } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    const res = await handler.handle(recordReq({ action: "start", id: "run-1" }));
+
+    expect(res.body).toMatchObject({ fps: 15 });
+    expect(started).toEqual([{ id: "run-1", fps: 15 }]);
+  });
+
+  it("refuses an fps outside 1..30 BEFORE any spawn", async () => {
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    for (const fps of [0, 31, -1, 15.5, "15", null]) {
+      const res = await handler.handle(
+        recordReq({ action: "start", id: "run-1", fps }),
+      );
+      expect(res.status, `fps=${String(fps)}`).toBe(400);
+      expect(res.body).toMatchObject({ error: "invalid_fps" });
+    }
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("refuses an id that is not a plain filename, BEFORE any spawn", async () => {
+    // It becomes a path. A `..` or a slash here is a directory the caller
+    // chose, and the daemon writes wherever it points.
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    for (const id of ["../etc/passwd", "a/b", "", "x".repeat(65), 7, undefined]) {
+      const res = await handler.handle(
+        recordReq({ action: "start", id, fps: 15 }),
+      );
+      expect(res.status, `id=${String(id)}`).toBe(400);
+      expect(res.body).toMatchObject({ error: "invalid_record_id" });
+    }
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("refuses an action it does not have, and invalid JSON", async () => {
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    expect((await handler.handle(recordReq({ action: "pause" }))).status).toBe(400);
+    expect((await handler.handle(recordReq({}))).status).toBe(400);
+    expect((await handler.handle(recordReq(null))).status).toBe(400);
+    expect(
+      (await handler.handle({ ...recordReq({}), body: "{not json" })).status,
+    ).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 record_unavailable on a box with no recorder", async () => {
+    // The honest answer: `features` omits `"record"` in the first place, so a
+    // caller that reads the status before asking never gets here.
+    const { handler } = makeHandler();
+    const res = await handler.handle(recordReq({ action: "start", id: "run-1" }));
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ error: "record_unavailable", id: "run-1" });
+  });
+
+  it("maps a refused second start to 409", async () => {
+    const { recorder } = fakeRecorder({
+      start: () => ({ ok: false, error: "record_active" }),
+    });
+    const { handler } = makeHandler({ recorder });
+    const res = await handler.handle(recordReq({ action: "start", id: "run-2" }));
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "record_active", id: "run-2" });
+  });
+
+  it("maps a missing ffmpeg to 503", async () => {
+    const { recorder } = fakeRecorder({
+      start: () => ({ ok: false, error: "record_unavailable" }),
+    });
+    const { handler } = makeHandler({ recorder });
+    expect(
+      (await handler.handle(recordReq({ action: "start", id: "run-1" }))).status,
+    ).toBe(503);
+  });
+
+  it("hands the stop result straight back, truncation and all", async () => {
+    const recording = {
+      path: "/rec/run-1.mp4",
+      bytes: 1_234,
+      durationMs: 9_000,
+      distinctFrames: 42,
+      truncated: true,
+    };
+    const { recorder } = fakeRecorder({ stop: async () => recording });
+    const { handler } = makeHandler({ recorder });
+
+    const res = await handler.handle(recordReq({ action: "stop" }));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, recording });
+  });
+
+  it("answers 200 for a stop with nothing to stop", async () => {
+    // Not a 409: a caller collecting evidence on a teardown path stops a take
+    // that may have hit its size cap five minutes ago, and it needs an answer
+    // it can read rather than an error it must special-case.
+    const { recorder } = fakeRecorder({ stop: async () => null });
+    const { handler } = makeHandler({ recorder });
+    const res = await handler.handle(recordReq({ action: "stop" }));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, recording: null });
+  });
+
+  it("reports the current state on GET, with a recorder or without one", async () => {
+    const { recorder } = fakeRecorder({
+      status: () => ({ active: true, id: "run-1", fps: 15, distinctFrames: 7 }),
+    });
+    const withOne = makeHandler({ recorder }).handler;
+    const withNone = makeHandler().handler;
+
+    expect((await withOne.handle(recordReq({}, "GET"))).body).toMatchObject({
+      active: true,
+      id: "run-1",
+    });
+    expect((await withNone.handle(recordReq({}, "GET"))).body).toMatchObject({
+      active: false,
+    });
+  });
+
+  it("is NOT blocked by a held lease", async () => {
+    // The whole reason this is a route rather than a `BrowserAction`. A person
+    // taking control mid-run must not end the recording of the run they took
+    // it during — and this endpoint neither observes the page nor drives it.
+    const lease = new HandoffLease();
+    lease.acquire("someone-else");
+    const { recorder, start, stop } = fakeRecorder();
+    const { handler } = makeHandler({ lease, recorder });
+
+    expect(
+      (await handler.handle(recordReq({ action: "start", id: "run-1" }))).status,
+    ).toBe(200);
+    expect((await handler.handle(recordReq({ action: "stop" }))).status).toBe(200);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("still needs the bearer, and refuses a cross-origin caller", async () => {
+    const { recorder, start } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+
+    expect(
+      (
+        await handler.handle({
+          ...recordReq({ action: "start", id: "run-1" }),
+          authorization: undefined,
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await handler.handle({
+          ...recordReq({ action: "start", id: "run-1" }),
+          origin: "https://evil.test",
+        })
+      ).status,
+    ).toBe(403);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("answers 405 for a method the route does not have", async () => {
+    const { recorder } = fakeRecorder();
+    const { handler } = makeHandler({ recorder });
+    const res = await handler.handle(recordReq({}, "DELETE"));
+    expect(res.status).toBe(405);
+    expect(res.headers).toEqual({ allow: "GET, POST" });
   });
 });

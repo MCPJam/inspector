@@ -13,8 +13,10 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
   PlatformEvalRouteFacts,
+  PlatformEvalServerFacts,
   PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
@@ -56,6 +58,7 @@ import type {
   PlatformPersonaDeleted,
   PlatformSecret,
   PlatformSecretDeleted,
+  PlatformSpendBudget,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,
   PlatformTraceDestinationDeleted,
@@ -177,6 +180,241 @@ export interface PlatformApiClientOptions {
    * credential or the dedupe key through this door, whatever it passes.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * WHAT THIS PROCESS IS, declared on every eval-run launch this client makes.
+   *
+   * The platform stamps a run's `source` itself, and everything arriving over
+   * the public API is `api` — a CLI run, a GitHub Actions job and an MCP
+   * agent are indistinguishable there, because from the server's side all
+   * three are API calls. Deriving the difference from `user-agent` was tried
+   * and removed as forgeable. So the difference is declared, and stored beside
+   * the stamp rather than inside it: a display label, never an authorization
+   * input.
+   *
+   * SET ON THE CLIENT, not per call. The HOST PROCESS knows what it is; a run
+   * request does not, and putting it on a run's arguments would expose it as a
+   * settable field of the MCP `run_eval_suite` tool — letting the agent
+   * whose run it is choose its own badge.
+   *
+   * `kind` is allowlisted to the three the server cannot see for itself.
+   * Anything else is dropped at the API boundary rather than refused: a label
+   * must never fail a launch.
+   */
+  launcher?: PlatformRunLauncherOption;
+  /**
+   * The CI job this process is running inside, declared on every eval-run
+   * launch. Fills the run's CI columns and makes it resolvable by commit for
+   * baseline comparison. Build it with `detectCiMetadata()`.
+   */
+  ci?: PlatformCiMetadataOption;
+}
+
+/** See {@link PlatformApiClientOptions.launcher}. */
+export interface PlatformRunLauncherOption {
+  kind: "cli" | "mcp" | "github_action";
+  /** The launching program — `"mcpjam-cli"`, an MCP client's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+/**
+ * See {@link PlatformApiClientOptions.ci}.
+ *
+ * Deliberately the shape `detectCiMetadata` returns, GitHub's own spellings and
+ * all: the platform maps `runId`→`pipelineId` and `job`→`jobId` at its header
+ * boundary. One mapping, in one place, rather than every caller learning the
+ * run row's vocabulary.
+ *
+ * ACCEPTED IS NOT SENT. `repository`, `pullRequestNumber` and `workflow` are
+ * accepted because that is what the environment offers and a caller should not
+ * have to strip them by hand. A run row has no column for any of the three, so
+ * none of them reaches the wire — see the key list in `buildLaunchHeaders`.
+ */
+export interface PlatformCiMetadataOption {
+  provider?: string;
+  repository?: string;
+  commitSha?: string;
+  branch?: string;
+  pullRequestNumber?: number;
+  workflow?: string;
+  job?: string;
+  runUrl?: string;
+  runId?: string;
+  /** Accepted in the run row's own spelling too, when a caller has it. */
+  pipelineId?: string;
+  jobId?: string;
+}
+
+/**
+ * The two headers, and why they are headers.
+ *
+ * Both `/v1` eval-run bodies reject unknown properties, so a new BODY field is
+ * a 400 against any deployment that predates it — self-hosted installs and
+ * staging included. An unknown header is ignored by every version of
+ * everything, so the first SDK release to send these keeps working against
+ * every server that has ever run.
+ */
+export const RUN_LAUNCH_HEADERS = {
+  launcher: "x-mcpjam-launcher",
+  ci: "x-mcpjam-ci",
+} as const;
+
+/**
+ * The API boundary's own caps, mirrored here.
+ *
+ * Not redundant with them. A header this client builds is assembled from
+ * caller-supplied strings — an MCP client's `user-agent`, a CI provider's
+ * branch name — and the request crosses proxies, gateways and CDNs before it
+ * reaches the boundary that would drop an oversized value harmlessly. Those
+ * intermediaries answer an outsized header with 431 or 400, and the launch
+ * fails over a label. Trimming here keeps the failure cosmetic on the one side
+ * we control.
+ */
+const MAX_LAUNCHER_HEADER_BYTES = 512;
+const MAX_CI_HEADER_BYTES = 2048;
+const MAX_LAUNCHER_FIELD_CHARS = 200;
+const MAX_CI_FIELD_CHARS = 512;
+
+function headerByteLength(value: string): number {
+  return typeof TextEncoder === "function"
+    ? new TextEncoder().encode(value).length
+    : // Node without a global TextEncoder: every byte of a header is at worst
+      // 4 for one JS char, and over-counting only drops a header early.
+      value.length * 4;
+}
+
+/** The serialized header, or nothing when it would not fit. */
+function withinHeaderCap(
+  serialized: string,
+  maxBytes: number
+): string | undefined {
+  return headerByteLength(serialized) <= maxBytes ? serialized : undefined;
+}
+
+/**
+ * Serialize the declared launch context into its two headers, dropping
+ * anything unusable.
+ *
+ * Drops rather than throws, at every step. This is a label on a run, and a
+ * client that refused to construct because a version string was empty would
+ * trade a real capability for a cosmetic one. The API boundary drops the same
+ * values again for the same reason — belt and braces on a field whose worst
+ * failure mode is a missing badge.
+ */
+function buildLaunchHeaders(
+  options: PlatformApiClientOptions
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  const kind = options.launcher?.kind;
+  if (kind === "cli" || kind === "mcp" || kind === "github_action") {
+    const client = trimmedOrUndefined(
+      options.launcher?.client,
+      MAX_LAUNCHER_FIELD_CHARS
+    );
+    const version = trimmedOrUndefined(
+      options.launcher?.version,
+      MAX_LAUNCHER_FIELD_CHARS
+    );
+    const serialized = withinHeaderCap(
+      JSON.stringify({
+        kind,
+        ...(client ? { client } : {}),
+        ...(version ? { version } : {}),
+      }),
+      MAX_LAUNCHER_HEADER_BYTES
+    );
+    if (serialized) headers[RUN_LAUNCH_HEADERS.launcher] = serialized;
+  }
+
+  if (options.ci) {
+    // Serialized from a KNOWN key list rather than by spreading the object: a
+    // detector that grows a field would otherwise start sending it into a
+    // header with a size cap, and the first symptom would be the whole
+    // envelope being dropped for being too long.
+    //
+    // The list is exactly what a run row can hold — its own six columns, plus
+    // the two GitHub spellings (`runId`, `job`) the platform maps onto
+    // `pipelineId` and `jobId` at its header boundary.
+    //
+    // `repository`, `pullRequestNumber` and `workflow` are absent ON PURPOSE,
+    // not by oversight. `detectCiMetadata` returns all three because they are
+    // what the environment offers, and the boundary is documented and tested
+    // to drop all three: a run row has no column for any of them. Sending them
+    // anyway would spend the header budget on fields nothing can read — and an
+    // envelope over that cap is dropped WHOLE, so a dead field's only possible
+    // effect is to cost a live one.
+    const ci: Record<string, string> = {};
+    for (const key of [
+      "provider",
+      "commitSha",
+      "branch",
+      "job",
+      "jobId",
+      "runUrl",
+      "runId",
+      "pipelineId",
+    ] as const) {
+      const value = trimmedOrUndefined(
+        (options.ci as Record<string, unknown>)[key],
+        MAX_CI_FIELD_CHARS
+      );
+      if (value) ci[key] = value;
+    }
+    if (Object.keys(ci).length > 0) {
+      const serialized = withinHeaderCap(
+        JSON.stringify(ci),
+        MAX_CI_HEADER_BYTES
+      );
+      if (serialized) headers[RUN_LAUNCH_HEADERS.ci] = serialized;
+    }
+  }
+
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function trimmedOrUndefined(
+  value: unknown,
+  maxChars?: number
+): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return maxChars === undefined ? trimmed : trimmed.slice(0, maxChars);
+}
+
+/**
+ * Lift the suite-file sync marker out of a write body and onto the query.
+ *
+ * `declaredSuiteId` says "this write IS the suite file syncing itself", which
+ * is what lets a CI-owned suite be written at all. Callers pass it inside the
+ * body object because that is where it reads naturally beside the fields it
+ * accompanies; it must not GO there.
+ *
+ * Every one of these `/v1` bodies is `.strict()`, on this Inspector and on
+ * every Inspector that predates the CI-owned lock, and a strict object refuses
+ * an unknown key with a 400. This package is versioned independently of the
+ * deployment it talks to — a user upgrades `@mcpjam/cli` without touching their
+ * self-hosted Inspector — so a body field here would turn `eval run --file`
+ * from "syncs, and the lock lets it through" into "400, every time" against
+ * anything older. The same reasoning that puts the launcher in a header,
+ * applied to the field that actually decides whether a write lands.
+ *
+ * A query parameter is read by deployments that know it and ignored by those
+ * that do not, which is the right degradation: an Inspector with no lock has no
+ * exception to make.
+ */
+function withFileSyncMarker(body: Record<string, unknown>): {
+  body: Record<string, unknown>;
+  query?: QueryParams;
+} {
+  const { declaredSuiteId, ...rest } = body;
+  const marker =
+    typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
+  return marker.length > 0
+    ? { body: rest, query: { declaredSuiteId: marker } }
+    : { body };
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -257,6 +495,15 @@ export class PlatformApiClient {
   private readonly timeoutMs: number;
   private readonly userAgent?: string;
   private readonly extraHeaders?: Record<string, string>;
+  /**
+   * The declared-origin headers, serialized ONCE at construction.
+   *
+   * Once, because they cannot change over the client's life — the host process
+   * is what it is — and because serializing per request would put a
+   * `JSON.stringify` on the hot path of every read call that will never send
+   * them.
+   */
+  private readonly launchHeaders?: Record<string, string>;
 
   constructor(options: PlatformApiClientOptions) {
     this.baseUrl = stripTrailingSlashes(
@@ -269,6 +516,7 @@ export class PlatformApiClient {
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
+    this.launchHeaders = buildLaunchHeaders(options);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -368,8 +616,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -1685,7 +1933,7 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
-      { body: params.body },
+      { body: params.body, declareLaunch: true },
       options
     );
   }
@@ -1807,7 +2055,7 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
-      { body: params.body },
+      { body: params.body, declareLaunch: true },
       options
     );
   }
@@ -1996,6 +2244,29 @@ export class PlatformApiClient {
   }
 
   /**
+   * ONE run's suite quality-gate report, evaluated by the platform against
+   * the suite's stored policy.
+   *
+   * A 404 after the run itself was retrieved is NEVER "no policy" —
+   * `not_configured` is a 200 report. A deployment that predates the route
+   * is FEATURE_NOT_SUPPORTED (bare 404 or 501), not proof the suite has
+   * none.
+   */
+  getEvalRunGate(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunGate> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate`,
+      {},
+      options
+    );
+  }
+
+  /**
    * ONE run's materialized route-facts document, addressed by run.
    *
    * `404` means one of two different things, and the API does not distinguish
@@ -2016,6 +2287,35 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/route-facts`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's SERVER FACTS: the snapshot it ran against, and what the setup
+   * phase observed.
+   *
+   * COMPUTED ON READ, which is the difference from the three documents above.
+   * There is no materializer and no backfill window: a run that finished
+   * before this shipped still answers, because the answer is derived from the
+   * snapshot the run already stored. A run with no snapshot answers
+   * `state: "unavailable"` with a reason — a measured fact about that run,
+   * not a missing document.
+   *
+   * Everything it returns is a FACT and none of it is a verdict: a tool count
+   * is not a defect, a connect duration is not a failure, and a precheck is a
+   * signal. Nothing here feeds a gate.
+   */
+  getEvalRunServerFacts(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalServerFacts> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/server-facts`,
       {},
       options
     );
@@ -2087,6 +2387,11 @@ export class PlatformApiClient {
             ? { maxTrials: params.maxTrials }
             : {}),
         },
+        // This route LAUNCHES RUNS — one per experiment arm — and reads the
+        // launch headers to stamp both. Without the opt-in, a CLI or MCP
+        // client's experiment produced two runs badged `API` with no commit
+        // metadata, which also costs the commit-keyed baseline lookup.
+        declareLaunch: true,
       },
       options
     );
@@ -2747,13 +3052,18 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
 
   deleteEvalSuite(
-    params: { projectId: string; suiteId: string },
+    params: {
+      projectId: string;
+      suiteId: string;
+      /** See `deleteEvalCase`. A query param for the same reason. */
+      declaredSuiteId?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformEvalSuiteDeleted> {
     return this.request(
@@ -2761,7 +3071,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      {},
+      { query: { declaredSuiteId: params.declaredSuiteId } },
       options
     );
   }
@@ -2779,7 +3089,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/schedule`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -2827,7 +3137,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -2850,7 +3160,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/batch`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -2871,13 +3181,23 @@ export class PlatformApiClient {
       )}/eval-suites/${encodeURIComponent(
         params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
 
   deleteEvalCase(
-    params: { projectId: string; suiteId: string; caseId: string },
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseId: string;
+      /**
+       * The suite file's `suite.id`, when this delete is that file syncing
+       * itself — see `updateEvalSuite`'s body field of the same name. A QUERY
+       * PARAM here because the route reads no body at all.
+       */
+      declaredSuiteId?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformEvalCaseDeleted> {
     return this.request(
@@ -2887,7 +3207,7 @@ export class PlatformApiClient {
       )}/eval-suites/${encodeURIComponent(
         params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      {},
+      { query: { declaredSuiteId: params.declaredSuiteId } },
       options
     );
   }
@@ -3486,6 +3806,80 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Read an organization's spend budget.
+   *
+   * Any member may read it. A member who cannot RAISE the ceiling still needs
+   * to know it exists, because it is what refused their run.
+   */
+  getSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Set or replace the spend budget. ORG ADMIN ONLY.
+   *
+   * `capUsd` is rounded to the cent, and the response is read back from the
+   * store rather than echoed — a caller that sent $50.004 sees what was kept.
+   *
+   * `alertPercents` REPLACES the whole set; omitting it leaves the stored one
+   * alone. Reaching the cap always alerts, so 100 is rejected: it would name
+   * the same threshold twice.
+   *
+   * Reaching the cap makes MCPJam-billed work refuse with
+   * `spend_budget_reached`. That is NOT the credit-exhausted refusal and must
+   * not be answered by selling credits — the organization set this ceiling on
+   * itself, and only raising or clearing it changes the answer.
+   */
+  setSpendBudget(
+    params: {
+      organizationId: string;
+      capUsd: number;
+      alertPercents?: number[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    const { organizationId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/organizations/${encodeURIComponent(organizationId)}/spend-budget`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Remove the ceiling, leaving the organization uncapped. ORG ADMIN ONLY.
+   *
+   * The window's spend counter SURVIVES: it is a record of what was spent,
+   * not of what the budget was, and clearing a budget does not unspend money.
+   * Setting a new cap therefore takes effect against the spend already made in
+   * the current window.
+   */
+  clearSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
       {},
       options
     );
@@ -4633,7 +5027,17 @@ export class PlatformApiClient {
     // POST's.
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
-    init: { query?: QueryParams; body?: unknown },
+    init: {
+      query?: QueryParams;
+      body?: unknown;
+      /**
+       * Send the declared launch context. Opt-in per call rather than global:
+       * these headers describe a RUN's origin, and stamping them onto every
+       * read and every unrelated write would put a claim on requests that
+       * create nothing to claim.
+       */
+      declareLaunch?: boolean;
+    },
     options?: RequestOptions
   ): Promise<T> {
     const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
@@ -4654,6 +5058,11 @@ export class PlatformApiClient {
     }
     if (this.userAgent) {
       headers["user-agent"] = this.userAgent;
+    }
+    // After `extraHeaders`, like every other header this client owns: an edge
+    // authenticator's credential must not be able to relabel a run's origin.
+    if (init.declareLaunch && this.launchHeaders) {
+      Object.assign(headers, this.launchHeaders);
     }
     if (options?.idempotencyKey) {
       headers["idempotency-key"] = options.idempotencyKey;
