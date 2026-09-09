@@ -262,6 +262,18 @@ o.observe(tcp('10.0.0.4','192.0.2.2',443,12348,18),False,32)
 o.observe(tcp('10.0.0.4','192.0.2.2',443,12348,20),False,33)
 print(json.dumps(rows))
 `;
+    const availability = spawnSync("python3", ["--version"], {
+      encoding: "utf8",
+    });
+    expect(
+      availability.error,
+      `python3 is required for the network monitor tests: ${availability.error?.message ?? "failed to start"}`,
+    ).toBeUndefined();
+    expect(
+      availability.status,
+      `python3 is required for the network monitor tests: ${availability.stderr || availability.stdout}`,
+    ).toBe(0);
+
     const result = spawnSync(
       "python3",
       [
@@ -273,7 +285,11 @@ print(json.dumps(rows))
       ],
       { encoding: "utf8" },
     );
-    expect(result.status, result.stderr).toBe(0);
+    expect(
+      result.error,
+      `python3 failed to start the network monitor test: ${result.error?.message ?? "unknown startup error"}`,
+    ).toBeUndefined();
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     const rows = JSON.parse(result.stdout);
     expect(rows.map((r: { outcome: string }) => r.outcome)).toEqual([
       "attempted",
