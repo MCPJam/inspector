@@ -1,4 +1,4 @@
-import { refuseGithubCredentialAccess } from "../../services/github-checks/credential-policy.js";
+import { requireGithubToolSelection } from "../../services/github-checks/credential-policy.js";
 /**
  * Host tool resolver: resolved host config → AI SDK ToolSet.
  *
@@ -383,7 +383,7 @@ export function resolveHostTools(
 ): ToolSet | undefined {
   const ids = config.builtInToolIds ?? [];
   if (ids.length === 0) return undefined;
-  refuseGithubCredentialAccess();
+  requireGithubToolSelection(ids);
   if (!ctx) {
     logger.debug(
       "[built-in-tools] builtInToolIds requested without Convex auth context; omitting",

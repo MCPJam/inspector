@@ -1,4 +1,4 @@
-import { refuseGithubCredentialAccess } from "../services/github-checks/credential-policy.js";
+import { verifyGithubCredentialAccess, githubExecutionPolicy } from "../services/github-checks/credential-policy.js";
 import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import {
@@ -167,10 +167,10 @@ export async function resolveOrgModelConfig(
 
   const authHeader = normalizeAuthHeader(auth);
   const serverIds = normalizeServerIds(auth?.serverIds);
-  refuseGithubCredentialAccess();
+  await verifyGithubCredentialAccess();
   const cacheKey = buildCacheKey(params, auth);
   const cached = resolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!githubExecutionPolicy() && cached && cached.expiresAt > Date.now()) {
     return cached.result;
   }
 
@@ -255,10 +255,12 @@ export async function resolveOrgModelConfig(
     }
 
     const result: ResolvedOrgModelConfig = { providers };
-    resolveCache.set(cacheKey, {
-      result,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
+    if (!githubExecutionPolicy()) {
+      resolveCache.set(cacheKey, {
+        result,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+    }
     return result;
   } finally {
     clearTimeout(timeout);
@@ -550,12 +552,12 @@ export async function resolveOrgProviderRuntimeForTarget(
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
-  refuseGithubCredentialAccess();
+  await verifyGithubCredentialAccess();
   const cacheKey = buildRuntimeCacheKey(target, providerKey, model, auth);
   const now = Date.now();
   pruneRuntimeResolveCache(now);
   const cached = runtimeResolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (!githubExecutionPolicy() && cached && cached.expiresAt > now) {
     return cached.result;
   }
 
@@ -657,10 +659,12 @@ export async function resolveOrgProviderRuntimeForTarget(
 
   const writeNow = Date.now();
   pruneRuntimeResolveCache(writeNow);
-  runtimeResolveCache.set(cacheKey, {
-    result,
-    expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
-  });
+  if (!githubExecutionPolicy()) {
+    runtimeResolveCache.set(cacheKey, {
+      result,
+      expiresAt: writeNow + RUNTIME_CACHE_TTL_MS,
+    });
+  }
   return result;
 }
 

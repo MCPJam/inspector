@@ -17,6 +17,7 @@ const {
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
+  mockSetRepoForkCredentials,
   mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
@@ -39,6 +40,9 @@ const {
   mockSetRepoEnabled: vi.fn(async () => ({ changed: true })),
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
+  mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
   mockSetRepoFeedbackComments: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
@@ -94,6 +98,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
+    setRepoForkCredentials: mockSetRepoForkCredentials,
     setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
@@ -1884,5 +1889,23 @@ describe("GithubChecksRoute permissions", () => {
     expect(
       screen.queryByText(/only an organization owner or admin can change it/i)
     ).not.toBeInTheDocument();
+  });
+});
+
+it("Settings opts in only the selected repository", async () => {
+  mockMyRole.value = "admin";
+  mockOrgsLoading.value = false;
+  mockAuthLoading.value = false;
+  mockAvailability.value = { state: "enabled" };
+  mockRepos.value = [ROW];
+  renderRoute();
+  const toggle = screen.getByRole("switch", {
+    name: /Allow suite credentials in approved forks/,
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
+    configId: ROW._id,
+    enabled: true,
   });
 });
