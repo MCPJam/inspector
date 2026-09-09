@@ -41,6 +41,9 @@ export type {
   HostConfigInputV2,
   CanonicalHostConfigV2,
   CanonicalHostConfigSkillSelection,
+  CanonicalHostConfigBrowserToolPolicy,
+  HostConfigBrowserToolPolicy,
+  HostConfigBrowserToolPolicyMode,
   HostConfigSkillSelection,
   HostConfigComputer,
   HostConfigMcpProfileV1,
@@ -75,6 +78,7 @@ export { isAppOnlyTool } from "./app-only-tool.js";
 export {
   filterAppOnlyTools,
   applyVisibilityPolicyAndCountSignals,
+  applyToolDescriptionOverrides,
 } from "./tool-visibility.js";
 export type { ToolMetadataSource } from "./tool-visibility.js";
 export {
@@ -92,8 +96,10 @@ export { hostConnectionProfile } from "./host-connection.js";
 export type { HostConnectionProfile } from "./host-connection.js";
 export {
   readOpenAiCompatOverride,
+  readOpenAiAppsOverrides,
   compatPresetForHostStyle,
   resolveOpenAiCompatForHostConfig,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
 } from "./compat-runtime.js";
 
 // Stage 5 (Step 1): SDK→backend eval ingestion wire normalizer. Strips

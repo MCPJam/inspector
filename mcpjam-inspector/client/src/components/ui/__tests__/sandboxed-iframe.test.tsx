@@ -362,6 +362,60 @@ describe("SandboxedIframe — resource-ready delivery", () => {
   });
 });
 
+describe("SandboxedIframe — browser storage policy delivery", () => {
+  function dispatchFromIframe(iframe: HTMLIFrameElement, data: unknown): void {
+    const proxyOrigin = new URL(iframe.src).origin;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        source: iframe.contentWindow!,
+        origin: proxyOrigin,
+      })
+    );
+  }
+
+  it("forwards browserStorage in the payload and resends when it changes", async () => {
+    const renderIframe = (localStorageAllowed: boolean) => (
+      <SandboxedIframe
+        html="<html><body>widget</body></html>"
+        browserStorage={{ localStorage: localStorageAllowed }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(renderIframe(false));
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const postMessageSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+      });
+    });
+
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(1));
+    expect(postMessageSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          browserStorage: { localStorage: false },
+        }),
+      }),
+      expect.any(String)
+    );
+
+    // Semantically unchanged — no resend.
+    rerender(renderIframe(false));
+    await act(async () => Promise.resolve());
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+
+    // Flipping the toggle MUST re-post, or the guard would keep running
+    // against a policy the user already changed. This is what including
+    // browserStorage in `resourceReadyKey` buys.
+    rerender(renderIframe(true));
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(2));
+  });
+});
+
 describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
   // The handler at sandboxed-iframe.tsx:165-205 only forwards messages that
   // either (a) match a small non-JSON-RPC allow-list or (b) carry
@@ -573,5 +627,88 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
       params: {},
     });
     expect(onMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("SandboxedIframe — view mount reporting", () => {
+  function dispatchFromIframe(iframe: HTMLIFrameElement, data: unknown): void {
+    const proxyOrigin = new URL(iframe.src).origin;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        source: iframe.contentWindow!,
+        origin: proxyOrigin,
+      }),
+    );
+  }
+
+  it("forwards mcpjam:view-mode to the host", () => {
+    // The proxy reports where it mounted the view; the renderer turns this
+    // into the Sandbox Stack origin chip. It is not JSON-RPC, so it only
+    // reaches the host if the allow-list names it.
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe")!;
+    const payload = {
+      type: "mcpjam:view-mode",
+      mode: "url",
+      url: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+    };
+    act(() => dispatchFromIframe(iframe, payload));
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].data).toEqual(payload);
+  });
+
+  it("forwards mountMode in the payload and resends when it changes", async () => {
+    // mountMode decides how the proxy mounts the HTML, so it belongs to the
+    // render recipe: changing it must re-send rather than leave the previous
+    // mount on screen.
+    const { container, rerender } = render(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="write"
+      />,
+    );
+    const iframe = container.querySelector("iframe")!;
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+        params: {},
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({ mountMode: "write" }),
+        }),
+        expect.any(String),
+      );
+    });
+    const afterFirst = postMessage.mock.calls.length;
+
+    rerender(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="srcdoc"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(postMessage.mock.calls.length).toBeGreaterThan(afterFirst);
+    });
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ mountMode: "srcdoc" }),
+      }),
+      expect.any(String),
+    );
   });
 });

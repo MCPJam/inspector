@@ -42,12 +42,24 @@ export interface UiResourceMetaSources {
   csp: MetadataFieldSource;
   permissions: MetadataFieldSource;
   prefersBorder: MetadataFieldSource;
+  domain: MetadataFieldSource;
 }
 
 export interface ResolvedUiResourceMeta {
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
   prefersBorder?: boolean;
+  /**
+   * `_meta.ui.domain` — the dedicated origin the SERVER asked for.
+   *
+   * Advisory only. MCPJam derives the origin it actually serves a view from,
+   * the way Claude and ChatGPT do; a server-chosen string is never used for
+   * routing, because keying an origin on it would let one server claim
+   * another's storage. It travels to the client so the CSP Workbench can say
+   * whether the declaration matches what a developer will really need to
+   * allowlist here.
+   */
+  domain?: string;
   /** Per-field breakdown of which source won. */
   metadataSources: UiResourceMetaSources;
   /** Summary of `metadataSources` — `"mixed"` when they disagree. */
@@ -270,6 +282,7 @@ interface NormalizedUiMeta {
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
   prefersBorder?: boolean;
+  domain?: string;
 }
 
 function readUiMeta(
@@ -283,6 +296,13 @@ function readUiMeta(
     // Anything non-boolean is a malformed declaration, not a `false`.
     prefersBorder:
       typeof ui.prefersBorder === "boolean" ? ui.prefersBorder : undefined,
+    // Trimmed because it is compared against a hostname downstream, and an
+    // empty declaration is no declaration — reporting `""` would render a
+    // mismatch finding against a value the server never made.
+    domain:
+      typeof ui.domain === "string" && ui.domain.trim().length > 0
+        ? ui.domain.trim()
+        : undefined,
   };
 }
 
@@ -302,6 +322,7 @@ export function resolveUiResourceMeta(
     csp: "none",
     permissions: "none",
     prefersBorder: "none",
+    domain: "none",
   };
 
   // ── csp ──────────────────────────────────────────────────────────────
@@ -352,6 +373,18 @@ export function resolveUiResourceMeta(
     metadataSources.prefersBorder = "legacy";
   }
 
+  // ── domain ───────────────────────────────────────────────────────────
+  // Two-source chain: `_meta.ui.domain` is a SEP-1865 field with no legacy
+  // `openai/widget*` equivalent.
+  let domain: string | undefined;
+  if (contentUiMeta?.domain !== undefined) {
+    domain = contentUiMeta.domain;
+    metadataSources.domain = "content";
+  } else if (listingUiMeta?.domain !== undefined) {
+    domain = listingUiMeta.domain;
+    metadataSources.domain = "listing";
+  }
+
   const usedMetadataSources = new Set(
     Object.values(metadataSources).filter((source) => source !== "none")
   );
@@ -362,7 +395,14 @@ export function resolveUiResourceMeta(
       ? (Array.from(usedMetadataSources)[0] as MetadataFieldSource)
       : "mixed";
 
-  return { csp, permissions, prefersBorder, metadataSources, metadataSource };
+  return {
+    csp,
+    permissions,
+    prefersBorder,
+    domain,
+    metadataSources,
+    metadataSource,
+  };
 }
 
 /**
@@ -403,6 +443,12 @@ export function canSkipListingLookup(
   contentMeta: Record<string, unknown> | undefined
 ): boolean {
   const ui = readUiMeta(contentMeta);
+  // `domain` is deliberately NOT part of this predicate. It is an advisory
+  // field the Workbench reports on, and requiring it would make every render
+  // of a resource that declares csp/permissions/prefersBorder but no domain
+  // pay a `resources/list` round-trip forever. The cost of leaving it out is
+  // narrow and worth naming: a listing-only `domain` is not seen when the
+  // content item already supplies the other three.
   return (
     ui.csp !== undefined &&
     ui.permissions !== undefined &&
@@ -427,14 +473,11 @@ export async function findListingMetaForUri(
 ): Promise<Record<string, unknown> | undefined> {
   try {
     let cursor: string | undefined;
-    // A server that keeps handing back a cursor it already issued would
-    // otherwise spin until the page cap, turning one broken server into
-    // `LISTING_LOOKUP_MAX_PAGES` pointless round-trips on every render.
-    const seenCursors = new Set<string>();
     for (let page = 0; page < LISTING_LOOKUP_MAX_PAGES; page++) {
       const listing = (await manager.listResources(
         serverId,
-        cursor ? { cursor } : undefined
+        // Presence, not truthiness: `""` is a valid continuation cursor.
+        cursor !== undefined ? { cursor } : undefined
       )) as
         | {
             resources?: Array<{ uri?: unknown; _meta?: unknown }>;
@@ -449,24 +492,19 @@ export async function findListingMetaForUri(
 
       const nextCursor = listing?.nextCursor;
       // Found the entry but it carries no `_meta`, or the server is done
-      // paginating — either way there is nothing further to read.
-      if (match || typeof nextCursor !== "string" || nextCursor.length === 0) {
+      // paginating — either way there is nothing further to read. "Done" means
+      // NO cursor: MCP 2026-07-28 `server/utilities/pagination` makes `""` a
+      // valid cursor that MUST NOT be treated as the end of results, so an
+      // empty string keeps the walk going.
+      //
+      // No repeated-cursor guard: comparing two cursors for equality is itself
+      // a determination based on cursor value, and a server may legally
+      // reissue one constant token — `""` included — for every page.
+      // `LISTING_LOOKUP_MAX_PAGES` is the bound, and hitting it is reported
+      // through `onSkipped` below rather than passing as "no declaration".
+      if (match || typeof nextCursor !== "string") {
         return undefined;
       }
-      if (seenCursors.has(nextCursor)) {
-        // Report the fact, not the value: pagination cursors are opaque
-        // server-generated tokens and implementations encode internal state
-        // in them. "The server repeated a cursor" is the whole diagnostic;
-        // the token itself adds nothing and puts server-side identifiers
-        // into our debug logs.
-        onSkipped?.(
-          `resources/list repeated a pagination cursor after ${
-            page + 1
-          } page(s) — stopping`
-        );
-        return undefined;
-      }
-      seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
     onSkipped?.(

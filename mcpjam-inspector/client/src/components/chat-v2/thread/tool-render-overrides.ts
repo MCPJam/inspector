@@ -16,6 +16,11 @@ export interface ToolRenderOverride {
    * non-interactive runs; live/record-armed surfaces leave it unset.
    */
   frozenScreenshotUrl?: string | null;
+  /** Eval-only browser evidence captured with a frozen widget screenshot. */
+  recordedWidgetErrors?: {
+    consoleErrors: string[];
+    blockedRequests: string[];
+  };
   /**
    * Try the live MCP Apps fetch path before falling back to
    * `cachedWidgetHtmlUrl`. Used by in-flow session revisit so the widget
@@ -65,7 +70,7 @@ export interface ToolRenderOverride {
  */
 export function widgetSlotShouldRender(
   liveWidgetEligible: boolean,
-  override: Pick<ToolRenderOverride, "frozenScreenshotUrl"> | undefined
+  override: Pick<ToolRenderOverride, "frozenScreenshotUrl"> | undefined,
 ): boolean {
   return liveWidgetEligible || !!override?.frozenScreenshotUrl;
 }

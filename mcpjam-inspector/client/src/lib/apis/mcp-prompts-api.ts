@@ -91,7 +91,8 @@ export async function listPromptsPage(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serverId,
-          ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+          // Presence, not truthiness: `""` is a valid continuation cursor.
+          ...(opts?.cursor !== undefined ? { cursor: opts.cursor } : {}),
           ...(opts?.refresh === true ? { refresh: true } : {}),
         }),
       });

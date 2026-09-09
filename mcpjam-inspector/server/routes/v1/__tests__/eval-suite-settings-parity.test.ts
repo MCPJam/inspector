@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { updateSuiteSchema } from "../evals.js";
-import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manifest";
+import {
+  EVAL_SUITE_SETTINGS_MANIFEST,
+  QUALITY_GATE_REQUEST_SAMPLES,
+  SAMPLE_BY_PATH,
+  SETTINGS_PAGE_HIDDEN_KEYS,
+} from "@/shared/eval-suite-settings-manifest";
 
 /**
  * The API half of the settings-parity ratchet.
@@ -26,16 +31,6 @@ import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manif
  * reason. Any path added to the manifest without a sample here fails loudly
  * below rather than being skipped.
  */
-const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
-  "settings.minimumAccuracy": 80,
-  "settings.minimumIterations": 3,
-  "settings.matchOptions": { toolCallOrder: "exact" },
-  "settings.checks": [{ type: "responseContains", needle: "hi" }],
-  "settings.judge": { enabled: true, autoRun: true, threshold: 0.8 },
-  "environment.computerEnvironment": "Playwright",
-  environmentIds: ["env_1"],
-};
-
 /** Build `{a: {b: value}}` from `"a.b"`. */
 function bodyForPath(path: string, value: unknown): Record<string, unknown> {
   const segments = path.split(".");
@@ -46,6 +41,34 @@ function bodyForPath(path: string, value: unknown): Record<string, unknown> {
 }
 
 const OPERATION_NAMES = new Set(ALL_OPERATIONS.map((op) => op.name));
+
+/** Full refined bodies for quality-gate leaves — a standalone leaf fails the reason/revision refine. */
+const QUALITY_GATE_BODY_BY_PATH: Record<string, Record<string, unknown>> = {
+  "settings.qualityGate.baseline":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "baseline only")
+      ?.body ?? {},
+  "settings.qualityGate.maximumPassRateDrop":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "maximum drop")
+      ?.body ?? {},
+  "settings.qualityGate.noDeterministicRegressions":
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "deterministic regressions",
+    )?.body ?? {},
+  "settings.qualityGate.maximumP95LatencyIncreaseMs":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "p95 latency")
+      ?.body ?? {},
+  "settings.qualityGate.noGatingScoreErrors":
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "gating-score errors",
+    )?.body ?? {},
+};
+
+function requestBodyForApiPath(
+  path: string,
+  sample: unknown,
+): Record<string, unknown> {
+  return QUALITY_GATE_BODY_BY_PATH[path] ?? bodyForPath(path, sample);
+}
 
 describe("eval suite settings manifest — API parity", () => {
   it("declares exactly one reachability answer per row", () => {
@@ -74,7 +97,7 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key} names api path "${row.api}" with no sample value in this test — add one`
       ).toBeDefined();
       const parsed = updateSuiteSchema.safeParse(
-        bodyForPath(row.api, sample)
+        requestBodyForApiPath(row.api, sample)
       );
       if (!parsed.success) {
         unreachable.push(`${row.key} → ${row.api}: ${parsed.error.message}`);
@@ -106,7 +129,7 @@ describe("eval suite settings manifest — API parity", () => {
       if (!row.api || !row.api.includes(".")) continue;
       const [head, leaf] = row.api.split(".");
       const parsed = updateSuiteSchema.parse(
-        bodyForPath(row.api, SAMPLE_BY_PATH[row.api])
+        requestBodyForApiPath(row.api, SAMPLE_BY_PATH[row.api])
       ) as Record<string, Record<string, unknown>>;
       expect(
         parsed[head],
@@ -125,6 +148,102 @@ describe("eval suite settings manifest — API parity", () => {
     }
   });
 
+  it("accepts every refined quality-gate request sample", () => {
+    for (const sample of QUALITY_GATE_REQUEST_SAMPLES) {
+      const parsed = updateSuiteSchema.safeParse(sample.body);
+      expect(
+        parsed.success,
+        `${sample.name} should be accepted: ${
+          parsed.success ? "" : parsed.error.message
+        }`
+      ).toBe(true);
+    }
+  });
+
+  it("refuses a quality-gate write without a revision note or precondition", () => {
+    const missingNote = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      settings: { qualityGate: { noGatingScoreErrors: true } },
+    });
+    expect(missingNote.success).toBe(false);
+
+    const missingRevision = updateSuiteSchema.safeParse({
+      revisionNote: "Tighten the bar.",
+      settings: { qualityGate: { noGatingScoreErrors: true } },
+    });
+    expect(missingRevision.success).toBe(false);
+  });
+
+  it("refuses previous_completed and comparative conditions without a baseline", () => {
+    const previous = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      revisionNote: "Try previous run.",
+      settings: {
+        qualityGate: { baseline: { kind: "previous_completed" } },
+      },
+    });
+    expect(previous.success).toBe(false);
+
+    const drop = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      revisionNote: "Drop without a baseline.",
+      settings: { qualityGate: { maximumPassRateDrop: 0.05 } },
+    });
+    expect(drop.success).toBe(false);
+  });
+
+  it("has no writable groundedness path", () => {
+    for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if (row.api) {
+        expect(row.api).not.toMatch(/groundedness/i);
+      }
+    }
+    expect(SAMPLE_BY_PATH["settings.judge.groundedness"]).toBeUndefined();
+    expect(
+      JSON.stringify(SAMPLE_BY_PATH["settings.judge"] ?? {}),
+    ).not.toMatch(/groundedness/);
+    const refused = updateSuiteSchema.safeParse({
+      settings: { judge: { groundedness: { enabled: true } } },
+    });
+    expect(refused.success).toBe(false);
+  });
+
+  it("keeps the not-on-the-settings-page list closed", () => {
+    // `settingsPage: "hidden"` was once an open hatch, and twelve rows used it
+    // to leave the page while the render ratchet skipped every one of them.
+    // The list is frozen here so adding a key is a deliberate test change, and
+    // every key names where the row actually lives.
+    expect(Object.keys(SETTINGS_PAGE_HIDDEN_KEYS).sort()).toEqual([
+      "deleteSuite",
+      "githubChecks",
+      "schedule",
+    ]);
+    for (const [key, whereItLives] of Object.entries(
+      SETTINGS_PAGE_HIDDEN_KEYS,
+    )) {
+      const row = EVAL_SUITE_SETTINGS_MANIFEST.find(
+        (entry) => entry.key === key,
+      );
+      expect(row, `${key} is hidden but has no manifest row`).toBeDefined();
+      expect(
+        (row as { settingsPage?: string }).settingsPage,
+        `${key} is in the hidden list without the marker`,
+      ).toBe("hidden");
+      expect(
+        whereItLives.trim().length,
+        `${key} does not say where it is reached instead`,
+      ).toBeGreaterThanOrEqual(20);
+    }
+    // And the marker is never used off the list.
+    for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if (!("settingsPage" in row)) continue;
+      expect(
+        row.key in SETTINGS_PAGE_HIDDEN_KEYS,
+        `${row.key} is marked hidden but is not in SETTINGS_PAGE_HIDDEN_KEYS`,
+      ).toBe(true);
+    }
+  });
+
   it("gives every `excluded:` row a substantive reason", () => {
     // Short reasons are how an exclusion becomes permanent: nobody can argue
     // with "not supported".
@@ -134,6 +253,17 @@ describe("eval suite settings manifest — API parity", () => {
         row.excluded.trim().length,
         `${row.key}'s exclusion reason is too thin to argue with`
       ).toBeGreaterThanOrEqual(40);
+      // Length is not truth. The `checks` row once explained itself with
+      // "saved through applySuiteSettings.disabledStageChecks; it has no
+      // public PATCH field yet" — a sentence long enough to pass the check
+      // above, describing a Convex argument that mutation has never declared.
+      // Nothing in THIS repo can verify a claim about the backend's argument
+      // list, so a reason may not make one: say what the row is and why it is
+      // off the agent surfaces, not how some other service stores it.
+      expect(
+        /applySuiteSettings\.[A-Za-z0-9_]+/.test(row.excluded),
+        `${row.key}'s reason claims a backend save path this repo cannot check — describe the row instead`,
+      ).toBe(false);
     }
   });
 });

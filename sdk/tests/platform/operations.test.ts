@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
   closeTunnelOperation,
@@ -26,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
@@ -618,7 +620,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
       };
       return Response.json({
         items: [{ name: "echo", cursorSeen: requestBody.cursor ?? null }],
-        nextCursor: "tools-page-2",
+        // The `""` sentinel lets one test exercise an empty-string nextCursor
+        // coming back off the MCP passthrough; every other cursor is unchanged.
+        nextCursor: requestBody.cursor === "penultimate" ? "" : "tools-page-2",
       });
     }
     if (
@@ -858,6 +862,99 @@ describe("listEvalSuiteRunsOperation", () => {
   });
 });
 
+
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  /**
+   * The suite's attachment list is CLIENTS. The wire body still names it
+   * `hosts`, so `clients` folds onto it entry by entry — and both at once is a
+   * refusal, because two replace-all lists describe two different suites.
+   */
+  it("folds `clients` onto the wire's `hosts`", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      {
+        suite: "smoke",
+        clients: [{ client: "Claude" }, { client: "ChatGPT", servers: ["a"] }],
+      },
+      { client },
+    );
+
+    expect(patchBodies).toEqual([
+      { hosts: [{ host: "Claude" }, { host: "ChatGPT", servers: ["a"] }] },
+    ]);
+  });
+
+  it("refuses `clients` and `hosts` together", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    const error = await updateEvalSuiteOperation
+      .execute(
+        {
+          suite: "smoke",
+          clients: [{ client: "Claude" }],
+          hosts: [{ host: "ChatGPT" }],
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("not both");
+    expect(patchBodies).toEqual([]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
+  });
+});
+
 describe("runEvalSuiteOperation", () => {
   it("omits serverIds so the platform connects the suite's saved selection", async () => {
     const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
@@ -898,9 +995,14 @@ describe("runEvalSuiteOperation", () => {
     const createCall = fetchMock.mock.calls.find(([target]) =>
       String(target).endsWith("/eval-runs")
     );
+    // `serverNames` rides along PAIRED WITH `serverIds` by index. A launch
+    // that re-authors the suite's saved selection persists these names; when
+    // they were missing the platform stored the raw ids, and every surface
+    // that lists the suite showed an opaque id where the server name belongs.
     expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
       suiteId: "suite-1",
       serverIds: ["server-http", "server-disabled"],
+      serverNames: ["Echo", "Retired"],
     });
   });
 
@@ -1065,6 +1167,24 @@ describe("runEvalCaseOperation", () => {
     });
   });
 
+  it("pairs serverNames with an explicit server override", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", servers: ["echo"] },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((runCall?.[1] as RequestInit).body));
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+  });
+
   it("requires a suite and a case", () => {
     expect(
       runEvalCaseOperation.inputSchema.safeParse({ suite: "Smoke" }).success
@@ -1088,6 +1208,7 @@ describe("createEvalSuiteOperation", () => {
         cases: [
           {
             title: "echo works",
+            intent: "greeting",
             steps: [
               { id: "s1", kind: "prompt", prompt: "say hi" },
               {
@@ -1127,11 +1248,144 @@ describe("createEvalSuiteOperation", () => {
     expect(body.tests).toHaveLength(1);
     expect(body.tests[0]).toMatchObject({
       title: "echo works",
+      intent: "greeting",
       steps: [
         { id: "s1", kind: "prompt", prompt: "say hi" },
         expect.objectContaining({ kind: "assert" }),
       ],
     });
+  });
+
+  /**
+   * A case's grading rule is a CHECK. This operation called the same field
+   * `predicates` while the API, the UI and `create_eval_case` all called it
+   * `checks` — so an agent authored a suite in one word and then edited one of
+   * its own cases in another.
+   */
+  it("folds a case's `checks` onto the wire's `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = {
+      mode: "replace",
+      list: [{ type: "toolCalledAtLeastOnce", toolName: "echo" }],
+    };
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+            checks: gate,
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.tests[0].predicates).toEqual(gate);
+    expect(body.tests[0]).not.toHaveProperty("checks");
+  });
+
+  it("refuses a case that sets both `checks` and `predicates`", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    const gate = { mode: "replace", list: [] };
+
+    const error = await createEvalSuiteOperation
+      .execute(
+        {
+          name: "Authored smoke",
+          servers: ["echo"],
+          model: "anthropic/claude-haiku-4.5",
+          cases: [
+            {
+              title: "echo works",
+              steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+              checks: gate,
+              predicates: gate,
+            },
+          ],
+        },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("echo works");
+    expect(
+      fetchMock.mock.calls.some(
+        ([target, init]) =>
+          String(target).endsWith("/eval-suites") &&
+          (init as RequestInit | undefined)?.method === "POST"
+      )
+    ).toBe(false);
+  });
+
+  it("attaches the named clients so the suite is not authored without one", async () => {
+    // An API-authored suite had no way to name its client: it read back with
+    // an empty Client everywhere it was listed, and `run_eval_suite`'s host
+    // selector — which only runs hosts ATTACHED to the suite — had nothing to
+    // select.
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        hosts: ["Claude", "host-chatgpt"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.hosts).toEqual([{ host: "Claude" }, { host: "host-chatgpt" }]);
+  });
+
+  it("omits hosts entirely when no client is named", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body).not.toHaveProperty("hosts");
   });
 
   it("rejects stdio servers before creating the suite", async () => {
@@ -1249,9 +1503,9 @@ describe("createEvalSuiteOperation", () => {
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) return;
-    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
-      true
-    );
+    expect(
+      parsed.error.issues.some((issue) => /hostz/.test(issue.message))
+    ).toBe(true);
   });
 
   it("requires a name, at least one server, and at least one case", () => {
@@ -1280,6 +1534,43 @@ describe("createEvalSuiteOperation", () => {
 });
 
 describe("eval run polling operations", () => {
+  it("defines the chain vocabulary IN BAND, not by reference", () => {
+    // An MCP client sees the tool description and nothing else. The stage
+    // order, the three-way chain discriminant and the five states used to live
+    // only in the hosted agent's promptNotes, so every other MCP surface — the
+    // public worker included — handed a model ~36 bare enum members with no
+    // definitions and no way to look them up mid-turn.
+    const description = getEvalRunOperation.description;
+
+    // The order is normative: `notReached` is derived from position.
+    expect(description).toContain(
+      "connection → discovery → selection → call → response → userValue"
+    );
+    // The discriminant, and which of the three carries rows.
+    for (const status of ["verified", "unverified", "absent"]) {
+      expect(description).toContain(`\`${status}\``);
+    }
+    // Every state, each said as its own fact.
+    for (const state of DECISION_LABEL_VOCABULARIES.stageStates) {
+      expect(description).toContain(`\`${state}\``);
+    }
+    // THE claim this whole vocabulary exists to protect.
+    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain(
+      "authorizes proposing a change to the server under test"
+    );
+    // The full 29-reason vocabulary does not belong in a tool description; it
+    // belongs where an agent already fetches reference material. Named here so
+    // the pointer cannot be dropped while the skill stays served.
+    expect(description).toContain("user-value-chain-glossary");
+    // And the phrase that would make a client render a spend warning on a
+    // read-only operation (mcp/tests/platformTools.test.ts ties it to
+    // `risk: "spend"`, which a read must never declare).
+    expect(description).not.toContain("COSTS MONEY");
+    expect(getEvalRunOperation.risk).toBeUndefined();
+    expect(getEvalRunOperation.readOnly).toBe(true);
+  });
+
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -1845,6 +2136,7 @@ describe("operation catalog consistency", () => {
     show_servers: {},
     connect_project_server: { url: "https://example.com/mcp" },
     get_project_server_connection_status: { connectionRequestId: "scr_abc" },
+    cancel_project_server_connection: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1854,6 +2146,9 @@ describe("operation catalog consistency", () => {
     call_server_tool: { server: "s", toolName: "t" },
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
+    list_server_skills: { server: "s" },
+    get_server_skill: { server: "s", uri: "u" },
+    read_server_skill_file: { server: "s", skillUri: "u", resourceUri: "r" },
     check_host_compatibility: { server: "s" },
     start_claude_readiness_run: { server: "s" },
     start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
@@ -1867,6 +2162,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {
@@ -1900,19 +2196,47 @@ describe("operation catalog consistency", () => {
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
+    get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_gate: { project: "p", runId: "r" },
+    get_eval_run_route_facts: { project: "p", runId: "r" },
+    get_eval_run_server_facts: { project: "p", runId: "r" },
+    propose_eval_description_rewrite: {
+      project: "p",
+      runId: "r",
+      toolName: "t",
+    },
+    start_eval_description_experiment: { project: "p", experiment: "e" },
+    get_eval_description_experiment: { project: "p", experiment: "e" },
+    list_eval_suite_stage_analytics: { project: "p", suite: "s" },
     // baseRunId is deliberately absent from the minimal input: omitting it is
     // the common path (compare against the nearest completed predecessor).
     compare_eval_run: { project: "p", runId: "r" },
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    waive_eval_gate: {
+      project: "p",
+      runId: "r",
+      reason: "shipping the hotfix; tracked in ENG-1",
+      expiresAt: 1_700_000_000_000,
+    },
+    get_eval_gate_waiver: { project: "p", runId: "r" },
+    revoke_eval_gate_waiver: { project: "p", runId: "r", waiverId: "w" },
     request_eval_run_judge: { project: "p", runId: "r" },
-    list_eval_check_repos: {},
-    connect_eval_check_repo: {
+    list_eval_github_repos: {},
+    connect_eval_github_repo: {
       suite: "s",
       repo: "acme/widgets",
       // No default: the policy decides what other people's pull requests
       // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
+    },
+    // The pre-rename spellings of the two above. Still advertised, so an agent
+    // already calling one keeps its tool; same inputs, same implementation.
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
       outagePolicy: "fail_open",
     },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
@@ -1935,6 +2259,43 @@ describe("operation catalog consistency", () => {
     create_persona: { name: "Ada", role: "buyer" },
     update_persona: { persona: "pe", name: "Ada" },
     delete_persona: { persona: "pe" },
+    list_secrets: {},
+    get_secret: { secret: "sec" },
+    // `delivery` is REQUIRED with no default, which is the point: a caller who
+    // has not said whether the value ends up inside the sandbox has not made
+    // the decision this operation exists to make.
+    create_secret: {
+      name: "STRIPE_API_KEY",
+      value: "sk_live_example_value",
+      delivery: "materialized",
+    },
+    update_secret: { secret: "sec", value: "sk_live_rotated_value" },
+    delete_secret: { secret: "sec" },
+    list_trace_destinations: { organization: "org" },
+    get_trace_destination: { organization: "org", destination: "td" },
+    create_trace_destination: {
+      organization: "org",
+      name: "Coralogix",
+      endpointUrl: "https://ingress.eu2.coralogix.com:443",
+    },
+    update_trace_destination: {
+      organization: "org",
+      destination: "td",
+      name: "Coralogix (production)",
+    },
+    delete_trace_destination: { organization: "org", destination: "td" },
+    test_trace_destination: { organization: "org", destination: "td" },
+    pause_trace_destination: { organization: "org", destination: "td" },
+    resume_trace_destination: { organization: "org", destination: "td" },
+    backfill_trace_destination: {
+      organization: "org",
+      destination: "td",
+      days: 7,
+    },
+    list_trace_destination_backfills: {
+      organization: "org",
+      destination: "td",
+    },
     generate_personas: { environmentId: "e" },
     get_journey: { journey: "j" },
     create_journey: {
@@ -2002,17 +2363,23 @@ describe("operation catalog consistency", () => {
       mode: "project_members",
     },
     rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
-    list_hosts: {},
-    get_host: { host: "h" },
-    set_host_servers: { host: "h", serverIds: [] },
-    duplicate_host: { host: "h" },
-    create_host: { name: "h", template: "claude" },
-    update_host: { host: "h", name: "renamed" },
-    delete_host: { host: "h" },
+    list_clients: {},
+    get_client: { client: "c" },
+    set_client_servers: {
+      client: "c",
+      serverIds: [],
+      expectedConfigId: "hc_1",
+    },
+    duplicate_client: { client: "c" },
+    create_client: { name: "c", template: "claude" },
+    update_client: { client: "c", name: "renamed", expectedName: "c" },
+    delete_client: { client: "c" },
     list_project_environments: {},
     get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
+    list_project_skills: {},
+    get_project_skill: { skillId: "sk" },
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
@@ -2122,7 +2489,16 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Stops a pending connection, releasing the slot it holds.
+      "cancel_project_server_connection",
       "request_eval_run_judge",
+      // Description-rewrite experiment. Propose spends a small model budget
+      // to draft the rewrite; start launches two replay arms and spends
+      // eval-iteration credits. `get_eval_description_experiment` stays a
+      // read — it only polls the receipt.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
+      "connect_eval_github_repo",
       "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",
@@ -2146,11 +2522,11 @@ describe("operation catalog consistency", () => {
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
-      "create_host",
-      "update_host",
-      "delete_host",
-      "set_host_servers",
-      "duplicate_host",
+      "create_client",
+      "update_client",
+      "delete_client",
+      "set_client_servers",
+      "duplicate_client",
       "create_project_environment",
       "ensure_adhoc_environment",
       "name_environment",
@@ -2178,6 +2554,24 @@ describe("operation catalog consistency", () => {
       "create_persona",
       "update_persona",
       "delete_persona",
+      // Secret writes. `create_secret` and `update_secret` carry a credential
+      // in their INPUT (risk: exposure); `delete_secret` revokes one.
+      "create_secret",
+      "update_secret",
+      "delete_secret",
+      // Trace-destination writes. `create` and `update` carry vendor
+      // credentials in their INPUT and decide whether customer content leaves
+      // the platform (risk: exposure); `resume` is exposure too, because it
+      // restarts an export someone stopped. `test` and `pause` persist but
+      // expose nothing, and `backfill` is `spend` — it can queue a month of an
+      // organization's history at a vendor that bills on ingest.
+      "create_trace_destination",
+      "update_trace_destination",
+      "delete_trace_destination",
+      "test_trace_destination",
+      "pause_trace_destination",
+      "resume_trace_destination",
+      "backfill_trace_destination",
       "create_journey",
       "update_journey",
       "archive_journey",
@@ -2223,6 +2617,13 @@ describe("operation catalog consistency", () => {
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
       "send_chat_message",
+      // Gate waivers. Both are writes because both persist an audited record
+      // and both move a published GitHub Check Run. `get_eval_gate_waiver` is
+      // deliberately NOT here — reading whether a gate is waived is available
+      // to anyone who can view the run, and a waiver its readers cannot see
+      // is not a visible waiver.
+      "waive_eval_gate",
+      "revoke_eval_gate_waiver",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -2293,6 +2694,42 @@ describe("server live operations", () => {
 
     expect(result.items).toEqual([{ name: "echo", cursorSeen: "page-2" }]);
     expect(result.nextCursor).toBe("tools-page-2");
+  });
+
+  // MCP 2026-07-28 `server/utilities/pagination`: "an empty string is a valid
+  // cursor and thus MUST NOT be treated as the end of results". These listings
+  // are a PASSTHROUGH of the MCP server's cursor, so the rule reaches them.
+  it("accepts an empty-string cursor and puts it on the wire", () => {
+    const parsed = listServerToolsOperation.inputSchema.safeParse({
+      project: "new",
+      server: "Echo",
+      cursor: "",
+    });
+    // A `.min(1)` here would refuse to page a conforming server.
+    expect(parsed.success).toBe(true);
+  });
+
+  it("list_server_tools forwards an empty-string cursor verbatim", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "" },
+      { client }
+    );
+
+    expect(result.items).toEqual([{ name: "echo", cursorSeen: "" }]);
+  });
+
+  it("list_server_tools surfaces an empty-string nextCursor instead of dropping it", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const result = await listServerToolsOperation.execute(
+      { project: "new", server: "Echo", cursor: "penultimate" },
+      { client }
+    );
+
+    expect(result.nextCursor).toBe("");
+    expect("nextCursor" in result).toBe(true);
   });
 
   it("call_server_tool defaults parameters and posts the call body", async () => {
@@ -2405,14 +2842,18 @@ describe("registry operations", () => {
       if (path === "/api/v1/projects") {
         return Response.json({ items: PROJECTS });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)
+      ) {
         return Response.json({
           serverId: "server-installed",
           serverName: "Installed",
           outcome: options?.outcome ?? "created",
         });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)
+      ) {
         return Response.json({
           id: "server-installed",
           projectId: "project-new",

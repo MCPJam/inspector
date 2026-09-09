@@ -596,6 +596,22 @@ export function diffAcknowledgement(
  */
 const MAX_RETAINED_STREAMS = 50;
 
+/**
+ * How many rejected notifications a coordinator keeps.
+ *
+ * Unlike the stream history, this one grows on input the PEER controls: a
+ * server that keeps sending notifications for a stream that is no longer
+ * active, or for a subscription id we never issued, adds a record per
+ * notification and nothing ever removed one. The records are small — three to
+ * five scalars each, no `params` — so this was slow rather than dramatic, but
+ * it had no ceiling at all, and the process it grows in is the Electron main
+ * process.
+ *
+ * Higher than {@link MAX_RETAINED_STREAMS} because rejections arrive in bursts
+ * and the debugger wants the burst, not a sample of it.
+ */
+const MAX_RETAINED_REJECTIONS = 200;
+
 let coordinatorSeq = 0;
 
 /**
@@ -628,6 +644,7 @@ export class SubscriptionCoordinator {
   private currentLocalId?: string;
   /** Serializes reconcile/close/reopen so filter churn cannot interleave. */
   private queue: Promise<void> = Promise.resolve();
+  /** Bounded by {@link MAX_RETAINED_REJECTIONS}; oldest evicted on write. */
   private readonly rejections: RejectedSubscriptionNotification[] = [];
   /** Legacy adapter bookkeeping: URIs currently `resources/subscribe`d. */
   private legacySubscribedUris = new Set<string>();
@@ -914,6 +931,15 @@ export class SubscriptionCoordinator {
 
   private recordRejection(event: RejectedSubscriptionNotification): void {
     this.rejections.push(event);
+    // Oldest first, matching the stream history: a long-lived connection being
+    // spammed by its peer should keep the RECENT rejections, which are the ones
+    // describing whatever is wrong now.
+    if (this.rejections.length > MAX_RETAINED_REJECTIONS) {
+      this.rejections.splice(
+        0,
+        this.rejections.length - MAX_RETAINED_REJECTIONS
+      );
+    }
     this.options.onRejectedNotification?.(event);
   }
 

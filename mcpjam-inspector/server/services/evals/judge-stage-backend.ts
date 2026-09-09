@@ -38,6 +38,7 @@ import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
 import type {
   StageAuthoredCase,
   StageSetupSignals,
+  TestStep,
 } from "@mcpjam/sdk/contract";
 import type { ToolExposureSignals } from "@mcpjam/sdk/host-config/internal";
 import { isAbortError } from "@/shared/abort-errors";
@@ -141,6 +142,7 @@ export type JudgeStageDerivationBody = {
   firstFailedStage?: string;
   failureCategory?: string;
   stageAnalyzerVersion?: number;
+  stageMeasurements?: unknown;
   setupSignals?: unknown;
   toolSignals?: unknown;
   scores?: unknown[];
@@ -172,12 +174,46 @@ export type JudgeSecondPassIterationRow = {
   prompts?: PromptTraceSummary[];
   messages?: ModelMessage[];
   /**
-   * The authored case's stage-applicability inputs. NOT persisted on the
-   * iteration, so the read surface resolves it from the suite the same way the
-   * runner did — absent ⇒ this iteration gets no chain, exactly as in the
-   * first pass, rather than a guessed one.
+   * The RUN'S OWN frozen snapshot of the authored case, not a derived
+   * `StageAuthoredCase`.
+   *
+   * Stage applicability is inferred by the SDK's `buildStageAuthoredCase` — the
+   * same function the runner used on the first pass — so the backend hands back
+   * the raw case and this side derives. Mirroring that inference in Convex
+   * would put a second implementation of "what does this case assert" in the
+   * repository least able to test it against the analyzer. Absent ⇒ this
+   * iteration gets no chain, exactly as in the first pass, rather than a
+   * guessed one.
+   */
+  authoredCase?: {
+    isNegativeTest?: boolean;
+    expectedOutput?: string;
+    expectedToolCalls?: readonly unknown[];
+    successPredicates?: readonly unknown[];
+    caseType?: string;
+    steps?: readonly TestStep[];
+    promptTurns?: ReadonlyArray<{ expectedToolCalls?: readonly unknown[] }>;
+  };
+  /**
+   * The backend's OWN derived shape, still served beside the raw case for D7's
+   * consumer. Read only as a fallback when `authoredCase` is absent — a row
+   * that carries just this must still derive a chain, so the field has to stay
+   * on the contract as well as in the code that reads it.
    */
   stageCase?: StageAuthoredCase;
+  /** Snapshotted per-case options, for the `toolCalls:match` definition hash. */
+  matchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /**
+   * Whether the persisted TRACE came back in full.
+   *
+   * `false` ⇒ the backend could not serve this iteration's spans within its
+   * byte budget. The analyzer reports `traceAbsent` when handed no spans, so
+   * re-deriving here would replace a correct user-value chain with one saying
+   * nothing happened — this pass therefore posts NO stage keys for such a row.
+   * A partial chain is worse than none: none leaves the first pass's standing.
+   */
+  traceComplete?: boolean;
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
 };
@@ -190,7 +226,20 @@ export type JudgeSecondPassRunRow = {
   gradingEngine?: { mode?: unknown };
   configSnapshot?: { gradingEngine?: { mode?: unknown } };
   iterations: JudgeSecondPassIterationRow[];
+  /**
+   * True when the run has MORE iterations than this fetch retrieved.
+   *
+   * The pass reports the set it graded, and the backend marks a fanout
+   * complete when every reported outcome succeeded — it cannot tell a fully
+   * graded run from one whose tail was never fetched. So a partial fetch must
+   * never be allowed to complete a fanout; the pass reports `failed` instead
+   * and lets the sweep re-drive it.
+   */
+  incomplete?: boolean;
 };
+
+/** Pages one fetch will follow before giving up. 200 iterations per page. */
+const MAX_DERIVATION_INPUT_PAGES = 25;
 
 /**
  * Read the run and its iterations WITHOUT a user bearer.
@@ -204,9 +253,36 @@ export type JudgeSecondPassRunRow = {
 export async function fetchRunForJudgeSecondPass(
   runId: string
 ): Promise<JudgeSecondPassRunRow> {
-  return await postJson<JudgeSecondPassRunRow>("/runs/judge-derivation-input", {
-    runId,
-  });
+  // FOLLOWS THE CURSOR. The route pages at 200 iterations, and a consumer that
+  // took only the first page would grade the head of a long run, report every
+  // outcome as applied, and let the backend mark the fanout complete — leaving
+  // the tail permanently ungraded with nothing to re-drive it. A run of 25
+  // cases at 10 repetitions already exceeds one page.
+  //
+  // Paging is an implementation detail of this port: `runJudgeSecondPass` sees
+  // one run row either way.
+  let cursor: string | undefined;
+  let head: JudgeSecondPassRunRow | undefined;
+  const iterations: JudgeSecondPassIterationRow[] = [];
+
+  for (let page = 0; page < MAX_DERIVATION_INPUT_PAGES; page += 1) {
+    const body: Record<string, unknown> = { runId };
+    if (cursor !== undefined) body.cursor = cursor;
+    const response = await postJson<
+      JudgeSecondPassRunRow & { nextCursor?: string }
+    >("/runs/judge-derivation-input", body);
+
+    head ??= response;
+    iterations.push(...(response.iterations ?? []));
+    if (response.nextCursor === undefined) {
+      return { ...head, iterations };
+    }
+    cursor = response.nextCursor;
+  }
+
+  // A run longer than the page budget. Reported rather than silently truncated
+  // — see `incomplete`.
+  return { ...(head as JudgeSecondPassRunRow), iterations, incomplete: true };
 }
 
 /**
@@ -241,6 +317,7 @@ export type MetadataAttributionStageDerivationBody = {
   firstFailedStage?: string;
   failureCategory?: string;
   stageAnalyzerVersion?: number;
+  stageMeasurements?: unknown;
 };
 
 /**

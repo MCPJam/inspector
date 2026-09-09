@@ -140,18 +140,40 @@ describe("dialToolListing", () => {
     expect(listing.complete).toBe(false);
   });
 
-  it("stops a server that echoes one cursor forever", async () => {
+  // A server may legally reissue one constant opaque token for every page —
+  // MCP 2026-07-28 `server/utilities/pagination` forbids reading anything off
+  // a cursor's VALUE beyond whether one was provided, and comparing two
+  // cursors for equality is exactly that. So a repeated cursor is followed
+  // like any other; the PAGE CAP is what bounds the walk, and it reports the
+  // listing as incomplete rather than as finished.
+  it("walks a server that echoes one cursor forever to the page cap, and calls the listing incomplete", async () => {
     const { fetchFn, calls } = routedFetch({
       "tools/list": [{ tools: [{ name: "a" }], nextCursor: "same" }],
     });
     const listing = await dialToolListing({
       enteredUrl: URL_UNDER_TEST,
       fetchFn,
-      maxListPages: 50,
+      maxListPages: 4,
     });
-    expect(calls.length).toBeLessThan(5);
+    expect(calls.length).toBe(4);
+    expect(listing.paginationCapHit).toBe(true);
     expect(listing.complete).toBe(false);
-    expect(listing.error).toContain("repeated cursor");
+  });
+
+  it("does the same for a constant EMPTY-STRING cursor", async () => {
+    // The case the whole fix is about: `""` must not be read as the end, and
+    // must not be singled out by a cycle check either.
+    const { fetchFn, calls } = routedFetch({
+      "tools/list": [{ tools: [{ name: "a" }], nextCursor: "" }],
+    });
+    const listing = await dialToolListing({
+      enteredUrl: URL_UNDER_TEST,
+      fetchFn,
+      maxListPages: 4,
+    });
+    expect(calls.length).toBe(4);
+    expect(listing.paginationCapHit).toBe(true);
+    expect(listing.complete).toBe(false);
   });
 
   it("records the entry cap when a server lists more than the budget", async () => {

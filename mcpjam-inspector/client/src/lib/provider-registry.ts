@@ -32,6 +32,18 @@ import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
 import minimaxLogo from "/minimax_logo.svg";
 import qwenLogo from "/qwen_logo.png";
+import nvidiaLogo from "/nvidia_logo.svg";
+import amazonLogo from "/amazon_logo.svg";
+import kwaipilotLogo from "/kwaipilot_logo.svg";
+import hunyuanLogo from "/hunyuan_logo.svg";
+import bytedanceLogo from "/bytedance_logo.svg";
+import inceptionLightLogo from "/inception_light.svg";
+import inceptionDarkLogo from "/inception_dark.svg";
+import morphLogo from "/morph_logo.svg";
+import stepfunLogo from "/stepfun_logo.svg";
+import arceeLogo from "/arcee_logo.svg";
+import cohereLogo from "/cohere_logo.svg";
+import poolsideLogo from "/poolside_logo.svg";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -136,6 +148,69 @@ const PROVIDER_REGISTRY: Record<string, ProviderBrand> = {
     logoLight: openrouterLogo,
     color: "text-purple-500 dark:text-purple-400",
   },
+  nvidia: {
+    displayName: "NVIDIA",
+    logoLight: nvidiaLogo,
+    color: "text-lime-600 dark:text-lime-400",
+  },
+  amazon: {
+    displayName: "Amazon",
+    logoLight: amazonLogo,
+    color: "text-amber-600 dark:text-amber-400",
+  },
+  kwaipilot: {
+    displayName: "Kwaipilot",
+    logoLight: kwaipilotLogo,
+    color: "text-sky-600 dark:text-sky-400",
+  },
+  tencent: {
+    // The catalog files Hunyuan under `tencent/*` (`tencent/hy-mt2-lite`,
+    // `tencent/hy-mt2-plus`), so the Hunyuan mark reads truer at 12px than the
+    // Tencent corporate logo. The asset is named for what it depicts — it
+    // carries `<title>Hunyuan</title>` — so nobody "fixes" it by dropping the
+    // corporate logo in under a filename that asked for one.
+    displayName: "Tencent Hunyuan",
+    logoLight: hunyuanLogo,
+    color: "text-blue-600 dark:text-blue-400",
+  },
+  bytedance: {
+    displayName: "ByteDance",
+    logoLight: bytedanceLogo,
+    color: "text-cyan-600 dark:text-cyan-400",
+  },
+  inception: {
+    // Ships as `currentColor`, which an <img> can't inherit — pinned to an
+    // explicit fill per theme instead of one asset that vanishes on dark.
+    displayName: "Inception",
+    logoLight: inceptionLightLogo,
+    logoDark: inceptionDarkLogo,
+    color: "text-zinc-600 dark:text-zinc-400",
+  },
+  morph: {
+    displayName: "Morph",
+    logoLight: morphLogo,
+    color: "text-lime-600 dark:text-lime-400",
+  },
+  stepfun: {
+    displayName: "StepFun",
+    logoLight: stepfunLogo,
+    color: "text-blue-600 dark:text-blue-400",
+  },
+  "arcee-ai": {
+    displayName: "Arcee AI",
+    logoLight: arceeLogo,
+    color: "text-teal-600 dark:text-teal-400",
+  },
+  cohere: {
+    displayName: "Cohere",
+    logoLight: cohereLogo,
+    color: "text-emerald-600 dark:text-emerald-400",
+  },
+  poolside: {
+    displayName: "Poolside",
+    logoLight: poolsideLogo,
+    color: "text-indigo-600 dark:text-indigo-400",
+  },
   custom: {
     displayName: "Custom",
     // No bundled logo → monogram; the background gradient makes it legible.
@@ -154,6 +229,9 @@ const PROVIDER_ALIASES: Record<string, string> = {
   mistralai: "mistral",
   zai: "z-ai",
   moonshot: "moonshotai",
+  // The catalog serves the newer Grok models under `spacexai/*`; same
+  // vendor as `x-ai/*`, so both share the bundled Grok assets.
+  spacexai: "xai",
 };
 
 const DEFAULT_COLOR = "text-gray-600 dark:text-gray-400";

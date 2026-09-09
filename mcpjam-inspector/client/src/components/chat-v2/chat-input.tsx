@@ -6,7 +6,6 @@ import {
   useMemo,
   useEffect,
 } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { SkillsSource } from "@/lib/apis/mcp-skills-api";
 import type {
@@ -15,6 +14,7 @@ import type {
   DragEvent,
   FormEvent,
   KeyboardEvent,
+  ReactNode,
 } from "react";
 import { cn } from "@/lib/chat-utils";
 import { track } from "@/lib/analytics";
@@ -51,6 +51,10 @@ import {
   ClientSelector,
   type ClientSelectorData,
 } from "@/components/chat-v2/chat-input/client-selector";
+import {
+  ExecutionTargetChip,
+  type ExecutionTargetChipData,
+} from "@/components/chat-v2/chat-input/execution-target-chip";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -282,6 +286,16 @@ interface ChatInputProps {
   enableMultiModel?: boolean;
   /** Playground-only: renders a client chip beside the model chip. */
   clientSelector?: ClientSelectorData;
+  /**
+   * Where this turn's Claude Code agent runs, as a chip in the toolbar.
+   *
+   * A DATA prop, mirroring `clientSelector`: one key on
+   * `sharedChatInputProps` reaches all six `<ChatInput>` sites, and the
+   * component itself owns no lifecycle. The dialog it opens lives in
+   * PlaygroundMain, once — six composers each owning their own would be six
+   * dialogs racing one approval.
+   */
+  executionTarget?: ExecutionTargetChipData;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -383,6 +397,17 @@ interface ChatInputProps {
    */
   environmentServersOverridden?: boolean;
   onResetEnvironmentServers?: () => void;
+  /**
+   * Banner rendered inside the composer, above everything else.
+   *
+   * Exists for statements the composer has to make ABOUT ITSELF — today, that
+   * a reopened conversation's as-run host/environment was never recorded, so
+   * these controls are the viewer's current selection rather than history (see
+   * `ConversationTargetNotice`). Rendered here rather than by each caller
+   * because there are six `<ChatInput>` sites and the notice must not be
+   * reachable from only some of them.
+   */
+  notice?: ReactNode;
 }
 
 export function ChatInput({
@@ -405,6 +430,7 @@ export function ChatInput({
   onMultiModelEnabledChange,
   enableMultiModel = false,
   clientSelector,
+  executionTarget,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -447,13 +473,21 @@ export function ChatInput({
   onEnvironmentServerToggle,
   environmentServersOverridden = false,
   onResetEnvironmentServers,
+  notice,
 }: ChatInputProps) {
-  // Cloud skill source for the `/` picker: in hosted mode, list/load skills
-  // from the project's Convex/Computer source (Playground carries projectId via
-  // `clientSelector`). Gated behind the `skills-enabled` flag until QA completes
-  // (flag off ⇒ no cloud source, so the picker lists no cloud skills). Local
-  // mode keeps the default (filesystem) path. Memoized so the popover's fetch
-  // effects don't re-run every render.
+  // The project LIBRARY half of the `/` picker: list/load skills from the
+  // project's Convex source (Playground carries the id via `clientSelector`).
+  //
+  // NOT gated on `HOSTED_MODE` any more. It was, back when the picker showed
+  // one source or the other and hosted was the only mode with a library to
+  // show — which meant a local user's own project skills were unreachable from
+  // chat, though they are exactly what the library exists for. The picker now
+  // merges both halves (see SkillsPopoverSection), so this is simply "is there
+  // a library to read": a Convex project id exists in both modes, and an
+  // unsynced project has none, which keeps the half off by itself.
+  //
+  // Still gated behind the `skills-enabled` flag until QA completes. Memoized
+  // so the popover's fetch effects don't re-run every render.
   const skillsEnabled = useSkillsEnabled();
   // Skills over MCP (SEP-2640): the selected servers ARE the candidate
   // providers. `connected: true` because a server only reaches
@@ -481,7 +515,7 @@ export function ChatInput({
 
   const skillsSource = useMemo<SkillsSource | undefined>(
     () =>
-      HOSTED_MODE && skillsEnabled && clientSelector?.cloudProjectId
+      skillsEnabled && clientSelector?.cloudProjectId
         ? { kind: "cloud", projectId: clientSelector.cloudProjectId }
         : undefined,
     [clientSelector?.cloudProjectId, skillsEnabled]
@@ -1417,6 +1451,8 @@ export function ChatInput({
             </div>
           )}
 
+          {notice}
+
           <PromptsPopover
             anchor={caret}
             selectedServers={selectedServers}
@@ -1820,17 +1856,38 @@ export function ChatInput({
                       </button>
 
                       {onRequireToolApprovalChange && (
-                        <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
-                          <div className="flex items-center gap-2 text-sm">
-                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-                            Tool Approval
+                        <div className="rounded-md px-2 py-2 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm">
+                              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                              Tool Approval
+                            </div>
+                            <Switch
+                              checked={requireToolApproval}
+                              onCheckedChange={(checked) =>
+                                onRequireToolApprovalChange(checked)
+                              }
+                              aria-describedby="tool-approval-floor-note"
+                            />
                           </div>
-                          <Switch
-                            checked={requireToolApproval}
-                            onCheckedChange={(checked) =>
-                              onRequireToolApprovalChange(checked)
-                            }
-                          />
+                          {/* A caption rather than a tooltip: the row contains
+                              the switch itself, so a tooltip trigger wrapped
+                              around it would open over the control the user is
+                              reaching for, and a non-focusable trigger div
+                              would never open for a keyboard user at all.
+                              Both halves of the rule are surprising — the
+                              switch RAISES a floor and never lowers it, so
+                              some things pause without it and some never
+                              pause with it — and neither should be behind a
+                              hover. */}
+                          <p
+                            id="tool-approval-floor-note"
+                            className="mt-1 pl-6 text-[11px] leading-snug text-muted-foreground"
+                          >
+                            Pause before tool calls. Browser, page,
+                            local-machine and destructive UI actions always
+                            pause; read-only lookups never do.
+                          </p>
                         </div>
                       )}
 
@@ -1862,6 +1919,9 @@ export function ChatInput({
                   themeMode={resolvedThemeMode}
                   modalThemeMode={globalThemeMode}
                 />
+              ) : null}
+              {!minimalMode && executionTarget ? (
+                <ExecutionTargetChip {...executionTarget} />
               ) : null}
               {!minimalMode && (
                 <ModelSelector

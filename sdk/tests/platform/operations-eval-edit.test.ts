@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PlatformApiClient } from "../../src/platform/client.js";
 import {
   createEvalCaseOperation,
+  createEvalCasesOperation,
   deleteEvalCaseOperation,
   deleteEvalSuiteOperation,
   generateEvalCasesOperation,
@@ -29,6 +30,7 @@ function makeClient(): {
   calls: Array<{
     method: string;
     path: string;
+    query: Record<string, string>;
     body?: any;
     headers: Record<string, string>;
   }>;
@@ -36,6 +38,7 @@ function makeClient(): {
   const calls: Array<{
     method: string;
     path: string;
+    query: Record<string, string>;
     body?: any;
     headers: Record<string, string>;
   }> = [];
@@ -50,7 +53,13 @@ function makeClient(): {
     )) {
       headers[key.toLowerCase()] = value;
     }
-    calls.push({ method, path, body, headers });
+    calls.push({
+      method,
+      path,
+      query: Object.fromEntries(url.searchParams),
+      body,
+      headers,
+    });
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
     if (/\/environments$/.test(path))
@@ -63,6 +72,23 @@ function makeClient(): {
         generationModel: "anthropic/claude-haiku-4.5",
         created: [],
         counts: {},
+      });
+    if (/\/eval-suites\/[^/]+\/cases\/batch$/.test(path))
+      return Response.json({
+        created: (body.cases ?? []).map(
+          (testCase: { title?: string }, index: number) => ({
+            index,
+            id: `c-batch-${index}`,
+            title: testCase.title,
+            kind: "prompt",
+          })
+        ),
+        failed: [],
+        duplicatePolicy: {
+          effectivePolicy: "block",
+          coerced: false,
+        },
+        warnings: [],
       });
     if (/\/eval-suites\/[^/]+\/cases$/.test(path) && method === "GET")
       return Response.json({ items: CASES });
@@ -190,6 +216,95 @@ describe("eval-edit operation execution", () => {
       name: "Renamed",
       settings: { minimumAccuracy: 80 },
     });
+  });
+
+  it("create_eval_case carries the converter's import claim to the wire", async () => {
+    const { client, calls } = makeClient();
+    const claim = {
+      status: "approximated" as const,
+      sourceCaseKey: "promptfoo:tests[3]",
+      note: "Source asserted a regex; MCPJam asserts a substring.",
+    };
+    await createEvalCaseOperation.execute(
+      { suite: "s1", title: "Converted", import: claim },
+      { client }
+    );
+    const post = calls.find((c) => c.method === "POST");
+    // Dropping the claim here does not merely lose provenance: a case with no
+    // claim is a NATIVE case, and a native case needs no approval — so an
+    // approximated case would run and gate on evidence nobody reviewed.
+    expect(post?.body?.import).toEqual(claim);
+  });
+
+  it("update_eval_case forwards a claim, and null to clear one", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", import: null },
+      { client }
+    );
+    const patch = calls.find((c) => c.method === "PATCH");
+    // `null` CLEARS; omitting leaves the stored claim alone. `buildCaseBody`
+    // drops undefined and keeps null, which is exactly that distinction.
+    expect(patch?.body).toEqual({ import: null });
+  });
+
+  it("forwards intent on create and distinguishes clear from omission on update", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCaseOperation.execute(
+      { suite: "s1", title: "Labelled", intent: "refund" },
+      { client }
+    );
+    expect(calls.find((call) => call.method === "POST")?.body?.intent).toBe(
+      "refund"
+    );
+
+    await updateEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", intent: null },
+      { client }
+    );
+    expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({
+      intent: null,
+    });
+  });
+
+  it("create rejects import: null, which the route would 400", async () => {
+    // The REST create schema takes the claim or nothing; only PATCH accepts
+    // null. An input schema that advertised null here would tell the caller a
+    // body is valid and then have the server reject it.
+    expect(
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        import: null,
+      }).success
+    ).toBe(false);
+    expect(
+      createEvalCasesOperation.inputSchema.safeParse({
+        suite: "s1",
+        cases: [{ title: "t", import: null }],
+      }).success
+    ).toBe(false);
+    // Update still clears with null — that is the whole point of the asymmetry.
+    expect(
+      updateEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        case: "c1",
+        import: null,
+      }).success
+    ).toBe(true);
+  });
+
+  it("create_eval_case rejects an exact claim with no note", async () => {
+    // The contract schema is reused verbatim, so a claim means the same thing
+    // whether it arrives from a suite file or this operation — including the
+    // rule that `exact` must cite the mapping rule that earns it.
+    expect(
+      createEvalCaseOperation.inputSchema.safeParse({
+        suite: "s1",
+        title: "t",
+        import: { status: "exact" },
+      }).success
+    ).toBe(false);
   });
 
   it("get_eval_case resolves a case by title", async () => {
@@ -398,5 +513,178 @@ describe("eval suites × project environments", () => {
       setEvalSuiteEnvironmentsOperation.inputSchema.safeParse({ suite: "s1" })
         .success
     ).toBe(false);
+  });
+});
+
+/**
+ * The suite-file sync marker on the write operations.
+ *
+ * A CI-owned suite — one whose configuration lives in a repository — refuses
+ * these writes. The file's own sync is the exception, and it says so by naming
+ * the suite's own `suite.id`. What these tests pin is that the marker actually
+ * reaches the wire, in the right place for each verb, and that it never becomes
+ * part of the thing being written.
+ */
+/**
+ * ONE PLACE, EVERY VERB: the marker rides the QUERY STRING.
+ *
+ * Never the body. Every one of these `/v1` bodies is `.strict()`, on this
+ * Inspector and on every Inspector that predates the CI-owned lock, and a
+ * strict object refuses an unknown key with a 400. This package is versioned
+ * independently of the deployment it talks to, so a body field would turn
+ * `eval run --file` into a 400 against any self-hosted Inspector the user had
+ * not upgraded in lockstep. A query parameter is read by deployments that know
+ * it and ignored by those that do not.
+ *
+ * These assertions are what stop that regressing: a marker that moved back
+ * into a body would still reach a current server, and would still pass a test
+ * that only checked "the value arrived".
+ */
+describe("declaredSuiteId reaches the wire", () => {
+  it("rides the query string on update_eval_suite", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute(
+      { suite: "s1", name: "Renamed", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ name: "Renamed" });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on update_eval_case, without joining the case definition", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalCaseOperation.execute(
+      {
+        suite: "s1",
+        case: "c2",
+        title: "Renamed",
+        declaredSuiteId: "s_from_file",
+      },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ title: "Renamed" });
+    // A marker is not a case field. If it ever became one, a suite file's
+    // cases would each carry the id of the suite that contains them.
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+    expect(write?.body?.suite).toBeUndefined();
+  });
+
+  it("rides the query string on create_eval_cases", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCasesOperation.execute(
+      {
+        suite: "s1",
+        declaredSuiteId: "s_from_file",
+        cases: [
+          {
+            title: "One",
+            steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          },
+        ],
+      } as never,
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "POST");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    // One marker for the batch, not one per case: a batch is one write to one
+    // suite, and a per-item marker would invite items that disagreed. And not
+    // in the body at all — that is the 400 against an older Inspector.
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+    expect(write?.body?.cases?.[0]).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on delete_eval_case", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalCaseOperation.execute(
+      { suite: "s1", case: "c2", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    // A DELETE with no body cannot carry a body field; making one route the
+    // exception is a shape callers get wrong. So assert the QUERY STRING —
+    // the wire, not just that a request happened.
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toBeUndefined();
+  });
+
+  it("rides the query string on delete_eval_suite", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalSuiteOperation.execute(
+      { suite: "s1", declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+  });
+
+  it("rides the query string on set_eval_suite_schedule", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteScheduleOperation.execute(
+      { suite: "s1", enabled: false, declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ enabled: false });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on create_eval_case", async () => {
+    const { client, calls } = makeClient();
+    await createEvalCaseOperation.execute(
+      {
+        suite: "s1",
+        title: "From the file",
+        query: "list the invoices",
+        declaredSuiteId: "s_from_file",
+      },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "POST");
+    // Single-case sync has to reach the same file-sync exception the batch
+    // form does, or a one-case suite file could not write itself.
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("omits the marker entirely on an ordinary edit", async () => {
+    const { client, calls } = makeClient();
+    await deleteEvalCaseOperation.execute(
+      { suite: "s1", case: "c2" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "DELETE");
+    // Not a capability: an app edit sends nothing, and gets the refusal a
+    // CI-owned suite is right to give it.
+    expect(write?.query).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("rides the query string on set_eval_suite_environments", async () => {
+    const { client, calls } = makeClient();
+    await setEvalSuiteEnvironmentsOperation.execute(
+      { suite: "s1", environments: null, declaredSuiteId: "s_from_file" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    const write = calls.find((call) => call.method === "PATCH");
+    expect(write?.query).toMatchObject({ declaredSuiteId: "s_from_file" });
+    expect(write?.body).toMatchObject({ environmentIds: null });
+    expect(write?.body).not.toHaveProperty("declaredSuiteId");
+  });
+
+  it("sends nothing at all when the caller named no id", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute(
+      { suite: "s1", name: "Renamed" },
+      { client, signal: undefined, onScopeResolved: undefined } as never
+    );
+    // An ordinary edit must not carry an empty marker: the route would forward
+    // it, and a platform that predates the lock rejects unknown arguments.
+    expect(
+      calls.find((call) => call.method === "PATCH")?.body
+    ).not.toHaveProperty("declaredSuiteId");
   });
 });

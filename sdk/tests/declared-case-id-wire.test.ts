@@ -139,6 +139,7 @@ describe("declared case id on the upload", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].caseId).toBe("c_refund_flow");
+    expect(results[0].intent).toBeNull();
     // The whole point of the field: the id survives a rename of the display
     // name, which the title does not.
     expect(results[0].caseTitle).toBe("refund flow");
@@ -166,6 +167,7 @@ describe("declared case id on the upload", () => {
 
     const [result] = uploadedResults(fetchMock);
     expect(result.caseId).toBe("c_standalone");
+    expect(result.intent).toBeNull();
     expect(result.caseTitle).toBe("standalone case");
   });
 
@@ -176,6 +178,7 @@ describe("declared case id on the upload", () => {
     const platformCase: PlatformEvalCase = {
       id: "case_hosted_1",
       title: "Refund flow",
+      intent: "refund",
       steps: [{ id: "s1", kind: "prompt", prompt: "Ask for a refund" }],
       iterations: 1,
       isNegative: false,
@@ -188,6 +191,7 @@ describe("declared case id on the upload", () => {
 
     expect(config.id).toBe("case_hosted_1");
     expect(config.externalCaseId).toBe("case_hosted_1");
+    expect(config.intent).toBe("refund");
 
     const [result] = iterationsToEvalResultInputs(
       config.name ?? "",
@@ -205,10 +209,15 @@ describe("declared case id on the upload", () => {
       undefined,
       undefined,
       undefined,
-      { caseId: config.id, externalCaseId: config.externalCaseId }
+      {
+        caseId: config.id,
+        externalCaseId: config.externalCaseId,
+        intent: config.intent ?? null,
+      }
     );
     expect(result.caseId).toBe("case_hosted_1");
     expect(result.externalCaseId).toBe("case_hosted_1");
+    expect(result.intent).toBe("refund");
   });
 
   it("adds caseId and changes nothing else about a legacy payload", async () => {
@@ -249,8 +258,8 @@ describe("declared case id on the upload", () => {
     const { caseId: _dropped, ...withoutCaseId } = declared[0];
     expect(withoutCaseId).toEqual(legacy[0]);
 
-    // And on the wire, a config with no `externalCaseId` gains `caseId` and
-    // no other key.
+    // And on the wire, a modern config declares both its case id and its
+    // unlabelled intent slice.
     const suite = new EvalSuite({ name: "legacy" });
     suite.add(
       new EvalTest({
@@ -267,10 +276,12 @@ describe("declared case id on the upload", () => {
     // `externalIterationId` is stamped on by the reporter, not the mapper.
     const {
       caseId: _uploadedId,
+      intent: _uploadedIntent,
       externalIterationId,
       ...uploadedMapped
     } = uploaded;
     expect(typeof externalIterationId).toBe("string");
+    expect(_uploadedIntent).toBeNull();
     expect(Object.keys(uploadedMapped).sort()).toEqual(
       Object.keys(legacy[0]).sort()
     );
@@ -313,6 +324,7 @@ describe("declared case id on the upload", () => {
     ]);
     for (const result of results) {
       expect(result.externalCaseId).toBeUndefined();
+      expect(result.intent).toBeNull();
     }
   });
 
@@ -413,8 +425,10 @@ describe("declared case id on the upload", () => {
       caseTitle: "case",
       passed: true,
       caseId: "c_prompts",
+      intent: "refund",
     });
     expect(withId.caseId).toBe("c_prompts");
+    expect(withId.intent).toBe("refund");
 
     const withoutId = promptsToEvalResult([prompt], {
       caseTitle: "case",
@@ -426,8 +440,10 @@ describe("declared case id on the upload", () => {
     const single = prompt.toEvalResult({
       caseTitle: "case",
       caseId: "c_single",
+      intent: "refund",
     });
     expect(single.caseId).toBe("c_single");
+    expect(single.intent).toBe("refund");
     expect(prompt.toEvalResult({ caseTitle: "case" }).caseId).toBeUndefined();
     expect(
       JSON.stringify(prompt.toEvalResult({ caseTitle: "case" }))

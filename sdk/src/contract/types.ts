@@ -196,7 +196,10 @@ export type ScoreResult = {
   evidence?: string[];
   deterministic: boolean;
   model?: string;
-  /** Digest of the rendered judge prompt, for reproducibility triage. */
+  /**
+   * Digest of the judge request as SENT — every channel of it, not just the
+   * user turn — for reproducibility triage.
+   */
   promptHash?: string;
   /** Present iff `status === "error"`. Truncated to 500 chars. */
   error?: string;

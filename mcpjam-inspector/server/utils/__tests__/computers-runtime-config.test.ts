@@ -3,6 +3,7 @@ import {
   initComputersRuntimeConfigBootstrap,
   resolveComputersLocalConfigured,
   resetComputersRuntimeConfigBootstrapForTests,
+  isHostedBrowserExposable,
 } from "../computers/runtime-config";
 import {
   isComputersDataPlaneConfigured,
@@ -217,5 +218,63 @@ describe("resolveComputersLocalConfigured", () => {
     fetchImpl = () => jsonResponse(401, { error: "Unauthorized" });
 
     expect(await resolveComputersLocalConfigured()).toBe(false);
+  });
+});
+
+describe("hosted browser exposure verdict (W7)", () => {
+  const CONFIG = {
+    enabled: true as const,
+    e2bApiKey: "key",
+    e2bApiUrl: null,
+    e2bDomain: null,
+    e2bTemplateId: null,
+    terminalTokenSecret: null,
+  };
+
+  const bootstrapWith = async (payload: unknown) => {
+    resetComputersRuntimeConfigBootstrapForTests();
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "tok");
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    await initComputersRuntimeConfigBootstrap();
+  };
+
+  it("stays UNKNOWN when the backend does not answer (an older backend)", async () => {
+    // Silence is not refusal: the inspector's own env flag is dark by default
+    // and is what staging drives the runtime with before the gate exists.
+    await bootstrapWith(CONFIG);
+    expect(isHostedBrowserExposable()).toBeNull();
+  });
+
+  it("records an explicit refusal", async () => {
+    await bootstrapWith({
+      ...CONFIG,
+      hostedBrowser: { exposable: false, reason: "desktop_rate_unset" },
+    });
+    expect(isHostedBrowserExposable()).toBe(false);
+  });
+
+  it("records approval", async () => {
+    await bootstrapWith({ ...CONFIG, hostedBrowser: { exposable: true } });
+    expect(isHostedBrowserExposable()).toBe(true);
+  });
+
+  it("records the verdict even on a deployment with no vendor key", async () => {
+    // Such a deployment cannot run computers at all, but it still ANSWERS the
+    // question, and answering early keeps the registry's check synchronous.
+    await bootstrapWith({
+      enabled: false,
+      hostedBrowser: { exposable: false, reason: "catalog_disabled" },
+    });
+    expect(isHostedBrowserExposable()).toBe(false);
   });
 });

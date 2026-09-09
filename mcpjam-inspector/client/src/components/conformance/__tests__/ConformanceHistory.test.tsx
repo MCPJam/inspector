@@ -77,12 +77,17 @@ describe("ConformanceHistory", () => {
 
   it("opens an existing run instead of starting a new one", async () => {
     const user = userEvent.setup();
-    render(<ConformanceHistory projectId="proj_1" serverId="srv_1" />);
+    // A Convex-id-shaped project: the run link carries the project in its
+    // PATH now, and the builder refuses to put an unusable id there.
+    const projectId = "k5700000000000000000000000a";
+    render(<ConformanceHistory projectId={projectId} serverId="srv_1" />);
 
     await user.click(screen.getByTestId("conformance-history-row"));
 
+    // Not `?project=`: a run link has to reopen the same project on a
+    // refresh, which a query the app consumes and strips cannot do.
     expect(navigateMock).toHaveBeenCalledWith(
-      "/conformance/runs/run_existing?project=proj_1",
+      `/p/${projectId}/conformance/runs/run_existing`,
     );
     expect(startRun).not.toHaveBeenCalled();
   });

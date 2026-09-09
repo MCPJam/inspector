@@ -463,6 +463,20 @@ function metadataUrl(serverUrl: string, wellKnown: string): string {
   return new URL(wellKnown, `${url.protocol}//${url.host}`).toString();
 }
 
+/**
+ * A plain JSON document fetched over HTTP — OAuth metadata, not MCP traffic.
+ *
+ * `record: false` is load-bearing. These documents are not JSON-RPC and never
+ * were, so letting them into the run-wide wire record fed them to
+ * `wire-schema-valid`, which graded them against `JSONRPCMessage` and reported
+ * both metadata documents as missing `id` and `jsonrpc` — on every server,
+ * including ones with nothing else to report.
+ *
+ * This is the ONLY caller in this module that opts out, and deliberately so.
+ * Every other `rawRequest` here speaks JSON-RPC to the MCP endpoint, including
+ * the deliberately malformed body in `parseErrorHandlingWarning`, whose
+ * response is exactly the kind of frame the wire check exists to grade.
+ */
 async function fetchJson(
   ctx: RawHttpCheckContext,
   url: string
@@ -472,6 +486,7 @@ async function fetchJson(
     method: "GET",
     includeBaseHeaders: false,
     headers: { Accept: "application/json" },
+    record: false,
   });
   return result.status === 200 &&
     result.json !== null &&

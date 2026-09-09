@@ -44,14 +44,12 @@ function mint(
 
 describe("POST /api/web/guest-token", () => {
   const originalServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  const originalLockdown = process.env.MCPJAM_NONPROD_LOCKDOWN;
   const originalNodeEnv = process.env.NODE_ENV;
   const originalAllowLocalDev = process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.INSPECTOR_SERVICE_TOKEN = SERVICE_TOKEN;
-    delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     delete process.env.ALLOW_LOCAL_DEV_SERVICE_TOKEN;
     fetchConvexGuestSessionMock.mockResolvedValue({
       kind: "session",
@@ -65,11 +63,6 @@ describe("POST /api/web/guest-token", () => {
       delete process.env.INSPECTOR_SERVICE_TOKEN;
     } else {
       process.env.INSPECTOR_SERVICE_TOKEN = originalServiceToken;
-    }
-    if (originalLockdown === undefined) {
-      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
-    } else {
-      process.env.MCPJAM_NONPROD_LOCKDOWN = originalLockdown;
     }
     if (originalNodeEnv === undefined) {
       delete process.env.NODE_ENV;
@@ -95,16 +88,6 @@ describe("POST /api/web/guest-token", () => {
       "x-mcpjam-client-ip": "1.1.1.2",
     });
     expect(res.status).toBe(401);
-    expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
-  });
-
-  it("returns 403 when guest access is locked down", async () => {
-    process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
-    const res = await mint(makeApp(), {
-      "x-inspector-service-token": SERVICE_TOKEN,
-      "x-mcpjam-client-ip": "1.1.1.3",
-    });
-    expect(res.status).toBe(403);
     expect(fetchConvexGuestSessionMock).not.toHaveBeenCalled();
   });
 

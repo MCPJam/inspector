@@ -15,8 +15,10 @@ import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceSpan,
+  EvalTraceVideoMeta,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
+import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
@@ -40,7 +42,11 @@ import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
 import { hasReplayArtifacts } from "./browser-step-replay";
-import { StepReplayView } from "./step-replay-view";
+import {
+  StepReplayView,
+  type StepPresentation,
+} from "./step-replay-view";
+import type { EvalStepReplay } from "@/shared/eval-step-replay";
 import { buildFrozenScreenshotOverrides } from "./frozen-screenshot-overrides";
 import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-app-invocations";
 import type { TestStep } from "@/shared/steps";
@@ -116,6 +122,12 @@ interface TraceViewerProps {
   syncedStepId?: string | null;
   /** Fired on Steps-row hover/select, to drive the synced highlight. */
   onSyncStep?: (stepId: string | null) => void;
+  /** Steps-tab presentation. Pass-through; see `StepReplayView`. */
+  stepPresentation?: StepPresentation;
+  /** Per-step verdicts WITH reasons, so a failed row can say why. */
+  stepResults?: ReadonlyArray<EvalStepReplay>;
+  /** The verdict word the page already computed, so this tab does not derive a second. */
+  verdictWord?: string;
   /** Force a single mode (used when TraceViewer is embedded into a larger shell).
    *  Chat host shells force only timeline/chat/raw/tools. The eval RunColumn
    *  (quick-run result panel) additionally forces "browser" so it can surface
@@ -306,6 +318,28 @@ function getBrowserVideoUrl(
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+/**
+ * What that recording says about itself, when it says anything.
+ *
+ * Read only ALONGSIDE a resolved URL, by the caller: metadata under an empty
+ * player would render a duration and a frame rate for a recording that is not
+ * there.
+ */
+function getBrowserVideoMeta(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null
+): EvalTraceVideoMeta | null {
+  if (!trace || Array.isArray(trace) || typeof trace !== "object") return null;
+  const raw = (trace as TraceEnvelope).videoMeta;
+  if (!raw || typeof raw !== "object") return null;
+  // PARSED, not cast. The badge renders on `truncated` and the header formats
+  // `durationMs` and `fps`, so a value of the wrong TYPE does not degrade — a
+  // `truncated: "false"` string is truthy and would claim a recording stopped
+  // at its size limit when it did not. That is the one thing this metadata
+  // exists to say, so it is the one thing worth refusing to guess at.
+  const parsed = evalTraceVideoMetaZ.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export function TraceViewer({
   trace,
   model,
@@ -325,6 +359,9 @@ export function TraceViewer({
   iterationResult = null,
   syncedStepId,
   onSyncStep,
+  stepPresentation = "legacy",
+  stepResults,
+  verdictWord,
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
@@ -419,6 +456,10 @@ export function TraceViewer({
   );
   const browserSteps = useMemo(() => getBrowserSteps(trace), [trace]);
   const browserVideoUrl = useMemo(() => getBrowserVideoUrl(trace), [trace]);
+  const browserVideoMeta = useMemo(
+    () => (browserVideoUrl ? getBrowserVideoMeta(trace) : null),
+    [trace, browserVideoUrl]
+  );
   // Step-aligned replay tab: gated on the run carrying its authored step list.
   const hasSteps = (steps?.length ?? 0) > 0;
   // Replay tab gate — ONE predicate, shared with every other surface that shows
@@ -486,6 +527,7 @@ export function TraceViewer({
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
+        toolResultDisplay: "tool-card",
       }),
     [trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
@@ -837,6 +879,7 @@ export function TraceViewer({
               observations={browserObservations}
               steps={browserSteps}
               videoUrl={browserVideoUrl}
+              videoMeta={browserVideoMeta}
               isRunning={isLoading}
               className={flexFillChrome ? "flex-1" : undefined}
             />
@@ -866,6 +909,9 @@ export function TraceViewer({
               hoveredStepId={syncedStepId}
               onHoverStep={onSyncStep}
               onSelectStep={onSyncStep}
+              presentation={stepPresentation}
+              stepResults={stepResults}
+              verdictWord={verdictWord}
             />
           </div>
         )}
@@ -973,7 +1019,7 @@ export function TraceViewer({
                     toolRenderOverrides={toolRenderOverrides}
                     appToolInvocationsOverride={appToolInvocationsOverride}
                     showInlineEdit={false}
-                    minimalMode={true}
+                    minimalMode={false}
                     interactive={threadInteractive}
                     recorder={recorder}
                     reasoningDisplayMode="collapsed"

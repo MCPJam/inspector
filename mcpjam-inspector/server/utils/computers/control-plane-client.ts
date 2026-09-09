@@ -28,6 +28,13 @@ export type ComputerStatus =
   | "deleted"
   | "error";
 
+/**
+ * Which runtime a computer boots. Hand-mirrored from the backend
+ * (`projectComputers.runtimeKind`, PR d/e2); absent ⇒ terminal, so every
+ * existing caller keeps the terminal behaviour it had before desktop existed.
+ */
+export type RuntimeKind = "terminal" | "desktop-browser";
+
 export interface ReservedComputer {
   computerId: string;
   status: ComputerStatus;
@@ -42,11 +49,28 @@ export interface ComputerSandboxInfo {
   status: ComputerStatus;
   projectId: string;
   ownerUserId: string;
+  /** Hand-mirrored from the backend `ComputerView` (PR e2). */
+  runtimeKind?: RuntimeKind;
+  bootedRuntimeCapabilities?: string[];
 }
 
 export type ControlPlaneResult<T> =
   | { ok: true; value: T }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * The control plane's own machine code, when it sent one
+       * (`billing_limit_reached`, `at_capacity`, `FEATURE_UNAVAILABLE`, …).
+       * Absent for statuses that carry no code and for failures minted on this
+       * side. Callers that need to tell two refusals with the same status apart
+       * branch on this rather than on the message prose.
+       */
+      code?: string;
+      /** Which budget a capacity refusal hit; see `postJson`. */
+      resource?: string;
+    };
 
 export function getConvexHttpUrl(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
@@ -130,11 +154,28 @@ async function postJson<T>(
     // fall through with null payload
   }
   if (!response.ok) {
+    const body =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : undefined;
     const error =
-      payload && typeof payload === "object" && "error" in payload
-        ? String((payload as { error: unknown }).error)
+      body && "error" in body
+        ? String(body.error)
         : `request failed (${response.status})`;
-    return { ok: false, status: response.status, error };
+    const code = typeof body?.code === "string" ? body.code : undefined;
+    return {
+      ok: false,
+      status: response.status,
+      error,
+      ...(code ? { code } : {}),
+      // WHICH budget a 503 hit (`run` | `desktop` | `org` | `global`), when
+      // the control plane said. Lets a caller word its wait notice — "waiting
+      // on desktop capacity" is a different sentence, and a different wait,
+      // from "this organization has too many sandboxes in flight".
+      ...(typeof body?.resource === "string"
+        ? { resource: body.resource }
+        : {}),
+    };
   }
   return { ok: true, value: payload as T };
 }
@@ -159,18 +200,39 @@ function bearerHeader(raw: string): Record<string, string> {
 export interface EvalSandbox {
   sandboxId: string;
   sandboxRowId: string;
+  /**
+   * What ACTUALLY booted — not what was asked for. On a reuse the control
+   * plane answers with the row's own kind, so a caller can never believe it
+   * holds a desktop box when it holds a terminal one.
+   */
+  runtimeKind?: RuntimeKind;
+  /** What the live box advertises (`["bash","browser"]` for a desktop). */
+  capabilities?: string[];
 }
 
 /**
  * Provision a fresh ephemeral sandbox for one eval iteration, pinned to the
  * run's frozen environment build (user-bearer auth). The body carries only the
- * run/iteration ids — the control plane resolves the image from the run's
- * configSnapshot, so this can never boot an arbitrary template.
+ * run/iteration ids and the image CLASS — the control plane resolves the image
+ * itself from the run's configSnapshot, so this can never boot an arbitrary
+ * template.
+ *
+ * `runtimeKind: "desktop-browser"` is a REQUEST, not a grant: the control
+ * plane refuses it unless the iteration's own frozen host config advertises
+ * the `browser` tool, and refuses it outright when the run also pins a custom
+ * environment image.
+ *
+ * Failure statuses the caller must distinguish:
+ *   409 `desktop_not_advertised` / `desktop_pin_conflict` /
+ *       `desktop_unavailable` — terminal for this run, and the `error` string
+ *       is written for a human: surface it, do not retry.
+ *   503 — at capacity; `resource` says which budget. Retryable with backoff.
  */
 export async function provisionEvalSandbox(args: {
   bearer: string;
   runId: string;
   iterationId?: string;
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<EvalSandbox>> {
   return postJson<EvalSandbox>(
@@ -179,6 +241,7 @@ export async function provisionEvalSandbox(args: {
     {
       runId: args.runId,
       ...(args.iterationId ? { iterationId: args.iterationId } : {}),
+      ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
     },
     args.signal
   );
@@ -224,6 +287,10 @@ export interface JourneySandbox {
   sandboxRowId: string;
   /** Working directory the target's host configured (backend-resolved). */
   workdir?: string;
+  /** What ACTUALLY booted — on a reuse, the row's kind, not the request's. */
+  runtimeKind?: RuntimeKind;
+  /** What the live box advertises (`["bash","browser"]` for a desktop). */
+  capabilities?: string[];
 }
 
 /**
@@ -240,15 +307,21 @@ export interface JourneySandbox {
  * the attempt finished is refused outright.
  *
  * Failure statuses the caller must distinguish:
- *   409 — no image pinned / attempt not running / image unavailable. Terminal
- *         for this attempt; retrying cannot help.
- *   503 — at capacity. Retryable with backoff.
+ *   409 — no image pinned / attempt not running / image unavailable, or one of
+ *         the desktop refusals (`desktop_not_advertised`,
+ *         `desktop_pin_conflict`, `desktop_unavailable`). Terminal for this
+ *         attempt; the `error` string is written for a human.
+ *   503 — at capacity; `resource` says which budget. Retryable with backoff.
+ *
+ * `runtimeKind: "desktop-browser"` is a REQUEST, not a grant — the control
+ * plane refuses it unless the target's FROZEN snapshot advertises `browser`.
  */
 export async function provisionJourneySandbox(args: {
   bearer: string;
   runId: string;
   targetId: string;
   sessionIdx: number;
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<JourneySandbox>> {
   return postJson<JourneySandbox>(
@@ -258,6 +331,7 @@ export async function provisionJourneySandbox(args: {
       runId: args.runId,
       targetId: args.targetId,
       sessionIdx: args.sessionIdx,
+      ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
     },
     args.signal
   );
@@ -451,14 +525,19 @@ export async function reserveComputer(args: {
   bearer: string;
   projectId: string;
   executionScope?: ExecutionScope;
+  /** Request a specific runtime (PR e2 forwards this at the reserve boundary).
+   *  Absent ⇒ terminal, so existing callers are byte-for-byte unchanged. */
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ReservedComputer>> {
+  const body: Record<string, unknown> = args.executionScope
+    ? { executionScope: args.executionScope }
+    : { projectId: args.projectId };
+  if (args.runtimeKind) body.runtimeKind = args.runtimeKind;
   return postJson<ReservedComputer>(
     "/computers/reserve",
     bearerHeader(args.bearer),
-    args.executionScope
-      ? { executionScope: args.executionScope }
-      : { projectId: args.projectId },
+    body,
     args.signal
   );
 }
@@ -609,6 +688,8 @@ export async function ensureComputerReady(args: {
   projectId: string;
   /** Phase 3 scope; forwarded verbatim to reserveComputer (legacy when absent). */
   executionScope?: ExecutionScope;
+  /** Forwarded to reserveComputer on every poll so the desktop kind sticks. */
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
   /** Overall budget. E2B cold provision is seconds; waking ~1s. */
   timeoutMs?: number;

@@ -4,6 +4,7 @@ import {
   iterationLatencyP50,
   iterationLatencyP95,
   percentile,
+  sumIterationCost,
 } from "./helpers";
 import type { CaseRunBatch } from "./runs/group-case-iterations";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -18,6 +19,26 @@ export interface MetricStripPoint {
   latencyP95: number | null;
   /** Average tokens per iteration (test execution) within this run/batch. */
   tokens: number;
+  /**
+   * Total MCPJam-billed cost across this run/batch, or `null` when nothing in
+   * it was priced. Never 0 for an unpriced run — see `formatCostOrDash`.
+   */
+  costUsd: number | null;
+  /**
+   * How many of `total` iterations contributed to `costUsd`. A partial sum
+   * plotted as a whole one is how a half-priced run reads as a cheap one, so
+   * the strip needs the coverage to know when to withhold the point.
+   */
+  costedIterations: number;
+  /**
+   * True when a customer's own runner supplied part of `costUsd`.
+   *
+   * Carried alongside the amount because the headline cannot say it: the
+   * number is real either way, but "MCPJam measured this" and "your runner
+   * told us this" are different claims, and the per-iteration rows already
+   * mark the difference.
+   */
+  hasRunnerReportedCost: boolean;
   /** Total tool calls across all iterations in this run/batch. */
   toolCalls: number;
 }
@@ -35,6 +56,10 @@ export interface MetricStripData {
 export type CellMetricTrendInput = {
   runLabel: string;
   result: "passed" | "failed" | "pending" | "partial";
+  /** Iteration counts within the run; falls back to result-derived 0/1 counts. */
+  passed?: number;
+  failed?: number;
+  total?: number;
   latencyMs: number | null;
   latencyP95Ms?: number | null;
   tokens: number | null;
@@ -49,24 +74,45 @@ function passRateFromCellResult(
   return 0;
 }
 
-function metricPointFromCellTrend(point: CellMetricTrendInput): MetricStripPoint {
-  const passed = point.result === "passed" ? 1 : 0;
-  const failed = point.result === "failed" ? 1 : 0;
+function metricPointFromCellTrend(
+  point: CellMetricTrendInput,
+): MetricStripPoint {
+  const hasCounts = point.total != null && point.total > 0;
+  const passed = hasCounts
+    ? point.passed ?? 0
+    : point.result === "passed"
+    ? 1
+    : 0;
+  const failed = hasCounts
+    ? point.failed ?? 0
+    : point.result === "failed"
+    ? 1
+    : 0;
+  const total = hasCounts ? point.total ?? 1 : 1;
   return {
-    passRate: passRateFromCellResult(point.result),
+    passRate: hasCounts
+      ? Math.round((passed / total) * 100)
+      : passRateFromCellResult(point.result),
     passed,
-    total: 1,
+    total,
     failed,
     latencyP50: point.latencyMs,
     latencyP95: point.latencyP95Ms ?? point.latencyMs,
     tokens: point.tokens ?? 0,
     toolCalls: point.toolCalls ?? 0,
+    // This projection is built from a pre-aggregated CELL, which carries no
+    // per-iteration usage — so cost is genuinely unknown here rather than
+    // zero, and the strip withholds the point.
+    costUsd: null,
+    costedIterations: 0,
+    hasRunnerReportedCost: false,
   };
 }
 
-function latencyPercentilesAcrossRuns(
-  trendSeries: CellMetricTrendInput[],
-): { latencyP50: number | null; latencyP95: number | null } {
+function latencyPercentilesAcrossRuns(trendSeries: CellMetricTrendInput[]): {
+  latencyP50: number | null;
+  latencyP95: number | null;
+} {
   const p50Samples = trendSeries
     .map((point) => point.latencyMs)
     .filter((value): value is number => value != null);
@@ -80,7 +126,11 @@ function latencyPercentilesAcrossRuns(
   };
 }
 
-/** Fold per-cell run history into the same strip model the suite header uses. */
+/**
+ * Fold per-cell run history into the same strip model the suite header uses.
+ * Headline pass counts are cumulative across all runs in the series so the
+ * All-runs dashboard reports total iterations, not just the latest run's.
+ */
 export function buildCellMetricStripData(
   trendSeries: CellMetricTrendInput[],
 ): MetricStripData | null {
@@ -92,10 +142,26 @@ export function buildCellMetricStripData(
 
   const { latencyP50, latencyP95 } = latencyPercentilesAcrossRuns(trendSeries);
 
+  let cumulativePassed = 0;
+  let cumulativeFailed = 0;
+  let cumulativeTotal = 0;
+  for (const point of series) {
+    cumulativePassed += point.passed;
+    cumulativeFailed += point.failed;
+    cumulativeTotal += point.total;
+  }
+
   return {
     ...base,
     latest: {
       ...base.latest,
+      passed: cumulativePassed,
+      failed: cumulativeFailed,
+      total: cumulativeTotal,
+      passRate:
+        cumulativeTotal > 0
+          ? Math.round((cumulativePassed / cumulativeTotal) * 100)
+          : base.latest.passRate,
       latencyP50,
       latencyP95,
     },
@@ -170,10 +236,21 @@ function pointFromIterations(
     latencyP95: iterationLatencyP95(iterations),
     tokens: averageTokensPerIteration(iterations),
     toolCalls: runToolCallTotal(iterations),
+    ...(() => {
+      const { totalUsd, costedIterations, hasRunnerReported } =
+        sumIterationCost(iterations);
+      return {
+        costUsd: totalUsd,
+        costedIterations,
+        hasRunnerReportedCost: hasRunnerReported,
+      };
+    })(),
   };
 }
 
-function finalizeMetricStripData(series: MetricStripPoint[]): MetricStripData | null {
+function finalizeMetricStripData(
+  series: MetricStripPoint[],
+): MetricStripData | null {
   if (series.length === 0) return null;
 
   const latest = series[series.length - 1];
@@ -200,6 +277,7 @@ function measuredRuns(runs: EvalSuiteRun[]): EvalSuiteRun[] {
 export function buildSuiteMetricStripData(
   allRuns: EvalSuiteRun[],
   allIterations: EvalIteration[],
+  labelRun?: (run: EvalSuiteRun) => string,
 ): MetricStripData | null {
   const runs = measuredRuns(allRuns);
   if (runs.length === 0) return null;
@@ -214,9 +292,16 @@ export function buildSuiteMetricStripData(
 
   const chronological = [...runs].sort((a, b) => a.createdAt - b.createdAt);
   const series: MetricStripPoint[] = [];
+  const runLabels: string[] = [];
   for (const run of chronological) {
     const its = itsByRun.get(run._id);
     if (!its || its.length === 0) continue;
+    const runName = labelRun
+      ? labelRun(run)
+      : run.runNumber
+      ? `Run #${run.runNumber}`
+      : `Run ${run._id.slice(0, 8)}`;
+    runLabels.push(`${runName} · ${new Date(run.createdAt).toLocaleString()}`);
     const summary = computeIterationSummary(its);
     const total = run.summary?.total ?? summary.runs;
     const passed = run.summary?.passed ?? summary.passed;
@@ -230,7 +315,8 @@ export function buildSuiteMetricStripData(
     );
   }
 
-  return finalizeMetricStripData(series);
+  const data = finalizeMetricStripData(series);
+  return data ? { ...data, runLabels } : null;
 }
 
 /**

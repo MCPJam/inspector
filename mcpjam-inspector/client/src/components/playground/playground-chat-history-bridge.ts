@@ -55,8 +55,6 @@ export const usePlaygroundChatHistoryBridgeStore = create<BridgeStore>(
 );
 
 /** Selector hook for pane consumers. */
-export function usePlaygroundChatHistoryBridge():
-  | PlaygroundChatHistoryBridge
-  | null {
+export function usePlaygroundChatHistoryBridge(): PlaygroundChatHistoryBridge | null {
   return usePlaygroundChatHistoryBridgeStore((s) => s.bridge);
 }

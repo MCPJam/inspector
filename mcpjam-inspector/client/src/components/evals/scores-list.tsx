@@ -113,6 +113,28 @@ function isGating(joined: JoinedScore): boolean {
   return joined.definition?.role === "gating";
 }
 
+/**
+ * Does this row belong in a "N / M gating scores passed" count?
+ *
+ * Deliberately NOT `isGating`, and the difference is the whole point of two
+ * predicates:
+ *
+ *   - an UNJOINABLE row counts, even though it renders in its own section — it
+ *     fails closed everywhere else, and leaving it out would read
+ *     "2 / 2 checks passed" beside a failed iteration;
+ *   - a joined gating row that came back `not_applicable` does NOT count, even
+ *     though it renders under "Gating" — exclusion from every denominator is
+ *     exactly what distinguishes it from `skipped`.
+ *
+ * Every count in this file goes through here, so the header and the compact
+ * chip cannot disagree about the same iteration.
+ */
+function countsTowardGate(joined: JoinedScore): boolean {
+  if (joined.definition === null) return true;
+  if (joined.definition.role !== "gating") return false;
+  return joined.score.status !== "not_applicable";
+}
+
 /** Does this row count against the gate? Mirrors the SDK's `scoresPassed`. */
 function failsGate(joined: JoinedScore): boolean {
   if (!joined.definition) return true; // unjoinable ⇒ fails closed
@@ -139,24 +161,12 @@ function joinOne(
   return joinScores([score], config)[0];
 }
 
-/**
- * Whether this score decides the verdict. An UNJOINABLE row counts as gating:
- * it fails closed everywhere else, so excluding it from the chip's denominator
- * would show "2 / 2 checks passed" beside a failed iteration.
- */
+/** Whether this score decides the verdict — see {@link countsTowardGate}. */
 export function isGatingScore(
   score: ScoreResult,
   config: EvaluationConfigSnapshot | null,
 ): boolean {
-  const joined = joinOne(score, config);
-  // `not_applicable` is excluded from EVERY denominator — that is the property
-  // that distinguishes it from `skipped`. Counting it would render
-  // "1 / 1 checks passed" for an iteration where the only gating scorer was
-  // never in scope.
-  if (joined.definition !== null && score.status === "not_applicable") {
-    return false;
-  }
-  return joined.definition === null || isGating(joined);
+  return countsTowardGate(joinOne(score, config));
 }
 
 export function scoreFailsGate(
@@ -176,7 +186,7 @@ function statusBadge(joined: JoinedScore) {
       label: "UNRESOLVED",
       icon: AlertTriangle,
       className:
-        "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+        "bg-warning/15 text-warning border border-warning/30",
     };
   }
   if (status === "scored") {
@@ -189,7 +199,7 @@ function statusBadge(joined: JoinedScore) {
       label: "ERROR",
       icon: AlertTriangle,
       className:
-        "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30",
+        "bg-warning/15 text-warning border border-warning/30",
     };
   }
   if (status === "skipped") {
@@ -197,7 +207,7 @@ function statusBadge(joined: JoinedScore) {
       label: "SKIPPED",
       icon: CircleSlash,
       className:
-        "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20",
+        "bg-warning/10 text-warning border border-warning/20",
     };
   }
   return {
@@ -216,6 +226,16 @@ function formatValue(score: ScoreResult): string | null {
   return `${value} / ${threshold}`;
 }
 
+/** The header badge's three tones. `none` is muted: it asserts nothing. */
+const SUMMARY_TONE = {
+  passed: { icon: CheckCircle2, className: EVAL_PASSED_BADGE_STRONG_CLASS },
+  failed: { icon: XCircle, className: EVAL_FAILED_BADGE_STRONG_CLASS },
+  none: {
+    icon: MinusCircle,
+    className: "bg-muted text-muted-foreground border border-border/40",
+  },
+} as const;
+
 /**
  * Render the per-iteration score gate.
  *
@@ -223,14 +243,36 @@ function formatValue(score: ScoreResult): string | null {
  * annotated: the single most misleading thing this view could do is let a red
  * advisory judge read as the reason a run failed.
  */
+/**
+ * A judge row is the Scores-list channel the blind protocol must close.
+ *
+ * Either mark is enough: a non-deterministic definition is a judge (or a
+ * judge-shaped scorer), and platform-minted judge ids start with `judge:`.
+ * The two overlap on today's goal-completion row; either alone still hides
+ * a row that would print the answer a reviewer must not see first.
+ */
+function isJudgeRow(row: JoinedScore): boolean {
+  return (
+    row.definition?.deterministic === false ||
+    row.score.scorerId.startsWith("judge:")
+  );
+}
+
 export function ScoresList({
   scores,
   evaluationConfig,
   integrity,
+  hideJudgeRows = false,
 }: {
   scores: ScoreResult[];
   evaluationConfig: EvaluationConfigSnapshot | null;
   integrity?: "score_integrity_invalid" | null;
+  /**
+   * Hide judge values until the reviewer has labelled (or revealed) this
+   * trial. Presentation only: the stored rows, `isGatingScore`, and
+   * `scoreFailsGate` stay untouched.
+   */
+  hideJudgeRows?: boolean;
 }) {
   // An integrity-invalid iteration whose rows were ALL quarantined still
   // renders: the warning below is the only explanation an operator will get
@@ -245,14 +287,36 @@ export function ScoresList({
   );
   const unjoinable = joined.filter((row) => row.definition === null);
 
-  const gatingFailures = gating.filter(failsGate).length;
+  // The SECTIONS above group rows for a reader; the count below is the verdict,
+  // and the two memberships are not the same set. Counting the "Gating" section
+  // instead would put an out-of-scope `not_applicable` row in the denominator
+  // here while the compact chip left it out — the same iteration summarized two
+  // ways, in two places on the same screen.
+  const hidingJudges = hideJudgeRows && joined.some(isJudgeRow);
+  const counted = joined
+    .filter((row) => !(hidingJudges && isJudgeRow(row)))
+    .filter(countsTowardGate);
+  const countedFailures = counted.filter(failsGate).length;
   // An integrity downgrade means the backend could not verify this iteration's
   // gating evidence and flipped its verdict. The surviving rows may all read
   // green — they are the ones that DID validate — so summarizing them as a
   // pass would contradict the run's own result.
   const integrityInvalid = integrity === "score_integrity_invalid";
-  const allPassed =
-    gatingFailures === 0 && unjoinable.length === 0 && !integrityInvalid;
+  // THREE states, not two. An iteration with nothing to gate on has neither
+  // met a gate nor missed one, and a binary badge has to lie in one direction
+  // or the other: a green check claims a threshold was cleared, a red cross
+  // reports a regression that did not happen. It renders neutral instead.
+  const summary: { tone: keyof typeof SUMMARY_TONE; label: string } =
+    integrityInvalid
+      ? { tone: "failed", label: "score evidence did not verify" }
+      : counted.length === 0
+        ? { tone: "none", label: "no gating scores" }
+        : {
+            tone: countedFailures === 0 ? "passed" : "failed",
+            label: `${counted.length - countedFailures} / ${counted.length} gating scores passed`,
+          };
+  const tone = SUMMARY_TONE[summary.tone];
+  const SummaryIcon = tone.icon;
 
   return (
     <div
@@ -262,28 +326,18 @@ export function ScoresList({
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Scores
+          Scores{hidingJudges ? " · judge hidden" : ""}
         </div>
         <div
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed
-              ? EVAL_PASSED_BADGE_STRONG_CLASS
-              : EVAL_FAILED_BADGE_STRONG_CLASS
-          }`}
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone.className}`}
         >
-          {allPassed ? (
-            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
-          ) : (
-            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
-          )}
-          {integrityInvalid
-            ? "score evidence did not verify"
-            : `${gating.length - gatingFailures} / ${gating.length} gating scores passed`}
+          <SummaryIcon className="h-3 w-3 shrink-0" aria-hidden />
+          {summary.label}
         </div>
       </div>
 
       {integrity === "score_integrity_invalid" ? (
-        <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-800 dark:text-amber-200">
+        <div className="flex items-start gap-2 rounded border border-warning/40 bg-warning/10 p-2 text-[11px] text-warning-foreground">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>
             This iteration&rsquo;s verdict was downgraded at ingest: its gating
@@ -301,12 +355,23 @@ export function ScoresList({
         </div>
       ) : null}
 
-      <ScoreGroup title="Gating" rows={gating} keyPrefix="gating" />
-      <ScoreGroup title="Advisory" rows={advisory} keyPrefix="advisory" />
+      <ScoreGroup
+        title="Gating"
+        rows={gating}
+        keyPrefix="gating"
+        hideJudgeRows={hidingJudges}
+      />
+      <ScoreGroup
+        title="Advisory"
+        rows={advisory}
+        keyPrefix="advisory"
+        hideJudgeRows={hidingJudges}
+      />
       <ScoreGroup
         title="Unresolved (no matching definition)"
         rows={unjoinable}
         keyPrefix="unjoinable"
+        hideJudgeRows={hidingJudges}
       />
     </div>
   );
@@ -316,10 +381,12 @@ function ScoreGroup({
   title,
   rows,
   keyPrefix,
+  hideJudgeRows,
 }: {
   title: string;
   rows: JoinedScore[];
   keyPrefix: string;
+  hideJudgeRows: boolean;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -328,9 +395,19 @@ function ScoreGroup({
         {title}
       </div>
       <ul className="space-y-1.5">
-        {rows.map((row, index) => (
-          <ScoreRow key={`${keyPrefix}-${index}`} row={row} />
-        ))}
+        {rows.map((row, index) =>
+          hideJudgeRows && isJudgeRow(row) ? (
+            <li
+              key={`${keyPrefix}-${index}`}
+              data-testid="score-row-hidden"
+              className="rounded border border-border/40 bg-background/40 p-2 text-[11px] text-muted-foreground"
+            >
+              Judge score hidden until you label this trial
+            </li>
+          ) : (
+            <ScoreRow key={`${keyPrefix}-${index}`} row={row} />
+          ),
+        )}
       </ul>
     </div>
   );
@@ -347,7 +424,7 @@ function ScoreRow({ row }: { row: JoinedScore }) {
     <li
       className={`rounded border ${
         failing
-          ? "border-red-500/40 bg-red-500/5"
+          ? "border-destructive/40 bg-destructive/5"
           : "border-border/40 bg-background/40"
       }`}
     >
@@ -380,7 +457,7 @@ function ScoreRow({ row }: { row: JoinedScore }) {
         </summary>
         <div className="space-y-1 px-2 pb-2 text-[11px] text-muted-foreground">
           {row.score.error ? (
-            <div className="text-amber-700 dark:text-amber-300">
+            <div className="text-warning">
               {row.score.error}
             </div>
           ) : null}

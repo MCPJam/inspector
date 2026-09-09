@@ -127,8 +127,16 @@ export function registerCompatCommands(program: Command): void {
               _meta?: Record<string, unknown>;
             }>)
           );
-          cursor = result.nextCursor;
-          if (!cursor) break;
+          cursor =
+            typeof result.nextCursor === "string"
+              ? result.nextCursor
+              : undefined;
+          // Presence, not truthiness: MCP 2026-07-28
+          // `server/utilities/pagination` makes `""` a valid cursor that MUST
+          // NOT be read as the end of results. No repeated-cursor guard:
+          // comparing two cursors for equality is itself a determination based
+          // on cursor value, and a constant token — `""` included — is legal.
+          if (cursor === undefined) break;
           // Cap hit with tools still pending — flag rather than drop them.
           if (page === TOOLS_PAGE_CAP - 1) truncated = true;
         }

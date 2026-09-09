@@ -59,9 +59,19 @@ const {
   flagState: { environmentsEnabled: true },
 }));
 
-vi.mock("react-router", () => ({
-  useNavigate: () => navigateMock,
+vi.mock("react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-router")>()),
   useLocation: () => ({ search: locationState.search, pathname: "/x" }),
+}));
+
+// `useAppNavigate`, not react-router's `useNavigate`: app navigation goes
+// through the scoped helper now, which carries the active project into
+// project-owned paths (`/p/<projectId>/hosts/<id>`). The rest of
+// `app-navigation` is the real module — these suites assert against its
+// path builders.
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => navigateMock,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -73,7 +83,17 @@ vi.mock("@/lib/scenario-client-style", () => ({
   getScenarioHostLogo: () => "logo.png",
 }));
 
-vi.mock("@/lib/scenario-session", () => ({
+// Only the link BUILDER is stubbed. It reads the shareable app origin, which
+// jsdom answers as localhost, and these specs assert against a share host.
+//
+// `withScenarioPreviewSurface` is deliberately the REAL export. The previous
+// version of this mock reimplemented it, which made the preview assertion
+// below unfalsifiable: a hand-rolled copy appends `surface=preview` whether or
+// not the production helper still does — its `try/catch` returning the link
+// untouched, or the param renamed, would leave the spec green. The real helper
+// runs fine here; it only needs `window.location` for `new URL`'s base.
+vi.mock("@/lib/scenario-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/scenario-session")>()),
   buildScenarioLink: (token: string) => `https://mcpjam.link/t/${token}`,
 }));
 
@@ -132,9 +152,13 @@ vi.mock("@/components/scenarios/ScenarioShareSection", () => ({
 }));
 
 // Share UI calls useConvexAuth; stub so detail chrome specs don't need a provider.
-vi.mock("@/components/scenarios/ScenarioShareBanner", () => ({
-  ScenarioShareBanner: () => <div data-testid="stub-share-banner" />,
+vi.mock("@/components/scenarios/ScenarioShareEmptyPanel", () => ({
   ScenarioShareEmptyPanel: () => <div data-testid="stub-share-empty" />,
+}));
+
+vi.mock("@/components/scenarios/ScenarioShareDialog", () => ({
+  ScenarioShareDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="stub-share-dialog" /> : null,
 }));
 
 // Provider reads Convex for pattern findings; these specs only care that the
@@ -173,13 +197,8 @@ vi.mock("@/components/scenarios/ScenarioUsagePanel", () => ({
 vi.mock("@/components/shared/usage-insights/InsightsWorkbench", () => ({
   InsightsWorkbench: (props: Record<string, unknown>) => {
     workbenchMock(props);
-    // Default stub leaves empty-state reporting to the page's initial
-    // `insightsEmpty=true`. Specs that need the filled-cohort branch call
-    // `onEmptyChange(false)` themselves.
     return (
-      <div data-testid="stub-usage-insights">
-        {props.emptyState as never}
-      </div>
+      <div data-testid="stub-usage-insights">{props.emptyState as never}</div>
     );
   },
 }));
@@ -201,11 +220,9 @@ vi.mock("@/components/scenarios/ScenarioPreviewPane", () => ({
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
-  ResizablePanelGroup: ({
-    children,
-  }: {
-    children?: unknown;
-  }) => <div data-testid="stub-resizable-group">{children as never}</div>,
+  ResizablePanelGroup: ({ children }: { children?: unknown }) => (
+    <div data-testid="stub-resizable-group">{children as never}</div>
+  ),
   ResizablePanel: ({ children }: { children?: unknown }) => (
     <div>{children as never}</div>
   ),
@@ -243,7 +260,6 @@ const detail = (
 ) => (
   <UserTestingScenarioDetail
     scenario={{ ...scenario, ...over } as ScenarioSettings}
-    isAuthenticated
     editMode={opts.editMode}
     onBack={vi.fn()}
     onDeleted={vi.fn()}
@@ -257,11 +273,6 @@ const renderDetail = (
 
 const renderEdit = (over: Partial<ScenarioSettings> = {}) =>
   renderDetail(over, { editMode: true });
-
-/** Composer lives in the setup dialog — open it before asserting strip props. */
-const openSetup = () => {
-  fireEvent.click(screen.getByTestId("user-testing-edit-setup"));
-};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -291,9 +302,9 @@ describe("UserTestingScenarioDetail", () => {
 
     expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-sessions")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-    // Empty Insights owns share; the header strip stays off until there is data.
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("user-testing-edit-tab"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("stub-share-empty")).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-edit-button")).toBeInTheDocument();
     // Edit is a header action + route, not a view-mode tab.
@@ -301,54 +312,41 @@ describe("UserTestingScenarioDetail", () => {
     expect(within(tabNav).queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
-  it("shows the header share strip once Insights reports a filled cohort", async () => {
-    renderDetail();
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
-
-    const onEmptyChange = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
-      | ((empty: boolean) => void)
-      | undefined;
-    expect(onEmptyChange).toBeTypeOf("function");
-    await act(async () => {
-      onEmptyChange?.(false);
-    });
-
-    expect(screen.getByTestId("stub-share-banner")).toBeInTheDocument();
-  });
-
-  it("keeps onEmptyChange stable across the render it triggers", async () => {
-    // Regression for INSPECTOR-CLIENT-236 (infinite render loop).
+  it("puts share behind one header button, with no strip in the page body", () => {
     renderDetail();
 
-    const before = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange as
-      | ((empty: boolean) => void)
-      | undefined;
-    expect(before).toBeTypeOf("function");
+    // The landing tester-link banner is gone: Share is the only general
+    // entry point, and a second affordance is what this replaced.
+    expect(screen.queryByTestId("user-testing-share-dialog")).toBeNull();
+    expect(screen.queryByTestId("stub-share-dialog")).toBeNull();
 
-    const callsAfterMount = workbenchMock.mock.calls.length;
-    await act(async () => {
-      before?.(false);
-    });
-    // A no-op regression (setter or callback stops updating) would leave
-    // `calls` at the same length, making the identity check below vacuous.
-    expect(workbenchMock.mock.calls.length).toBeGreaterThan(callsAfterMount);
-    const after = workbenchMock.mock.calls.at(-1)?.[0]?.onEmptyChange;
-    expect(after).toBe(before);
+    fireEvent.click(screen.getByTestId("user-testing-share-button"));
 
-    // Redundant update, same value: the no-op guard must skip the re-render.
-    const callsAfterFirstUpdate = workbenchMock.mock.calls.length;
-    await act(async () => {
-      before?.(false);
-    });
-    expect(workbenchMock.mock.calls.length).toBe(callsAfterFirstUpdate);
+    expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
   });
 
-  it("shows setup and share controls on the Edit route", () => {
+  it("offers the same Share modal on the Edit route", () => {
+    renderEdit();
+
+    fireEvent.click(screen.getByTestId("user-testing-share-button"));
+
+    expect(screen.getByTestId("stub-share-dialog")).toBeInTheDocument();
+  });
+
+  it("shows Settings and its sharing controls on the Edit route", () => {
     renderEdit();
 
     expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sharing permissions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Ratings" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("stub-share")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-share-banner")).not.toBeInTheDocument();
     expect(screen.queryByTestId("stub-usage-insights")).not.toBeInTheDocument();
   });
 
@@ -370,7 +368,9 @@ describe("UserTestingScenarioDetail", () => {
     // Insights `absolute inset-0` with no children — no empty state, no
     // retry. The workbench must stay reachable; if it itself blows up, the
     // share empty panel is the recovery UI.
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     workbenchMock.mockImplementation(() => {
       throw new Error(
         "Could not find public function: scenarioWindowInsights:getWindowSignals",
@@ -397,7 +397,7 @@ describe("UserTestingScenarioDetail", () => {
     );
   });
 
-  it("offers Edit setup next to Delete when the composer can run", () => {
+  it("edits the environment inline when the composer can run", () => {
     environmentState.row = {
       environmentId: "env-1",
       projectId: "p1",
@@ -410,9 +410,13 @@ describe("UserTestingScenarioDetail", () => {
     };
     renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
 
-    expect(screen.getByTestId("user-testing-edit-setup")).toHaveTextContent(
-      "Edit",
-    );
+    // Chips under an "Environment" heading, not a footer dialog.
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Environment" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
   });
 
@@ -435,21 +439,58 @@ describe("UserTestingScenarioDetail", () => {
     // History is exactly what someone opens an archived scenario to read.
     renderDetail(archived);
     fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=sessions", {
-      replace: true,
-    });
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/user-testing/cb-1?tab=sessions",
+      {
+        replace: true,
+      },
+    );
   });
 
-  it("hides Edit setup on a host-backed scenario (composer can't run)", () => {
+  it("hides the Environment section on a host-backed scenario (composer can't run)", () => {
     renderEdit();
 
     expect(
       screen.queryByTestId("user-testing-detail-environment-error"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("user-testing-edit-setup"),
+      screen.queryByTestId("user-testing-environment-section"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("user-testing-delete")).toBeInTheDocument();
+    // With no Environment section, the header is the only thing left that can
+    // say which client this runs against.
+    expect(screen.getByTestId("user-testing-host-client")).toHaveTextContent(
+      "Client: Cursor",
+    );
+  });
+
+  it("keeps the client out of the header once Environment can show it", () => {
+    environmentState.row = {
+      environmentId: "env-1",
+      projectId: "p1",
+      name: "Checkout flow",
+      origin: { kind: "manual" },
+      revision: 1,
+      servers: [],
+      hostStyle: "chatgpt",
+      updatedAt: 0,
+    };
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(
+      screen.getByTestId("user-testing-environment-section"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("user-testing-host-client")).toBeNull();
+  });
+
+  it("goes back to the scenario from Edit, not out to the list", () => {
+    renderEdit();
+
+    fireEvent.click(screen.getByTestId("user-testing-detail-back"));
+
+    // Edit is a sub-route and its own Edit button is inert there, so the list
+    // would leave no one-click way back to Insights.
+    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1");
   });
 
   it("seeds the session pane from a deep-linked session", () => {
@@ -487,7 +528,6 @@ describe("UserTestingScenarioDetail", () => {
       // presence must NOT read as "named".
       renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      openSetup();
       const button = screen.getByTestId("user-testing-save-as-environment");
       fireEvent.click(button);
 
@@ -539,7 +579,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       expect(
         screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
@@ -629,7 +668,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -664,7 +702,6 @@ describe("UserTestingScenarioDetail", () => {
       environmentState.row = { ...namedRow, origin: "adhoc", name: undefined };
       renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
-      openSetup();
       expect(
         screen.getByTestId("stub-environment-composer"),
       ).toBeInTheDocument();
@@ -687,7 +724,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -714,7 +750,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() => expect(resolveTargetsMock).toHaveBeenCalled());
@@ -728,7 +763,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() =>
         lastComposerProps().onChange({
           ...composeState,
@@ -748,7 +782,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       // The resolver reuses matching NAMED rows; resolving against a list
       // that hasn't loaded would mint an unnamed twin of one that exists.
       expect(lastComposerProps()).toEqual(
@@ -767,7 +800,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       // A second edit before the first settles: its rollback would clear the
       // in-flight guard out from under the first commit.
@@ -798,7 +830,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
       await waitFor(() =>
         expect(rebindScenarioMock).toHaveBeenCalledWith({
@@ -838,7 +869,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       // A collaborator rebinds the scenario to env-9 while our resolve is in
@@ -887,7 +917,6 @@ describe("UserTestingScenarioDetail", () => {
         environmentName: "Checkout flow",
       });
 
-      openSetup();
       act(() => lastComposerProps().onChange(composeState));
 
       await waitFor(() =>
@@ -902,79 +931,82 @@ describe("UserTestingScenarioDetail", () => {
 });
 
 /**
- * Preview docks beside Edit and embeds the live share link, which bootstraps
- * a real guest session. When it mounts is therefore a behaviour, not an
- * implementation detail: too eager and every visit to a scenario pollutes its
- * own Sessions list. Edit is a dedicated route, so leaving it unmounts Preview.
+ * Settings is ONE COLUMN — the docked Preview is gone (BB-176).
+ *
+ * The pane embedded the live share link, so merely OPENING Edit bootstrapped a
+ * real guest session that landed in the study's own Sessions list: the
+ * creator's editing was indistinguishable from tester traffic. It also spent
+ * half the screen on something whose only job was to be looked at, squeezing
+ * the form it sat beside. "Open preview" in the action row does the same job
+ * on demand, in a tab, and now says what it opens.
  */
-describe("UserTestingScenarioDetail — preview", () => {
-  it("does not embed anything until Edit is opened", () => {
+describe("UserTestingScenarioDetail — settings layout", () => {
+  it("never embeds the share link, on either route", () => {
     renderDetail();
+    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
 
+    renderEdit();
     expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Preview" }),
+      screen.queryByTestId("user-testing-edit-preview"),
     ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("user-testing-edit-button"));
-
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1/edit");
+    // No guest session was started just by opening the editor.
+    expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("embeds this scenario's share link on the Edit route", () => {
+  it("lays Settings out as a single fixed-measure column", () => {
+    const { container } = renderEdit();
+
+    expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    // The 560px measure the frame specifies, not a percentage of a split pane
+    // that keeps shrinking as the window narrows.
+    expect(container.querySelector('[class*="w-[560px]"]')).not.toBeNull();
+    // A resizable split is what the fixed measure replaced. Asserted against
+    // the MOCK's own test id, not `[data-panel-group]`: the group is stubbed
+    // in this file, so the real attribute never appears in jsdom and that
+    // assertion could not fail even if the split came back.
+    expect(
+      screen.queryByTestId("stub-resizable-group"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tags Open preview as preview traffic, not as a tester session", () => {
+    // A creator opening their own study starts a real guest session. Untagged,
+    // their look-around lands in the study's own Sessions list as if a tester
+    // had run it — and the docked pane that used to set this marker is gone,
+    // so this link is the only thing that can.
     renderEdit();
 
-    expect(screen.getByTestId("user-testing-edit-preview")).toBeInTheDocument();
-    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({ publishLink: "https://mcpjam.link/t/tok" }),
+    expect(screen.getByTestId("user-testing-open-preview")).toHaveAttribute(
+      "href",
+      expect.stringContaining("surface=preview"),
     );
   });
 
-  it("redirects legacy ?tab=preview to the Edit route", () => {
+  it("says what Open preview opens, without lengthening the label", () => {
+    // Research read this button as a second step of setting the study up
+    // rather than as the tester's own session.
+    renderEdit();
+
+    const link = screen.getByTestId("user-testing-open-preview");
+    expect(link).toHaveTextContent("Open preview");
+    expect(link).toHaveAttribute(
+      "title",
+      expect.stringMatching(/as a tester sees it/i),
+    );
+    expect(link).toHaveAccessibleName(/tester sees it/i);
+  });
+
+  it("still redirects legacy ?tab=preview to the Edit route", () => {
     locationState.search = "?tab=preview";
     renderDetail();
 
     expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1/edit", {
       replace: true,
     });
-    // Still on the detail tree until the parent remounts with editMode —
-    // redirect must not mount Preview here.
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
   });
 
-  it("unmounts Preview when leaving the Edit route", () => {
-    const { rerender } = renderEdit();
-    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
-
-    rerender(detail());
-
-    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-  });
-
-  it("passes the host's mcp profile through for the iframe permissions", () => {
-    const mcpProfile = { apps: { sandbox: { permissions: { mode: "deny-all" } } } };
-    hostState.host = { config: { mcpProfile } };
-    renderEdit();
-
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({ mcpProfile }),
-    );
-  });
-
-  it("waits for the host config rather than embedding with default permissions", () => {
-    hostState.isLoading = true;
-    hostState.host = null;
-    renderEdit();
-
-    // `allow` only applies at mount, and its no-config default is permissive.
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
-    expect(screen.getByText(/Loading preview/i)).toBeInTheDocument();
-  });
-
-  it("refuses to embed a scenario whose environment can't resolve", () => {
+  it("still warns when the environment can't resolve, and offers no preview link", () => {
     renderEdit({
       environmentId: "env-1",
       environmentName: "Checkout flow",
@@ -984,13 +1016,23 @@ describe("UserTestingScenarioDetail — preview", () => {
       },
     });
 
-    // The link doesn't open for testers either — framing it would show them
-    // the same failure with less explanation.
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        publishLink: null,
-        emptyTitle: "This scenario can't be previewed",
-      }),
-    );
+    expect(
+      screen.getByTestId("user-testing-detail-environment-error"),
+    ).toBeInTheDocument();
+    // The link doesn't open for testers either, so it is not offered.
+    expect(
+      screen.queryByTestId("user-testing-open-preview"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the tester task list beside the study's other settings", () => {
+    renderEdit();
+
+    expect(
+      screen.getByTestId("user-testing-tasks-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-settings-tasks"),
+    ).toBeInTheDocument();
   });
 });

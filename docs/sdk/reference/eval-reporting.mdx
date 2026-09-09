@@ -450,6 +450,7 @@ Advanced replay override. Most users should not construct this manually.
 | `externalIterationId` | `string` | No | Custom iteration ID |
 | `externalCaseId` | `string` | No | Custom case ID |
 | `caseId` | `string` | No | The case's declared identity ([`EvalTestConfig.id`](/sdk/reference/eval-test)). An `EvalSuite` puts this on every result automatically. The backend resolves by it first and adopts it onto a case that resolved by content hash, which is what lets a renamed test keep its history. Must equal `externalCaseId` when both are present. |
+| `intent` | `string \| null` | No | Analytics grouping label for this case. `null` explicitly records an unlabelled modern producer; omit the field to preserve legacy wire behavior. Never affects scoring or the verdict. |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
 | `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |
@@ -460,7 +461,7 @@ Advanced replay override. Most users should not construct this manually.
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **gating** predicate passes. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case; so is one whose `status` is `"error"`, a check that could not be scored at all. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 <Note>
   Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
@@ -484,6 +485,20 @@ The three widget predicates — `widgetRendered`, `widgetRenderLatencyUnder`, `w
 | `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
 | `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
 | `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
+| `turnCountUnder` | `turns` | The iteration used strictly fewer than `turns` user turns. Fails when the transcript carries no turn count. |
+| `noEndingQuestion` | — | **Observation.** The final assistant message's last non-empty line does not end with `?`. Cannot tell an offer ("Would you like a breakdown?") from a request for missing input, so it is Warn/Report only — `role: "advisory"` is required and a gating one is refused. |
+| `toolLatencyUnder` | `ms`, `toolName?` | Every observed call in scope settled in strictly under `ms`. Reports `status: "error"` when the run captured no per-call timing. |
+| `toolResultContains` | `needle`, `caseSensitive?`, `toolName?` | A tool result in scope contains `needle`, searched over the model-visible text and the structured payload. |
+| `toolResultMatchesSchema` | `schema`, `toolName?` | Every tool result in scope validates against the authored JSON Schema. Any JSON root — 2026-07-28 dropped the object-only restriction on `structuredContent`. |
+| `toolResultSizeUnder` | `maxBytes`, `toolName?` | Every tool result in scope is strictly under `maxBytes`, measured on what the server returned and **before** the transcript's own 64 000-character text cap. Bytes, not tokens. |
+| `argumentsMatchToolSchema` | `toolName?` | Every call's arguments validate against the tool's declared `inputSchema`, classified as `missing-required`, `wrong-type`, `bad-enum` or `hallucinated-param`. A key merely absent from `properties` is legal and is reported, never failed. Schema validity does not establish that the arguments match the user's intent. |
+| `noRepeatedIdenticalCall` | `toolName?` | **Observation.** No call repeated the one immediately before it with equal arguments. A poll loop and a transient retry are the same shape and both correct, so it is Warn/Report only. |
+| `toolCallCountUnder` | `count`, `toolName?` | Strictly fewer than `count` calls in scope. Total calls, which is not the same as calls before the right tool. |
+| `toolCalledBefore` | `toolName`, `beforeToolName` | Every call to `beforeToolName` was preceded by a call to `toolName`. Vacuously true when `beforeToolName` never ran. |
+| `noDeprecatedToolCalled` | — | **Observation.** No called tool's own description marks it deprecated. Anchored to self-deprecation, so "Replaces the deprecated `old_search` tool" does not fire. Warn/Report only. |
+| `noDestructiveToolCalled` | — | No called tool declares `annotations.destructiveHint`. Reports `status: "error"` when no tool in the inventory declares annotations at all. |
+| `toolErrorNamesInput` | `toolName?` | **Observation.** Every tool error message names one of that tool's input keys or a value the call sent. It does not measure recovery quality — "Rate limited. Retry in 30 seconds." names nothing and is a good message. Warn/Report only. |
+| `fullPageHasContinuation` | `toolName?` | **Observation.** A page whose length equals its requested limit carries recognized continuation metadata. A full page is not proof that more results exist, so this reports rather than fails. Warn/Report only. |
 
 #### ArgMatcher
 
@@ -495,6 +510,22 @@ Used by `toolCalledWith` to specify expected arguments and matching mode.
 | `argumentMatching` | `"partial" \| "exact" \| "ignore"` | Matching mode. `"partial"` (default) checks only the keys present in `args`; `"exact"` requires deep equality; `"ignore"` skips argument comparison. |
 
 #### A predicate never passes by default
+
+#### Observations may never gate
+
+Some kinds above are marked **Observation**. They are heuristics — a pattern
+that can be right about what it saw and still wrong about what it means — so
+they carry one rule everywhere: `role: "advisory"` is required, a gating one is
+refused by the schema and by the backend, the authoring UI offers Warn and
+Report only, and they never enter `allGatingScorersPassed`.
+
+#### Missing evidence is an error, not a failure
+
+The kinds that read tool results, per-call timings or the tool inventory report
+`status: "error"` when the run did not capture what they need. An error row
+carries no value, keeps its scorer in `unresolvedScorerIds`, and leaves its
+stage `notMeasured`. A gate with an unscored row does not pass — but nothing is
+attributed to the server for a measurement we could not take.
 
 A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
 
@@ -520,7 +551,7 @@ const predicates: Predicate[] = [
 
 // Pass predicates via the per-run override in the Inspector corpus,
 // or use evaluatePredicates() directly in custom pipelines:
-import { evaluatePredicates, buildIterationTranscript } from "@mcpjam/sdk/predicates";
+import { evaluatePredicates, allPredicatesPassed, buildIterationTranscript } from "@mcpjam/sdk/predicates";
 
 const transcript = buildIterationTranscript({
   trace: myTrace,
@@ -529,7 +560,10 @@ const transcript = buildIterationTranscript({
 });
 
 const results = evaluatePredicates(transcript, predicates);
-const allPassed = results.every((r) => r.passed);
+// `allPredicatesPassed`, not `results.every(...)`: the results array keeps
+// failed ADVISORY rows so a reader can see them, and counting those as
+// failures rejects a run over a finding that was never meant to gate.
+const allPassed = allPredicatesPassed(results);
 ```
 
 #### Predicate results in metadata

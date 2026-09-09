@@ -1,0 +1,31 @@
+{
+  "id": "arguments-undeclared-key-open-schema",
+  "title": "An extra key an open schema allows",
+  "rationale": "A key absent from `properties` is not a violation on its own — JSON Schema allows additional properties by default. It is reported for the author's eye and never failed.",
+  "transcript": {
+    "toolCalls": [
+      { "toolCallId": "c1", "toolName": "search_issues", "arguments": { "query": "login", "sortBy": "created" } }
+    ],
+    "toolErrors": [],
+    "finalAssistantMessage": "Found 3 issues.",
+    "turnCount": 1,
+    "toolInventory": [
+      {
+        "name": "search_issues",
+        "description": "Search issues.",
+        "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
+        "annotations": { "readOnlyHint": true }
+      }
+    ],
+    "toolResults": [
+      { "toolCallId": "c1", "toolName": "search_issues", "text": "3 issues", "isError": false, "size": { "bytes": 8, "basis": "model_visible_output", "complete": true } }
+    ],
+    "toolCallTimings": [
+      { "toolCallId": "c1", "toolName": "search_issues", "durationMs": 110, "provenance": "span" }
+    ],
+    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+  },
+  "expect": [
+    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "pass", "relevance": "neutral", "note": "`sortBy` is listed in the reason as an undeclared key, not as a failure" }
+  ]
+}

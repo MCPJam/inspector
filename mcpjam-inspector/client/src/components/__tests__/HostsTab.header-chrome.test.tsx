@@ -6,8 +6,14 @@ import { HostsTab } from "@/components/HostsTab";
 // HostsTab only consumes `useNavigate`; stubbing it dodges the workspace
 // React-version mismatch that pulls in a duplicate React when MemoryRouter
 // initializes its hooks under jsdom.
-vi.mock("react-router", () => ({
-  useNavigate: () => vi.fn(),
+// `useAppNavigate`, not react-router's `useNavigate`: app navigation goes
+// through the scoped helper now, which carries the active project into
+// project-owned paths (`/p/<projectId>/hosts/<id>`). The rest of
+// `app-navigation` is the real module — these suites assert against its
+// path builders.
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  useAppNavigate: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/use-previewed-client-id", () => ({

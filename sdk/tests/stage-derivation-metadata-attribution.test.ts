@@ -61,8 +61,12 @@ const selection = (rows: StageResultRow[]) =>
   rows.find((row) => row.stage === "selection")!;
 
 describe("STAGE_ANALYZER_VERSION bumped for D7", () => {
-  test("is 4", () => {
-    expect(STAGE_ANALYZER_VERSION).toBe(4);
+  test("is past the version D7 introduced", () => {
+    // D7 took it to 4; D8's chat-session authoring took it to 5. The bump is
+    // what matters — a semantics change that did not move the version is what
+    // makes a stale row unrecomputable — so this asserts the floor rather
+    // than freezing a number every later wave has to come back and edit.
+    expect(STAGE_ANALYZER_VERSION).toBeGreaterThanOrEqual(4);
   });
 });
 

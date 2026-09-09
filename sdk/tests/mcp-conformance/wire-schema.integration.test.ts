@@ -49,6 +49,30 @@ describe("wire-schema-valid against production-shaped defects", { timeout: 20_00
     expect(Number(check.details?.methodCorrelated)).toBeGreaterThan(0);
   });
 
+  // The 2026-08-26 sweep's most-reported finding: `wire-schema-valid` failed on
+  // ALL twelve hosted servers at BOTH revisions, and on five of them it was the
+  // only failed check on an otherwise clean run. Every one of those failures
+  // was the server's own OAuth metadata being graded as a JSON-RPC message.
+  it("ignores OAuth metadata documents, which are not JSON-RPC", async () => {
+    const { check } = await runAgainst({ serveOAuthMetadata: true });
+
+    expect([check.id, check.status, check.error?.message]).toEqual([
+      "wire-schema-valid",
+      "passed",
+      undefined,
+    ]);
+    expect(check.details?.violationCount).toBe(0);
+    // The exact reported symptom, pinned so a regression names itself rather
+    // than showing up as an opaque count.
+    expect(String(check.error?.message ?? "")).not.toMatch(
+      /oauth-protected-resource|must have required property 'jsonrpc'/,
+    );
+    // Non-vacuity: the run still graded real JSON-RPC traffic. Without this a
+    // recorder that dropped EVERYTHING would satisfy the assertions above.
+    expect(Number(check.details?.messagesValidated)).toBeGreaterThan(0);
+    expect(Number(check.details?.methodCorrelated)).toBeGreaterThan(0);
+  });
+
   it("fails list results missing ttlMs and cacheScope (the hubspot shape)", async () => {
     const { check } = await runAgainst({ omitCacheHints: true });
     expect(check.status).toBe("failed");

@@ -18,7 +18,7 @@ const MOVED_CLOUD_GROUPS = [
   "projects",
   "eval",
   "sessions",
-  "hosts",
+  "clients",
   "environments",
   "journeys",
   "scenarios",

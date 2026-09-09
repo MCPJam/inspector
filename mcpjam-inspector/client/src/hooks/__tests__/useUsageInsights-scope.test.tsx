@@ -16,14 +16,20 @@ import {
 } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
 
-const { mockUseQuery, mockUseMutation } = vi.hoisted(() => ({
+const { mockUseQuery, mockUseMutation, mockUseAction } = vi.hoisted(() => ({
   mockUseQuery: vi.fn(),
   mockUseMutation: vi.fn(),
+  mockUseAction: vi.fn(),
 }));
 
+// Every Convex hook `useUsageInsights` reaches for has to appear here: this is
+// a non-partial mock, so a hook the module calls but this factory omits is not
+// a missing stub, it is a render-time throw that fails every case in the file
+// at once. `useAction` arrived with the benchmark scope's on-demand diagram.
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
   useMutation: (...args: unknown[]) => mockUseMutation(...args),
+  useAction: (...args: unknown[]) => mockUseAction(...args),
 }));
 
 /** All (name, args) pairs a render passed to useQuery. */
@@ -36,6 +42,7 @@ function queryCalls(): Array<[string, unknown]> {
 beforeEach(() => {
   mockUseQuery.mockReset().mockReturnValue(undefined);
   mockUseMutation.mockReset().mockReturnValue(vi.fn());
+  mockUseAction.mockReset().mockReturnValue(vi.fn());
 });
 
 describe("useUsageInsights scope routing", () => {
@@ -124,6 +131,73 @@ describe("useUsageInsights scope routing", () => {
     expect(
       rebuildFns.get("chatSessions:rebuildScenarioInsights"),
     ).toHaveBeenCalledWith({ scenarioId: "cb-1" });
+  });
+
+  // The hook's own warning is that a mis-shaped ternary sends a benchmark
+  // scope down the SCENARIO arm. That fails as a wrong cohort rather than as
+  // an error, so it is pinned here the same way the other two arms are.
+  it("benchmark scope hits getBenchmarkUsageBreakdown keyed on the run", () => {
+    renderHook(() =>
+      useUsageInsights({
+        scope: { kind: "benchmark", benchmarkRunId: "brun-1" },
+        filters: EMPTY_USAGE_FILTER,
+      }),
+    );
+    const breakdown = queryCalls().find(([name]) =>
+      name.includes("UsageBreakdown"),
+    );
+    expect(breakdown?.[0]).toBe("chatSessions:getBenchmarkUsageBreakdown");
+    expect(breakdown?.[1]).toMatchObject({ benchmarkRunId: "brun-1" });
+    // Keyed on the run and nothing else — a project or scenario id leaking in
+    // here is how one surface's cohort ends up answering another's question.
+    const args = breakdown?.[1] as Record<string, unknown>;
+    expect(args.projectId).toBe(undefined);
+    expect(args.scenarioId).toBe(undefined);
+  });
+
+  // "A diagram that waits to be asked": the benchmark flow costs model spend
+  // against the run's budget, so rendering the hook must never trigger it.
+  it("benchmark scope does not generate the flow diagram on render", () => {
+    const generate = vi.fn().mockResolvedValue({});
+    mockUseAction.mockReturnValue(generate);
+
+    renderHook(() =>
+      useUsageInsights({
+        scope: { kind: "benchmark", benchmarkRunId: "brun-1" },
+        filters: EMPTY_USAGE_FILTER,
+      }),
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("benchmark rebuild() asks for the flow diagram for its own run", async () => {
+    const generate = vi.fn().mockResolvedValue({});
+    mockUseAction.mockReturnValue(generate);
+    const rebuildFns = new Map<string, ReturnType<typeof vi.fn>>();
+    mockUseMutation.mockImplementation((name: string) => {
+      const fn = rebuildFns.get(name) ?? vi.fn().mockResolvedValue({});
+      rebuildFns.set(name, fn);
+      return fn;
+    });
+
+    const benchmark = renderHook(() =>
+      useUsageInsights({
+        scope: { kind: "benchmark", benchmarkRunId: "brun-1" },
+        filters: EMPTY_USAGE_FILTER,
+      }),
+    );
+    await benchmark.result.current.rebuild();
+
+    expect(generate).toHaveBeenCalledWith({ benchmarkRunId: "brun-1" });
+    // And never through the other scopes' mutations, which key on a project or
+    // a scenario the benchmark does not have.
+    expect(
+      rebuildFns.get("chatSessions:rebuildSwarmInsights"),
+    ).not.toHaveBeenCalled();
+    expect(
+      rebuildFns.get("chatSessions:rebuildScenarioInsights"),
+    ).not.toHaveBeenCalled();
   });
 });
 

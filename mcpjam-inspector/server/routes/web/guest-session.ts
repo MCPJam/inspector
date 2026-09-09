@@ -61,16 +61,6 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return c.json(
-      {
-        code: ErrorCode.FORBIDDEN,
-        message: "Guest access is disabled in this environment.",
-      },
-      403
-    );
-  }
-
   const ip = getClientIp(c);
   if (!ip && process.env.NODE_ENV === "production") {
     return c.json(
@@ -185,16 +175,6 @@ function buildExpiredGuestSessionCookie(): string {
 }
 
 guestSession.post("/revoke", async (c) => {
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return c.json(
-      {
-        code: ErrorCode.FORBIDDEN,
-        message: "Guest access is disabled in this environment.",
-      },
-      403
-    );
-  }
-
   const context: GuestSessionFetchContext = {
     cookie: extractGuestSessionCookie(c.req.header("cookie")),
     userAgent: c.req.header("user-agent") ?? null,
@@ -249,16 +229,6 @@ guestSession.post("/revoke", async (c) => {
  * route so a stolen secret cannot be used to flood the upstream.
  */
 guestSession.post("/promotion-proof", async (c) => {
-  if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-    return c.json(
-      {
-        code: ErrorCode.FORBIDDEN,
-        message: "Guest access is disabled in this environment.",
-      },
-      403
-    );
-  }
-
   const ip = getClientIp(c);
   if (!ip && process.env.NODE_ENV === "production") {
     return c.json(

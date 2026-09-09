@@ -7,6 +7,7 @@ import resourceTemplates from "./resource-templates";
 import prompts from "./prompts";
 import chatV2 from "./chat-v2";
 import computers from "./computers";
+import localHarness from "./local-harness";
 import oauth from "./oauth";
 import exporter from "./export";
 import evals from "./evals";
@@ -28,6 +29,7 @@ import subscribe from "./subscribe";
 import subscriptions from "./subscriptions";
 import widgetRender from "./widget-render";
 import widgetSession from "./widget-session";
+import webmcpInspector from "./webmcp-inspector";
 import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
 import { buildHealthMeta } from "../../utils/health-payload.js";
@@ -49,6 +51,7 @@ mcp.route("/chat-v2", chatV2);
 
 // Local computer engine — consent capability (grant/verify/revoke)
 mcp.route("/computers", computers);
+mcp.route("/local-harness", localHarness);
 
 // Speech-to-text endpoint
 mcp.route("/audio", audioTranscriptions);
@@ -141,5 +144,6 @@ mcp.route("/widget-render", widgetRender);
 // Interactive headless widget sessions (keepMounted) - start/action/close with
 // strict browser lifecycle. Local-mode only; backs `mcpjam apps session`.
 mcp.route("/widget-session", widgetSession);
+mcp.route("/webmcp", webmcpInspector);
 
 export default mcp;

@@ -25,6 +25,7 @@ import { IMPORT_MAPPING_STATUSES } from "../src/contract/chain.js";
 import { TEST_STEP_KINDS } from "../src/contract/steps.js";
 import {
   EVAL_SUITE_SCHEMA_VERSION,
+  evalSuiteFileCaseImportSchema,
   evalSuiteFileSchema,
 } from "../src/contract/suite-file.js";
 import {
@@ -190,6 +191,65 @@ describe("eval suite file — cross-field rules", () => {
     );
     expect(
       messages.some((message) => message.includes("cannot be audited"))
+    ).toBe(true);
+  });
+
+  it('names the exact-claim rule when an "exact" import has no note', () => {
+    const messages = messagesFor('import.status "exact" with no note');
+    const named = messages.find((message) => message.includes("import.note"));
+    expect(named, "no message named import.note").toBeDefined();
+    // The wording is the point: `exact` is a CONVERTER claim, and the message
+    // has to say so or a reader takes the rejection for a formatting nit and
+    // pastes in filler prose to clear it.
+    expect(named).toContain("converter-asserted, not verified");
+    expect(named).toContain('Record "approximated"');
+  });
+
+  it("bounds sourceCaseKey and note at the caps the platform enforces", () => {
+    // The accept cohort holds the exactly-at-the-cap twins, so these two rows
+    // prove the bound is inclusive rather than merely present.
+    const key = messagesFor(
+      "import.sourceCaseKey one character over the 512-character cap"
+    );
+    expect(key.some((message) => message.includes("512"))).toBe(true);
+    const note = messagesFor(
+      "import.note one character over the 2000-character cap"
+    );
+    expect(note.some((message) => message.includes("2000"))).toBe(true);
+  });
+
+  it("refuses a blank note or source key, rather than trimming one", () => {
+    // `.min(1)` counts characters, so `"   "` passes it. On `exact` that is a
+    // policy hole: the note is the rule that EARNS the claim, and a case
+    // claiming exact while citing nothing runs with no approval at all.
+    const note = messagesFor("import.note that is only whitespace");
+    expect(note.some((message) => message.includes("must not be blank"))).toBe(
+      true
+    );
+    const key = messagesFor("import.sourceCaseKey that is only whitespace");
+    expect(key.some((message) => message.includes("must not be blank"))).toBe(
+      true
+    );
+    // REJECTED, not trimmed: the platform's validator rejects a blank value
+    // too, so trimming here would make a file load locally and fail at ingest.
+    expect(
+      evalSuiteFileCaseImportSchema.safeParse({
+        status: "approximated",
+        note: "  cited rule  ",
+      }).data?.note
+    ).toBe("  cited rule  ");
+  });
+
+  it("refuses an approval field smuggled into a case's import block", () => {
+    // Approval is a per-run decision the server derives from the authenticated
+    // launcher. A file that could carry one would file somebody else's approval
+    // under a name they never used, and would outlive the run it was for.
+    const messages = messagesFor("import block carries an approval field");
+    expect(
+      messages.some(
+        (message) =>
+          message.includes("approvedBy") || message.includes("Unrecognized")
+      )
     ).toBe(true);
   });
 

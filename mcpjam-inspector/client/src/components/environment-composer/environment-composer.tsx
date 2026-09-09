@@ -21,6 +21,7 @@
  * need a Convex provider.
  */
 import { useCallback, useMemo, type ReactNode } from "react";
+import { useConvexAuth } from "convex/react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
@@ -40,6 +41,7 @@ import {
   type EnvironmentStack,
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
+import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -84,6 +86,8 @@ export function EnvironmentComposer({
   clientDefaultLabel,
   emptyServerLabel = "Server group · client default",
   serverInfoText = "Optional shared server group for every client in this setup.",
+  environmentsVocabulary = "environment",
+  showTargetCount = true,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -99,7 +103,11 @@ export function EnvironmentComposer({
    * cannot silently shed its override.
    */
   slots?: readonly ComposerSlot[];
-  /** Secondary text on the Client-defaults row (previewed host's model). */
+  /**
+   * Inherited model id (or display name) for the Client-defaults row. When
+   * omitted, the strip derives it from the selected clients: one shared
+   * modelId becomes the pill label; mixed or missing models stay generic.
+   */
   clientDefaultLabel?: string | null;
   /**
    * Empty-state label and info tooltip for the servers pill. The defaults are
@@ -109,6 +117,13 @@ export function EnvironmentComposer({
    */
   emptyServerLabel?: string;
   serverInfoText?: string;
+  /**
+   * Evaluate calls the saved-target picker Clients. Other surfaces keep
+   * Environments so Swarms and the Environments page stay unchanged.
+   */
+  environmentsVocabulary?: "environment" | "client";
+  /** A caller rendering its own execution plan can hide the inline count. */
+  showTargetCount?: boolean;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -129,16 +144,21 @@ export function EnvironmentComposer({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const { isAuthenticated } = useConvexAuth();
   const modelsOptedIn = slots.includes("models");
   const modelMatrix = useModelMatrixCapability(
     modelsOptedIn ? projectId : null
   );
   const modelsEnabled = modelsOptedIn && modelMatrix === true;
+  const { hosts } = useHostList({
+    isAuthenticated,
+    projectId: modelsEnabled ? projectId : null,
+  });
   // `slots` NARROWS, never widens: a slot must be both asked for by the caller
   // AND allowed by its flag. Omitting `slots` keeps DEFAULT_COMPOSER_SLOTS, so
   // every existing surface renders exactly the strip it rendered before.
-  const showEnvironmentsSlot =
-    slots.includes("environments") && environmentsEnabled;
+  const environmentsSlotRequested = slots.includes("environments");
+  const showEnvironmentsSlot = environmentsSlotRequested && environmentsEnabled;
   const showClientsSlot = slots.includes("clients");
   const showServersSlot = slots.includes("servers");
   const showSkillsSlot = slots.includes("skills") && skillsEnabled;
@@ -190,6 +210,18 @@ export function EnvironmentComposer({
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
   const choiceCount = modelChoiceCount(value.stack.modelSelection);
+  const inheritedClientDefaultLabel = useMemo(() => {
+    if (clientDefaultLabel) return clientDefaultLabel;
+    const selected = new Set(value.stack.hostIds);
+    const modelIds = [
+      ...new Set(
+        hosts
+          .filter((host) => selected.has(host.hostId) && host.modelId)
+          .map((host) => host.modelId)
+      ),
+    ];
+    return modelIds.length === 1 ? modelIds[0] : null;
+  }, [clientDefaultLabel, hosts, value.stack.hostIds]);
   const budget: TargetBudgetContext = {
     hostCount: value.stack.hostIds.length,
     choiceCount,
@@ -324,12 +356,30 @@ export function EnvironmentComposer({
             max={maxTargets}
             disabled={disabled}
             emptyLabel={
-              maxTargets === 1
-                ? "Select an environment"
-                : "No environments · pick some"
+              environmentsVocabulary === "client"
+                ? maxTargets === 1
+                  ? "Select a client"
+                  : "No clients · pick some"
+                : maxTargets === 1
+                  ? "Select an environment"
+                  : "No environments · pick some"
+            }
+            headingLabel={
+              environmentsVocabulary === "client"
+                ? maxTargets > 1
+                  ? "Clients · run order"
+                  : "Clients"
+                : undefined
+            }
+            emptyProjectLabel={
+              environmentsVocabulary === "client"
+                ? "No clients in this project yet."
+                : undefined
             }
             triggerTestId={testId("environments-picker")}
-            triggerAriaLabel="Environments"
+            triggerAriaLabel={
+              environmentsVocabulary === "client" ? "Clients" : "Environments"
+            }
             inModal={inModal}
             footerSlot={environmentPickerFooter}
           />
@@ -362,7 +412,7 @@ export function EnvironmentComposer({
             testId={testId("models-picker")}
             inModal={inModal}
             budget={budget}
-            clientDefaultLabel={clientDefaultLabel}
+            clientDefaultLabel={inheritedClientDefaultLabel}
           />
         ) : null}
         {showServersSlot ? (
@@ -401,11 +451,14 @@ export function EnvironmentComposer({
         ) : null}
       </div>
 
-      {/* Only when the environment picker is actually usable: the surrounding
-          surface may already be disabling everything and saying its own version
+      {/* Only when the caller asked for the environment slot: a surface that
+          omitted it is already disabling everything and saying its own version
           of this, and naming that control would then point at something the
-          user cannot reach. */}
-      {stackEditBlock && !disabled && showEnvironmentsSlot ? (
+          user cannot reach. Gated on the REQUEST, not on `showEnvironmentsSlot`
+          — folding in `environmentsEnabled` would leave a viewer without the
+          environments flag staring at a fully greyed-out strip with nothing
+          explaining why. */}
+      {stackEditBlock && !disabled && environmentsSlotRequested ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}
@@ -417,7 +470,7 @@ export function EnvironmentComposer({
             : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
         </p>
       ) : null}
-      {modelsEnabled && !disabled ? (
+      {modelsEnabled && slots.includes("models") && showTargetCount && !disabled ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("target-count")}

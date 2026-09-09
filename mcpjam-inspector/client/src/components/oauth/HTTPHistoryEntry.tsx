@@ -12,7 +12,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
-import type { LogErrorDetails } from "@mcpjam/sdk/browser";
+import {
+  isUnauthenticatedProbeChallenge,
+  type LogErrorDetails,
+} from "@mcpjam/sdk/browser";
 import type { HttpEntryView } from "@/lib/http-entry-views";
 
 interface HTTPHistoryEntryProps {
@@ -81,8 +84,12 @@ export function HTTPHistoryEntry({
   // In the request-only view the response is rendered under the paired
   // received-step card, so status is shown (and styled) there instead.
   const deferredResponse = view === "request" && status !== undefined;
-  const isExpectedAuthChallenge =
-    step === "request_without_token" && status === 401;
+  const isExpectedAuthChallenge = isUnauthenticatedProbeChallenge({
+    step,
+    status,
+    statusText,
+    wwwAuthenticateHeader: responseHeaders?.["www-authenticate"],
+  });
   const hasError =
     view === "request"
       ? Boolean(error)

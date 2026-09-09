@@ -625,7 +625,16 @@ export function useAppState({
   ]);
 
   const handleSwitchProject = useCallback(
-    async (projectId: string) => {
+    async (
+      projectId: string,
+      /**
+       * `silent` suppresses the confirmation toast. The URL-driven switch uses
+       * it: when the address bar is what selected the project, "Switched to
+       * project: X" is telling the user something they can already read — on
+       * every cold open of a shared link, every Back, every tab.
+       */
+      options?: { silent?: boolean }
+    ) => {
       const newProject = effectiveProjects[projectId];
       if (!newProject) {
         toast.error("Project not found");
@@ -653,7 +662,9 @@ export function useAppState({
       } else {
         dispatch({ type: "SWITCH_PROJECT", projectId });
       }
-      toast.success(`Switched to project: ${newProject.name}`);
+      if (!options?.silent) {
+        toast.success(`Switched to project: ${newProject.name}`);
+      }
     },
     [
       effectiveProjects,

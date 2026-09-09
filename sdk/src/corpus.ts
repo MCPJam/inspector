@@ -32,6 +32,7 @@ import { EvalSuite } from "./EvalSuite.js";
 import type { HostExecutor } from "./HostExecutor.js";
 import { canonicalDigest } from "./contract/canonical.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
+import { checkRole } from "./predicates/policy.js";
 import { predicateSchema, type Predicate } from "./predicates/types.js";
 import type { EvalMatchOptions } from "./matchers.js";
 import type { EvalExpectedToolCall } from "./eval-reporting-types.js";
@@ -332,11 +333,16 @@ export function evalTestFromPlatformCase(
           );
         }
         const predicate = parsed.data as Predicate;
-        // `toolCalledWith` becomes an expectation rather than a predicate, so
-        // it grades through the tool matcher exactly as the hosted
-        // `deriveExpectedToolCalls` does. `minCount` and per-assert matching
-        // are dropped IDENTICALLY on both sides — this is parity, not loss.
-        if (predicate.type === "toolCalledWith") {
+        // A gating `toolCalledWith` becomes an expectation rather than a
+        // predicate, so it grades through the tool matcher exactly as the
+        // hosted `deriveExpectedToolCalls` does. An advisory one stays a
+        // predicate row — promoting it would mint a matcher expectation that
+        // can fail the trial. `minCount` and per-assert matching are dropped
+        // IDENTICALLY on both sides — this is parity, not loss.
+        if (
+          predicate.type === "toolCalledWith" &&
+          checkRole(predicate) !== "advisory"
+        ) {
           // A negative case passes only when NO tool was called, so ANY
           // `toolCalledWith` contradicts it. Checked here rather than on the
           // derived `expectedToolCalls`, because a non-plain assertion stays a
@@ -459,6 +465,9 @@ export function evalTestFromPlatformCase(
     ...(evalCase.expectedOutput !== undefined
       ? { expectedOutput: evalCase.expectedOutput }
       : {}),
+    // Intent is analytics metadata, not semantic case content, but the local
+    // EvalTest must still carry the hosted label onto its reported iterations.
+    ...(evalCase.intent !== undefined ? { intent: evalCase.intent } : {}),
     // Identity ALWAYS rides here, never on the display name.
     externalCaseId: evalCase.id,
   };

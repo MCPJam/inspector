@@ -22,9 +22,14 @@ export function SkillResultCard({
   onUpdate,
   skillsSource,
 }: SkillResultCardProps) {
-  // Prefer the source stamped on the skill at selection time; fall back to the
-  // current prop for legacy/local selections. This keeps file reads pinned to
-  // the project the skill was selected from, even if the active project changed.
+  // Prefer the source stamped on the skill at selection time; the prop is a
+  // fallback for results persisted BEFORE the stamp existed, and for nothing
+  // else. Every new selection stamps its own source (see
+  // `SkillsPopoverSection.handleSkillClick`), which matters now that the
+  // picker offers both halves: the prop names the library in both build modes,
+  // so an unstamped local skill would expand into file reads against Convex.
+  // Stamping also keeps reads pinned to the project the skill came from even
+  // if the active project has since changed.
   const effectiveSource = skillResult.source ?? skillsSource;
   const [isExpanded, setIsExpanded] = useState(false);
   const [files, setFiles] = useState<SkillFile[]>([]);

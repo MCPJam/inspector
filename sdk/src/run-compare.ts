@@ -34,13 +34,14 @@ import {
   type StructuredCaseResult,
   type StructuredRunReport,
 } from "./structured-reporting.js";
-import type { EvalDecisionSummary } from "./eval-decision-summary.js";
+import type { EvalRunDecisionSummary } from "./contract/index.js";
 
 function classify(
   status: PlatformRunCompareCase["status"]
 ): StructuredCaseResult["classification"] {
   if (status === "regressed") return "breaking";
-  if (status === "fixed" || status === "unchanged_passed") return "non_breaking";
+  if (status === "fixed" || status === "unchanged_passed")
+    return "non_breaking";
   return "informational";
 }
 
@@ -85,9 +86,7 @@ function toStructuredCase(row: PlatformRunCompareCase): StructuredCaseResult {
       evaluationConfigChanged: row.evaluationConfigChanged,
       base: row.base.outcome,
       compare: row.compare.outcome,
-      ...(row.scoreDeltas.length > 0
-        ? { scoreDeltas: row.scoreDeltas }
-        : {}),
+      ...(row.scoreDeltas.length > 0 ? { scoreDeltas: row.scoreDeltas } : {}),
     },
   };
 }
@@ -138,13 +137,10 @@ export function buildRunCompareReport(
     durationMs?: number;
     flakyCases?: FlakyCase[];
     metadata?: Record<string, unknown>;
-    decisionSummary?: EvalDecisionSummary;
+    decisionSummary?: EvalRunDecisionSummary;
   } = {}
 ): StructuredRunReport {
-  const cases = [
-    ...compare.cases.map(toStructuredCase),
-    gateCase(gateReport),
-  ];
+  const cases = [...compare.cases.map(toStructuredCase), gateCase(gateReport)];
 
   return {
     schemaVersion: 1,
@@ -167,6 +163,12 @@ export function buildRunCompareReport(
       },
       scoreContract: compare.scoreContract,
       passSummary: compare.passSummary,
+      // The whole-run metric deltas the gate read — cost, tokens and wall
+      // duration, each with its coverage. Carried so a JSON report is
+      // self-contained: a reader deciding whether a cost verdict is
+      // trustworthy needs the coverage that produced it, and re-fetching the
+      // compare payload to find out defeats the point of a report.
+      metrics: compare.metrics,
       // Reported, never gated — see `detectFlakyCases`.
       flakyCases: options.flakyCases ?? [],
       ...(options.metadata ?? {}),

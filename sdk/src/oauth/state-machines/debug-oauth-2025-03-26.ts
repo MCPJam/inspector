@@ -26,10 +26,15 @@ import type {
 import type { DiagramAction } from "./shared/types.js";
 import { buildOAuthSequenceDiagramActions } from "./shared/sequence-diagram.js";
 import {
+  addChallengeStatusWarning,
   addInfoLog,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
 } from "./shared/logging.js";
+import {
+  classifyUnauthenticatedProbe,
+  UnexpectedProbeStatusError,
+} from "./shared/challenges.js";
 import {
   mergeHeaders,
   mergeHeadersForAuthServer,
@@ -327,10 +332,20 @@ export const createDebugOAuthStateMachine = (
                   Date.now() - (lastEntry.timestamp || Date.now());
               }
 
-              if (response.status === 401 || response.status === 200) {
+              const probe = classifyUnauthenticatedProbe({
+                status: response.status,
+                statusText: response.statusText,
+                wwwAuthenticateHeader: response.headers["www-authenticate"],
+                serverMessage: response.body?.error?.message,
+              });
+
+              if (
+                probe.kind === "challenged" ||
+                probe.kind === "anonymous_allowed"
+              ) {
                 // Expected response - proceed with OAuth discovery
-                const infoLogs =
-                  response.status === 200
+                let infoLogs =
+                  probe.kind === "anonymous_allowed"
                     ? addInfoLog(
                         state,
                         "discovery_start",
@@ -342,6 +357,15 @@ export const createDebugOAuthStateMachine = (
                         },
                       )
                     : state.infoLogs;
+
+                if (probe.kind === "challenged" && !probe.specCompliant) {
+                  infoLogs = addChallengeStatusWarning(
+                    state,
+                    infoLogs,
+                    "discovery_start",
+                    responseData,
+                  );
+                }
 
                 updateState({
                   currentStep: "discovery_start",
@@ -355,11 +379,17 @@ export const createDebugOAuthStateMachine = (
                   lastResponse: responseData,
                   httpHistory: updatedHistory,
                 });
-                throw new Error(
-                  `Expected 401 or 200 but got HTTP ${response.status}: ${response.body?.error?.message || response.statusText}`,
+                throw new UnexpectedProbeStatusError(
+                  probe.message,
+                  response.status,
                 );
               }
             } catch (error) {
+              // The server replied; relabelling that as a request failure hides
+              // what it actually said.
+              if (error instanceof UnexpectedProbeStatusError) {
+                throw error;
+              }
               throw new Error(
                 `Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`,
               );

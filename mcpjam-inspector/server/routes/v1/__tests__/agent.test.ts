@@ -40,6 +40,23 @@ const {
   };
 });
 
+/**
+ * The deployment switch over scheduled-eval writes.
+ *
+ * ON for this file: the cases below assert the WHOLE offered surface, and the
+ * switch subtracts `set_eval_suite_schedule` from it. Its own case flips it
+ * off. Spread over the real module rather than replaced — the route graph
+ * reads a dozen other config exports, and a bare factory would have to
+ * restate every one of them.
+ */
+const configState = vi.hoisted(() => ({ scheduledEvalsWrite: true }));
+vi.mock("../../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  get SCHEDULED_EVALS_WRITE_ENABLED() {
+    return configState.scheduledEvalsWrite;
+  },
+}));
+
 // `GET /agent-ops` mounts `requireVerifiedAuth` — it never calls Convex, so
 // nothing downstream would re-check the bearer. Tokens here are placeholder
 // strings; the middleware's own branches are covered in
@@ -519,6 +536,196 @@ describe("agent tool surface", () => {
       expect.objectContaining({ project: "p1" }),
       expect.anything()
     );
+    executeSpy.mockRestore();
+  });
+
+  it("hands the model permalinks alongside a read's rows", async () => {
+    // The system prompt tells the model to pass back a `permalinks` url
+    // verbatim. This surface returned the raw result, so on the hosted agent
+    // that rule named a field nothing produced and the model was left with
+    // bare ids — which is how it came to invent app URLs in the first place.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          { id: "srv_1", name: "Asana", projectId: "p1" },
+          { id: "srv_2", name: "Linear", projectId: "p1" },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      permalinks?: Array<{ url: string; resource: { id: string } }>;
+    };
+    expect(result.permalinks?.map((permalink) => permalink.url)).toEqual([
+      expect.stringContaining("/servers/srv_1?project=p1"),
+      expect.stringContaining("/servers/srv_2?project=p1"),
+    ]);
+    executeSpy.mockRestore();
+  });
+
+  it("keeps the permalinks when the payload is truncated for the model", async () => {
+    // The case they matter MOST in. `capForModel` replaces an over-cap value
+    // wholesale with `{truncated, preview}`, so a permalink folded inside the
+    // payload disappeared on exactly the long listings where the link is the
+    // only thing the model can still act on.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          {
+            id: "srv_1",
+            name: "Asana",
+            projectId: "p1",
+            // Comfortably past the 24k model-output cap on its own.
+            notes: "x".repeat(30_000),
+          },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      truncated?: boolean;
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(result.truncated).toBe(true);
+    expect(result.permalinks?.[0]?.url).toContain("/servers/srv_1?project=p1");
+    executeSpy.mockRestore();
+  });
+
+  it("leaves the result alone when nothing is addressable", async () => {
+    // An empty listing has no resource to open. The envelope must not appear
+    // as an empty array either: `permalinks: []` reads to the model as "this
+    // surface offers links and there are none for you", which is a different
+    // claim from a result that never carried links at all.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as Record<string, unknown>;
+    expect(result).not.toHaveProperty("permalinks");
+    expect(result.items).toEqual([]);
+    executeSpy.mockRestore();
+  });
+
+  it("links the rows it can address and drops the ones it cannot", async () => {
+    // Each ref is built independently. One row missing the id the route needs
+    // must cost that row its link and nothing more — the failure mode worth
+    // guarding is the one where a single bad row silently strips the links off
+    // every row beside it.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          { id: "", name: "Unaddressable", projectId: "p1" },
+          { id: "srv_2", name: "Linear", projectId: "p1" },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(result.permalinks?.map((permalink) => permalink.url)).toEqual([
+      expect.stringContaining("/servers/srv_2?project=p1"),
+    ]);
+    executeSpy.mockRestore();
+  });
+
+  it("does not report an idempotent re-create as something the turn created", async () => {
+    // `createdResourcesFrom` keys on a NAME PREFIX so the catalog's new
+    // creates are adopted without editing that file. The cost of that rule is
+    // that an idempotent create — one that succeeds by returning the row that
+    // already existed, saying so with `created: false` — would be reported
+    // under a heading that reads "created", which is the same lie the function
+    // already refuses to tell about an edit.
+    //
+    // `publish_scenario` is the operation the flag was written for and it is
+    // excluded from this surface entirely (who may talk to your servers is a
+    // human call), so this drives the guard through a create-prefixed op that
+    // IS on the surface. The model still sees the permalink either way; only
+    // the host's created-resource block is withheld.
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke", created: false },
+        servers: [],
+      } as never);
+    const created: CreatedResource[] = [];
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created,
+    });
+    const tool = tools[createEvalSuiteOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute(VALID_CREATE_INPUT, {})) as {
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(created).toEqual([]);
+    expect(result.permalinks?.[0]?.url).toContain("/evals/suite/ts_1");
+    executeSpy.mockRestore();
+  });
+
+  it("still returns the read when the permalink policy cannot read it", async () => {
+    // A policy reads a shape (`result.items.map`). A null result throws inside
+    // it. Deriving a link is a convenience on top of the read; it must never
+    // be what turns a successful read into a failed tool call.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue(null as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    await expect(tool.execute({}, {})).resolves.toBeNull();
     executeSpy.mockRestore();
   });
 
@@ -1387,6 +1594,23 @@ describe("org capability policy", () => {
       ...AGENT_API_GATED_OPERATIONS,
     ]) {
       expect(tools[operation.name], operation.name).toBeDefined();
+    }
+  });
+
+  // The DEPLOYMENT's own tightening, riding the same seam as the org's. The
+  // op is omitted rather than offered-and-refused, for the same reason a
+  // disabled op is: a tool the model can see is a tool it plans around.
+  it("omits set_eval_suite_schedule when the deployment switch is off", async () => {
+    configState.scheduledEvalsWrite = false;
+    try {
+      const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+      expect(tools[setEvalSuiteScheduleOperation.name]).toBeUndefined();
+      // Every other gated op is untouched — one op, not a kill switch on the
+      // whole gated tier.
+      expect(tools[runEvalSuiteOperation.name]).toBeDefined();
+      expect(tools[cancelEvalRunOperation.name]).toBeDefined();
+    } finally {
+      configState.scheduledEvalsWrite = true;
     }
   });
 

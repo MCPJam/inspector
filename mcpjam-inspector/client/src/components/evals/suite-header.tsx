@@ -22,7 +22,6 @@ import {
   RotateCw,
   Settings,
   Sparkles,
-  X,
 } from "lucide-react";
 import {
   Popover,
@@ -59,11 +58,9 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
-import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
-import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
@@ -92,6 +89,17 @@ interface SuiteHeaderProps {
   aggregate?: SuiteAggregate | null;
   testCases?: EvalCase[];
   readOnlyConfig?: boolean;
+  /**
+   * The suite's configuration lives in a repository, so it cannot be edited
+   * here — see `isCiOwnedSuite`.
+   *
+   * DISTINCT FROM `readOnlyConfig`, which also hides Run: that prop means "this
+   * surface does not offer suite controls at all" (desktop CI), while this one
+   * means "this suite refuses edits, and running it is the point". Merging them
+   * would take Run away from every CI-owned suite — exactly the thing the lock
+   * is supposed to keep working.
+   */
+  configLocked?: boolean;
   hideRunActions?: boolean;
   onSetupCi?: () => void;
   onOpenExportSuite?: () => void;
@@ -118,10 +126,6 @@ interface SuiteHeaderProps {
    * Playground: block suite-level Run all while a single case quick-run is in flight.
    */
   runningTestCaseId?: string | null;
-  /** Persists the suite's host attachments (multi-host fan-out target list). */
-  onSuiteHostAttachmentsUpdate?: (
-    attachments: HostAttachmentDraft[]
-  ) => Promise<void>;
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -136,6 +140,12 @@ interface SuiteHeaderProps {
    */
   iterationOverride?: number;
   onIterationOverrideChange?: (value: number | undefined) => void;
+  /** Settings sheet: name edits flow into the draft instead of saving on blur. */
+  settingsDraftName?: {
+    value: string;
+    onChange: (value: string) => void;
+    error?: string;
+  };
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -157,6 +167,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runs = [],
     testCases = [],
     readOnlyConfig = false,
+    configLocked = false,
     hideRunActions = false,
     onSetupCi,
     onOpenExportSuite,
@@ -175,14 +186,30 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
-    onSuiteHostAttachmentsUpdate,
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
+    settingsDraftName,
   } = props;
 
   const showTestCaseCtas =
     runsViewMode === "test-cases" ||
     (unifiedSuiteDashboard && viewMode === "overview");
+
+  /**
+   * The AUTHORING half of the case toolbar — Generate and New case.
+   *
+   * Split from `showTestCaseCtas` rather than folded into it, because that flag
+   * also gates **Run all**, which is a run control and must survive the lock:
+   * running a CI-owned suite from the app is the point. Both buttons here start
+   * flows that end in a `case.create` the platform refuses with
+   * `CI_OWNED_SUITE_READ_ONLY`, so offering them is offering work that cannot
+   * land.
+   *
+   * This is the Evals path specifically. Evaluate hides Add case through
+   * `SuiteDetailOverview`; the unified dashboard renders its case tools from
+   * this header instead, so the same rule has to be stated twice.
+   */
+  const showCaseAuthoringCtas = showTestCaseCtas && !configLocked;
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -204,8 +231,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     latestRunForMetadata?.status === "pending";
 
   useEffect(() => {
-    setEditedName(suite.name);
-  }, [suite.name]);
+    setEditedName(settingsDraftName?.value ?? suite.name);
+  }, [settingsDraftName?.value, suite.name]);
 
   const handleNameClick = useCallback(() => {
     setIsEditingName(true);
@@ -232,32 +259,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       setEditedName(suite.name);
     }
   }, [editedName, suite.name, suite._id, updateSuite]);
-
-  const handleServerAttachmentUpdate = useCallback(
-    async (serverAttachmentId: string) => {
-      // Picker calls this synchronously inside onClick — don't rethrow,
-      // or the unawaited promise becomes an unhandled rejection. The
-      // toast is the user-facing signal; the suite row will reconcile
-      // from the live Convex subscription on retry.
-      try {
-        await updateSuite({
-          suiteId: suite._id,
-          serverAttachmentId,
-        });
-        track("eval_suite_server_changed", {
-          location: "suite_header",
-          suite_id: suite._id,
-          server_attachment_id: serverAttachmentId,
-        });
-        toast.success("Server group updated");
-      } catch (error) {
-        toast.error(
-          getBillingErrorMessage(error, "Failed to update server group")
-        );
-      }
-    },
-    [suite._id, updateSuite]
-  );
 
   const handleNameKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -291,50 +292,72 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
   if (isEditMode) {
-    // Settings sheet header — matches the body's max-w-2xl column so the
-    // title sits flush over the form. Title is light-weight (semibold,
-    // not text-xl bold) so the eyebrow-labelled sections below carry the
-    // visual rhythm; Done is a ghost chip, not a heavy outline button.
+    const nameValue = settingsDraftName?.value ?? suite.name;
+    const nameError = settingsDraftName?.error;
+
+    const handleDraftNameChange = (value: string) => {
+      setEditedName(value);
+      settingsDraftName?.onChange(value);
+    };
+
+    const handleDraftNameBlur = () => {
+      setIsEditingName(false);
+      setEditedName(nameValue);
+    };
+
+    const handleDraftNameKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        handleDraftNameBlur();
+      } else if (e.key === "Escape") {
+        setIsEditingName(false);
+        setEditedName(nameValue);
+      }
+    };
+
     return (
-      <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
-        <div className="min-w-0 flex-1 pr-2">
-          {isEditingName && !readOnlyConfig ? (
+      <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
+        <div className="min-w-0" data-setting-key="name">
+          {/*
+            The name is the ONE setting that lives outside the sheet's
+            `fieldset[disabled]`, so it needs its own lock. It became reachable
+            when the sheet started rendering for a CI-owned suite — the settings
+            are that suite's documentation and a reader has to be able to open
+            them — and an editable name there would feed `settingsDraftName`,
+            put the suite in the commit flow, and end in the 409 the rest of
+            the sheet exists to avoid offering.
+          */}
+          {configLocked ? (
+            <h2
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold leading-8 tracking-tight"
+              title={nameValue}
+            >
+              {nameValue}
+            </h2>
+          ) : isEditingName ? (
             <input
               type="text"
               value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
+              onChange={(e) => handleDraftNameChange(e.target.value)}
+              onBlur={handleDraftNameBlur}
+              onKeyDown={handleDraftNameKeyDown}
               autoFocus
-              className="w-full min-w-0 max-w-full -ml-2 px-2 py-1 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+              aria-label="Suite name"
+              className="h-8 min-w-0 w-full max-w-full rounded-md border border-input bg-background px-2 text-lg font-semibold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring"
             />
-          ) : readOnlyConfig ? (
-            <h1
-              className="truncate text-lg font-semibold tracking-tight"
-              title={suite.name}
-            >
-              {suite.name}
-            </h1>
           ) : (
-            <Button
-              variant="ghost"
+            <button
+              type="button"
               onClick={handleNameClick}
-              className="h-auto max-w-full min-w-0 justify-start -ml-2 rounded-md px-2 py-1 text-left text-lg font-semibold tracking-tight hover:bg-accent/40"
-              title={suite.name}
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold tracking-tight hover:text-foreground/80"
+              title={nameValue}
             >
-              <span className="min-w-0 truncate text-left">{suite.name}</span>
-            </Button>
+              {nameValue}
+            </button>
           )}
+          {nameError ? (
+            <p className="mt-1 text-xs text-destructive">{nameError}</p>
+          ) : null}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => onViewModeChange("overview")}
-        >
-          Done
-          <X className="h-3.5 w-3.5" />
-        </Button>
       </div>
     );
   }
@@ -442,22 +465,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   if (viewMode === "test-detail" || viewMode === "test-edit") {
     return null;
   }
-
-  // Rendered whenever the suite overview is visible, regardless of whether any
-  // cases exist yet — the empty "pick a client" affordance is the whole point of
-  // surfacing the axis up front. The model-axis bar was removed: a host's
-  // `modelId` is the source of truth for what each run runs against, so a
-  // separate suite-wide model selector is just noise.
-  const suiteOverviewHostBar = (
-    <SuiteEnvironmentComposerBar
-      containerVariant="inline"
-      className="py-1.5 md:py-2"
-      suite={suite}
-      readOnly={readOnlyConfig}
-      onUpdate={onSuiteHostAttachmentsUpdate}
-      onUpdateServerAttachment={handleServerAttachmentUpdate}
-    />
-  );
 
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
@@ -684,12 +691,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     (casesSidebarHidden &&
       Boolean(onShowCasesSidebar) &&
       runsViewMode === "runs") ||
-    Boolean(onSetupCi && !readOnlyConfig);
+    Boolean(onSetupCi && !readOnlyConfig && !configLocked);
 
   const overviewHasCaseTools =
     overviewRunAllCta != null ||
-    (showTestCaseCtas && Boolean(onGenerateTestCases)) ||
-    (showTestCaseCtas && Boolean(onCreateTestCase));
+    (showCaseAuthoringCtas && Boolean(onGenerateTestCases)) ||
+    (showCaseAuthoringCtas && Boolean(onCreateTestCase));
 
   const overviewSuiteNavButtons =
     overviewHasSuiteNav ? (
@@ -706,7 +713,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Cases
           </Button>
         ) : null}
-        {onSetupCi && !readOnlyConfig ? (
+        {onSetupCi && !readOnlyConfig && !configLocked ? (
           <Button
             size="sm"
             variant="outline"
@@ -749,13 +756,13 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           sideOffset={6}
           className="px-2 py-1 text-[11px]"
         >
-          Suite settings — description, validators, judges
+          Suite settings — where it runs, validators, judges
         </TooltipContent>
       </Tooltip>
     ) : null;
 
   const overviewGenerateButton =
-    showTestCaseCtas && onGenerateTestCases ? (
+    showCaseAuthoringCtas && onGenerateTestCases ? (
       <div className="inline-flex items-center">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -807,7 +814,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     ) : null;
 
   const overviewNewCaseButton =
-    showTestCaseCtas && onCreateTestCase ? (
+    showCaseAuthoringCtas && onCreateTestCase ? (
       <Button
         type="button"
         size="sm"
@@ -835,7 +842,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const overviewLegacyRunActions =
     !hideRunActions && (replayableLatestRun || !readOnlyConfig) ? (
       <>
-        {!readOnlyConfig && hasServersConfigured ? (
+        {!readOnlyConfig && !configLocked && hasServersConfigured ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -954,7 +961,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 autoFocus
                 className="h-8 min-w-0 w-full max-w-full flex-1 rounded-md border border-input px-3 py-0 text-base font-semibold leading-none focus:outline-none focus:ring-2 focus:ring-ring md:text-lg"
               />
-            ) : readOnlyConfig ? (
+            ) : readOnlyConfig || configLocked ? (
               <h2
                 className="flex h-8 min-w-0 flex-1 items-center truncate px-2 text-base font-semibold leading-none md:text-lg"
                 title={suite.name}
@@ -981,7 +988,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ) : null}
           </div>
         </div>
-        <div className="min-w-0 shrink">{suiteOverviewHostBar}</div>
         {overviewSettingsButton}
         {overviewSuiteNavButtons}
       </div>

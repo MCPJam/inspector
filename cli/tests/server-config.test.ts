@@ -6,6 +6,7 @@ import test from "node:test";
 import { Command } from "commander";
 import {
   addSharedServerOptions,
+  getGlobalOptions,
   parseNonNegativeInteger,
   parseJsonRecord,
   parseRetryPolicy,
@@ -570,4 +571,68 @@ test("resolveAliasedStringOption rejects missing and conflicting aliases", () =>
       error instanceof CliError &&
       error.message.includes("Specify only one of --tool-name or --name"),
   );
+});
+
+// ── The `--timeout` default ────────────────────────────────────────────────
+//
+// The 30s program default is sized for an MCP probe. Commands that drive a
+// model turn pass their own, larger default; an explicit `--timeout` must
+// still win over both, or a caller could not shorten a long-running command.
+
+function timeoutCommand(argv: string[]): Command {
+  const command = new Command("send").exitOverride();
+  command.option("--timeout <ms>", "Request timeout in milliseconds", Number);
+  command.parse(argv, { from: "user" });
+  return command;
+}
+
+/**
+ * The REAL shape: `--timeout` lives on the program, carries a commander
+ * default of 30_000, and is read from a subcommand.
+ *
+ * The first version of this fix passed the simple test above and did nothing
+ * in production, because with a commander default the option value is never
+ * `undefined` — so a `?? perCommandDefault` fallback is unreachable. Anything
+ * asserting the per-command default MUST go through this builder.
+ */
+function programWithTimeout(argv: string[]): Command {
+  const program = new Command("mcpjam").exitOverride();
+  program.option(
+    "--timeout <ms>",
+    "Request timeout in milliseconds",
+    Number,
+    30_000,
+  );
+  const leaf = program.command("send").exitOverride();
+  leaf.action(() => {});
+  program.parse(argv, { from: "user" });
+  return leaf;
+}
+
+test("getGlobalOptions uses the 30s program default when none is given", () => {
+  assert.equal(getGlobalOptions(timeoutCommand([])).timeout, 30_000);
+});
+
+test("getGlobalOptions honours a per-command default when --timeout is absent", () => {
+  assert.equal(getGlobalOptions(timeoutCommand([]), 300_000).timeout, 300_000);
+});
+
+test("an explicit --timeout still beats the per-command default", () => {
+  const command = timeoutCommand(["--timeout", "5000"]);
+  assert.equal(getGlobalOptions(command, 300_000).timeout, 5_000);
+});
+
+test("the per-command default beats the program's own commander default", () => {
+  const leaf = programWithTimeout(["send"]);
+  assert.equal(getGlobalOptions(leaf, 300_000).timeout, 300_000);
+});
+
+test("the program default still applies when a command asks for none", () => {
+  const leaf = programWithTimeout(["send"]);
+  assert.equal(getGlobalOptions(leaf).timeout, 30_000);
+});
+
+test("an explicit --timeout beats both defaults, from a subcommand", () => {
+  const leaf = programWithTimeout(["--timeout", "5000", "send"]);
+  assert.equal(getGlobalOptions(leaf, 300_000).timeout, 5_000);
 });

@@ -1,6 +1,6 @@
 /**
  * Evals-screen tools: run/cancel/generate/delete existing suites, and open
- * the create-suite page with an optional name prefill.
+ * the create-suite dialog with an optional name prefill.
  *
  * Mount-scoped like the registry group: `EvalsTab` owns the command handlers
  * and the suites they resolve against, so the tools exist exactly while
@@ -40,13 +40,13 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
     {
       name: "ui_open_eval_suite_form",
       description:
-        "Open the create-suite page on the Evaluate screen for the user to fill in and submit. Optionally prefills the suite name — nothing else. This only prepares the form; it never creates the suite (the user picks servers/hosts and submits). To act on an existing suite, use the run/generate/delete eval tools instead.",
+        "Open the create-suite dialog on the Evaluate screen for the user to fill in and submit. Optionally prefills the suite name — nothing else. This only prepares the form; it never creates the suite (the user picks servers/hosts and submits). To act on an existing suite, use the run/generate/delete eval tools instead.",
       inputSchema: {
         type: "object",
         properties: {
           name: {
             type: "string",
-            description: "Optional suite name to prefill on the create page.",
+            description: "Optional suite name to prefill in the dialog.",
           },
         },
         additionalProperties: false,
@@ -58,7 +58,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
-      // Opens the /evals/create route (the create page) on the Evaluate screen.
+      // Opens the /evals/create route (the dialog) on the Evaluate screen.
       mayNavigate: true,
       execute: async (args) => {
         const name = asOptionalString(args.name);
@@ -170,6 +170,110 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         const response = await dispatchInspectorCommand({
           type: "generateEvalTests",
           payload: { suite },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_edit_eval_case_draft",
+      description:
+        "Edit the test case CURRENTLY OPEN in the case editor (e.g. the 'Describe a case' workspace) — there is no suite/case id to pass, it always targets whatever case is on screen. Set 'prompt' to (re)write the case's user-turn prompt, 'addToolAssertion' to add a check that a specific tool was called with given arguments, or 'noTool' to mark the case as expecting no tool call. Fails with an error if no case is currently open for editing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "The user prompt this case's first turn should send. Replaces whatever prompt the case already had.",
+          },
+          addToolAssertion: {
+            type: "object",
+            description:
+              "Add a check that the given tool was called with these arguments.",
+            properties: {
+              toolName: { type: "string" },
+              arguments: {
+                type: "object",
+                description: "Expected arguments, as a plain object.",
+              },
+            },
+            required: ["toolName"],
+            additionalProperties: false,
+          },
+          noTool: {
+            type: "boolean",
+            description: "Mark the case as expecting no tool call at all.",
+          },
+        },
+        additionalProperties: false,
+      },
+      readOnly: false,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      execute: async (args) => {
+        const prompt = asOptionalString(args.prompt);
+        if (args.prompt !== undefined && prompt === undefined) {
+          return errorResult(
+            "'prompt' must be a non-empty string when provided.",
+          );
+        }
+        let addToolAssertion:
+          | { toolName: string; arguments?: Record<string, unknown> }
+          | undefined;
+        if (args.addToolAssertion !== undefined) {
+          const raw = args.addToolAssertion;
+          if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+            return errorResult("'addToolAssertion' must be an object.");
+          }
+          const toolName = asOptionalString(
+            (raw as Record<string, unknown>).toolName,
+          );
+          if (!toolName) {
+            return errorResult(
+              "'addToolAssertion.toolName' is required and must be a non-empty string.",
+            );
+          }
+          const rawArguments = (raw as Record<string, unknown>).arguments;
+          if (
+            rawArguments !== undefined &&
+            (typeof rawArguments !== "object" ||
+              rawArguments === null ||
+              Array.isArray(rawArguments))
+          ) {
+            return errorResult(
+              "'addToolAssertion.arguments' must be an object when provided.",
+            );
+          }
+          addToolAssertion = {
+            toolName,
+            ...(rawArguments
+              ? { arguments: rawArguments as Record<string, unknown> }
+              : {}),
+          };
+        }
+        if (args.noTool !== undefined && typeof args.noTool !== "boolean") {
+          return errorResult("'noTool' must be a boolean when provided.");
+        }
+        if (
+          prompt === undefined &&
+          addToolAssertion === undefined &&
+          args.noTool === undefined
+        ) {
+          return errorResult(
+            "Provide at least one of 'prompt', 'addToolAssertion', or 'noTool'.",
+          );
+        }
+        const response = await dispatchInspectorCommand({
+          type: "editEvalCaseDraft",
+          payload: {
+            ...(prompt !== undefined ? { prompt } : {}),
+            ...(addToolAssertion ? { addToolAssertion } : {}),
+            ...(args.noTool !== undefined ? { noTool: args.noTool } : {}),
+          },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },

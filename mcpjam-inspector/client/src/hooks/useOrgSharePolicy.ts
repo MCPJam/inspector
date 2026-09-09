@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
 
-export type ShareMode =
-  | "project_members"
-  | "invited_only"
-  | "anyone_with_link";
+export type ShareMode = "project_members" | "invited_only" | "anyone_with_link";
 
 export type ShareInviteAudience = "anyone" | "org_members";
 
@@ -14,52 +12,6 @@ export type OrgSharePolicyKnobs = {
   inviteAudience: ShareInviteAudience;
   updatedAt: number | null;
 };
-
-function messageOf(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    const lines = error.message.split("\n").filter(Boolean);
-    const last = lines[lines.length - 1] ?? error.message;
-    return last.replace(/^\[.*?\]\s*/, "").trim() || error.message;
-  }
-  return String(error);
-}
-
-function useOrgScopedWrite(organizationId: string | null): {
-  error: string | null;
-  isSaving: boolean;
-  run: (work: () => Promise<unknown>) => Promise<void>;
-} {
-  const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const currentOrgRef = useRef(organizationId);
-
-  useEffect(() => {
-    currentOrgRef.current = organizationId;
-    setError(null);
-    setIsSaving(false);
-  }, [organizationId]);
-
-  const run = useCallback(
-    async (work: () => Promise<unknown>) => {
-      const startedFor = organizationId;
-      setError(null);
-      setIsSaving(true);
-      try {
-        await work();
-      } catch (nextError) {
-        if (currentOrgRef.current === startedFor) {
-          setError(messageOf(nextError));
-        }
-        throw nextError;
-      } finally {
-        if (currentOrgRef.current === startedFor) setIsSaving(false);
-      }
-    },
-    [organizationId],
-  );
-
-  return { error, isSaving, run };
-}
 
 export function useOrgSharePolicy(organizationId: string | null): {
   policy: OrgSharePolicyKnobs | undefined;

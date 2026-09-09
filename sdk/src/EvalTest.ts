@@ -41,6 +41,11 @@ import {
   mintCaseId,
   opaqueIdSchema,
 } from "./contract/identity.js";
+import {
+  caseIntentSchema,
+  normalizeIntent,
+  type CaseIntent,
+} from "./contract/stage-intent.js";
 import type { IterationStatus } from "./contract/chain.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
@@ -306,6 +311,11 @@ export interface EvalTestConfig {
    * byte-identical to before.
    */
   externalCaseId?: string;
+  /**
+   * Optional analytics grouping label for this case. It is forwarded with
+   * every result but never participates in scoring or the verdict.
+   */
+  intent?: CaseIntent;
   /**
    * Hosted "negative case" semantics: the test passes iff NO tool was called.
    *
@@ -588,6 +598,20 @@ export class EvalTest {
         config = rest;
       }
     }
+    // Intent is authored metadata, normalized once at the authoring boundary
+    // just like the hosted external id above. Absence stays absent locally;
+    // the reporting identity sends an explicit null so the wire can preserve
+    // the unlabelled slice.
+    if (config.intent !== undefined) {
+      const intent = normalizeIntent(config.intent);
+      const rest = { ...config };
+      if (intent === undefined) {
+        delete rest.intent;
+      } else {
+        rest.intent = caseIntentSchema.parse(intent);
+      }
+      config = rest;
+    }
     assertDeclaredCaseId(config);
     // After `assertDeclaredCaseId`, so a config with an `externalCaseId` and
     // no `id` gets the missing-id error that already names `id := externalCaseId`
@@ -710,9 +734,10 @@ export class EvalTest {
               // Derived exclusively from the gating scores. The legacy
               // expression `passed && predicatePassed && toolMatch.passed` is
               // now one projection among several rather than the verdict — and
-              // it is equivalent by construction, because `test()`,
-              // `expectedToolCalls` and each predicate each contribute one
-              // gating score of exactly that value.
+              // it is equivalent by construction for gating checks, because
+              // `test()`, `expectedToolCalls` and each gating predicate each
+              // contribute one gating score of exactly that value. Advisory
+              // predicates contribute an advisory row and never fail the trial.
               passed: graded.passed,
               // The iteration RAN. `graded.passed === false` is the server
               // under test failing its task, which is not an execution
@@ -1178,6 +1203,9 @@ export class EvalTest {
         // standalone test still forks its hosted history — the exact bug the
         // declared id exists to retire, surviving on the path nobody looked at.
         caseId: this.config.id,
+        // `null`, not omission, says this case is deliberately unlabelled on
+        // the result wire. Omission is reserved for pre-intent reporters.
+        intent: this.config.intent ?? null,
         ...(this.config.externalCaseId !== undefined
           ? { externalCaseId: this.config.externalCaseId }
           : {}),

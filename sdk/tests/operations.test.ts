@@ -414,6 +414,86 @@ describe("listAllTools", () => {
       "Exceeded 1000 pages while draining tools/list.",
     );
   });
+
+  // MCP 2026-07-28 / draft `server/utilities/pagination`: "Don't make any
+  // determination based on cursor value other than whether a non-null value
+  // was provided (e.g. an empty string is a valid cursor and thus MUST NOT be
+  // treated as the end of results)".
+  it('follows a nextCursor of "" and forwards it verbatim', async () => {
+    const manager = createMockManager({
+      listTools: jest
+        .fn()
+        .mockResolvedValueOnce({
+          tools: [{ name: "echo" }],
+          nextCursor: "",
+        })
+        .mockResolvedValueOnce({
+          tools: [{ name: "draw" }],
+          nextCursor: undefined,
+        }),
+    });
+
+    const result = await listAllTools(manager, { serverId: "srv" });
+
+    // (a) the drain continued past the `""` page ...
+    expect(result.tools.map((tool) => tool.name)).toEqual(["echo", "draw"]);
+    expect(manager.listTools).toHaveBeenCalledTimes(2);
+
+    // (b) ... and the follow-up call actually carried `cursor: ""` — a
+    // truthiness forward would drop it and silently re-read page one.
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      1,
+      "srv",
+      undefined,
+      undefined,
+    );
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      2,
+      "srv",
+      { cursor: "" },
+      undefined,
+    );
+  });
+
+  it("treats a non-string nextCursor as the end, never as a cursor", async () => {
+    // The pinned semantics keep three buckets distinct: absent/null ends the
+    // walk, `""` continues it, and a non-string is not a cursor at all.
+    for (const nextCursor of [null, 42, { opaque: true }, []]) {
+      const manager = createMockManager({
+        listTools: jest
+          .fn()
+          .mockResolvedValue({ tools: [{ name: "echo" }], nextCursor }),
+      });
+
+      const result = await listAllTools(manager, { serverId: "srv" });
+
+      expect(result.tools.map((tool) => tool.name)).toEqual(["echo"]);
+      expect(manager.listTools).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // A server may legally reissue ONE CONSTANT TOKEN for every page: MCP
+  // 2026-07-28 `server/utilities/pagination` forbids reading anything off a
+  // cursor's value beyond whether one was provided, and comparing two cursors
+  // for equality is exactly that. So a repeated cursor is walked like any
+  // other, and the page cap — not a cycle check — is the bound.
+  it("keeps walking a constant cursor and stops at the page cap", async () => {
+    for (const constant of ["", "same-token-forever"]) {
+      const manager = createMockManager({
+        listTools: jest.fn().mockResolvedValue({
+          tools: [{ name: "echo" }],
+          nextCursor: constant,
+        }),
+      });
+
+      // Not truncated at page two — walked until OUR OWN limit says stop, and
+      // the stop is a throw, so a partial listing is never returned as whole.
+      await expect(listAllTools(manager, { serverId: "srv" })).rejects.toThrow(
+        "Exceeded 1000 pages while draining tools/list.",
+      );
+      expect(manager.listTools).toHaveBeenCalledTimes(1000);
+    }
+  });
 });
 
 // ── withEphemeralClient ─────────────────────────────────────────────

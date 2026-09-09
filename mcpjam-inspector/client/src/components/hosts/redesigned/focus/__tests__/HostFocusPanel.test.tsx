@@ -32,6 +32,39 @@ vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
 import { HostFocusPanel } from "../HostFocusPanel";
 
 describe("HostFocusPanel", () => {
+  it("keeps Close interactive while a save locks the editor", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const { container } = render(
+      <HostFocusPanel
+        hostId="host-test"
+        tab="behavior"
+        onTabChange={vi.fn()}
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        onSaveLatest={vi.fn()}
+        hostLoaded
+        saveInFlight
+        attention={[]}
+        onClose={onClose}
+      />,
+    );
+
+    const root = container.firstElementChild as HTMLElement;
+    const close = screen.getByRole("button", { name: "Close panel" });
+    const name = screen.getByRole("textbox", { name: "Client name" });
+
+    expect(root).toHaveAttribute("aria-busy", "true");
+    expect(root).not.toHaveAttribute("inert");
+    expect(close.closest("[inert]")).toBeNull();
+    expect(name.closest("[inert]")).not.toBeNull();
+
+    await user.click(close);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("uses global theme shell classes for the panel root", () => {
     const { container } = render(
       <HostFocusPanel

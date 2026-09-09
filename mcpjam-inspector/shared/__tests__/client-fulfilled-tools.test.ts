@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyUiToolApprovals,
+  BROWSER_INTERACTIVE_TOOL_NAMES,
+  BROWSER_OBSERVATION_TOOL_NAMES,
+  BROWSER_TOOL_NAMES,
+  isBrowserToolName,
   isAppToolAlias,
   isClientFulfilledToolName,
   isUiToolName,
+  pageToolCallNeedsApproval,
+  uiToolApprovalFloor,
   uiToolCallNeedsApproval,
 } from "../client-fulfilled-tools";
 
@@ -164,82 +169,75 @@ describe("client-fulfilled tool names", () => {
       ).toBe(false);
     });
   });
+});
 
-  describe("classifyUiToolApprovals", () => {
-    const entries = [
-      {
-        name: "ui_snapshot_app",
+describe("browser tool names", () => {
+  it("identifies browser tool names", () => {
+    expect(isBrowserToolName("browser_act")).toBe(true);
+    expect(isBrowserToolName("browser_observe")).toBe(true);
+    expect(isBrowserToolName("bash")).toBe(false);
+    expect(isBrowserToolName("page_1234abcd")).toBe(false);
+  });
+
+  it("splits every verb into exactly one of observation / interactive", () => {
+    // The split is what lets an unattended read-only run be BUILT with only
+    // the tools that look — `buildBrowserTools` filters on it. A verb in
+    // neither set would be silently dropped from every run; one in both would
+    // make "read-only" mean whichever set was checked first.
+    for (const name of BROWSER_TOOL_NAMES) {
+      const observation = BROWSER_OBSERVATION_TOOL_NAMES.has(name);
+      const interactive = BROWSER_INTERACTIVE_TOOL_NAMES.has(name);
+      expect(observation !== interactive, name).toBe(true);
+    }
+    expect(BROWSER_TOOL_NAMES).toHaveLength(
+      BROWSER_OBSERVATION_TOOL_NAMES.size + BROWSER_INTERACTIVE_TOOL_NAMES.size,
+    );
+  });
+});
+
+/**
+ * The floor each entry sits at, asserted apart from the switch.
+ *
+ * `uiToolCallNeedsApproval` above answers the combined question; this answers
+ * the one the entry alone decides, which is what a future setting will vary.
+ */
+describe("uiToolApprovalFloor", () => {
+  it("reads destructive as `always` and read-only as `never`", () => {
+    expect(
+      uiToolApprovalFloor({
+        readOnly: false,
+        annotations: { destructiveHint: true },
+      }),
+    ).toBe("always");
+    expect(
+      uiToolApprovalFloor({
         readOnly: true,
         annotations: { readOnlyHint: true, destructiveHint: false },
-      },
-      {
-        name: "ui_navigate",
+      }),
+    ).toBe("never");
+    expect(uiToolApprovalFloor({ readOnly: true })).toBe("never");
+  });
+
+  it("reads an additive annotated tool as `setting`", () => {
+    expect(
+      uiToolApprovalFloor({
         readOnly: false,
         annotations: { readOnlyHint: false, destructiveHint: false },
-      },
-      {
-        name: "ui_execute_tool",
-        readOnly: false,
-        annotations: { readOnlyHint: false, destructiveHint: true },
-      },
-    ];
+      }),
+    ).toBe("setting");
+    // Legacy (no annotations) mutating entry: the flag alone, as before.
+    expect(uiToolApprovalFloor({ readOnly: false })).toBe("setting");
+  });
 
-    it("splits destructive from free in default mode", () => {
-      const { requiredNames, freeNames } = classifyUiToolApprovals(
-        entries,
-        false
-      );
-      expect([...requiredNames]).toEqual(["ui_execute_tool"]);
-      expect([...freeNames].sort()).toEqual(["ui_navigate", "ui_snapshot_app"]);
-    });
+  it("reads an ABSENT destructiveHint as `always` (protocol default)", () => {
+    expect(uiToolApprovalFloor({ readOnly: false, annotations: {} })).toBe(
+      "always",
+    );
+  });
+});
 
-    it("moves every mutating tool to required in strict mode, keeping read-only free", () => {
-      const { requiredNames, freeNames } = classifyUiToolApprovals(
-        entries,
-        true
-      );
-      expect([...requiredNames].sort()).toEqual([
-        "ui_execute_tool",
-        "ui_navigate",
-      ]);
-      // Strict mode still must not pause a snapshot — this is why the engine
-      // needs `freeNames` and not just "absent from requiredNames".
-      expect([...freeNames]).toEqual(["ui_snapshot_app"]);
-    });
-
-    it("places every entry in exactly one set", () => {
-      for (const strict of [true, false]) {
-        const { requiredNames, freeNames } = classifyUiToolApprovals(
-          entries,
-          strict
-        );
-        expect(requiredNames.size + freeNames.size).toBe(entries.length);
-        for (const name of requiredNames) {
-          expect(freeNames.has(name)).toBe(false);
-        }
-      }
-    });
-
-    it("handles an absent snapshot", () => {
-      const { requiredNames, freeNames } = classifyUiToolApprovals(
-        undefined,
-        false
-      );
-      expect(requiredNames.size).toBe(0);
-      expect(freeNames.size).toBe(0);
-    });
-
-    it("classifies legacy entries (no annotations) by the flag alone", () => {
-      const legacy = [
-        { name: "ui_navigate", readOnly: false },
-        { name: "ui_snapshot_app", readOnly: true },
-      ];
-      expect([...classifyUiToolApprovals(legacy, false).requiredNames]).toEqual(
-        []
-      );
-      expect([...classifyUiToolApprovals(legacy, true).requiredNames]).toEqual([
-        "ui_navigate",
-      ]);
-    });
+describe("pageToolCallNeedsApproval", () => {
+  it("is `always`, and says so without consulting anything", () => {
+    expect(pageToolCallNeedsApproval()).toBe(true);
   });
 });

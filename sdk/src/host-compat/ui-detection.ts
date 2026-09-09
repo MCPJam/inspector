@@ -1,4 +1,4 @@
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "../widget-runtime/tool-ui-resource.js";
 
 /**
  * Narrow, host-compat-specific bridge detection from a tool's `_meta`.
@@ -28,7 +28,7 @@ export function detectHostCompatBridgeFromMeta(
   // malformed metadata (e.g. `openai/outputTemplate: {}`) as a widget.
   const template = toolMeta?.["openai/outputTemplate"];
   const hasOpenAi = typeof template === "string" && template.length > 0;
-  const hasMcpApps = Boolean(getToolUiResourceUri({ _meta: toolMeta }));
+  const hasMcpApps = Boolean(resolveToolUiResourceUri(toolMeta));
   if (hasOpenAi && hasMcpApps) return HostCompatBridge.OPENAI_SDK_AND_MCP_APPS;
   if (hasOpenAi) return HostCompatBridge.OPENAI_SDK;
   if (hasMcpApps) return HostCompatBridge.MCP_APPS;

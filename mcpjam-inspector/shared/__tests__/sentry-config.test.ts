@@ -5,6 +5,13 @@ import {
   buildElectronSentryConfig,
   buildSentryConfig,
   buildServerSentryConfig,
+  CLIENT_BUILD_SURFACES,
+  electronBuildSurface,
+  type FingerprintableEvent,
+  groupDomMutationConflicts,
+  isSentryBuildSurface,
+  resolveClientBuildSurface,
+  SENTRY_BUILD_SURFACES,
   SENTRY_DSN,
 } from "../sentry-config";
 
@@ -41,6 +48,30 @@ describe("buildSentryConfig", () => {
       deployment: "hosted",
     });
     expect("release" in config).toBe(false);
+  });
+
+  it("omits dist entirely when none is given", () => {
+    const config = buildSentryConfig({
+      dsn: "dsn",
+      environment: "dev",
+      deployment: "hosted",
+    });
+    expect("dist" in config).toBe(false);
+  });
+
+  it("keeps dist when provided", () => {
+    // `dist` is what separates the builds that share one release name. A
+    // config that drops it silently puts the npm bundle's events on the
+    // desktop bundle's artifacts, which is how every frame in 2.47.0 came
+    // back naming an unrelated file.
+    expect(
+      buildSentryConfig({
+        dsn: "dsn",
+        environment: "prod",
+        deployment: "self_hosted",
+        dist: "npm",
+      }).dist,
+    ).toBe("npm");
   });
 
   it("keeps release when provided", () => {
@@ -165,6 +196,163 @@ describe("surface builders", () => {
     const abort = BROWSER_IGNORE_ERRORS.find((e) => e instanceof RegExp);
     expect((abort as RegExp).test("AbortError: The user aborted a request")).toBe(
       true,
+    );
+  });
+
+  it("groups DOM mutation conflicts on the browser client only", () => {
+    const ctx = { environment: "prod", deployment: "hosted" as const };
+    expect(buildClientSentryConfig(ctx).beforeSend).toBe(
+      groupDomMutationConflicts,
+    );
+    // A server-side NotFoundError is an upstream or storage failure, so
+    // collapsing those by message would merge unrelated defects.
+    expect(buildElectronSentryConfig(ctx)).not.toHaveProperty("beforeSend");
+    expect(buildServerSentryConfig(ctx)).not.toHaveProperty("beforeSend");
+  });
+});
+
+describe("groupDomMutationConflicts", () => {
+  function domMutationEvent(
+    value: string,
+    environment = "prod",
+  ): FingerprintableEvent {
+    return {
+      environment,
+      exception: { values: [{ type: "NotFoundError", value }] },
+    };
+  }
+
+  // Blink names the mutating method, so both wordings are the same defect.
+  it.each([
+    "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
+    "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.",
+  ])("collapses %j into one fingerprint", (value) => {
+    expect(
+      groupDomMutationConflicts(domMutationEvent(value)).fingerprint,
+    ).toEqual(["dom-mutation-conflict", "prod"]);
+  });
+
+  it("leaves the ambiguous WebKit wording ungrouped", () => {
+    // WebKit uses this sentence for the whole NotFoundError class, so a match
+    // cannot prove a DOM mutation. Grouping on it would fold an IndexedDB
+    // failure into this issue; those keep their frame-based grouping.
+    expect(
+      groupDomMutationConflicts(
+        domMutationEvent("The object can not be found here."),
+      ).fingerprint,
+    ).toBeUndefined();
+  });
+
+  it("keeps dev out of the production group", () => {
+    // An issue spans environments in Sentry, and dev is the larger share of
+    // this project's volume — one group for both would bury production again.
+    expect(
+      groupDomMutationConflicts(
+        domMutationEvent(
+          "Failed to execute 'removeChild' on 'Node': gone.",
+          "dev",
+        ),
+      ).fingerprint,
+    ).toEqual(["dom-mutation-conflict", "dev"]);
+  });
+
+  it("leaves an unrelated NotFoundError alone", () => {
+    // Same DOMException name, different defect: IndexedDB raises NotFoundError
+    // too, and merging those into the DOM group would hide a storage bug.
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      exception: {
+        values: [
+          { type: "NotFoundError", value: "The named object was not found." },
+        ],
+      },
+    };
+    expect(groupDomMutationConflicts(event).fingerprint).toBeUndefined();
+  });
+
+  it("leaves other exception types alone even on a matching message", () => {
+    const event: FingerprintableEvent = {
+      environment: "prod",
+      exception: {
+        values: [
+          {
+            type: "TypeError",
+            value: "Failed to execute 'removeChild' on 'Node': nope",
+          },
+        ],
+      },
+    };
+    expect(groupDomMutationConflicts(event).fingerprint).toBeUndefined();
+  });
+
+  it("passes through an event carrying no exception", () => {
+    // Message events and transactions reach beforeSend too; reading through a
+    // missing `exception` must not throw on the reporting path.
+    const event: FingerprintableEvent = { environment: "prod" };
+    expect(groupDomMutationConflicts(event)).toBe(event);
+  });
+});
+
+describe("build surfaces", () => {
+  it("names every surface exactly once", () => {
+    // Two builds sharing a `dist` is the same defect as two builds sharing a
+    // `release`: Sentry cannot tell their artifacts apart and symbolicates
+    // one against the other.
+    expect(new Set(SENTRY_BUILD_SURFACES).size).toBe(
+      SENTRY_BUILD_SURFACES.length,
+    );
+  });
+
+  it("gives mac and Windows Electron builds separate surfaces", () => {
+    // Both desktop jobs compile and upload their own `.vite/renderer` and
+    // `.vite/build` under the same release. Collapsing them to one name
+    // reintroduces the collision.
+    expect(electronBuildSurface("darwin")).toBe("electron-mac");
+    expect(electronBuildSurface("win32")).toBe("electron-win");
+    expect(electronBuildSurface("darwin")).not.toBe(
+      electronBuildSurface("win32"),
+    );
+  });
+
+  it("falls back to local on a platform nothing uploads for", () => {
+    // A Linux desktop build has no artifacts in Sentry. Reporting `local`
+    // says so; borrowing `electron-mac` would claim maps that do not describe
+    // this bundle.
+    expect(electronBuildSurface("linux")).toBe("local");
+  });
+
+  it("rejects a surface name the upload sites do not use", () => {
+    expect(isSentryBuildSurface("npm")).toBe(true);
+    expect(isSentryBuildSurface("desktop")).toBe(false);
+    expect(isSentryBuildSurface("")).toBe(false);
+  });
+
+  it("accepts every surface that builds dist/client", () => {
+    for (const surface of CLIENT_BUILD_SURFACES) {
+      expect(resolveClientBuildSurface(surface)).toBe(surface);
+    }
+  });
+
+  it("resolves an unset build surface to local", () => {
+    expect(resolveClientBuildSurface(undefined)).toBe("local");
+    expect(resolveClientBuildSurface("")).toBe("local");
+  });
+
+  it("rejects the Electron surfaces the client build cannot produce", () => {
+    // `vite.renderer.config.mts` stamps those from `process.platform` and
+    // uploads `.vite/renderer`. A `dist/client` bundle claiming one would be
+    // symbolicated against the renderer's artifacts.
+    expect(() => resolveClientBuildSurface("electron-mac")).toThrow(
+      /not a client build surface/,
+    );
+    expect(() => resolveClientBuildSurface("electron-win")).toThrow(
+      /not a client build surface/,
+    );
+  });
+
+  it("rejects a value no build surface list contains", () => {
+    expect(() => resolveClientBuildSurface("desktop")).toThrow(
+      /not a client build surface/,
     );
   });
 });

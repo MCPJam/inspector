@@ -16,12 +16,6 @@
  * The Saved tab renders an empty state pointing this out.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@mcpjam/design-system/accordion";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
@@ -36,9 +30,12 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
 import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
 import { TabHeader } from "@/components/ui-playground/TabHeader";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
+import { ToolDetailsAccordion } from "@/components/ui/tool-details-accordion";
 import { SearchInput } from "@/components/ui/search-input";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
+import { WebmcpPageToolsSection } from "@/components/playground/WebmcpPageToolsSection";
+import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { useBuiltinToolRun } from "@/components/playground/use-builtin-tool-run";
 import { BuiltinToolDetailView } from "@/components/playground/BuiltinToolDetailView";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
@@ -54,6 +51,14 @@ interface InnerProps {
   activeServerNames: string[];
   /** Harness native built-in tools (display-only). Present for harness hosts. */
   builtinTools?: HarnessBuiltinToolInfo[];
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
+  /**
+   * The agent browser's tools, when the previewed host attaches one. Omitted
+   * by callers that don't resolve a host (the Evals embedded chat), which just
+   * means the section isn't rendered.
+   */
+  browserTools?: BrowserToolsState;
 }
 
 interface Selection {
@@ -64,21 +69,23 @@ interface Selection {
 export function MultiServerToolsPaneInner({
   activeServerNames,
   builtinTools = [],
+  builtinToolsRunLocally = false,
+  browserTools,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
   const appState = useSharedAppState();
   const reconnectingServerNames = useMemo(
     () =>
       activeServerNames.filter(
-        (name) => appState.servers[name]?.connectionStatus === "connecting"
+        (name) => appState.servers[name]?.connectionStatus === "connecting",
       ),
-    [activeServerNames, appState.servers]
+    [activeServerNames, appState.servers],
   );
   const { flat, collidingNames, loadingByServer, refetch } = useAggregatedTools(
     activeServerNames,
     {
       unavailableServerNames: reconnectingServerNames,
-    }
+    },
   );
 
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -102,7 +109,7 @@ export function MultiServerToolsPaneInner({
       flat.find(
         (entry) =>
           entry.serverId === selected.serverId &&
-          entry.toolName === selected.toolName
+          entry.toolName === selected.toolName,
       ) ?? null
     );
   }, [flat, selected]);
@@ -118,7 +125,7 @@ export function MultiServerToolsPaneInner({
     }
     const entry = flat.find(
       (e) =>
-        e.serverId === selected.serverId && e.toolName === selected.toolName
+        e.serverId === selected.serverId && e.toolName === selected.toolName,
     );
     if (entry) {
       setFormFields(generateFormFieldsFromSchema(entry.tool.inputSchema));
@@ -151,15 +158,15 @@ export function MultiServerToolsPaneInner({
   const handleFieldChange = (name: string, value: unknown) => {
     setFormFields((current) =>
       current.map((field) =>
-        field.name === name ? { ...field, value, isSet: true } : field
-      )
+        field.name === name ? { ...field, value, isSet: true } : field,
+      ),
     );
   };
   const handleToggleField = (name: string, isSet: boolean) => {
     setFormFields((current) =>
       current.map((field) =>
-        field.name === name ? { ...field, isSet } : field
-      )
+        field.name === name ? { ...field, isSet } : field,
+      ),
     );
   };
 
@@ -258,6 +265,8 @@ export function MultiServerToolsPaneInner({
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             builtinTools={builtinTools}
+            builtinToolsRunLocally={builtinToolsRunLocally}
+            {...(browserTools ? { browserTools } : {})}
             selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
             onSelectBuiltin={handleSelectBuiltin}
             selected={selected}
@@ -311,6 +320,8 @@ interface FlatToolListProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   builtinTools: HarnessBuiltinToolInfo[];
+  builtinToolsRunLocally: boolean;
+  browserTools?: BrowserToolsState;
   selectedBuiltinKey: string | null;
   onSelectBuiltin: (key: string) => void;
   selected: Selection | null;
@@ -326,14 +337,19 @@ function FlatToolList({
   searchQuery,
   onSearchQueryChange,
   builtinTools,
+  builtinToolsRunLocally,
+  browserTools,
   selectedBuiltinKey,
   onSelectBuiltin,
   selected,
   onToggleSelected,
 }: FlatToolListProps) {
   // A harness host has native built-in tools even with zero MCP-server tools,
-  // so the "no tools" empty state must account for them.
-  const hasBuiltin = builtinTools.length > 0;
+  // and a browser host has the six `browser_*` ones — so the "no tools" empty
+  // state must account for both, or it reports the wrong reason for a list
+  // that is not actually empty.
+  const hasBuiltin =
+    builtinTools.length > 0 || (browserTools?.tools.length ?? 0) > 0;
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 py-2 flex-shrink-0">
@@ -383,7 +399,7 @@ function FlatToolList({
                     "w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1",
                     isSelected
                       ? "cursor-pointer bg-primary/10"
-                      : "cursor-pointer hover:bg-muted/50"
+                      : "cursor-pointer hover:bg-muted/50",
                   )}
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -408,7 +424,7 @@ function FlatToolList({
                   )}
                   {(() => {
                     const visibility = getToolVisibility(
-                      entry.tool._meta as Record<string, unknown> | undefined
+                      entry.tool._meta as Record<string, unknown> | undefined,
                     );
                     const visibilityLabel = `[${visibility
                       .map((v) => `"${v}"`)
@@ -473,7 +489,19 @@ function FlatToolList({
           searchQuery={searchQuery}
           selectedKey={selectedBuiltinKey}
           onSelect={onSelectBuiltin}
+          localExecution={builtinToolsRunLocally}
         />
+        {browserTools ? (
+          <BrowserToolsSection
+            tools={browserTools.tools}
+            page={browserTools.page}
+            live={browserTools.live}
+            engine={browserTools.engine}
+            searchQuery={searchQuery}
+            onRefreshPage={browserTools.refreshPage}
+          />
+        ) : null}
+        <WebmcpPageToolsSection />
       </div>
     </div>
   );
@@ -498,7 +526,7 @@ function SelectedToolView({
 }: SelectedToolViewProps) {
   const hasParameters = formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(
-    hasParameters ? ["parameters"] : ["description"]
+    hasParameters ? ["parameters"] : ["description"],
   );
 
   useEffect(() => {
@@ -517,59 +545,22 @@ function SelectedToolView({
     <div className="h-full flex flex-col">
       <SelectedToolHeader toolName={headerToolName} onExpand={onExpand} />
       <ScrollArea className="flex-1 min-h-0">
-        <Accordion
-          type="multiple"
-          value={openSections}
-          onValueChange={setOpenSections}
-          className="px-3"
-        >
-          {entry.tool.description && (
-            <AccordionItem value="description">
-              <AccordionTrigger className="text-xs">
-                Description
-              </AccordionTrigger>
-              <AccordionContent>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {entry.tool.description}
-                </p>
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {entry.tool.inputSchema && (
-            <AccordionItem value="input-schema">
-              <AccordionTrigger className="text-xs">
-                Input Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={entry.tool.inputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {entry.tool.outputSchema && (
-            <AccordionItem value="output-schema">
-              <AccordionTrigger className="text-xs">
-                Output Schema
-              </AccordionTrigger>
-              <AccordionContent>
-                <SchemaViewer schema={entry.tool.outputSchema} />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-          {hasParameters && (
-            <AccordionItem value="parameters">
-              <AccordionTrigger className="text-xs">
-                Parameters
-              </AccordionTrigger>
-              <AccordionContent>
-                <ParametersForm
-                  fields={formFields}
-                  onFieldChange={onFieldChange}
-                  onToggleField={onToggleField}
-                />
-              </AccordionContent>
-            </AccordionItem>
-          )}
-        </Accordion>
+        <ToolDetailsAccordion
+          description={entry.tool.description}
+          inputSchema={entry.tool.inputSchema}
+          outputSchema={entry.tool.outputSchema}
+          openSections={openSections}
+          onOpenSectionsChange={setOpenSections}
+          parameters={
+            hasParameters ? (
+              <ParametersForm
+                fields={formFields}
+                onFieldChange={onFieldChange}
+                onToggleField={onToggleField}
+              />
+            ) : undefined
+          }
+        />
       </ScrollArea>
     </div>
   );

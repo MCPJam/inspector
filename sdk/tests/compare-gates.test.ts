@@ -40,7 +40,10 @@ function input(overrides: Partial<CompareGateInput> = {}): CompareGateInput {
   };
 }
 
-function verdictFor(report: ReturnType<typeof evaluateCompareGates>, gate: string) {
+function verdictFor(
+  report: ReturnType<typeof evaluateCompareGates>,
+  gate: string
+) {
   const verdict = report.verdicts.find((row) => row.gate === gate);
   if (!verdict) throw new Error(`no verdict for gate "${gate}"`);
   return verdict;
@@ -90,9 +93,9 @@ describe("evaluateCompareGates — pass-rate regression", () => {
       base: side(99_000, 100_000),
       compare: side(98_500, 100_000),
     });
-    expect(
-      evaluateCompareGates(args, { passRateRegression: {} }).outcome
-    ).toBe("passed");
+    expect(evaluateCompareGates(args, { passRateRegression: {} }).outcome).toBe(
+      "passed"
+    );
     expect(
       evaluateCompareGates(args, {
         passRateRegression: { minEffectSize: 0.001 },
@@ -251,12 +254,48 @@ describe("evaluateCompareGates — integrity of BOTH sides", () => {
     gateable: boolean;
     expectedIntegrity: string;
   }> = [
-    { label: "both valid", base: "valid", compare: "valid", gateable: true, expectedIntegrity: "valid" },
-    { label: "base invalid", base: "invalid", compare: "valid", gateable: false, expectedIntegrity: "invalid" },
-    { label: "compare invalid", base: "valid", compare: "invalid", gateable: false, expectedIntegrity: "invalid" },
-    { label: "base absent", base: undefined, compare: "valid", gateable: false, expectedIntegrity: "unknown" },
-    { label: "compare absent", base: "valid", compare: undefined, gateable: false, expectedIntegrity: "unknown" },
-    { label: "both absent", base: undefined, compare: undefined, gateable: false, expectedIntegrity: "unknown" },
+    {
+      label: "both valid",
+      base: "valid",
+      compare: "valid",
+      gateable: true,
+      expectedIntegrity: "valid",
+    },
+    {
+      label: "base invalid",
+      base: "invalid",
+      compare: "valid",
+      gateable: false,
+      expectedIntegrity: "invalid",
+    },
+    {
+      label: "compare invalid",
+      base: "valid",
+      compare: "invalid",
+      gateable: false,
+      expectedIntegrity: "invalid",
+    },
+    {
+      label: "base absent",
+      base: undefined,
+      compare: "valid",
+      gateable: false,
+      expectedIntegrity: "unknown",
+    },
+    {
+      label: "compare absent",
+      base: "valid",
+      compare: undefined,
+      gateable: false,
+      expectedIntegrity: "unknown",
+    },
+    {
+      label: "both absent",
+      base: undefined,
+      compare: undefined,
+      gateable: false,
+      expectedIntegrity: "unknown",
+    },
   ];
 
   it.each(INTEGRITY_CASES)(
@@ -397,10 +436,159 @@ describe("evaluateCompareGates — an empty comparison is never a pass", () => {
 
   it("still honours a deliberately low, non-zero floor", () => {
     expect(
-      evaluateCompareGates(
-        input({ base: side(1, 1), compare: side(0, 1) }),
-        { passRateRegression: { minSampleSize: 1 } }
-      ).verdicts[0].status
+      evaluateCompareGates(input({ base: side(1, 1), compare: side(0, 1) }), {
+        passRateRegression: { minSampleSize: 1 },
+      }).verdicts[0].status
     ).not.toBe("non_gateable");
+  });
+});
+
+describe("evaluateCompareGates — cost increase", () => {
+  /**
+   * The gate the whole cost effort exists for: "did my change make this more
+   * expensive?" A percentage rather than an absolute delta, because an
+   * absolute one goes stale on every prompt and model change — the exact
+   * failure of the fixed per-trial token ceiling this replaces.
+   *
+   * Every non-gateable case below is a case where a number COULD be computed
+   * and would mislead. That is the bar: refuse rather than answer wrongly.
+   */
+  const full = (costUsd: number) => ({
+    costUsd,
+    costCoverage: { costed: 4, total: 4 },
+  });
+
+  const policy: GatePolicy = { maximumCostIncreasePercent: 10 };
+
+  it("passes an increase within the allowance", () => {
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: full(1.05) }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("passed");
+    expect(verdict.message).toMatch(/\+5\.0%/);
+  });
+
+  it("fails an increase beyond it", () => {
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: full(1.5) }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("failed");
+    expect(verdict.observed).toBeCloseTo(50);
+  });
+
+  it("refuses a side whose coverage is absent, rather than assuming it full", () => {
+    // A base run answered by a deployment predating cost coverage carries a
+    // cost and no coverage block. Treating that absence as full coverage
+    // judges a regression against a partial sum from an older platform —
+    // which is precisely what the field being optional is meant to prevent.
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: { costUsd: 1.0 } }),
+        compare: side(4, 4, { totals: full(1.5) }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/base run does not report how much/i);
+  });
+
+  it("refuses the compare side too, not only the base", () => {
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: { costUsd: 1.5 } }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/compare run does not report how much/i);
+  });
+
+  it("passes a run that got cheaper", () => {
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: full(0.5) }),
+      }),
+      policy
+    );
+    expect(verdictFor(report, "maximumCostIncreasePercent").status).toBe(
+      "passed"
+    );
+  });
+
+  it("is NON-GATEABLE when either side has no cost", () => {
+    // A BYOK or harness run reaches here. Reporting "cheaper" for a run
+    // nobody priced is the failure mode.
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: { costUsd: undefined } as any }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/no cost on the compare run/i);
+  });
+
+  it("is NON-GATEABLE when either side is only partly priced", () => {
+    // The partial side reads as the cheaper run whichever way the real costs
+    // went, so a comparison between them is worse than no comparison.
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, {
+          totals: { costUsd: 1.0, costCoverage: { costed: 1, total: 4 } },
+        }),
+        compare: side(4, 4, { totals: full(1.05) }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/partially measured on the base run/i);
+  });
+
+  it("is NON-GATEABLE when the baseline cost nothing", () => {
+    // A percentage of zero is not a number. Treating it as an infinite
+    // increase would fail every run whose baseline happened to be free.
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(0) }),
+        compare: side(4, 4, { totals: full(0.5) }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/base run cost nothing/i);
+  });
+
+  it("is NON-GATEABLE when the two runs are not comparable populations", () => {
+    // The population rule applies in full: a cost comparison across a changed
+    // case set compares two different suites, not two versions of one.
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: full(2.0) }),
+        caseSetChanged: true,
+      }),
+      policy
+    );
+    expect(verdictFor(report, "maximumCostIncreasePercent").status).toBe(
+      "non_gateable"
+    );
   });
 });

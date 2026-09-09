@@ -649,11 +649,13 @@ describe("runToEvalResults", () => {
       model: "m1",
       expectedToolCalls: [{ toolName: "t" }],
       promptSelector: "last",
+      intent: "refund",
     });
 
     expect(results[0].provider).toBe("custom");
     expect(results[0].model).toBe("m1");
     expect(results[0].expectedToolCalls).toEqual([{ toolName: "t" }]);
+    expect(results[0].intent).toBe("refund");
   });
 });
 
@@ -703,6 +705,7 @@ describe("suiteRunToEvalResults", () => {
     const results = suiteRunToEvalResults(testResults, {
       casePrefix: "s",
       expectedToolCallsByTest: expectedByTest,
+      intentByTest: { "test-a": "refund", "test-b": null },
     });
 
     const testA = results.find((r) => r.caseTitle.includes("test-a"));
@@ -712,6 +715,8 @@ describe("suiteRunToEvalResults", () => {
     expect(testB?.expectedToolCalls).toEqual([
       { toolName: "tool_y", arguments: { z: 1 } },
     ]);
+    expect(testA?.intent).toBe("refund");
+    expect(testB?.intent).toBeNull();
   });
 });
 
@@ -818,20 +823,25 @@ describe("iterationsToEvalResultInputs", () => {
     // those keys off rather than loosening this to `toMatchObject`: the exact
     // shape of the rest of the metadata is what this test exists to pin.
     const split = (index: number) => {
-      const { stageResults, stageAnalyzerVersion, ...rest } = results[index]
-        .metadata as Record<string, unknown>;
-      return { stageResults, stageAnalyzerVersion, rest };
+      const { stageResults, stageAnalyzerVersion, stageMeasurements, ...rest } =
+        results[index].metadata as Record<string, unknown>;
+      return { stageResults, stageAnalyzerVersion, stageMeasurements, rest };
     };
 
     expect(split(0).rest).toEqual({ retryCount: 0, iterationNumber: 1 });
     expect(split(1).rest).toEqual({ retryCount: 2, iterationNumber: 2 });
 
     for (const index of [0, 1]) {
-      const { stageResults, stageAnalyzerVersion } = split(index);
+      const { stageResults, stageAnalyzerVersion, stageMeasurements } =
+        split(index);
       expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
       expect((stageResults as StageResultRow[]).map((r) => r.stage)).toEqual([
         ...USER_VALUE_STAGES,
       ]);
+      expect(stageMeasurements).toMatchObject({
+        schemaVersion: 1,
+        stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+      });
     }
   });
 

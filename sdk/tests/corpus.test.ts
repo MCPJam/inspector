@@ -260,6 +260,10 @@ describe("scenarioContentHash", () => {
   const IGNORED: Array<{ label: string; patch: Partial<PlatformEvalCase> }> = [
     { label: "iterations", patch: { iterations: 99 } },
     { label: "models", patch: { models: [] } },
+    {
+      label: "intent (analytics metadata, not case content)",
+      patch: { intent: "refund" },
+    },
     { label: "timestamps", patch: { createdAt: 999, updatedAt: 999 } },
     {
       label: "matchOptions (evaluation config, not content)",
@@ -614,6 +618,19 @@ describe("toolCalledWith conversion preserves what it cannot express", () => {
       expect(config.predicates).toEqual([assertion]);
     }
   );
+
+  it("keeps an advisory toolCalledWith as a predicate (no matcher expectation)", () => {
+    const assertion = {
+      type: "toolCalledWith",
+      toolName: "issue_refund",
+      args: { args: { orderId: "A1" } },
+      role: "advisory",
+      severity: "warn",
+    };
+    const config = caseWith(assertion);
+    expect(config.expectedToolCalls ?? []).toEqual([]);
+    expect(config.predicates).toEqual([assertion]);
+  });
 
   it("treats explicit defaults as plain", () => {
     const config = caseWith({

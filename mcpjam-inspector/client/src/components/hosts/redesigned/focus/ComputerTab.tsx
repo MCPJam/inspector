@@ -4,6 +4,7 @@ import { Input } from "@mcpjam/design-system/input";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { FieldRow, FocusBlock } from "./primitives";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
+import { HARNESS_DISPLAY_NAME } from "@/lib/harness-capabilities";
 import {
   attachComputerPatch,
   detachComputerPatch,
@@ -42,11 +43,16 @@ export function ComputerTab({
   const update = (patch: Partial<HostConfigInputV2>) =>
     onDraftChange((prev) => ({ ...prev, ...patch }));
 
-  // The Claude Code harness runs inside this computer, so it can't be detached
-  // while a harness is selected (the backend enforces `harness ⇒ computer`).
-  // Remove the harness first (e.g. on the Behavior tab) to free the toggle.
+  // A harness runtime runs inside this computer, so it can't be detached while
+  // one is selected (the backend enforces `harness ⇒ computer`). Remove the
+  // harness first (e.g. on the Behavior tab) to free the toggle.
   const lockedByHarness =
     draft.harness !== undefined && draft.computer !== undefined;
+  // Named, not hardcoded: this copy said "Claude Code" for every harness, which
+  // was already wrong on a Codex host.
+  const harnessName = draft.harness
+    ? HARNESS_DISPLAY_NAME[draft.harness]
+    : undefined;
 
   // Working directory (COMP-16). Locally-buffered text so keystrokes don't
   // re-hash the whole host config; committed on blur. The stored value clears to
@@ -70,8 +76,8 @@ export function ComputerTab({
         <FieldRow
           label="Personal computer"
           description={
-            lockedByHarness
-              ? "Required by the Claude Code harness — remove the harness to detach. A per-member cloud workstation (a persistent Linux sandbox) the real Claude Code runtime runs inside."
+            lockedByHarness && harnessName
+              ? `Required by the ${harnessName} harness — remove the harness to detach. A per-member cloud workstation (a persistent Linux sandbox) the real ${harnessName} runtime runs inside.`
               : "Attach a per-member cloud workstation (a persistent Linux sandbox). Required by computer-backed tools like Bash, which you enable in the Tools tab."
           }
           control={

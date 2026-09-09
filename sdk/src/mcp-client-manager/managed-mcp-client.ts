@@ -380,11 +380,11 @@ export class ProtocolVersionPinUnsupported extends Error {
   /**
    * What the server said it DOES speak, when it said so.
    *
-   * Present only when the failure arrived as `UnsupportedProtocolVersionError`
-   * — the shape raised after `server/discover` parsed cleanly and listed no
-   * usable version, which is the only one that carries the server's list. A
-   * pin refusal with no list yields `[]`, and the message simply omits the
-   * clause rather than guessing.
+   * Carried by two failure shapes: `UnsupportedProtocolVersionError` — raised
+   * after `server/discover` parsed cleanly and listed no usable version — and
+   * the legacy `initialize` refusal, whose message names the single version
+   * the server's reply offered. A pin refusal that carried no version at all
+   * yields `[]`, and the message simply omits the clause rather than guessing.
    */
   readonly supportedVersions: readonly string[];
   constructor(

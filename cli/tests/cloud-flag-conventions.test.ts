@@ -22,16 +22,19 @@ const CLOUD_COMMAND_FILES = [
   "cloud.ts",
   "cloud-link.ts",
   "environments.ts",
+  "clients.ts",
   "eval.ts",
-  "hosts.ts",
   "images.ts",
   "journeys.ts",
   "organizations.ts",
   "projects.ts",
   "registry.ts",
   "scenarios.ts",
+  "secrets.ts",
   "sessions.ts",
+  "skills.ts",
   "swarms.ts",
+  "trace-destinations.ts",
   "tunnel.ts",
   "user-testing.ts",
 ] as const;
@@ -44,6 +47,13 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
     if (
       [
         "apps.ts",
+        // Local-first, like `inspector.ts`: `mcpjam browser` drives the
+        // browser on THIS machine through the local Inspector's own routes and
+        // never reaches a cloud project or an API key. Its `--project` is the
+        // local project key that names a profile directory, not a cloud
+        // project. The hosted bindings (M2) will be cloud commands and belong
+        // in the list above when they land.
+        "browser.ts",
         "compat.ts",
         "conformance.ts",
         "conformance-run.ts",
@@ -52,6 +62,10 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "oauth.ts",
         "prompts.ts",
         "resources.ts",
+        // Local-first, like `resources.ts`: `mcpjam skills` connects to a
+        // server directly and never touches a project or an API key. The
+        // project's own Cloud Skills live in `skills.ts` under `cloud`.
+        "server-skills.ts",
         "server.ts",
         "subscriptions.ts",
         "tasks.ts",

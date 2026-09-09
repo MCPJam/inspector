@@ -20,13 +20,13 @@ describe("PlaygroundCenterHeaderBar", () => {
   };
 
   it("stacks host chrome and trace tabs when trace tabs are shown", () => {
-    render(
-      <PlaygroundCenterHeaderBar {...defaultProps} showTraceTabs />,
-    );
+    render(<PlaygroundCenterHeaderBar {...defaultProps} showTraceTabs />);
 
     expect(screen.getByTestId("playground-main-header")).toBeInTheDocument();
     expect(screen.getByTestId("mock-host-header")).toBeInTheDocument();
-    expect(screen.getByTestId("playground-trace-view-tabs")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("playground-trace-view-tabs"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Trace" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Raw" })).toBeInTheDocument();

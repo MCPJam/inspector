@@ -12,7 +12,8 @@ export async function listToolsWithMetadata(
 ) {
   const result = await manager.listTools(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined,
+    // Presence, not truthiness: `""` is a valid continuation cursor.
+    params.cursor !== undefined ? { cursor: params.cursor } : undefined,
   );
   const tools = result.tools ?? [];
   const toolsMetadata = manager.getAllToolsMetadata(params.serverId);

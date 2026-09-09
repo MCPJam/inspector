@@ -176,17 +176,6 @@ vi.mock("../../../utils/chat-helpers", async () => {
   };
 });
 
-// Mock shared types
-vi.mock("@/shared/types", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/types")>(
-    "@/shared/types"
-  );
-  return {
-    ...actual,
-    modelSupportsTemperature: vi.fn().mockReturnValue(true),
-  };
-});
-
 // Hosted-model classification moved behind the catalog service; the route keys
 // billing dispatch on isHostedCatalogModel. Default false — tests that exercise
 // the MCPJam path override it explicitly.
@@ -231,6 +220,10 @@ vi.mock("../../../utils/skill-tools", () => ({
     tools: {},
     systemPromptSection: "",
   }),
+  // The route scans the local filesystem to build its half of the turn's skill
+  // catalog. These tests run wherever CI does, so the real scan would make the
+  // assertions depend on the machine's `~/.claude/skills`.
+  listLocalRuntimeSkills: vi.fn().mockResolvedValue([]),
 }));
 
 describe("POST /api/mcp/chat-v2", () => {
@@ -282,7 +275,10 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("scenario runtime-config gate", () => {
     it("resolves the process guest bearer for a BEARER-LESS scenario turn (config never skipped)", async () => {
-      fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: {},
+      });
 
       await postJson(app, "/api/mcp/chat-v2", {
         scenarioId: "cbx_1",
@@ -602,8 +598,9 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("uses default temperature when not provided", async () => {
+    it("omits temperature when the caller does not provide one", async () => {
       const { streamText } = await import("ai");
+      const callsBefore = vi.mocked(streamText).mock.calls.length;
 
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
@@ -611,11 +608,30 @@ describe("POST /api/mcp/chat-v2", () => {
         apiKey: "test-key",
       });
 
-      expect(streamText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          temperature: 0.7,
-        })
-      );
+      // No preference means the provider's default, not the 0.7 this route used
+      // to invent. The chat tab always sends its slider value, so the callers
+      // reaching this branch are the SDK, the API and the eval runner.
+      expect(vi.mocked(streamText).mock.calls.length).toBe(callsBefore + 1);
+      const call = vi.mocked(streamText).mock.calls.at(-1)?.[0];
+      expect(call).not.toHaveProperty("temperature");
+    });
+
+    it("omits temperature entirely for models that reject the field", async () => {
+      const { streamText } = await import("ai");
+      const callsBefore = vi.mocked(streamText).mock.calls.length;
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "claude-opus-4-8", provider: "anthropic" },
+        apiKey: "test-key",
+        temperature: 0.5,
+      });
+
+      // `temperature: undefined` would still be serialized onto the request,
+      // so assert the key is absent rather than falsy.
+      expect(vi.mocked(streamText).mock.calls.length).toBe(callsBefore + 1);
+      const call = vi.mocked(streamText).mock.calls.at(-1)?.[0];
+      expect(call).not.toHaveProperty("temperature");
     });
 
     it("passes the inbound abort signal to user-provided streamText calls", async () => {
@@ -897,6 +913,43 @@ describe("POST /api/mcp/chat-v2", () => {
         Object.keys(options.tools).filter((name) => /^ui_/.test(name))
       ).toEqual([]);
       expect(options.system ?? "").not.toContain("MCPJam UI tools");
+    });
+
+    it("offers local skills through the merged catalog, addressed by ref", async () => {
+      // The desktop turn used to get a bare-name local surface. It now gets the
+      // same ref-addressed catalog every other surface has, so a local skill is
+      // `local/<name>` and says where it came from.
+      const { listLocalRuntimeSkills } = await import(
+        "../../../utils/skill-tools"
+      );
+      vi.mocked(listLocalRuntimeSkills).mockResolvedValueOnce([
+        {
+          skillId: "local:/home/u/.claude/skills/code-review",
+          ref: "local/code-review",
+          name: "code-review",
+          description: "Review code, locally.",
+          content: "# Local code-review",
+          aggregateHash: "hash-local",
+          directory: "~/.claude/skills/code-review",
+          files: [],
+        },
+      ] as never);
+      const { streamText } = await import("ai");
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      const options = vi.mocked(streamText).mock.calls.at(-1)![0] as {
+        tools: Record<string, unknown>;
+        system?: string;
+      };
+      expect(options.system ?? "").toContain("**local/code-review**");
+      expect(options.system ?? "").toContain("~/.claude/skills/code-review");
+      expect(Object.keys(options.tools)).toContain("loadSkill");
     });
 
     it("a server tool named ui_navigate stays executable with ordinary approval — never claimed by a stale UI snapshot", async () => {
@@ -1618,9 +1671,6 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("attaches a numeric hostConfig.temperature for GPT-5 (resolvedTemperature: undefined)", async () => {
-      const { modelSupportsTemperature } = await import("@/shared/types");
-      vi.mocked(modelSupportsTemperature).mockReturnValueOnce(false);
-
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
@@ -1673,6 +1723,58 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(typeof body.hostConfig.temperature).toBe("number");
         expect(body.hostConfig.temperature).toBe(0.3);
         expect("modelVisibleMcpToolResults" in body.hostConfig).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("omits temperature from the hosted /stream body for a Claude model that rejects it", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "anthropic/claude-opus-4.7", provider: "anthropic" },
+          chatSessionId: "chat-session-hosted-opus-4-7",
+          temperature: 0.5,
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+        expect(streamCall).toBeDefined();
+        const body = JSON.parse(
+          String((streamCall![1] as RequestInit).body ?? "{}")
+        );
+
+        // Anthropic 400s on the field being present at all, so assert the key
+        // is absent — `temperature: undefined` would still serialize it.
+        expect(body).not.toHaveProperty("temperature");
       } finally {
         global.fetch = originalFetch;
       }
@@ -1964,10 +2066,10 @@ describe("POST /api/mcp/chat-v2", () => {
           // /stream call, not merely resolved — otherwise the guest request
           // would reach Convex unauthenticated.
           const streamHeaders = new Headers(
-            (streamCall?.[1] as RequestInit | undefined)?.headers,
+            (streamCall?.[1] as RequestInit | undefined)?.headers
           );
           expect(streamHeaders.get("authorization")).toBe(
-            "Bearer guest-test-token",
+            "Bearer guest-test-token"
           );
         } finally {
           global.fetch = originalFetch;
@@ -2220,8 +2322,9 @@ describe("POST /api/mcp/chat-v2", () => {
           (args[1] as { tasks?: unknown } | undefined)?.tasks !== undefined
       );
       expect(call).toBeDefined();
-      return (call![1] as { tasks: { onTaskCreated: (e: unknown) => Promise<void> } })
-        .tasks;
+      return (
+        call![1] as { tasks: { onTaskCreated: (e: unknown) => Promise<void> } }
+      ).tasks;
     };
 
     const expectTaskCreatedPartDelivered = () => {

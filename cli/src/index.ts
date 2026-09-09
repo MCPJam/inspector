@@ -13,12 +13,14 @@ import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerXaaCommands } from "./commands/xaa.js";
 import { registerPromptCommands } from "./commands/prompts.js";
 import { registerResourcesCommands } from "./commands/resources.js";
+import { registerServerSkillsCommands } from "./commands/server-skills.js";
 import { registerServerCommands } from "./commands/server.js";
 import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
+import { registerBrowserCommands } from "./commands/browser.js";
 import { registerRegistryCommands } from "./commands/registry.js";
 import {
   detectOutputFormatFromArgv,
@@ -84,6 +86,7 @@ export async function main(
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
+  registerServerSkillsCommands(program);
   registerSubscriptionsCommands(program);
   registerCompatCommands(program);
   registerPromptCommands(program);
@@ -101,6 +104,7 @@ export async function main(
 
   program.commandsGroup("CLI:");
   registerInspectorCommands(program);
+  registerBrowserCommands(program);
   registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
 

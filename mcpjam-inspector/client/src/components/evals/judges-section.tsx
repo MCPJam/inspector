@@ -50,16 +50,41 @@ interface JudgesSectionProps {
   bareAutoGradeAriaLabel?: string;
 }
 
-function pruneEmpty(value: EvalJudgeConfig): EvalJudgeConfig | undefined {
-  if (!value.goalCompletion) return undefined;
+/**
+ * Drop a judge config that carries no information, keep one that does.
+ *
+ * Exported for its own test: the rule it encodes — every field that means
+ * something counts — is easy to break by adding a field and forgetting this
+ * list, and the symptom is a setting silently disappearing on an unrelated
+ * edit rather than anything that looks like a bug.
+ */
+export function pruneEmpty(
+  value: EvalJudgeConfig,
+): EvalJudgeConfig | undefined {
   const gc = value.goalCompletion;
-  const hasAnyField =
-    gc.enabled !== undefined ||
-    (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
-    gc.threshold !== undefined ||
-    gc.autoRun !== undefined;
-  if (!hasAnyField) return undefined;
-  return { goalCompletion: gc };
+  const hasGoalCompletion = Boolean(
+    gc &&
+      (gc.enabled !== undefined ||
+        (gc.judgeModel !== undefined && gc.judgeModel !== "") ||
+        gc.threshold !== undefined ||
+        gc.autoRun !== undefined ||
+        // `role` counts, and it is the one field here that must never be dropped
+        // by accident: a suite carrying only `role: "gating"` — legal, because an
+        // absent `enabled` already resolves to on — would otherwise have its whole
+        // judge config discarded the moment someone reset the model to the managed
+        // default, silently erasing a gate the organization had to earn.
+        gc.role !== undefined ||
+        // Same for presentation severity: a suite whose only authored field is
+        // `severity: "warn"` would otherwise vanish on an unrelated model reset.
+        gc.severity !== undefined),
+  );
+  const groundedness = value.groundedness;
+  const hasGroundedness = groundedness !== undefined;
+  if (!hasGoalCompletion && !hasGroundedness) return undefined;
+  return {
+    ...(hasGoalCompletion ? { goalCompletion: gc } : {}),
+    ...(hasGroundedness ? { groundedness } : {}),
+  };
 }
 
 export function JudgesSection({
@@ -126,9 +151,14 @@ export function JudgesSection({
     return Array.from(map, ([id, label]) => ({ id, label }));
   }, [availableModels, judgeModel]);
 
-  const update = (patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>) => {
+  const update = (
+    patch: Partial<NonNullable<EvalJudgeConfig["goalCompletion"]>>,
+  ) => {
     const nextGC = { ...(gc ?? {}), ...patch };
-    const nextConfig: EvalJudgeConfig = { goalCompletion: nextGC };
+    const nextConfig: EvalJudgeConfig = {
+      goalCompletion: nextGC,
+      ...(value?.groundedness ? { groundedness: value.groundedness } : {}),
+    };
     onChange(pruneEmpty(nextConfig));
   };
 
@@ -159,7 +189,9 @@ export function JudgesSection({
           checked={sectionOn}
           onCheckedChange={handleMainToggle}
           aria-label={
-            isBare ? bareAutoGradeAriaLabel : "Enable LLM as Judge for this suite"
+            isBare
+              ? bareAutoGradeAriaLabel
+              : "Enable LLM as Judge for this suite"
           }
         />
       </div>
@@ -248,9 +280,9 @@ export function JudgesSection({
         {sectionOn ? (
           <p className="text-[11px] text-muted-foreground/70">
             Runs grade against this config. Individual runs can apply a one-off
-            override from the run detail page — overridden runs show a banner
-            on the run card so their scores aren&apos;t mistaken for
-            suite-contract calibration.
+            override from the run detail page — overridden runs show a banner on
+            the run card so their scores aren&apos;t mistaken for suite-contract
+            calibration.
           </p>
         ) : null}
       </div>

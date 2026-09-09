@@ -21,6 +21,7 @@ const {
   mockPreview,
   mockRefresh,
   mockHost,
+  mockHostList,
   mockProjectServers,
   mockNavigate,
   mockPreviewArgs,
@@ -36,6 +37,7 @@ const {
   mockHost: {
     value: { host: null as unknown, isLoading: false },
   },
+  mockHostList: { value: [] as unknown[] },
   mockProjectServers: { value: [] as unknown[] },
   mockNavigate: vi.fn(),
   mockPreviewArgs: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("@/hooks/use-environment-preview", () => ({
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHost: () => mockHost.value,
+  useHostList: () => ({ hosts: mockHostList.value }),
 }));
 vi.mock("@/hooks/useProjects", () => ({
   useProjectServers: () => ({ servers: mockProjectServers.value }),
@@ -126,10 +129,26 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPreview.value = { preview: null, isLoading: false, error: null };
   mockHost.value = { host: HOST, isLoading: false };
+  mockHostList.value = [];
   mockProjectServers.value = [];
 });
 
 describe("EnvironmentCanvasPanel — preview → canvas wiring", () => {
+  it("uses the derived client display name", () => {
+    mockPreview.value = {
+      preview: previewWith([]),
+      isLoading: false,
+      error: null,
+    };
+    mockHostList.value = [
+      { hostId: "host-1", name: "Claude Code", displayName: "Claude Code #2" },
+    ];
+
+    renderPanel();
+
+    expect(screen.getByText("Claude Code #2")).toBeInTheDocument();
+  });
+
   it("draws a card per RESOLVED server and joins urls from the project list", () => {
     mockPreview.value = {
       preview: previewWith([

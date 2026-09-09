@@ -4,10 +4,12 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { SessionReadiness } from "@/components/scenarios/session-readiness";
+import type { ChatSessionStageDerivation } from "@/components/shared/user-value-chain/user-value-chain-types";
 // Type-only import, so the SharedChatThread import on the other side is not a
 // runtime cycle. One declaration of the backend contract, not two.
 import type { SessionCriteria } from "@/lib/swarm-api";
 import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
+import type { MintedPageToolRecord } from "@/shared/declared-tools";
 
 export type SharedChatSourceType = "scenario" | "swarm";
 
@@ -168,6 +170,15 @@ export interface SharedChatThread {
     reason?: string;
     error?: string;
   };
+  /**
+   * The session's derived user-value chain (`chatSessions.stageDerivation`).
+   *
+   * Absent on every session written before D8 and on any the analyzer has not
+   * been asked about; that absence is UNMEASURED and the chain panel renders
+   * it as such. `getSession` spreads the whole doc, so this flows through
+   * without a query change.
+   */
+  stageDerivation?: ChatSessionStageDerivation;
 }
 
 /**
@@ -272,6 +283,8 @@ export interface SharedChatTurnTrace {
   spanCount: number;
   modelId?: string;
   spansBlobUrl?: string | null;
+  /** The `webmcp_*` page tools this turn advertised; see `ChatHistoryTurnTrace`. */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 export function useSharedChatTurnTraces({

@@ -7,17 +7,152 @@
  * additive fields are non-breaking and must be ignored, never relied on
  * being absent.
  */
+import type { PlatformPermalink } from "./permalinks.js";
 import type { ServerDoctorResult } from "../server-doctor-core.js";
 import type {
   EvaluationConfigSnapshot,
   ScoreResult,
 } from "../contract/types.js";
 import type {
+  DescriptionExperimentReport,
+  EvalRunDecisionSummary,
+  EvalRunRouteFacts,
+  EvalRunServerFactsV1,
+  EvalStageAnalyticsV1,
+  EvalSuiteFileCaseImport,
+  EvalTrialFrictionSignals,
+  SuspectedConditionVerdict,
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
+  SuiteGatePolicyV1,
+  SuiteGateReportV1,
   UserValueStage,
 } from "../contract/index.js";
+
+/** `GET /projects/{p}/eval-runs/{runId}/gate` — the stored suite policy's answer. */
+export type PlatformEvalRunGate = SuiteGateReportV1;
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/decision-summary` — the canonical,
+ * versioned run decision contract.
+ *
+ * An ALIAS, not a second declaration. The shape is owned by
+ * `@mcpjam/sdk/contract` (`evalRunDecisionSummarySchema`), which is what makes
+ * the API's response and a client-side assembly the same object rather than two
+ * hand-mirrored descriptions of one; re-declaring it here as an interface would
+ * recreate exactly the drift this lane removed.
+ */
+export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
+
+/**
+ * One item of
+ * `GET /projects/{p}/eval-suites/{suiteId}/stage-analytics` — one RUN's
+ * complete materialized stage-analytics document.
+ *
+ * An ALIAS, for the same reason the decision summary is one: the shape is owned
+ * by `@mcpjam/sdk/contract` (`evalStageAnalyticsSchema`), and re-declaring it
+ * here would produce two hand-mirrored descriptions of one contract that drift
+ * the first time a field is added.
+ *
+ * Rates are NOT on this object. It carries counts, and every rate is derived by
+ * the contract's own helpers (`measuredPassRate`, `measurementCoverageRate`,
+ * `reachRate`, `latencyMeanMs`) so a zero denominator stays `notMeasured`
+ * instead of becoming a `0%` nobody can act on.
+ */
+export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/route-facts` — one RUN's
+ * materialized route-facts document.
+ *
+ * An ALIAS, for the same reason the decision summary and stage analytics
+ * are aliases: the shape is owned by `@mcpjam/sdk/contract`
+ * (`evalRunRouteFactsSchema`), and re-declaring it here would produce two
+ * hand-mirrored descriptions of one contract that drift the first time a
+ * field is added.
+ */
+export type PlatformEvalRouteFacts = EvalRunRouteFacts;
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/server-facts` — one RUN's server-facts
+ * document: what the snapshot it ran against looked like, and what the setup
+ * phase observed.
+ *
+ * An ALIAS, same reasoning as the three above: the shape is owned by
+ * `@mcpjam/sdk/contract` (`evalRunServerFactsSchema`).
+ *
+ * UNLIKE the others, this one is computed on read and therefore never
+ * "absent" for a visible run: a run with no snapshot answers
+ * `state: "unavailable"` with a reason, which is a measured fact about the run
+ * rather than a missing document.
+ */
+export type PlatformEvalServerFacts = EvalRunServerFactsV1;
+
+/**
+ * Response of the description-experiment routes:
+ * `POST /projects/{p}/eval-runs/{r}/description-experiments`,
+ * `POST /projects/{p}/eval-description-experiments/{e}/start`,
+ * `GET  /projects/{p}/eval-description-experiments/{e}`.
+ *
+ * The optional `report` is the SDK contract
+ * (`descriptionExperimentReportSchema`). HTTP routes land in PR-E3; this
+ * DTO is the client half so a later inspector can call them.
+ */
+export type PlatformEvalDescriptionExperimentStatus =
+  | "proposing"
+  | "proposed"
+  | "launching"
+  | "running"
+  | "reporting"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface PlatformEvalDescriptionExperimentProposal {
+  description: string;
+  proposalHash: string;
+  modelUsed?: string;
+  generatedAt?: number;
+  promptVersion?: number;
+  evidence?: {
+    failedIterationIds?: string[];
+    trialsRead?: number;
+  };
+}
+
+export interface PlatformEvalDescriptionExperimentPlan {
+  caseScope: "all" | "affected";
+  repetitions?: number;
+  plannedTrials?: number;
+  maxTrials?: number;
+  judgeAutoRun?: boolean;
+  proposalUsdMicros?: number;
+}
+
+export interface PlatformEvalDescriptionExperiment {
+  id: string;
+  suiteId: string;
+  sourceRunId: string;
+  toolName: string;
+  serverId?: string;
+  originalDescription?: string;
+  originalDescriptionHash?: string;
+  affectedCaseIds?: string[];
+  executionEngine?: string;
+  status: PlatformEvalDescriptionExperimentStatus;
+  errorCode?: string;
+  proposal?: PlatformEvalDescriptionExperimentProposal;
+  plan?: PlatformEvalDescriptionExperimentPlan;
+  runGroupId?: string;
+  arms?: { original?: string; rewrite?: string };
+  reportVersion?: number;
+  report?: DescriptionExperimentReport;
+  reportSourceMaxUpdatedAt?: number;
+}
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -204,6 +339,22 @@ export interface PlatformProjectServer {
   updatedAt: number | null;
 }
 
+/**
+ * An immutable snapshot of a set of saved servers (the backend's standalone
+ * `serverAttachment`). Pinning one on an environment is what keeps a run off
+ * its host's live server list.
+ */
+export interface PlatformServerGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  serverIds: string[];
+  /** Display names hydrated by the backend; ids stay authoritative. */
+  serverNames: string[];
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
 export interface PlatformEvalRunSummary {
   id: string | null;
   status: string | null;
@@ -211,6 +362,22 @@ export interface PlatformEvalRunSummary {
   passed: number | null;
   failed: number | null;
   createdAt: number | null;
+  /**
+   * The run's VERDICT, as distinct from its lifecycle `status` — the same
+   * field {@link PlatformEvalRun.result} carries, projected onto the
+   * latest-run summary.
+   *
+   * Worth reading even though `passed`/`failed` are right here: under
+   * `verdictPolicyVersion: 2` a run can finish `completed` and still be
+   * `"inconclusive"`, and NO derivation over the counts can produce that. A
+   * consumer that re-derives a verdict from `passed`/`failed` turns "we could
+   * not measure this" into a pass or a failure the platform explicitly
+   * declined to declare.
+   *
+   * Absent on API deployments that predate the field; `null` on a run that
+   * predates it.
+   */
+  result?: string | null;
 }
 
 export interface PlatformEvalSuite {
@@ -293,6 +460,16 @@ export interface PlatformTurnUsage {
 export interface PlatformChatTurn {
   sessionId: string | null;
   turnId: string;
+  /**
+   * The project this turn ran in.
+   *
+   * A CONTINUATION does not send one — it is read off the session row — so
+   * without this a caller holding only the turn cannot say where the session
+   * lives, and the session permalink cannot be composed. That is not
+   * hypothetical: it is the one operation whose scope is never resolved
+   * locally, so nothing else in the response or the context carries it.
+   */
+  projectId: string;
   reply?: string;
   finishReason?: string | null;
   toolCalls?: PlatformTurnToolCall[];
@@ -300,6 +477,19 @@ export interface PlatformChatTurn {
   usage?: PlatformTurnUsage;
   model?: { id: string; provider: string };
   toolMode?: PlatformToolMode;
+  /**
+   * WHICH ENGINE RAN: `"emulated"` or `"harness:<id>"` (e.g.
+   * `"harness:claude-code"`).
+   *
+   * Read this field rather than inferring an engine from the model id. It is
+   * the only thing that reports which engine ran, and `hostId` is per-turn
+   * rather than pinned: a continuation that omits it is refused outright when
+   * the session named only a host, and cannot reach a harness at all when the
+   * session pinned a target of its own.
+   */
+  engine?: string;
+  /** The saved host this turn executed as, when it named one. */
+  hostId?: string;
   advertisedToolCount?: number;
   excludedToolCount?: number;
   persisted: { outcome: string; version?: number };
@@ -417,7 +607,8 @@ export interface PlatformWidgetRender {
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
  */
-export type PlatformSessionSourceType = "direct" | "scenario" | "eval" | "swarm";
+export type PlatformSessionSourceType =
+  "direct" | "scenario" | "eval" | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
@@ -433,13 +624,21 @@ export interface PlatformSessionParentRef {
   scenarioId?: string;
 }
 
-/** Where a human goes to read a session. Always present. */
-export interface PlatformSessionLink {
-  /** App-relative path, including `?project=`. */
-  path: string;
-  /** Absolute URL for the same target. */
-  url: string;
-}
+/**
+ * Where a human goes to read a session. Always present.
+ *
+ * A PROJECTION of `PlatformPermalink`, not a widening of it: the wire
+ * contract for `/v1/sessions` rows is exactly `{path, url}` today, and adding
+ * `label`/`resource` as REQUIRED fields would make every older backend's
+ * response fail a client that trusted the type. Deriving it from
+ * `PlatformPermalink` instead of restating the two fields is what stops the
+ * shared permalink shape and the session wire shape from drifting apart —
+ * rename `path` there and this stops compiling here.
+ *
+ * The backend may later add `label`/`resource` as OPTIONAL fields without
+ * breaking a client built against this.
+ */
+export type PlatformSessionLink = Pick<PlatformPermalink, "path" | "url">;
 
 /**
  * One row of the unified, cross-surface sessions feed
@@ -498,6 +697,106 @@ export type PlatformSessionsPage = PlatformPage<PlatformSessionSummary> & {
 };
 
 /**
+ * An audited, time-boxed override of a run's gate.
+ *
+ * A waiver never changes the run's own `result` — the run keeps its honest
+ * verdict, and every reader that honors the waiver says so out loud instead.
+ * That is what makes "no silent waiver" checkable rather than promised: the
+ * evidence and the override are two separate records, and nothing collapses
+ * them.
+ */
+export interface PlatformGateWaiver {
+  id: string;
+  suiteId: string;
+  /** The run this waiver covers. Suite-wide waivers are not honored. */
+  runId: string | null;
+  /**
+   * Why the gate was overridden, as the granter wrote it.
+   *
+   * UNREDACTED free text, retained for the life of the suite and readable by
+   * anyone who can see it. Any surface that ACCEPTS one must say so before
+   * taking it — see `GATE_WAIVER_REASON_NOTICE` in the gate engine.
+   */
+  reason: string;
+  /** Epoch ms. Always in the future at creation, and capped at 30 days out. */
+  expiresAt: number;
+  createdAt: number;
+  createdBy: string;
+  /** `null`, never absent, when it cannot be resolved (e.g. a deleted user). */
+  createdByEmail: string | null;
+  revokedAt: number | null;
+  revokedBy: string | null;
+  /**
+   * Whether it is in force right now — neither revoked nor expired.
+   *
+   * A client that must not honor a lapsed waiver should re-derive this from
+   * `expiresAt` rather than trust it: the platform computes it at read time,
+   * and a cached read can outlive the instant it changes.
+   */
+  active: boolean;
+  /**
+   * WHAT was overridden, captured at waive time so a later edit to the suite's
+   * criteria cannot rewrite the record.
+   *
+   * `null` for a run decided by the v2 verdict policy: that policy's identity
+   * is recorded on the audit event instead, because this shape cannot hold it
+   * and filling it in would be a false record rather than an incomplete one.
+   */
+  policySnapshot: { minimumPassRate: number } | null;
+}
+
+/**
+ * The result of granting or revoking a waiver.
+ *
+ * `status` distinguishes the write from the two IDEMPOTENT no-ops, and both
+ * no-ops are successes rather than errors:
+ *
+ *   - `conflict` — a waiver was already in force, and `waiver` is that
+ *     EXISTING one rather than a second row.
+ *   - `already_revoked` — this waiver had already been revoked, and `waiver`
+ *     reports the original revocation rather than restamping it, so the record
+ *     of who actually ended it survives a second call.
+ *
+ * `republishedChecks` counts the GitHub Check Runs brought back in line by
+ * this write. A published check is a persisted verdict, not a live read, so
+ * `0` here on a repository with checks connected means the visible CI status
+ * did not change — worth surfacing, since the check is the thing that gates
+ * the merge.
+ */
+export interface PlatformGateWaiverWriteResult {
+  status: "created" | "conflict" | "revoked" | "already_revoked";
+  republishedChecks: number;
+  waiver: PlatformGateWaiver;
+}
+
+/** The active waiver over a run, or `null` when there is none. */
+export interface PlatformGateWaiverRead {
+  waiver: PlatformGateWaiver | null;
+}
+
+/**
+ * The DECLARED launcher on a run — see `PlatformEvalRun.launcher`.
+ *
+ * `kind` is allowlisted to the three origins the platform cannot observe for
+ * itself. The stamped origins (`ui`, `api`, `sdk`, `schedule`, `github_check`,
+ * `benchmark`) are deliberately NOT declarable: a client that could restate one
+ * could paint a `ui` badge on an API run.
+ */
+export interface PlatformEvalRunLauncher {
+  kind: "cli" | "mcp" | "github_action";
+  /** The launching program, e.g. `"mcpjam-cli"` or an MCP client's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+/** The VERIFIED attribution on a run — see `PlatformEvalRun.attribution`. */
+export interface PlatformEvalRunAttribution {
+  surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+  /** The API key id the request authenticated with. The KEY, never the secret. */
+  apiKeyId?: string;
+}
+
+/**
  * Full eval run record, as returned by `GET /projects/{p}/eval-runs/{runId}`
  * and the suite run-history listing. Distinct from `PlatformEvalRunSummary`,
  * the condensed latest-run projection embedded in `PlatformEvalSuite`.
@@ -506,7 +805,16 @@ export interface PlatformEvalRun {
   id: string;
   suiteId: string;
   runNumber: number | null;
-  /** Poll until terminal: "completed" | "failed" | "cancelled". */
+  /**
+   * Poll until TERMINAL. The four terminal statuses are `"completed"`,
+   * `"failed"`, `"cancelled"` and `"timed_out"`.
+   *
+   * `"grading"` is NOT terminal. Every trial has finished and the run is being
+   * held for its gating judge — up to 30 minutes — with `result` still
+   * `"pending"`. A poller that stops there reports a run with no verdict as
+   * though it had one; keep polling until the status is one of the four above.
+   * Absent on API deployments that predate the hold.
+   */
   status: string;
   /**
    * Verdict once terminal: `"passed" | "failed" | "inconclusive" | null`.
@@ -524,8 +832,36 @@ export interface PlatformEvalRun {
     failed?: number;
     passRate?: number;
   } | null;
-  /** Run origin: "ui" | "api" | "sdk". */
+  /**
+   * Run origin, STAMPED BY THE PLATFORM: `"ui" | "api" | "sdk" | "schedule" |
+   * "github_check" | "benchmark"`.
+   *
+   * Everything created through the public API is `"api"` — including a run
+   * launched by the CLI, by a GitHub Actions job, or by an MCP agent, because
+   * from the server's side all three are API calls. That is what makes this
+   * field usable as audit truth and what makes it useless as a badge; read
+   * `launcher` for the caller's own claim about which of the three it was.
+   */
   source: string;
+  /**
+   * The run's DECLARED launcher — what the launching process said it was, sent
+   * as `x-mcpjam-launcher` at launch time.
+   *
+   * A LABEL, never an authorization input. ABSENT when the launcher declared
+   * nothing, which is NOT the same as `"ui"`: a run with no launcher was not
+   * launched by any of the three declarable origins, and reading absence as
+   * "the app did it" would invent a claim nobody made.
+   */
+  launcher?: PlatformEvalRunLauncher;
+  /**
+   * VERIFIED agent attribution, minted by the platform from the credential the
+   * run authenticated with — never from anything the caller sent.
+   *
+   * The audit-grade half of the pair: `launcher` says what the client called
+   * itself, `attribution.surface` says what the credential proved. Absent when
+   * the credential carried no attribution claims.
+   */
+  attribution?: PlatformEvalRunAttribution;
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -586,6 +922,23 @@ export interface PlatformEvalRun {
    * `"inconclusive"` result; it is never a task failure.
    */
   verdictPolicyIntegrityError?: string;
+  /**
+   * The waiver currently in force over this run's gate, or `null`.
+   *
+   * Gated on being able to VIEW the run, deliberately not on being able to
+   * grant a waiver: a waiver only its grantors could see would not be a
+   * visible one, and visibility is the half of the charter this field exists
+   * to serve.
+   *
+   * `null` means no waiver. ABSENT means an API deployment that predates the
+   * field, which is a different fact and must not be read as "not waived" by
+   * anything that needs to be sure.
+   *
+   * Carried on the run projection rather than fetched separately so `eval
+   * gate` — which already GETs this run — can fold a waiver into its report
+   * without a second round trip on the gating path.
+   */
+  gateWaiver?: PlatformGateWaiver | null;
   createdAt: number;
   completedAt: number | null;
   /**
@@ -600,6 +953,15 @@ export interface PlatformEvalRun {
    * predate the envelope.
    */
   judges?: PlatformEvalRunJudges;
+  /**
+   * Whether this run's imported cases carry evidence a gate may rely on.
+   *
+   * ABSENT means an API deployment that predates import eligibility — a
+   * different fact from `legacy`, and one a gate must treat as "no opinion,
+   * behave as before" rather than as "no imported cases". Present on the
+   * detail response; lists stay compact.
+   */
+  importEligibility?: PlatformImportEligibility;
 }
 
 /**
@@ -637,8 +999,7 @@ export interface PlatformEvalRunJudgeState {
   threshold: number | null;
 }
 
-export interface PlatformEvalRunGoalCompletionJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGoalCompletionJudge extends PlatformEvalRunJudgeState {
   /**
    * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
    * failed judge carries no cases, and `status` is what says which.
@@ -646,8 +1007,7 @@ export interface PlatformEvalRunGoalCompletionJudge
   cases: PlatformEvalRunGoalCompletionCase[];
 }
 
-export interface PlatformEvalRunGroundednessJudge
-  extends PlatformEvalRunJudgeState {
+export interface PlatformEvalRunGroundednessJudge extends PlatformEvalRunJudgeState {
   /** Per-case grades. EMPTY unless `status` is `"completed"`. */
   cases: PlatformEvalRunGroundednessCase[];
 }
@@ -659,19 +1019,27 @@ export interface PlatformEvalRunJudgeCase {
    * not join it against the ids the per-case routes take.
    */
   caseKey: string;
+  /**
+   * The iteration this case graded — the join key between a judge case and
+   * the iterations the run returns, since `caseKey` is a storage key and
+   * joins to nothing.
+   *
+   * Optional because judge results written before it was persisted carry
+   * none: a caller must be able to tell "this run predates the join key"
+   * from a value it could act on.
+   */
+  iterationId?: string;
   score: number | null;
   passed: boolean;
   reason: string | null;
 }
 
-export interface PlatformEvalRunGoalCompletionCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGoalCompletionCase extends PlatformEvalRunJudgeCase {
   /** Rubric criteria the answer satisfied. */
   rubricHits: string[];
 }
 
-export interface PlatformEvalRunGroundednessCase
-  extends PlatformEvalRunJudgeCase {
+export interface PlatformEvalRunGroundednessCase extends PlatformEvalRunJudgeCase {
   /** Claims the tool trajectory does not support. */
   unsupportedClaims: string[];
 }
@@ -718,14 +1086,10 @@ export interface PlatformNotApplicableRailDisclosure {
 }
 
 export type PlatformRailDisclosure =
-  | PlatformManagedRailDisclosure
-  | PlatformNotApplicableRailDisclosure;
+  PlatformManagedRailDisclosure | PlatformNotApplicableRailDisclosure;
 
 export type PlatformDisclosureTenantEgress =
-  | "mcpjam-hosted"
-  | "byok-cloud"
-  | "byok-local"
-  | "unknown";
+  "mcpjam-hosted" | "byok-cloud" | "byok-local" | "unknown";
 
 export interface PlatformByokDisclosure {
   providerKey: string;
@@ -752,7 +1116,8 @@ export interface PlatformDisclosedModel {
  * `engines` then carries the per-plan detail and `'mixed'` is a summary, not
  * a fourth runtime kind.
  */
-export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}`;
+export type PlatformDisclosureEngine =
+  "emulated" | "mixed" | `harness:${string}`;
 
 /**
  * Whether this run executes MCPJam-hosted or on the caller's own machine.
@@ -763,8 +1128,7 @@ export type PlatformDisclosureEngine = "emulated" | "mixed" | `harness:${string}
  * the union defensively — a caller MUST NOT treat it as `hosted: false`.
  */
 export type PlatformEvalRunDisclosureLocus =
-  | { known: true; hosted: boolean }
-  | { known: false; reason: string };
+  { known: true; hosted: boolean } | { known: false; reason: string };
 
 export interface PlatformExecutionDisclosure {
   engine: PlatformDisclosureEngine;
@@ -908,7 +1272,8 @@ export interface PlatformEvalRunCreated {
   suiteId: string;
   /**
    * The run's status. `running` on a fresh launch; on a replay (see
-   * `deduped`), the existing run's own status — which may already be terminal.
+   * `deduped`), the existing run's own status — which may already be terminal,
+   * or `"grading"` if that run is being held for its gating judge.
    */
   status: string;
   /**
@@ -1031,6 +1396,8 @@ export interface PlatformEvalSuiteCreated {
   name: string;
   /** The HTTP servers the suite was configured against. */
   servers?: Array<{ id: string; name?: string }>;
+  /** The clients (hosts) attached at create time; empty when none were named. */
+  hosts?: Array<{ id: string; name?: string }>;
   /** Per-case create outcomes, mirroring eval-run caseUpsert. */
   caseUpsert: {
     committed?: Array<{ id?: string; name?: string }>;
@@ -1074,8 +1441,72 @@ export interface PlatformExpectedToolCall {
   arguments?: Record<string, unknown>;
 }
 
+/**
+ * Goal-completion fields on `settings.judge`. Resolved over platform
+ * defaults so this is what a run would actually grade with.
+ */
+export type PlatformEvalSuiteGoalCompletionJudge = {
+  /** Judge is available on the suite. Does NOT by itself grade anything. */
+  enabled: boolean;
+  model: string | null;
+  /**
+   * The flag that makes grading HAPPEN — fires the judge as each run
+   * completes. Absent on older API deployments.
+   */
+  autoRun?: boolean;
+  /**
+   * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
+   * Absent on older API deployments.
+   */
+  threshold?: number;
+  /**
+   * Presentation severity. Legal only with an advisory role. Absent when
+   * the suite has none, and on older API deployments.
+   */
+  severity?: "warn";
+  /**
+   * The suite's own grading criteria, handed to the judge alongside each
+   * case's expected output.
+   *
+   * The judge cites `id` in its reasons, which is what makes a verdict
+   * auditable rather than a number — so ids are stable, unique, and
+   * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
+   * agreement measured against criteria the suite no longer uses is
+   * agreement with a question nobody is asking. Absent on older API
+   * deployments and on suites with no criteria.
+   */
+  rubric?: {
+    criteria: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      required?: boolean;
+    }>;
+  } | null;
+};
+
+/**
+ * Stored groundedness on the suite read DTO. Always advisory. Fields are
+ * the stored values, not resolved defaults — C1 registers none.
+ */
+export type PlatformEvalSuiteGroundednessJudge = {
+  role: "advisory";
+  model: string | null;
+  threshold: number | null;
+  severity?: "warn";
+};
+
 export interface PlatformEvalSuiteSettings {
-  /** Minimum pass rate as a percentage, 0–100. */
+  /**
+   * The LEGACY suite-wide floor, as a percentage in [0, 100].
+   *
+   * ALWAYS `null` when {@link policy} is `"v2"`, whatever the suite's storage
+   * still holds: a v2 suite is decided by
+   * `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column
+   * an upgrade leaves behind is read by nothing. Read the threshold from
+   * `verdictPolicyDefaults` for a v2 suite — converting this one would be a
+   * threshold no run uses.
+   */
   minimumAccuracy: number | null;
   /**
    * Suite-level FLOOR on per-case iterations, 1–10: every case runs at least
@@ -1094,20 +1525,12 @@ export interface PlatformEvalSuiteSettings {
    * `model` stays nullable: older API deployments report the suite's raw
    * `judgeModel`, which is `null` for a suite that never picked one.
    */
-  judge: {
-    /** Judge is available on the suite. Does NOT by itself grade anything. */
-    enabled: boolean;
-    model: string | null;
+  judge: PlatformEvalSuiteGoalCompletionJudge & {
     /**
-     * The flag that makes grading HAPPEN — fires the judge as each run
-     * completes. Absent on older API deployments.
+     * Stored groundedness, when the suite has a reserved slot. Read-only
+     * while execution is unwired — PATCH refuses this key.
      */
-    autoRun?: boolean;
-    /**
-     * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
-     * Absent on older API deployments.
-     */
-    threshold?: number;
+    groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
   /**
    * The verdict policy this suite's runs are decided under.
@@ -1128,6 +1551,24 @@ export interface PlatformEvalSuiteSettings {
    * `passThreshold` cannot answer what a case is graded against.
    */
   verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+  /**
+   * Which policy decides this suite's runs, said in one word.
+   *
+   * The same fact `verdictPolicyVersion`'s presence carries, without the
+   * inference — and without the ambiguity, since a v2 suite whose stored
+   * defaults fail validation projects no version either. It is also the field
+   * that tells a writer which threshold to send: `minimumAccuracy` (a percent)
+   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused.
+   *
+   * Absent on older API deployments; read absence as `legacy` only after
+   * checking `verdictPolicyVersion`.
+   */
+  policy?: "legacy" | "v2";
+  /**
+   * Live quality-gate policy. `null` when the suite has none. Absent on
+   * older API deployments that predate B2.
+   */
+  qualityGate?: SuiteGatePolicyV1 | null;
 }
 
 /** Suite-level defaults under verdict policy 2. Fractions, never percents. */
@@ -1176,6 +1617,27 @@ export interface PlatformEvalSuiteSchedule {
    * absent on older API deployments.
    */
   environmentId?: string | null;
+  /**
+   * What the schedule is DOING, which `enabled` cannot say.
+   *
+   * A schedule pauses itself: `paused_quota` when the organization ran out of
+   * scheduled-run budget, `paused_auth` when the person it runs as lost their
+   * access to the suite, `paused_failures` after repeated consecutive failures.
+   * All three keep `enabled: true` — the schedule is still configured, it is
+   * just not firing — so a caller that reads only `enabled` reports a healthy
+   * automation that has not run in a week. Absent on older API deployments.
+   */
+  state?: "active" | "paused_quota" | "paused_auth" | "paused_failures" | null;
+  /**
+   * The user id the schedule runs AS. Scheduled runs use this person's
+   * access, and the schedule pauses (`paused_auth`) if they lose it. Absent on
+   * older API deployments.
+   */
+  createdBy?: string | null;
+  /** Epoch ms of the next due firing, or `null` when nothing is due. */
+  nextDueAt?: number | null;
+  /** Consecutive failed firings; resets on the first success. */
+  consecutiveFailures?: number;
 }
 
 /**
@@ -1191,6 +1653,27 @@ export interface PlatformEvalSuiteDetail {
    * declared id and cannot be claimed by `eval run --file`.
    */
   declaredId?: string;
+  /**
+   * Where this suite's configuration lives.
+   *
+   * `"ci"` means it is owned by a committed suite file or by SDK ingest, and
+   * the platform REFUSES configuration writes to it — name, settings,
+   * environments, schedule, models, skills, execution config and cases — with
+   * `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`. Running, replaying
+   * and comparing are unaffected.
+   *
+   * To change one: edit its file and send that file's `suite.id` as
+   * `declaredSuiteId` on the write, or duplicate the suite for an editable
+   * copy. `declaredId` alone is not this answer — a suite created by SDK
+   * ingest is CI-owned and has no declared id.
+   *
+   * OPTIONAL because it is additive: this package is versioned independently
+   * of the Inspector deployment it talks to, and one that predates the suite
+   * lock omits the field entirely. `undefined` means "this deployment does not
+   * say", which is not the same as `"app"` — a reader that needs the
+   * distinction should treat it as unknown rather than as editable.
+   */
+  managedBy?: "ci" | "app";
   name: string | null;
   description: string | null;
   projectId: string | null;
@@ -1222,8 +1705,59 @@ export interface PlatformEvalSuiteDetail {
   hosts: PlatformEvalSuiteHost[];
   settings: PlatformEvalSuiteSettings;
   schedule: PlatformEvalSuiteSchedule;
+  /**
+   * How many committed edits this suite has had, or `null` on a deployment
+   * that does not record revisions.
+   *
+   * Send it back as `expectedRevisionNumber` on a PATCH to make that edit a
+   * compare-and-set: an edit composed against a suite someone else has since
+   * changed is refused with 409 having written nothing, instead of applying
+   * half an intent over a document it no longer describes. Absent on older API
+   * deployments.
+   */
+  revisionNumber?: number | null;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * One committed edit to a suite's settings.
+ *
+ * The suite's history is the answer to "who changed this, and when" — a
+ * question that was already recorded and had no reader. Rows carry NO
+ * SNAPSHOTS: a page of whole suite configurations is a large payload for a list
+ * nobody reads that way, and the before/after of one revision is a different
+ * question with a different cost.
+ */
+export interface PlatformEvalSuiteRevision {
+  id: string;
+  /** Monotonic per suite. `revisionNumber` on the suite is the newest. */
+  revisionNumber: number;
+  /** Where the edit came from. `unattributed` is a write nothing claimed. */
+  source:
+    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
+  /** The user id, or `null` for a write with no human actor. */
+  createdBy: string | null;
+  /** A display name when one is resolvable; `null` otherwise. */
+  createdByName: string | null;
+  createdAt: number;
+  /** The reason the author gave, when they gave one. */
+  note: string | null;
+  /** STORAGE field names, not public API paths. */
+  changedFields: string[];
+  /**
+   * Shared by every revision one request produced, so a PATCH that edited the
+   * settings and re-attached the environments reads as one change.
+   */
+  revisionGroupId: string | null;
+  /**
+   * Runs launched against this revision, CAPPED. The question is "did runs use
+   * this", and the difference between 100 and 400 does not change the answer,
+   * while counting them all would make the list cost grow with the history.
+   */
+  pinnedRunCount: number;
+  /** True when `pinnedRunCount` hit the cap and is a floor, not a count. */
+  pinnedRunCountCapped: boolean;
 }
 
 /**
@@ -1270,6 +1804,10 @@ export interface PlatformEvalCase {
    */
   declaredId?: string;
   title: string;
+  /** Optional authored analytics grouping label; absent is unlabelled. */
+  intent?: string;
+  /** Authored case kind; absent means the editor derives it from matchOptions. */
+  kind?: "capability" | "regression";
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
@@ -1299,8 +1837,90 @@ export interface PlatformEvalCase {
   models: PlatformEvalCaseModel[];
   matchOptions?: PublicMatchOptions;
   checks?: PublicCheckOverride;
+  /**
+   * The converter's CLAIM about this case, when it was imported rather than
+   * authored here. ABSENT means natively authored — a different fact from
+   * "imported, faithfulness unknown", and one nothing downstream can recover
+   * once the two are conflated.
+   */
+  import?: PlatformEvalCaseImportClaim;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * What a converter CLAIMED about one imported case.
+ *
+ * `exact` is CONVERTER-CLAIMED exact: the converter says it applied a
+ * structural mapping rule, cited in `note`. MCPJam has NOT verified semantic
+ * equivalence and this field is not evidence that it did — user-facing copy
+ * must say "claimed exact", never "verified" or "accepted".
+ *
+ * Claim-only in both directions. Who approved an approximation, when, and why
+ * is a PER-RUN decision that lives on the run's frozen snapshot
+ * ({@link PlatformImportApprovalReceipt}), never on the case: an approval
+ * stored on a case would outlive the run it was granted for and the edit that
+ * invalidated it.
+ *
+ * ALIASED to the suite-file contract's own type rather than restated. A claim a
+ * converter writes into a file is exactly a claim the API carries, so a second
+ * spelling here is only an opportunity for the two to disagree about what a
+ * claim is — and the disagreement would surface at somebody's ingest, not ours.
+ */
+export type PlatformEvalCaseImportClaim = EvalSuiteFileCaseImport;
+
+/**
+ * One frozen approval of an approximated import, as the run recorded it.
+ *
+ * Every field here was written by the SERVER at launch. The launcher supplied
+ * a case id and a reason; the actor and the timestamp were derived, and the
+ * whole record was frozen into the run's own case snapshot. Reading it back
+ * therefore tells you what was true at launch, which is the only question a
+ * receipt can honestly answer — never what the case's current claim says.
+ */
+export interface PlatformImportApprovalReceipt {
+  testCaseId: string;
+  caseKey?: string;
+  sourceCaseKey?: string;
+  approvedBy: string;
+  approvedAt: number;
+  reason: string;
+}
+
+/** One reason a run's import evidence is incomplete. */
+export interface PlatformImportEligibilityIssue {
+  /** Stable machine-readable code from the platform. */
+  code: string;
+  testCaseId?: string;
+  caseKey?: string;
+  toolName?: string;
+}
+
+/**
+ * Whether a run's imported cases carry evidence a gate may rely on.
+ *
+ * Computed by the platform from the run's OWN frozen snapshot, never from the
+ * suite's current cases — those can be edited after the run, and recomputing
+ * from them would let an edit retroactively change what a finished run is
+ * allowed to prove.
+ *
+ * The three states are not two:
+ *
+ *   - `legacy` — the run contains no imported cases at all. Every pre-import
+ *     run, and every native run forever. Gateable, behaviour unchanged.
+ *   - `eligible` — imported cases, every one carrying a valid frozen decision.
+ *   - `incomplete` — imported evidence that cannot be trusted. NOT a failure:
+ *     the run is simply not gateable, and reporting it as a failed verdict
+ *     would describe a server defect the run never observed.
+ */
+export interface PlatformImportEligibility {
+  status: "legacy" | "eligible" | "incomplete";
+  gateable: boolean;
+  importedCaseCount: number;
+  claimedExactCaseIds: string[];
+  approvedApproximationCaseIds: string[];
+  approvedApproximationReceipts: PlatformImportApprovalReceipt[];
+  issues: PlatformImportEligibilityIssue[];
 }
 
 /** A note about a batch write that changes nothing about what was written. */
@@ -1428,6 +2048,23 @@ export interface PlatformCaseScoreDelta {
   value: PlatformNumericDiff;
 }
 
+/**
+ * Cost coverage for one side of a comparison.
+ *
+ * Travels with the cost rather than beside it: a 40% drop across full
+ * coverage is a regression signal, and the same 40% with half the compare
+ * side unpriced is an artifact of what we managed to price.
+ */
+export interface PlatformCostCoverageSide {
+  costed: number;
+  total: number;
+}
+
+export interface PlatformCostCoverage {
+  base: PlatformCostCoverageSide;
+  compare: PlatformCostCoverageSide;
+}
+
 export interface PlatformRunCompareCaseSide {
   outcome: "passed" | "failed" | "absent";
   /** Iteration ids are public; `traceBlobIds` are NOT and never appear here. */
@@ -1447,6 +2084,19 @@ export interface PlatformRunCompareCase {
   scoreDeltas: PlatformCaseScoreDelta[];
   base: PlatformRunCompareCaseSide;
   compare: PlatformRunCompareCaseSide;
+  /** Per-case cost, with the coverage that produced it. Optional for the
+   * same reason as the run-level block above. */
+  metrics?: {
+    estimatedCostUsd: PlatformNumericDiff;
+    /**
+     * OPTIONAL for the same reason it is optional at the run level, and the
+     * projection omits it on the same condition: a deployment predating cost
+     * coverage sends no block, and absence means "no opinion", never "fully
+     * covered". Declaring it required here would promise typed consumers a
+     * field the wire does not always carry.
+     */
+    costCoverage?: PlatformCostCoverage;
+  };
 }
 
 export interface PlatformRunCompareSide {
@@ -1481,8 +2131,29 @@ export interface PlatformRunCompare {
     policy:
       | "previous_completed"
       | "previous_completed_same_environment"
-      | "run";
+      | "run"
+      | "commit_sha";
     baseRunId: string;
+    /**
+     * The source SHA that was pinned, echoed back for the `commit_sha` policy
+     * only. Recorded alongside `baseRunId` rather than instead of it: a gate's
+     * audit trail needs both the SHA the caller asked for and the run it
+     * actually resolved to.
+     */
+    baseCommitSha?: string;
+    /**
+     * Present ONLY when uniqueness could NOT be established — the SHA matched
+     * several eligible runs, or the bounded lookup saturated so older eligible
+     * ones may exist beyond it. **Absent means unambiguous**; do not default
+     * it to 1.
+     */
+    matchCount?: number;
+    /**
+     * `matchCount` is a FLOOR, not a total — including when it reads 1. Render
+     * it WITH its count or not at all: a truncated count shown alone asserts a
+     * uniqueness nobody checked.
+     */
+    matchCountTruncated?: boolean;
   };
   baseRun: PlatformRunCompareSide;
   compareRun: PlatformRunCompareSide;
@@ -1501,9 +2172,75 @@ export interface PlatformRunCompare {
     wallDurationMs: PlatformNumericDiff;
     totalTokens: PlatformNumericDiff;
     estimatedCostUsd: PlatformNumericDiff;
+    /**
+     * How many iterations on each side actually contributed a cost.
+     *
+     * OPTIONAL because a deployment predating cost coverage answers without
+     * it, and absence must not read as "fully covered" — a gate that assumed
+     * so would judge a cost regression on a partial sum from an older
+     * platform. `undefined` means the deployment has no opinion; a present
+     * block with `costed < total` means it does and the answer is partial.
+     */
+    costCoverage?: PlatformCostCoverage;
   };
   scoreContract: PlatformScoreContractDiff;
+  /**
+   * Which skills changed between the two runs — the configuration attribution
+   * that usually explains the case-level differences beside it.
+   *
+   * Three states, and they mean different things:
+   *   - a section — these skills changed (or none did, with a count);
+   *   - `null` — NEITHER run recorded pinned skills, so there is nothing to
+   *     say; an empty section would claim no skills were involved;
+   *   - ABSENT — the deployment answering predates skill attribution entirely.
+   *     Optional for that reason: a client cannot assume every backend it talks
+   *     to has this, and a required field would make old responses unusable.
+   */
+  skills?: PlatformRunCompareSkills | null;
   cases: PlatformRunCompareCase[];
+}
+
+/** Delivery channel a pinned skill reached a run through. */
+export type PlatformRunCompareSkillChannel =
+  "host" | "environment" | "plugin" | "mcp-server";
+
+/** One skill's identity + content fingerprint on one side of a comparison. */
+export interface PlatformRunCompareSkillSide {
+  contentHash: string;
+  /** Complete-artifact hash; present only when supporting files diverge it. */
+  aggregateHash?: string;
+  /** Authored-skill revision, when the run recorded one. */
+  versionNumber?: number;
+  /** MCP-captured revision, when the run recorded one. */
+  serverSkillVersionNumber?: number;
+}
+
+export interface PlatformRunCompareSkillChange {
+  /** Stable match key; opaque, safe for list keys and dedupe. */
+  key: string;
+  name: string;
+  /** Namespaced runtime address for a plugin-channel skill. */
+  modelRef?: string;
+  channels: PlatformRunCompareSkillChannel[];
+  kind: "added" | "removed" | "changed";
+  /** Renamed between the runs — matched as ONE skill by its logical id. */
+  renamedFrom?: string;
+  base?: PlatformRunCompareSkillSide;
+  compare?: PlatformRunCompareSkillSide;
+  /**
+   * `v3 → v4`, present only when BOTH sides recorded a revision number. A
+   * change with no delta is a real content change whose revisions are unknown
+   * (one side predates versioning) — not a smaller change.
+   */
+  versionDelta?: string;
+}
+
+export interface PlatformRunCompareSkills {
+  base: { excluded: boolean; count: number };
+  compare: { excluded: boolean; count: number };
+  /** Added / removed / changed only, changed first. Unchanged are counted. */
+  changes: PlatformRunCompareSkillChange[];
+  unchangedCount: number;
 }
 
 export interface PlatformEvalSuiteDeleted {
@@ -1516,7 +2253,80 @@ export interface PlatformEvalCaseDeleted {
   deleted: true;
 }
 
-/** A host in a project (list projection). */
+// ── Clients ──────────────────────────────────────────────────────────────────
+//
+// A **Client** is the product noun: a named, reusable configuration that
+// defines how MCPJam connects to and talks to your MCP servers. The
+// `PlatformHost*` types below it are the DEPRECATED shapes the `/hosts` alias
+// still returns. They are separate interfaces, not aliases of these, because
+// the two surfaces genuinely differ in their fields — see the note on
+// `PlatformHost`.
+
+/**
+ * What a config edit to a client would follow.
+ *
+ * These are the DURABLE consumers that re-resolve the client's current config.
+ * Past runs, per-turn traces and pinned eval-suite snapshots hold a config id
+ * and do not follow an edit. Direct playground / client-chat use follows it and
+ * has no row to count, which is why it is described in prose by the surfaces
+ * that quote these numbers rather than folded into one of them.
+ */
+export interface PlatformClientImpact {
+  liveEnvironmentCount: number;
+  scenarioAttachmentCount: number;
+  activeLegacyJourneyCount: number;
+}
+
+/** A client in a project (list projection). */
+export interface PlatformClient {
+  id: string;
+  name: string;
+  /**
+   * ID of the content-addressed config this client points at, and the
+   * concurrency token every write takes. Content addressed, so the same id
+   * means byte-identical settings.
+   */
+  configId: string;
+  modelId: string;
+  serverCount: number;
+  /** Product ownership of the row (null for untagged). Never an auth signal. */
+  ownerScope: Record<string, unknown> | null;
+  hasComputer: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Full client detail, including the resolved config DTO and its read-backs. */
+export interface PlatformClientDetail {
+  id: string;
+  name: string;
+  /** The concurrency token — see {@link PlatformClient.configId}. */
+  configId?: string;
+  /** Resolved client-config v2 DTO (model, capabilities, hostContext, …). */
+  config: Record<string, unknown>;
+  ownerScope: Record<string, unknown> | null;
+  hasComputer?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+  /** What a config edit would follow. */
+  impact?: PlatformClientImpact;
+}
+
+export interface PlatformClientDeleted {
+  id: string;
+  deleted: true;
+}
+
+/**
+ * @deprecated A host in a project, as the `/hosts` alias returns it. Use
+ * {@link PlatformClient}.
+ *
+ * NOT a type alias of `PlatformClient`, deliberately. `/hosts` returns
+ * `hostConfigId` where `/clients` returns `configId`, and carries none of the
+ * read-backs — so an alias would be a compile-time lie about a runtime shape,
+ * and every existing caller reading `hostConfigId` would start failing
+ * typecheck for a field the deprecated route still sends.
+ */
 export interface PlatformHost {
   id: string;
   name: string;
@@ -1527,7 +2337,10 @@ export interface PlatformHost {
   updatedAt: number;
 }
 
-/** Full host detail, including the resolved host config DTO. */
+/**
+ * @deprecated Full host detail as the `/hosts` alias returns it. Use
+ * {@link PlatformClientDetail}, which also carries `configId` and `impact`.
+ */
 export interface PlatformHostDetail {
   id: string;
   name: string;
@@ -1535,6 +2348,7 @@ export interface PlatformHostDetail {
   config: Record<string, unknown>;
 }
 
+/** @deprecated Use {@link PlatformClientDeleted}. */
 export interface PlatformHostDeleted {
   id: string;
   deleted: true;
@@ -1560,6 +2374,21 @@ export interface PlatformHostDeleted {
 export interface PlatformEnvironmentSkillSelection {
   mode: "explicit";
   skillIds: string[];
+  /**
+   * EXACT-version overlay. At most one entry per selected skill; a selected
+   * skill with no entry resolves "Latest" — its current revision, read when the
+   * run starts, which is what every environment did before pins existed and
+   * what omitting this field still means.
+   *
+   * Pin a version to hold an environment at a known revision — the way two
+   * environments run two revisions of one skill side by side for a comparison.
+   */
+  versionPins?: PlatformEnvironmentSkillVersionPin[];
+}
+
+export interface PlatformEnvironmentSkillVersionPin {
+  skillId: string;
+  versionId: string;
 }
 
 export interface PlatformEnvironment {
@@ -1579,6 +2408,7 @@ export interface PlatformEnvironment {
    */
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   /**
    * Pinned plugin VERSIONS. Narrow by design: a version is pinnable only when
    * its plugin is installed and enabled, the version is `ready`, at most one
@@ -1623,6 +2453,7 @@ export interface PlatformAdhocEnvironment {
   /** See `PlatformEnvironment.modelId` — absent means "inherit the host's". */
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
   sandboxImageId?: string;
   /** Pass back as `expectedRevision` when promoting it with a name. */
@@ -1656,6 +2487,7 @@ export interface PlatformAdhocEnvironmentBody {
   serverAttachmentId?: string;
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
   sandboxImageId?: string;
 }
@@ -1689,6 +2521,7 @@ export interface PlatformEnvironmentCreateBody {
   /** Model to run instead of the host's; omit to inherit the host's. */
   modelId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
+  secretSelection?: PlatformEnvironmentSecretSelection;
   pluginVersionIds?: string[];
   /** Project-shared `PlatformImage` id to pin; omit for the default image. */
   sandboxImageId?: string;
@@ -1714,6 +2547,12 @@ export interface PlatformEnvironmentUpdateBody {
    */
   modelId?: string | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
+  /**
+   * New credential grant, or `null` to REVOKE it entirely. Omit to leave
+   * unchanged. `[]` is rejected: an accidental empty array that read as "remove
+   * every credential" would break a workflow with no error to look at.
+   */
+  secretSelection?: PlatformEnvironmentSecretSelection | null;
   pluginVersionIds?: string[] | null;
   /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
   sandboxImageId?: string | null;
@@ -1738,6 +2577,27 @@ export interface PlatformEnvironmentCapabilities {
    * env may launch without suite membership. Absent/false on older backends.
    */
   ephemeralEnvironmentLaunch?: boolean;
+  /**
+   * `skillSelection.versionPins` / `serverSkillSelection.versionPins` are
+   * accepted, and a pinned revision survives into run snapshots. Absent/false
+   * on older backends, which reject the unknown field outright — so probe this
+   * before offering a version picker. Optional, so an older backend's response
+   * still parses.
+   */
+  skillVersionPins?: boolean;
+  /**
+   * `secretSelection` is accepted on create / update / ad-hoc materialization,
+   * so an environment can carry a credential grant. Absent/false on older
+   * backends, which reject the unknown field with a validator error naming
+   * nothing the caller can act on — so probe this before sending a grant.
+   *
+   * Optional, so an older backend's response still parses. Note that the
+   * backend must PUBLISH this for a client to offer the field: a deployment
+   * that supports secret grants but predates the flag reports absence, which
+   * a strict client reads as "not supported". That is the intended reading —
+   * the flag is the contract — and it is why the backend half ships first.
+   */
+  secretGrants?: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -1791,6 +2651,69 @@ export interface PlatformEnvironmentResolved {
   /** The environment's sandbox-image pin, when set (and the backend is new
    *  enough to carry it through the resolve). */
   sandboxImageId?: string;
+}
+
+// ── Cloud Skills ─────────────────────────────────────────────────────────────
+//
+// An authored SKILL.md stored in Convex. Environments pin them by id
+// (`skillSelection.skillIds`) and eval runs pin them with `--compose-skill`,
+// so the id is the load-bearing value — and this READ-ONLY surface is the only
+// programmatic way to obtain one. Authoring stays on the app's `/api/web`
+// surface behind the `skills-enabled` beta gate.
+
+/**
+ * Which PROJECT SECRETS a run launched from this environment receives.
+ *
+ * Ids only. The environment is the GRANT BOUNDARY: no selection means no
+ * secrets, and there is no "all of them" mode — a credential is granted
+ * deliberately, per environment.
+ *
+ * Deliberately simpler than `PlatformEnvironmentSkillSelection`: no version
+ * pins, because a secret has exactly one current value and "pin the previous
+ * value" is the opposite of what rotation is for.
+ *
+ * Membership is not the same as delivery. A `sharing: "user"` secret selected
+ * here reaches ONLY sessions its owner started; every other member's run of
+ * this environment silently does not receive it. That rule is checked live at
+ * launch, so revoking someone's access does not require editing every
+ * environment that names their secret.
+ */
+export interface PlatformEnvironmentSecretSelection {
+  mode: "explicit";
+  secretIds: string[];
+}
+
+/** Why a skill cannot be pinned into an environment's `skillSelection`. */
+export type PlatformSkillPinnability =
+  { ok: true } | { ok: false; reason: string };
+
+/** One skill visible to the caller: project-shared, or their own draft. */
+export interface PlatformProjectSkill {
+  id: string;
+  projectId: string;
+  /** Load-bearing identity: the on-box dir name and `loadSkill(name)` arg. */
+  name: string;
+  description: string;
+  /** `project` = shared with the org (the only kind an environment may pin). */
+  sharing: "user" | "project";
+  isOwner: boolean;
+  /** Drift key folding in the body and any supporting files. */
+  aggregateHash: string;
+  provenance?: string;
+  /**
+   * Whether this skill may be pinned. Absent on older backends — treat absent
+   * as UNKNOWN, never as `{ok:true}`: a skill with supporting files or extra
+   * frontmatter is rejected at save time, and guessing would just move the
+   * failure later.
+   */
+  pinnability?: PlatformSkillPinnability;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One skill with its SKILL.md body (frontmatter stripped). */
+export interface PlatformProjectSkillDetail extends PlatformProjectSkill {
+  content: string;
 }
 
 // ── Agent Plugins ────────────────────────────────────────────────────────────
@@ -1942,9 +2865,54 @@ export interface PlatformEvalCasesGenerated {
   skipped?: Array<{ title: string; error: string }>;
 }
 
+/** What produced a stored cost, or why there is none. */
+export interface PlatformEvalIterationCostBasis {
+  status: "not_reported" | "provider_reported" | "estimated";
+  source?: "gateway_pricing" | "sdk_runner";
+  modelId?: string;
+  inputUsdPerToken?: number;
+  outputUsdPerToken?: number;
+  cachedInputUsdPerToken?: number;
+  pricingRefreshedAt?: number;
+  reason?: "no_pricing" | "no_tokens" | "harness_mixed_models";
+}
+
+export interface PlatformEvalIterationUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  /** Absent means NO COST WAS OBSERVED. Never treat it as zero. */
+  estimatedCostUsd?: number;
+  cacheHit?: boolean;
+  costBasis?: PlatformEvalIterationCostBasis;
+  [key: string]: unknown;
+}
+
 export interface PlatformEvalIteration {
   id: string;
+  /**
+   * The STORED case row's database id. Distinct from `caseId` below and never
+   * interchangeable with it: this one exists for every case the platform
+   * persisted, changes if the case is recreated, and means nothing outside this
+   * deployment.
+   */
   testCaseId: string | null;
+  /**
+   * The case's SDK-DECLARED id, when the run recorded one.
+   *
+   * Read from the iteration's frozen `testCaseSnapshot`, so it is the id the
+   * suite declared AT RUN TIME — the durable, author-chosen identity that
+   * survives a case being recreated. ABSENT on a UI-authored case (which never
+   * declared one) and on runs predating declared ids; absence is not an error.
+   *
+   * NOT a join key into `verdictSummary.cases[].caseId`, which is a separately
+   * ENCODED identity the platform mints from whichever spelling a given run
+   * knew. Matching one against the other attaches a trial to the wrong case
+   * aggregate.
+   */
+  caseId?: string;
   title: string | null;
   iterationNumber: number;
   /**
@@ -1966,8 +2934,23 @@ export interface PlatformEvalIteration {
   /** Wall-clock duration; null until terminal. */
   durationMs: number | null;
   tokensUsed: number | null;
-  /** Structured token usage (input/output/cached/reasoning) when available. */
-  usage: Record<string, unknown> | null;
+  /**
+   * Structured token usage when available, plus the cost the platform priced
+   * from it and the basis it used.
+   *
+   * `estimatedCostUsd` ABSENT means no cost was observed — never that the
+   * trial was free. `costBasis.reason` says which: `no_pricing` (not an
+   * MCPJam-billed model), `harness_mixed_models`, or `no_tokens`.
+   *
+   * `costBasis.source` distinguishes a figure MCPJam computed from its own
+   * token counts (`gateway_pricing`) from one a customer's runner reported
+   * (`sdk_runner`), which MCPJam neither computed nor verified. Gate totals
+   * EXCLUDE the latter — see `gateInputFromPlatformRun`.
+   *
+   * Narrowed from `Record<string, unknown>` so a gate reading cost does not
+   * have to re-guess the shape. Unknown keys still round-trip.
+   */
+  usage: PlatformEvalIterationUsage | null;
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
@@ -1997,6 +2980,68 @@ export interface PlatformEvalIteration {
   stageAnalyzerVersion?: number;
   /** The server returned stage rows that failed D1 validation. */
   stageResultsUnverified?: true;
+  /**
+   * Observable patterns in this trial's tool calls — an identifier a result
+   * surfaced that no later call carried, a repeat of the same search, a retry,
+   * a pagination continuation.
+   *
+   * REPORT-ONLY. Nothing here decided this trial's `result`, and every pattern
+   * has a benign reading: an unused identifier can mean the search already
+   * answered the question, and a repeat can be a sensible refinement. Read
+   * `identifierSignals.state` before reading the identifier kinds — a trial
+   * whose results were not retained never looked for them.
+   *
+   * ABSENT means the trial PREDATES the measurement, or its producer could not
+   * derive one. Never render an absent block as zero.
+   */
+  frictionSignals?: EvalTrialFrictionSignals;
+  /** The server returned a friction document that failed validation. */
+  frictionSignalsUnverified?: true;
+  /**
+   * Which server-controlled condition is SUSPECTED of contributing to one of
+   * the patterns above, from an advisory per-trial judge.
+   *
+   * SUSPECTED, and the word is load-bearing: the judge saw one window of one
+   * trial and named a plausible contributor. It is not evidence of cause —
+   * only a controlled rewrite that changes the suspected response and holds
+   * the rest comparable could be that — and nothing here entered this trial's
+   * `result`, its chain, or its `failureCategory`.
+   *
+   * `status` is `scored`, `skipped` or `error`. ABSENT means no judge ran:
+   * the trial predates it, nothing was flagged, or the deployment has it off.
+   */
+  suspectedConditionVerdict?: SuspectedConditionVerdict;
+  /** The server returned a verdict that failed validation. */
+  suspectedConditionUnverified?: true;
+}
+
+/**
+ * What an iteration's replay recording says about itself.
+ *
+ * `source` names the recorder, because the two differ in ways a reader can
+ * see: `"widget"` is the local harness recording one Chromium context with
+ * Playwright (a `.webm`, and it reports nothing else), `"hosted"` is an
+ * unattended run on a hosted browser, recorded off the whole display to an
+ * `.mp4` at a fixed rate.
+ *
+ * `distinctFrames` is the count AFTER identical frames were dropped, so a
+ * static ten-minute run holds a handful against six hundred seconds. That is
+ * the honest number; do not read it as a frame rate or as evidence of a fault.
+ */
+export interface PlatformEvalReplayVideoMeta {
+  source: "hosted" | "widget";
+  /** The rate the recorder was asked for, not the rate it wrote. */
+  fps?: number;
+  durationMs?: number;
+  /** Frames actually written, after identical ones were dropped. */
+  distinctFrames?: number;
+  /**
+   * The recording stopped at its size limit before the run ended.
+   *
+   * The file is a complete, playable PREFIX — not a corrupt file, and not the
+   * whole run. Report it as such rather than as the run's full duration.
+   */
+  truncated?: boolean;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -2012,8 +3057,22 @@ export interface PlatformEvalStepEvidence {
   }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
-  /** Resolved iteration replay `.webm` URL (same on every step of the run). */
+  /** Resolved iteration replay video URL (same on every step of the run). */
   videoUrl?: string;
+  /**
+   * What that recording says about itself. Present only beside `videoUrl`.
+   *
+   * `truncated` is the field a caller cannot work out from the file: a run on
+   * a hosted browser is recorded at a fixed rate and the recorder stops itself
+   * at a size limit, so what lands is a complete, playable PREFIX of the run.
+   * Seeking to a `videoOffsetMs` past that cut gets silence and no reason for
+   * it unless this is read first.
+   *
+   * Every field but `source` is optional, and the local widget harness reports
+   * none of them: it records with Playwright, which says nothing about the
+   * file it wrote. Absent metadata means "not reported", never "zero".
+   */
+  videoMeta?: PlatformEvalReplayVideoMeta;
   /** Playback offset of this step within the replay video, when known. */
   videoOffsetMs?: number;
   /** "scripted" (authored) vs "computer_use" (model-driven) interaction. */
@@ -2369,6 +3428,246 @@ export interface PlatformPersona {
   updatedAt: number;
 }
 
+/**
+ * A PROJECT SECRET — metadata only, always.
+ *
+ * There is no `value` field on this type, and there is no route, operation, or
+ * tool that returns one. A secret is written and delivered; it is never read
+ * back. That is the contract, not a default: the only code that decrypts writes
+ * into a sandbox's environment or an egress policy and returns nothing.
+ */
+export interface PlatformSecret {
+  id: string;
+  projectId: string;
+  /**
+   * The environment-variable name (`^[A-Z_][A-Z0-9_]*$`). This IS the secret's
+   * identity: it is what a materialized delivery exports, what a workflow
+   * references, and what stays stable across a rotation. Immutable — renaming
+   * is delete-and-recreate.
+   */
+  name: string;
+  description: string | null;
+  /**
+   * How the value reaches a run.
+   *
+   *  - `"brokered"` — injected as a request header by the sandbox's egress
+   *    proxy, OUTSIDE the VM. The box never holds it, so a prompt-injected
+   *    agent has nothing to exfiltrate. Prevents EXTRACTION, not USE: any
+   *    process in the box can call the bound host while the policy is live.
+   *    HTTPS APIs only (the proxy binds domain rules on ports 80/443).
+   *  - `"materialized"` — a real environment variable inside the box, because a
+   *    CLI cannot read a header the proxy adds. EXTRACTABLE BY DESIGN: `env`
+   *    prints it.
+   */
+  delivery: "brokered" | "materialized";
+  /** Brokered only: the exact hostnames the header is injected on. */
+  brokerHosts?: string[];
+  /** Brokered only: the header name, e.g. `Authorization`. */
+  brokerHeader?: string;
+  /** Brokered only: the header value template; `{}` is where the value goes. */
+  brokerTemplate?: string;
+  /**
+   * `"project"` — admin-managed, delivered to every member's sessions.
+   * `"user"` — personal; delivered ONLY in sessions its owner starts, and
+   * silently absent from another member's run of the same environment.
+   * Immutable — re-sharing is delete-and-recreate.
+   */
+  sharing: "user" | "project";
+  /** Personal secrets only. Project-shared rows have no owner. */
+  ownerUserId?: string;
+  /**
+   * When this secret was last HANDED TO a run — not when it was last used.
+   * Brokered use is unobservable by construction (the proxy injects the header;
+   * we never see the request), so "used" would be a number nobody can honestly
+   * produce. `null` means nothing has been recorded, which is not the same as
+   * "never delivered".
+   */
+  lastDeliveredAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  createdByUserId: string;
+  updatedByUserId: string;
+}
+
+/**
+ * Result of deleting a secret. A HARD delete — the row and the ciphertext both
+ * go. This is the revoke button, so it must not be soft.
+ */
+export interface PlatformSecretDeleted {
+  id: string;
+  projectId: string;
+  /** Echoed so a caller logging the revoke does not need a prior read. */
+  name: string;
+  deleted: true;
+}
+
+/**
+ * A TRACE DESTINATION — where an organization's traces are STREAMED.
+ *
+ * There is no `headers` field on this type, and there is no route, operation,
+ * or tool that returns one. Header values are written and used; they are never
+ * read back. That is the contract, not a default: the only code that decrypts
+ * them builds an outbound OTLP request and returns nothing to a caller.
+ */
+/**
+ * An organization's ceiling on MCPJam-billed spend for the current billing
+ * window.
+ *
+ * Dollars on the wire, credits in the store, and BOTH are reported so a
+ * caller never has to know the conversion (1 credit = 1¢) to check its own
+ * arithmetic against the ledger's.
+ *
+ * This governs MCPJam-billed spend only. Work run on your own provider keys
+ * is recorded but never counted against the cap, because MCPJam did not
+ * charge you for it.
+ */
+export interface PlatformSpendBudget {
+  /** The ceiling in USD. `null` means uncapped — the default. */
+  capUsd: number | null;
+  /** The same ceiling in credits, as stored. `null` when uncapped. */
+  capCredits: number | null;
+  /**
+   * Whole percents of the cap that raise an alert. Reaching the cap always
+   * alerts, so 100 never appears here.
+   */
+  alertPercents: number[];
+  /** Spend so far in this window. Present and meaningful even when uncapped. */
+  spentUsd: number;
+  spentCredits: number;
+  /**
+   * The window is the organization's BILLING ANCHOR period, not the calendar
+   * month: a budget that reset on the 1st while credits reset on the 14th
+   * would be a ceiling on the wrong thing.
+   */
+  windowStartAt: number;
+  windowEndsAt: number;
+  /** Thresholds already alerted in this window; each fires at most once. */
+  alertedPercents: number[];
+  /** When the cap was reached, if it has been. `null` otherwise. */
+  capReachedAt: number | null;
+  updatedAt: number | null;
+  /** The accepted range for `capUsd`, so a client can validate before sending. */
+  minCapUsd: number;
+  maxCapUsd: number;
+  /** False for a personal organization, which cannot carry a budget. */
+  supported: boolean;
+}
+
+export interface PlatformTraceDestination {
+  id: string;
+  organizationId: string;
+  name: string;
+  /** False stops streaming without discarding the configuration. */
+  enabled: boolean;
+  /** Normalized server-side: HTTPS, and ending in `/v1/traces`. */
+  endpointUrl: string;
+  /** The header NAMES this destination sends. Never their values. */
+  headerNames: string[];
+  /** Extra resource attributes merged into every export. `mcpjam.*` is reserved. */
+  resourceAttributes: Record<string, string>;
+  /**
+   * Which traces this destination subscribes to. `direct` is Playground, and
+   * only sessions SHARED to the workspace are ever sent — a private Playground
+   * session is excluded server-side and cannot be opted in.
+   */
+  sourceTypes: Array<"eval" | "scenario" | "swarm" | "direct">;
+  /**
+   * False (the default) redacts prompts, outputs, tool arguments and
+   * screenshots. The message envelopes still ship, so a vendor's GenAI views
+   * still list the spans — with `__REDACTED__` where the content would be.
+   */
+  includeContent: boolean;
+  compression: "gzip" | "none";
+  /** `null` means every project in the organization, present and future. */
+  projectIds: string[] | null;
+  /** The vendor preset this was created from, if any. UI sugar; not behaviour. */
+  preset: string | null;
+  /**
+   * Non-null means NOTHING IS BEING QUEUED. `reason` is a machine name so a
+   * client can map it to its own copy: `manual`, `auth_failed`,
+   * `secret_unreadable`, `too_many_failures`, `endpoint_private`,
+   * `redirect_required`.
+   */
+  paused: { at: number; reason: string } | null;
+  health: PlatformTraceDestinationHealth | null;
+  lastTest: { at: number; status: string; error: string | null } | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Delivery health for one destination. `null` until the first attempt. */
+export interface PlatformTraceDestinationHealth {
+  lastAttemptAt: number | null;
+  lastDeliveryAt: number | null;
+  lastDeliveryStatus: string | null;
+  /** The vendor's own error text, truncated. */
+  lastDeliveryError: string | null;
+  lastHttpStatus: number | null;
+  /**
+   * PERMANENT failures in a row. Retryable ones (429, 5xx, network) climb a
+   * separate backoff instead — a vendor outage must not trip the breaker and
+   * turn the export off.
+   */
+  consecutiveFailures: number;
+  /** While in the future, deliveries to this destination are held. */
+  retryNotBefore: number | null;
+  /**
+   * Sessions with work still owed. A BOUNDED PROBE, not a count: see
+   * `pendingCountCapped`.
+   */
+  pendingCount: number;
+  /** True when `pendingCount` hit the probe ceiling — read it as "N or more". */
+  pendingCountCapped: boolean;
+  deliveredSessionCount: number;
+  deliveredSpanCount: number;
+  /** Units given up on after exhausting retries, or refused permanently. */
+  deadLetterCount: number;
+}
+
+/**
+ * A destination just resumed. `pausedSince` is the instant the pause began, so
+ * a caller can size the gap — NOTHING was queued while it was paused, and the
+ * only way to fill the window is a backfill.
+ */
+export interface PlatformTraceDestinationResumed extends PlatformTraceDestination {
+  pausedSince: number | null;
+}
+
+/**
+ * A test span was SCHEDULED. Not "delivered": the send is a network round trip
+ * to a third party, and its outcome lands on the destination's `lastTest`.
+ */
+export interface PlatformTraceDestinationTestScheduled {
+  id: string;
+  scheduled: true;
+}
+
+/**
+ * Result of deleting a trace destination. Streaming stops and anything queued
+ * is discarded. Traces ALREADY DELIVERED stay in the vendor's system — MCPJam
+ * cannot retract them.
+ */
+export interface PlatformTraceDestinationDeleted {
+  id: string;
+  deleted: true;
+}
+
+/** One replay of a window of history into a destination. */
+export interface PlatformTraceDestinationBackfillJob {
+  id: string;
+  destinationId: string;
+  organizationId: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  /** The instant the window starts. Sessions active since then are queued. */
+  since: number;
+  sessionsScanned: number;
+  sessionsQueued: number;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+}
+
 /** Result of deleting a persona. The delete is SOFT: history still resolves it. */
 export interface PlatformPersonaDeleted {
   id: string;
@@ -2538,11 +3837,7 @@ export interface PlatformFindingDismissed {
  * - Reads never trigger generation; `status` is observational.
  */
 export type PlatformInsightsStatus =
-  | "not_available"
-  | "not_requested"
-  | "pending"
-  | "completed"
-  | "failed";
+  "not_available" | "not_requested" | "pending" | "completed" | "failed";
 
 export type PlatformInsightScope =
   | { kind: "eval_run"; id: string }
@@ -2572,9 +3867,7 @@ export type PlatformInsightActionTarget =
   | "environment";
 
 export type PlatformInsightActionability =
-  | "informational"
-  | "investigate"
-  | "ready";
+  "informational" | "investigate" | "ready";
 
 export interface PlatformActionableFindingEvidence {
   sessionId?: string;
@@ -2966,8 +4259,7 @@ export interface PlatformUserTestingScenario {
  * Scenario detail — the read shape, widened with the environment link and
  * the insights envelope.
  */
-export interface PlatformUserTestingScenarioDetail
-  extends PlatformUserTestingScenario {
+export interface PlatformUserTestingScenarioDetail extends PlatformUserTestingScenario {
   environmentId: string | null;
   /**
    * Present when the caller may have it. The envelope is gated on workspace
@@ -3097,8 +4389,7 @@ export type PlatformReadinessKind = "claude" | "openai";
  * in this type would let a caller write a request the server refuses.
  */
 export type PlatformReadinessSubmissionMode =
-  | "mcp-only"
-  | "mcp-imported-skills";
+  "mcp-only" | "mcp-imported-skills";
 
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
@@ -3235,8 +4526,7 @@ export interface PlatformReadinessStartBody {
   includeLlmObservations?: boolean;
 }
 
-export interface PlatformOpenAIReadinessStartBody
-  extends PlatformReadinessStartBody {
+export interface PlatformOpenAIReadinessStartBody extends PlatformReadinessStartBody {
   /**
    * The DECLARED submission shape. REQUIRED, and never inferred.
    *

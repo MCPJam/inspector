@@ -31,10 +31,13 @@ import {
   isWaitingHandoffStatus,
   matchHandoffRoute,
   readCallbackParams,
+  readClaimedHandoff,
   readPendingAuthorization,
+  rememberClaimedHandoff,
   rememberHandoffSignInReturn,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import {
   readClaimRefusal,
   type ClaimRefusalDetails,
@@ -104,10 +107,23 @@ async function bestEffortAccessToken(
  * lives in `details`, not in the prose.
  */
 class HandoffCallError extends Error {
-  constructor(message: string, readonly details?: unknown) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = "HandoffCallError";
   }
+}
+
+function isUsedLinkError(error: unknown): boolean {
+  return (
+    error instanceof HandoffCallError &&
+    typeof error.details === "object" &&
+    error.details !== null &&
+    (error.details as { reason?: unknown }).reason === "REQUEST_NOT_FOUND"
+  );
 }
 
 async function call<T>(
@@ -136,6 +152,7 @@ async function call<T>(
   if (!response.ok) {
     throw new HandoffCallError(
       payload?.message ?? "Something went wrong. Please try again.",
+      response.status,
       payload?.details,
     );
   }
@@ -266,6 +283,7 @@ export function ServerConnectionHandoff() {
   } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [usedLink, setUsedLink] = useState(false);
   const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const claimed = useRef(false);
@@ -315,6 +333,10 @@ export function ServerConnectionHandoff() {
             // with the continuation cookie, which is scoped to this request.
             await bestEffortAccessToken(getAccessToken),
           );
+          // Record what this token became, so a later reopen of THIS link can
+          // tell the continuation cookie is describing the same request rather
+          // than whichever one this browser claimed most recently.
+          rememberClaimedHandoff(route.handoffToken, result.requestId);
           // `replaceState`, not push: the token URL must not be somewhere the
           // back button can return to, and it is single-use anyway.
           window.history.replaceState(
@@ -345,8 +367,45 @@ export function ServerConnectionHandoff() {
           cause instanceof HandoffCallError
             ? readClaimRefusal(cause.details)
             : null;
-        if (claimRefusal) setRefusal(claimRefusal);
-        else setError(cause instanceof Error ? cause.message : String(cause));
+        if (claimRefusal) {
+          setRefusal(claimRefusal);
+          return;
+        }
+        // A SPENT TOKEN IS NOT AUTOMATICALLY A DEAD END, and treating it as one
+        // is what turned a re-opened link into a burned retry. The first claim
+        // cleared the handoff digest, but it also set the continuation cookie —
+        // the credential every later step of the flow already authenticates
+        // with. If that cookie still resolves to a request, this is the same
+        // browser coming back to its own link, and the honest answer is to put
+        // the user back in the flow rather than tell them it is gone.
+        //
+        // A browser that never claimed has no cookie and gets the used-link
+        // screen exactly as before.
+        //
+        // MATCHED, NOT MERELY PRESENT. The cookie has one name and always
+        // describes the last link this browser claimed, so a browser that
+        // claimed A and then B would answer a reopened A with B — a different
+        // server quietly swapped in behind the URL the user opened. The claim
+        // recorded which request each token became; only that request may be
+        // resumed here. When they disagree, the session behind this link really
+        // is gone, and the used-link screen is the honest answer.
+        if (route?.kind === "claim" && isUsedLinkError(cause)) {
+          const claimedRequestId = readClaimedHandoff(route.handoffToken);
+          const resumed = claimedRequestId
+            ? await call<HandoffState>("/state").catch(() => null)
+            : null;
+          if (resumed && resumed.requestId === claimedRequestId) {
+            window.history.replaceState(
+              {},
+              "",
+              handoffRequestPath(resumed.requestId),
+            );
+            setState(resumed);
+            return;
+          }
+          setUsedLink(true);
+        }
+        setError(cause instanceof Error ? cause.message : String(cause));
         return;
       }
       await refresh();
@@ -460,6 +519,10 @@ export function ServerConnectionHandoff() {
    */
   const switchAccount = useCallback(() => {
     setBusy(true);
+    // See `sign-out-latch`: without this, the refresh timer notices the
+    // revoked session mid-navigation and redirects to sign-in, losing the
+    // handoff link this function exists to return to.
+    markSignOutInProgress();
     const back = `${window.location.pathname}${window.location.search}`;
     void Promise.resolve(signOut({ navigate: false }))
       .catch(() => {
@@ -482,11 +545,29 @@ export function ServerConnectionHandoff() {
     );
   }
 
+  // WHAT THIS SCREEN MAY AND MAY NOT CLAIM. Reaching it means the resume above
+  // could not show this browser was the one that claimed the link — which says
+  // nothing about WHO did. "You already used this" was therefore false in the
+  // most common way to arrive here: opening the link in incognito, on a second
+  // machine, or after a chat client's preview crawler spent it, where the user
+  // is certain they never used it and the page appears to be lying.
+  //
+  // So the heading states only what is always true — the link was opened
+  // elsewhere — and the body carries the rule that explains every one of those
+  // cases without having to tell them apart.
   if (error && !state) {
     return (
       <Shell>
-        <h1 className="text-lg font-semibold">This link cannot be used</h1>
-        <p className="text-sm text-muted-foreground">{error}</p>
+        <h1 className="text-lg font-semibold">
+          {usedLink
+            ? "This link was opened somewhere else"
+            : "This link cannot be used"}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {usedLink
+            ? "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again."
+            : error}
+        </p>
       </Shell>
     );
   }

@@ -73,6 +73,57 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
+  // Anything that is not a billing rejection goes through `convexErrMessage`,
+  // so a write-boundary validator's own message reaches the toast instead of
+  // the redacted "[Request ID: …] Server Error" string.
+  it("surfaces a non-billing ConvexError payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new ConvexError(
+          "Invalid steps: interact step requires a non-empty toolName" as never,
+        ),
+        "fallback",
+      ),
+    ).toBe("Invalid steps: interact step requires a non-empty toolName");
+  });
+
+  it("surfaces the message of a non-billing object payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new ConvexError({ message: "Pick an element target." } as never),
+        "fallback",
+      ),
+    ).toBe("Pick an element target.");
+  });
+
+  // A non-billing payload can arrive JSON-encoded inside `Error.message`
+  // (thrown, then stringified). The toast must show the sentence, not the blob.
+  it("surfaces the message of a JSON-encoded Error payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new Error(JSON.stringify({ message: "Pick an element target." })),
+        "fallback",
+      ),
+    ).toBe("Pick an element target.");
+  });
+
+  it("surfaces the message of a raw string error", () => {
+    expect(getBillingErrorMessage("Pick an element target.", "fallback")).toBe(
+      "Pick an element target.",
+    );
+  });
+
+  it("strips the request-id prefix off a plain Error", () => {
+    expect(
+      getBillingErrorMessage(new Error("[Request ID: abc] boom"), "fallback"),
+    ).toBe("boom");
+  });
+
+  it("falls back when the error carries nothing readable", () => {
+    expect(getBillingErrorMessage(null, "fallback")).toBe("fallback");
+    expect(getBillingErrorMessage(new Error(""), "fallback")).toBe("fallback");
+  });
+
   it("formats backend limit payloads for non-billing-admin users", () => {
     const message = getBillingErrorMessage(
       new Error(

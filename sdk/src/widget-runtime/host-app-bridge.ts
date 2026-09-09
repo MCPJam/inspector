@@ -27,6 +27,10 @@
  */
 
 import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import {
+  applyToolResultPolicy,
+  type ToolResultPolicy,
+} from "./tool-result-policy.js";
 import { isVisibleToModelOnly } from "./tool-visibility.js";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations.js";
 
@@ -163,6 +167,12 @@ export interface HostBridgeMatrix {
   toolCancelled?: boolean;
   /** When false, do not install the view-initiated teardown handler. */
   requestTeardown?: boolean;
+  /**
+   * Which halves of a tool result this host relays back to the widget.
+   * Unlike the gates above — which decide whether a handler exists at all —
+   * this one shapes the VALUE a live handler returns.
+   */
+  toolResult?: ToolResultPolicy;
 }
 
 /**
@@ -382,7 +392,15 @@ export function registerHostBridgeHandlers(
       }
 
       try {
-        const result = await callbacks.onCallTool(name, invocationInput);
+        const rawResult = await callbacks.onCallTool(name, invocationInput);
+        // Shape the result BEFORE recording the invocation, so the
+        // inspector's app-tool panel shows what the widget actually
+        // received rather than what the server sent. A host that strips
+        // `structuredContent` is invisible to the widget author otherwise.
+        const result = applyToolResultPolicy(
+          rawResult,
+          getMatrix?.()?.toolResult,
+        );
         callbacks.onAppToolInvocation?.({
           id: invocationId,
           parentToolCallId,

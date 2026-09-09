@@ -49,6 +49,7 @@ export type InspectorCommandType =
   | "cancelEvalRun"
   | "generateEvalTests"
   | "deleteEvalSuite"
+  | "editEvalCaseDraft"
   | "createPersona"
   | "openJourneyForm"
   | "launchSwarmRun"
@@ -96,6 +97,7 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "cancelEvalRun",
   "generateEvalTests",
   "deleteEvalSuite",
+  "editEvalCaseDraft",
   "createPersona",
   "openJourneyForm",
   "launchSwarmRun",
@@ -347,7 +349,7 @@ export interface SearchRegistryDirectoryInspectorCommand {
  */
 
 /**
- * Opens the create-suite page for the USER to finish. Suite creation is
+ * Opens the create-suite dialog for the USER to finish. Suite creation is
  * high-entropy (model, servers/host attachments, tests), so the ONLY prefill
  * an agent may pass is the suite name — everything else is picked by the
  * human in the form, mirroring the `openServerForm` prefill-over-commit
@@ -387,6 +389,35 @@ export interface DeleteEvalSuiteInspectorCommand {
   id: string;
   type: "deleteEvalSuite";
   payload: { suite: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Writes into the test case CURRENTLY OPEN in the editor — the "Describe a
+ * case" workspace, or any other in-progress case edit. There is no suite/case
+ * addressing in the payload: it always targets whatever draft is on screen,
+ * and errors as `unsupported_in_mode` when no case editor is mounted (the
+ * bus's normal fall-through, so the model gets "open a case first" rather
+ * than acting on the wrong one).
+ *
+ * A deliberate subset of what the case form can express — the prompt and a
+ * single "tool called with these arguments" assertion — mirroring the
+ * Describe workspace's own scope rather than the full step editor.
+ */
+export interface EditEvalCaseDraftInspectorCommand {
+  id: string;
+  type: "editEvalCaseDraft";
+  payload: {
+    /** Replaces the case's user-turn prompt. */
+    prompt?: string;
+    /** Adds a "tool called with these arguments" assertion. */
+    addToolAssertion?: {
+      toolName: string;
+      arguments?: Record<string, unknown>;
+    };
+    /** Marks the case as expecting no tool call at all. */
+    noTool?: boolean;
+  };
   timeoutMs?: number;
 }
 
@@ -812,6 +843,7 @@ export type InspectorCommand =
   | CancelEvalRunInspectorCommand
   | GenerateEvalTestsInspectorCommand
   | DeleteEvalSuiteInspectorCommand
+  | EditEvalCaseDraftInspectorCommand
   | CreatePersonaInspectorCommand
   | OpenJourneyFormInspectorCommand
   | LaunchSwarmRunInspectorCommand

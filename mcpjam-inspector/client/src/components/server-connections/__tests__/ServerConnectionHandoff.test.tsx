@@ -47,6 +47,7 @@ import { ServerConnectionHandoff } from "../ServerConnectionHandoff";
 import {
   clearPendingAuthorization,
   readPendingAuthorization,
+  rememberClaimedHandoff,
   rememberPendingAuthorization,
   takeHandoffSignInReturn,
 } from "@/lib/server-connection-handoff";
@@ -90,7 +91,12 @@ function mockApi(handlers: Record<string, () => unknown>) {
           status: 500,
         });
       }
-      return new Response(JSON.stringify(handler()), { status: 200 });
+      // A handler may return its own `Response` when the status is the point of
+      // the test; anything else is the 200 body.
+      const result = handler();
+      return result instanceof Response
+        ? result
+        : new Response(JSON.stringify(result), { status: 200 });
     },
   );
   vi.stubGlobal("fetch", fetchMock);
@@ -109,6 +115,9 @@ function goTo(path: string, search = "") {
 
 afterEach(() => {
   clearPendingAuthorization();
+  // The claimed-handoff record is deliberately localStorage, so it outlives a
+  // tab — and would outlive a test too.
+  localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   goTo("/");
@@ -148,14 +157,21 @@ describe("the claim", () => {
     expect(calls.some((call) => call.path === "/claim")).toBe(false);
   });
 
-  it("says the link is unusable rather than showing an empty page", async () => {
+  it("says the link was opened elsewhere, never that the visitor used it", async () => {
+    // Most arrivals here are incognito, a second machine, or a chat client's
+    // preview crawler spending the link first — people who did not use it and
+    // would read the old "you already used this" as the page being wrong.
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ message: "That link has expired." }), {
-            status: 404,
-          }),
+          new Response(
+            JSON.stringify({
+              message: "Connection request not found",
+              details: { reason: "REQUEST_NOT_FOUND" },
+            }),
+            { status: 404 },
+          ),
       ),
     );
     goTo("/connect/server/dead-token");
@@ -163,7 +179,148 @@ describe("the claim", () => {
     render(<ServerConnectionHandoff />);
 
     expect(
-      await screen.findByText("That link has expired."),
+      await screen.findByText("This link was opened somewhere else"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Connection links only work in the browser that first opened them. Create a new link from the CLI to connect again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("resumes from the continuation cookie when the owner reopens their link", async () => {
+    // The claim is spent, but this browser is the one that spent it: the cookie
+    // it set still answers /state. Burning the retry here is the bug.
+    const calls = mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      "/state": () => stateBody(),
+    });
+    rememberClaimedHandoff("spent-token", "scr_1");
+    goTo("/connect/server/spent-token");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("Personal");
+
+    expect(
+      screen.queryByText("This link was opened somewhere else"),
+    ).not.toBeInTheDocument();
+    expect(calls.some((call) => call.path === "/state")).toBe(true);
+    // The spent token leaves the address bar exactly as a fresh claim's does.
+    expect(window.location.pathname).toBe("/connect/server/request/scr_1");
+    expect(window.location.href).not.toContain("spent-token");
+  });
+
+  it("refuses to resume a link the cookie no longer belongs to", async () => {
+    // Claimed link A, then link B: the cookie has one name, so it now
+    // describes B. Reopening A must NOT quietly hand the user B's server —
+    // A's session is genuinely gone, and saying so is the honest answer.
+    const calls = mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      "/state": () => stateBody({ requestId: "scr_2" }),
+    });
+    rememberClaimedHandoff("token-a", "scr_1");
+    rememberClaimedHandoff("token-b", "scr_2");
+    goTo("/connect/server/token-a");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link was opened somewhere else"),
+    ).toBeInTheDocument();
+    // Not swapped onto the other request behind the same URL.
+    expect(window.location.pathname).not.toContain("scr_2");
+    expect(calls.some((call) => call.path === "/state")).toBe(false);
+  });
+
+  it("still reports a spent link in a browser that never claimed it", async () => {
+    // No record for this token — someone else's browser, or a fresh one. The
+    // cookie is not asked about at all, because nothing here can show the link
+    // was ever this browser's.
+    const calls = mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      "/state": () => stateBody(),
+    });
+    goTo("/connect/server/someone-elses-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link was opened somewhere else"),
+    ).toBeInTheDocument();
+    expect(calls.some((call) => call.path === "/state")).toBe(false);
+  });
+
+  it("still reports a spent link in a browser that has no cookie", async () => {
+    mockApi({
+      "/claim": () =>
+        new Response(
+          JSON.stringify({
+            message: "Connection request not found",
+            details: { reason: "REQUEST_NOT_FOUND" },
+          }),
+          { status: 404 },
+        ),
+      // This browser claimed the link, but the cookie has since lapsed — an
+      // hour passed, or site data was cleared.
+      "/state": () =>
+        new Response(JSON.stringify({ message: "Not authorized" }), {
+          status: 401,
+        }),
+    });
+    rememberClaimedHandoff("spent-token", "scr_1");
+    goTo("/connect/server/spent-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link was opened somewhere else"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the accurate message for an expired link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              message: "That authorization link has expired.",
+              details: { reason: "REQUEST_EXPIRED" },
+            }),
+            { status: 404 },
+          ),
+      ),
+    );
+    goTo("/connect/server/expired-token");
+
+    render(<ServerConnectionHandoff />);
+
+    expect(
+      await screen.findByText("This link cannot be used"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("That authorization link has expired."),
     ).toBeInTheDocument();
   });
 });

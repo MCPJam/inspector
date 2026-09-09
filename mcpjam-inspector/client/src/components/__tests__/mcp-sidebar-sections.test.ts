@@ -35,7 +35,7 @@ describe("sidebar section grouping", () => {
       expect.arrayContaining(["Home", "Connect", "Playground"])
     );
     expect(titlesIn("Measure")).toEqual(
-      expect.arrayContaining(["Acceptance Testing", "Swarms", "Evaluate"])
+      expect.arrayContaining(["User Testing", "Swarms", "Evaluate"])
     );
     expect(titlesIn("Verify")).toEqual(
       expect.arrayContaining([
@@ -49,6 +49,9 @@ describe("sidebar section grouping", () => {
       "Resources",
       "Prompts",
       "Tasks",
+      // Same primitive as Tools, from the other side of the browser boundary:
+      // what a live PAGE registers rather than what a server exposes.
+      "WebMCP",
     ]);
     expect(titlesIn("Educate")).toEqual(["Learning"]);
   });
@@ -67,17 +70,17 @@ describe("sidebar section grouping", () => {
     expect(sectionOf("Compatibility")).toBe("Verify");
   });
 
-  it("labels User Testing as Acceptance Testing while keeping its route", () => {
+  it("labels the /user-testing item User Testing", () => {
     const item = navigationSections
       .flatMap((section) => section.items)
       .find((entry) => entry.url === "/user-testing");
 
-    expect(item?.title).toBe("Acceptance Testing");
+    expect(item?.title).toBe("User Testing");
     expect(
       navigationSections
         .flatMap((section) => section.items)
         .map((entry) => entry.title)
-    ).not.toContain("User Testing");
+    ).not.toContain("Acceptance Testing");
   });
 
   it("never lists the same title twice across sections", () => {

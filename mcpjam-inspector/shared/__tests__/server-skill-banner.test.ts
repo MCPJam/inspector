@@ -113,6 +113,25 @@ describe("server skill refs", () => {
     expect(slugOf([...servers].reverse())).toEqual(slugOf(servers));
   });
 
+  it("never hands a server the `local` namespace", () => {
+    // A merged catalog classifies a ref by its first segment, so a server
+    // labelled "Local" taking `local` would make every `local/<name>` ref
+    // resolve to that server — the user's own files unreachable, and the
+    // server answering to a namespace that is not its own.
+    expect(
+      assignServerSlugs([
+        { serverId: "s-a", serverLabel: "Local" },
+        { serverId: "s-b", serverLabel: "local!" },
+      ]).map((entry) => entry.serverSlug)
+    ).toEqual(["local-2", "local-3"]);
+    // Reserving it costs nothing a real label needed: everything else is
+    // untouched.
+    expect(
+      assignServerSlugs([{ serverId: "s-a", serverLabel: "Locale" }])[0]!
+        .serverSlug
+    ).toBe("locale");
+  });
+
   it("returns assignments in the caller's order", () => {
     expect(
       assignServerSlugs([

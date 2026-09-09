@@ -73,7 +73,7 @@ export function formatServerDoctorHuman(
     `Connection: ${result.connection.status} (${result.connection.detail})`,
   );
   lines.push(
-    `Counts: tools ${result.tools.length}, resources ${result.resources.length}, resourceTemplates ${result.resourceTemplates.length}, prompts ${result.prompts.length}`,
+    `Counts: tools ${result.tools.length}, resources ${result.resources.length}, resourceTemplates ${result.resourceTemplates.length}, prompts ${result.prompts.length}, skills ${result.skills.length}`,
   );
 
   if (result.status === "oauth_required" && result.probe) {

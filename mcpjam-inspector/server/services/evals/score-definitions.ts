@@ -8,15 +8,32 @@
  *
  * Three scorers, and the roles are the load-bearing part:
  *
- *   | scorerId                  | deterministic | role     | threshold |
- *   |---------------------------|---------------|----------|-----------|
- *   | `predicate:<criterionId>` | true          | gating   | 1         |
- *   | `toolCalls:match`         | true          | gating   | 1         |
- *   | `judge:goalCompletion`    | false         | ADVISORY | resolved  |
+ *   | scorerId                  | deterministic | role         | threshold |
+ *   |---------------------------|---------------|--------------|-----------|
+ *   | `predicate:<criterionId>` | true          | check policy | 1         |
+ *   | `toolCalls:match`         | true          | gating       | 1         |
+ *   | `judge:goalCompletion`    | false         | from the run | resolved  |
  *
- * `role: "advisory"` on the judge is what makes it structurally incapable of
- * gating: `sdk/src/gates.ts` only ever considers gating scorers, so an advisory
- * row cannot decide a customer's CI no matter what it scores.
+ * THE JUDGE'S ROLE COMES FROM THE RUN, NOT FROM THIS FILE. It used to be
+ * hard-coded advisory, which made a gating judge structurally powerless: a
+ * suite could earn the gate, the backend could hold the run for it, and the
+ * projection would still emit a row `sdk/src/gates.ts` never considers.
+ *
+ * It is read off `metadata.judgeVerdict.role`, which the backend stamps from
+ * the run's FROZEN config — so a run that started advisory cannot be
+ * retroactively gated by a later suite edit, and a run override that lowered
+ * the judge is honoured here exactly as it was at grading time. The decision is
+ * a closed one: the literal `"gating"` gates; absent, `"advisory"`, and
+ * anything else are advisory, because a role this build does not recognise must
+ * never be read as licence to fail a run.
+ *
+ * A gating judge's row then enters `allGatingScorersPassed` and
+ * `noGatingScoreErrors` exactly like a predicate's. Two invariants still hold
+ * STRUCTURALLY rather than by this file's choice: a judge row never carries
+ * `passed` unless it actually scored, so an errored judge cannot fail a trial
+ * on its own (the backend quarantines it instead); and the backend's finalizer
+ * applies a gating judge STRICTER-ONLY, so it can take a green away and never
+ * hand one out.
  */
 
 import {
@@ -27,20 +44,53 @@ import {
   type ResolvedScoreDefinition,
   type ScoreDefinition,
 } from "@mcpjam/sdk/contract";
-import type { Predicate, PredicateScope } from "@mcpjam/sdk/predicates";
+import {
+  checkRole,
+  stripCheckPolicy,
+  type Predicate,
+  type PredicateScope,
+} from "@mcpjam/sdk/predicates";
 
-/** Stable id of the hosted tool-call matcher projection. */
-export const HOSTED_TOOL_MATCH_SCORER_ID = "toolCalls:match";
-/** Stable id of the hosted advisory judge projection. */
-export const HOSTED_JUDGE_SCORER_ID = "judge:goalCompletion";
+/**
+ * Scorer identity lives in `shared/` so the client can mint the same ids it
+ * has to join against. Re-exported here because this module is where every
+ * server caller already looks for them.
+ */
+import {
+  hostedCriterionId,
+  HOSTED_JUDGE_SCORER_ID,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+} from "@/shared/hosted-criterion-id";
+
+export {
+  hostedCriterionId,
+  hostedPredicateScorerId,
+  HOSTED_TOOL_MATCH_SCORER_ID,
+  HOSTED_JUDGE_SCORER_ID,
+} from "@/shared/hosted-criterion-id";
 
 /**
  * Version of the hosted predicate projection — the "predicate evaluator
  * version" half of the predicate `implementationHash` inputs.
  */
 export const HOSTED_PREDICATE_EVALUATOR_VERSION = "1";
-/** Version of the hosted tool-match projection. */
-export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "1";
+/**
+ * Version of the hosted tool-match projection.
+ *
+ * BUMPED to "2" in B3b. The runner now threads the RESOLVED match options and
+ * the case polarity into this definition — before, both were simply absent from
+ * every hosted iteration, so `implementationHash` was computed over `{}` for a
+ * scorer that was in fact grading order-agnostic with partial argument
+ * matching. Fixing that changes the digest of every hosted `toolCalls:match`
+ * definition.
+ *
+ * The bump is what makes that change VERSIONED rather than silent: without it,
+ * two runs graded identically would carry different `implementationHash`es for
+ * the same `scorerVersion`, and a reader comparing them would have no way to
+ * tell a fixed projection from a changed scorer. With it, the digest moves
+ * because the version moved, which is exactly what a version is for.
+ */
+export const HOSTED_TOOL_MATCH_EVALUATOR_VERSION = "2";
 /** Version of the hosted judge projection (NOT the judge template version). */
 export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
 
@@ -53,44 +103,26 @@ export const HOSTED_JUDGE_PROJECTION_VERSION = "1";
  */
 export const HOSTED_JUDGE_OBJECTIVE_SCORE_CAP = 0.85;
 
-/**
- * The criterion identity of one hosted predicate.
- *
- * Hosted cases author predicates, not named criteria, so the id is derived
- * from the predicate's CONTENT (plus its turn scope, which is part of what is
- * being asserted) rather than from its position. Content-derived means stable
- * across an edit elsewhere in the list — `idSource: "platform"` records that
- * the platform minted it, so a report never claims an author chose this name.
- */
-export function hostedCriterionId(
-  predicate: Predicate,
-  scope?: PredicateScope
-): string {
-  const digest = canonicalDigest(
-    scope ? { predicate, scope } : { predicate }
-  ).slice(0, 12);
-  return `${predicate.type}-${digest}`;
-}
-
-/** `predicate:<criterionId>` — deterministic, gating, threshold 1. */
+/** `predicate:<criterionId>` — deterministic; role from the check policy. */
 export function hostedPredicateScoreDefinition(args: {
   predicate: Predicate;
   scope?: PredicateScope;
 }): ScoreDefinition {
   const criterionId = hostedCriterionId(args.predicate, args.scope);
+  const criterion = stripCheckPolicy(args.predicate);
   return {
     scorerId: `predicate:${criterionId}`,
     idSource: "platform",
     scorerVersion: HOSTED_PREDICATE_EVALUATOR_VERSION,
     implementationHash: canonicalDigest({
       evaluatorVersion: HOSTED_PREDICATE_EVALUATOR_VERSION,
-      criterion: args.predicate,
+      criterion,
       ...(args.scope ? { scope: args.scope } : {}),
     }),
     label: args.predicate.type,
     deterministic: true,
     passThreshold: 1,
-    role: "gating",
+    role: checkRole(args.predicate),
     ...(args.scope ? { scope: args.scope } : {}),
   };
 }
@@ -137,11 +169,24 @@ export function hostedJudgeScoreDefinition(args: {
   judgeTemplateHash?: string;
   objectiveScoreCap?: number;
   model?: string;
+  /**
+   * What the RUN's frozen config said this judge was allowed to do, read off
+   * the verdict the backend stamped. Absent, or anything but the literal
+   * `"gating"`, is advisory — the default has to fail closed, because a role
+   * this build does not recognise must never be read as licence to fail a run.
+   */
+  role?: "advisory" | "gating";
 }): ScoreDefinition {
+  const role = args.role ?? "advisory";
   return {
     scorerId: HOSTED_JUDGE_SCORER_ID,
     idSource: "platform",
     scorerVersion: HOSTED_JUDGE_PROJECTION_VERSION,
+    // `role` is DELIBERATELY not an input here. It is already an input to
+    // `definitionHash` in the contract, so a gating judge gets a distinct
+    // digest without re-fingerprinting the implementation — and an advisory
+    // judge's implementation hash stays byte-identical to every hosted run
+    // that has ever been recorded.
     implementationHash: canonicalDigest({
       judgeTemplateVersion: args.judgeTemplateVersion ?? null,
       judgeTemplateHash: args.judgeTemplateHash ?? null,
@@ -149,11 +194,14 @@ export function hostedJudgeScoreDefinition(args: {
       objectiveScoreCap:
         args.objectiveScoreCap ?? HOSTED_JUDGE_OBJECTIVE_SCORE_CAP,
     }),
-    label: "goal completion (advisory)",
+    label: `goal completion (${role})`,
     deterministic: false,
     passThreshold: args.threshold,
-    // ADVISORY, always. See the module docblock.
-    role: "advisory",
+    role,
+    // `onError` / `onSkipped` are deliberately NOT set. `resolveScoreDefinition`
+    // defaults them to `ignore` for an advisory definition and `fail` for a
+    // gating one, which is exactly what the backend finalizer reads — stating
+    // them here would be a second copy of that rule, free to drift from it.
     ...(args.model ? { model: args.model } : {}),
   };
 }
@@ -174,6 +222,8 @@ export type HostedScoreDefinitionInputs = {
     judgeTemplateHash?: string;
     objectiveScoreCap?: number;
     model?: string;
+    /** From the run's frozen config, via the stamped verdict. Fails closed. */
+    role?: "advisory" | "gating";
   };
 };
 

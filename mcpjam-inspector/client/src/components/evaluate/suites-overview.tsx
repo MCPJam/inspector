@@ -1,0 +1,457 @@
+import {
+  EvalListFilter,
+  ALL_EVAL_FILTER_VALUES,
+} from "../evals/eval-list-filter";
+import { useMemo, useState, type MouseEvent } from "react";
+import { formatDistanceToNow } from "date-fns";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { resolveHostLogoByName } from "@/lib/host-logo";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { cn } from "@/lib/utils";
+import { getEffectiveSuiteServers } from "../evals/helpers";
+import type {
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "../evals/types";
+
+interface SuitesOverviewProps {
+  overview: EvalSuiteOverviewEntry[];
+  onSelectSuite: (id: string) => void;
+  onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
+  /**
+   * Deleting from the landing row is the only path that does not require
+   * opening the suite first. The in-suite path (Edit → settings → Delete)
+   * still exists; this is the one that works for a suite you never want to
+   * look at again, including one that has never run.
+   */
+  onDelete?: (suite: EvalSuite) => void;
+  /** Per-suite: creators and project admins only. Hides the control entirely. */
+  canDeleteSuite?: (suite: EvalSuite) => boolean;
+  rerunningSuiteId?: string | null;
+  cancellingRunId?: string | null;
+  deletingSuiteId?: string | null;
+}
+
+// Shared with User Testing's scenario list so the two landings read as one
+// product. Data cells use the same pad + cols; the trailing action column is
+// extra so Run/Cancel don't steal space from Suite/Client/Server.
+const ROW_PAD = "flex w-full items-center gap-4 px-3";
+const DATA_COLS =
+  "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
+const ACTION_COL = "flex w-[7.5rem] shrink-0 items-center justify-end gap-1";
+
+export function SuitesOverview(props: SuitesOverviewProps) {
+  return (
+    <ErrorBoundary
+      fallback={
+        <div
+          className="flex flex-col items-center justify-center px-6 py-16 text-center"
+          data-testid="evals-suites-overview-error"
+        >
+          <AlertTriangle className="size-8 text-warning" />
+          <h2 className="mt-4 text-base font-semibold">
+            Couldn&apos;t show your suites
+          </h2>
+          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+            The list failed to render. Reload the page. This doesn&apos;t mean
+            anything happened to your suites.
+          </p>
+        </div>
+      }
+    >
+      <OverviewBody {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function OverviewBody({
+  overview,
+  onSelectSuite,
+  onRerun,
+  onCancelRun,
+  onDelete,
+  canDeleteSuite,
+  rerunningSuiteId = null,
+  cancellingRunId = null,
+  deletingSuiteId = null,
+}: SuitesOverviewProps) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const [serverFilter, setServerFilter] = useState(ALL_EVAL_FILTER_VALUES);
+  const clientOptions = [
+    ...new Set(overview.flatMap((entry) => suiteClientNames(entry.suite))),
+  ].sort();
+  const serverOptions = [
+    ...new Set(
+      overview.flatMap((entry) => getEffectiveSuiteServers(entry.suite)),
+    ),
+  ].sort();
+  const isFiltering =
+    clientFilter !== ALL_EVAL_FILTER_VALUES ||
+    serverFilter !== ALL_EVAL_FILTER_VALUES;
+
+  const sortedOverview = useMemo(
+    () =>
+      [...overview].sort((a, b) => {
+        const aTime = latestActivityAt(a);
+        const bTime = latestActivityAt(b);
+        return bTime - aTime;
+      }),
+    [overview],
+  );
+
+  const filteredOverview = sortedOverview.filter(
+    ({ suite }) =>
+      (clientFilter === ALL_EVAL_FILTER_VALUES ||
+        suiteClientNames(suite).includes(clientFilter)) &&
+      (serverFilter === ALL_EVAL_FILTER_VALUES ||
+        getEffectiveSuiteServers(suite).includes(serverFilter)),
+  );
+
+  if (sortedOverview.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="min-w-0" data-testid="evals-suites-overview">
+      <div
+        className={cn(ROW_PAD, "border-b border-border/40 pb-3")}
+        role="row"
+      >
+        <div className={DATA_COLS}>
+          <span
+            role="columnheader"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Suite
+          </span>
+          <div role="columnheader" aria-label="Client" className="min-w-0">
+            <EvalListFilter
+              label="Client"
+              variant="header"
+              value={clientFilter}
+              options={clientOptions}
+              onChange={setClientFilter}
+            />
+          </div>
+          <div role="columnheader" aria-label="Server" className="min-w-0">
+            <EvalListFilter
+              label="Server"
+              variant="header"
+              value={serverFilter}
+              options={serverOptions}
+              onChange={setServerFilter}
+            />
+          </div>
+          <span
+            role="columnheader"
+            className="text-right text-xs font-medium text-muted-foreground"
+          >
+            Pass rate
+          </span>
+          <span
+            role="columnheader"
+            className="text-right text-xs font-medium text-muted-foreground"
+          >
+            Last run
+          </span>
+        </div>
+        <div className={ACTION_COL}>
+          {isFiltering ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px]"
+              aria-label="Clear filters"
+              onClick={() => {
+                setClientFilter(ALL_EVAL_FILTER_VALUES);
+                setServerFilter(ALL_EVAL_FILTER_VALUES);
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <ul className="mt-1">
+        {filteredOverview.map((entry) => (
+          <li key={entry.suite._id}>
+            <div
+              className={cn(
+                ROW_PAD,
+                "rounded-md border border-transparent py-3 transition-colors",
+                "hover:border-border/60 hover:bg-muted/40",
+              )}
+            >
+              <button
+                type="button"
+                data-testid="evals-suites-overview-row"
+                data-suite-id={entry.suite._id}
+                onClick={() => onSelectSuite(entry.suite._id)}
+                className={cn(
+                  DATA_COLS,
+                  "text-left",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+              >
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {entry.suite.name || "Untitled suite"}
+                </span>
+                <ClientCell
+                  suite={entry.suite}
+                  themeMode={themeMode}
+                  className="flex"
+                />
+                <span className="min-w-0 truncate text-sm text-muted-foreground">
+                  {serverLabel(entry.suite)}
+                </span>
+                <span
+                  data-testid="evals-suites-overview-pass-rate"
+                  className="text-right text-sm tabular-nums text-foreground"
+                >
+                  {passRateLabel(entry)}
+                </span>
+                <span className="truncate text-right text-sm text-muted-foreground">
+                  {lastRunLabel(entry)}
+                </span>
+              </button>
+              <div className={ACTION_COL}>
+                <RowRunControl
+                  suite={entry.suite}
+                  latestRun={entry.latestRun}
+                  onRerun={onRerun}
+                  onCancelRun={onCancelRun}
+                  rerunningSuiteId={rerunningSuiteId}
+                  cancellingRunId={cancellingRunId}
+                />
+                {onDelete && (canDeleteSuite?.(entry.suite) ?? true) ? (
+                  <RowDeleteControl
+                    suite={entry.suite}
+                    onDelete={onDelete}
+                    deletingSuiteId={deletingSuiteId}
+                  />
+                ) : null}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {filteredOverview.length === 0 && (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          No suites match these filters.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function stopRowClick(event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function RowRunControl({
+  suite,
+  latestRun,
+  onRerun,
+  onCancelRun,
+  rerunningSuiteId,
+  cancellingRunId,
+}: {
+  suite: EvalSuite;
+  latestRun: EvalSuiteRun | null;
+  onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
+  rerunningSuiteId: string | null;
+  cancellingRunId: string | null;
+}) {
+  const suiteTitle = suite.name || "Untitled suite";
+  const hasServers = getEffectiveSuiteServers(suite).length > 0;
+  const latestRunInProgress =
+    latestRun?.status === "running" || latestRun?.status === "pending";
+  const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;
+  const isCancelling = Boolean(latestRun && cancellingRunId === latestRun._id);
+
+  if (latestRunInProgress && latestRun) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 px-2.5"
+        data-testid="evals-suites-overview-cancel"
+        aria-label={`Cancel run for ${suiteTitle}`}
+        disabled={isCancelling}
+        onClick={(event) => {
+          stopRowClick(event);
+          onCancelRun(latestRun._id);
+        }}
+      >
+        {isCancelling ? (
+          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : null}
+        Cancel
+      </Button>
+    );
+  }
+
+  if (isStarting) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 px-2.5"
+        data-testid="evals-suites-overview-running"
+        aria-label={`Running ${suiteTitle}`}
+        disabled
+      >
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-7 px-2.5"
+      data-testid="evals-suites-overview-run"
+      aria-label={hasServers ? `Run ${suiteTitle}` : "No servers configured"}
+      title={hasServers ? undefined : "No servers configured"}
+      disabled={!hasServers}
+      onClick={(event) => {
+        stopRowClick(event);
+        onRerun(suite);
+      }}
+    >
+      Run
+    </Button>
+  );
+}
+
+function RowDeleteControl({
+  suite,
+  onDelete,
+  deletingSuiteId,
+}: {
+  suite: EvalSuite;
+  onDelete: (suite: EvalSuite) => void;
+  deletingSuiteId: string | null;
+}) {
+  const isDeleting = deletingSuiteId === suite._id;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 w-7 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      data-testid="evals-suites-overview-delete"
+      aria-label={`Delete ${suite.name || "Untitled suite"}`}
+      disabled={isDeleting}
+      onClick={(event) => {
+        stopRowClick(event);
+        // Confirmation is the caller's: `EvalsTab` arms `ConfirmationDialogs`,
+        // which is the same dialog every other delete path in evals uses.
+        onDelete(suite);
+      }}
+    >
+      {isDeleting ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      ) : (
+        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+      )}
+    </Button>
+  );
+}
+
+function ClientCell({
+  suite,
+  themeMode,
+  className,
+}: {
+  suite: EvalSuite;
+  themeMode: "light" | "dark";
+  className?: string;
+}) {
+  const attachments = suite.hostAttachments ?? [];
+  if (attachments.length === 0) {
+    return (
+      <span className={cn(className, "text-sm text-muted-foreground")}>-</span>
+    );
+  }
+
+  const names = attachments.map(
+    (attachment) => attachment.hostName?.trim() || attachment.namedHostId,
+  );
+
+  return (
+    <span
+      className={cn(className, "min-w-0 items-center gap-2")}
+      title={names.join(", ")}
+    >
+      <span className="flex shrink-0 -space-x-1.5">
+        {names.map((name, index) => (
+          <span
+            key={`${name}-${index}`}
+            className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background ring-1 ring-background"
+          >
+            <img
+              src={resolveHostLogoByName(name, themeMode)}
+              alt=""
+              className="size-3.5 object-contain"
+            />
+          </span>
+        ))}
+      </span>
+      <span className="min-w-0 truncate text-sm text-foreground">
+        {names.join(", ")}
+      </span>
+    </span>
+  );
+}
+
+function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
+  return (
+    entry.latestRun?.completedAt ??
+    entry.latestRun?.createdAt ??
+    entry.suite.updatedAt ??
+    entry.suite._creationTime ??
+    0
+  );
+}
+
+function serverLabel(suite: EvalSuite): string {
+  const names = getEffectiveSuiteServers(suite);
+  if (names.length > 0) return names[0];
+  return "-";
+}
+
+function passRateLabel(entry: EvalSuiteOverviewEntry): string {
+  const rate = entry.latestRun?.summary?.passRate;
+  if (
+    typeof rate !== "number" ||
+    !Number.isFinite(rate) ||
+    !entry.latestRun?.summary?.total
+  )
+    return "—";
+  return `${Math.round(rate * 100)}%`;
+}
+
+function lastRunLabel(entry: EvalSuiteOverviewEntry): string {
+  const timestamp =
+    entry.latestRun?.completedAt ?? entry.latestRun?.createdAt ?? null;
+  if (!timestamp) return "-";
+  return formatDistanceToNow(timestamp, { addSuffix: true });
+}
+
+function suiteClientNames(suite: EvalSuite): string[] {
+  return (suite.hostAttachments ?? []).map(
+    (host) => host.hostName?.trim() || host.namedHostId,
+  );
+}

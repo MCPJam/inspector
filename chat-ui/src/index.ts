@@ -12,6 +12,18 @@ export {
   type TranscriptProps,
 } from "./read-only-transcript";
 export { MessageView, type MessageViewProps } from "./message-view";
+export {
+  MESSAGE_TIMESTAMP_METADATA_KEY,
+  MessageTimestamp,
+  formatMessageDateTime,
+  formatMessageTime,
+  getMessageTimestampMs,
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestamp,
+  withMessageTimestampMetadata,
+  type MessageTurnTiming,
+} from "./message-timestamp";
 export { PartSwitch, type PartSwitchProps } from "./part-switch";
 export { ToolCallPart, type ToolCallPartProps } from "./tool-call-part";
 export { WidgetPlaceholder } from "./widget-placeholder";
@@ -52,5 +64,14 @@ export {
 export * from "./internal/thread-helpers";
 export * from "./internal/widget-detection";
 export * from "./internal/tool-result-utils";
+// The adapter-to-renderer channel for a readable tool result. Public because
+// the inspector's own tool card reads the same field off the same parts, and
+// three hand-rolled readers with three different gates is how BB-198 stayed
+// open on one surface while another rendered it fine.
+export {
+  readTraceDisplayText,
+  isTraceDisplayMode,
+  type TraceDisplayMode,
+} from "./internal/trace-display";
 export * from "./internal/safe-external-url";
 export * from "./internal/persisted-execution-replay";

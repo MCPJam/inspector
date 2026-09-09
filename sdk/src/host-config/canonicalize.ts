@@ -32,6 +32,7 @@ import {
   PAGINATION_TRAVERSAL_MODES,
   SEP_1865_PERMISSION_FEATURES,
   TOOL_PARAM_HEADER_MIRRORING_MODES,
+  type CanonicalHostConfigBrowserToolPolicy,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
@@ -105,9 +106,11 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "cspConnectDomains",
   "cspResourceDomains",
   "resourceCacheTtl",
+  "toolResult",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
+  "safeAreaInsets",
   "widgetDisplayModeRequests",
 ] as const satisfies ReadonlyArray<keyof McpAppsCapabilities>;
 
@@ -435,6 +438,140 @@ function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
   return Array.from(seen).sort();
 }
 
+// Allowed keys on browserToolPolicy, PER MODE, and the closed set of modes.
+// Explicit construction below keeps stray keys out of the canonical JSON;
+// these sets make a stray key a loud error rather than a silent drop (the
+// `computer` precedent), and the split by mode is the `skillSelection`
+// precedent one function down.
+//
+// `toolAllowlist` is mode-specific because its only two readers both gate on
+// `mode === "allowlist"`: in any other mode it changes nothing a run does.
+// Hashing an inert field would give two configs that behave identically two
+// different identities — and dropping it silently would let an author believe
+// they had narrowed a policy that in fact permits everything. `originAllowlist`
+// is NOT mode-specific: it gates navigation in every mode.
+const BROWSER_TOOL_POLICY_BASE_KEYS = ["mode", "originAllowlist"] as const;
+const BROWSER_TOOL_POLICY_KEYS_BY_MODE: Record<string, ReadonlySet<string>> = {
+  allow_all: new Set(BROWSER_TOOL_POLICY_BASE_KEYS),
+  read_only: new Set(BROWSER_TOOL_POLICY_BASE_KEYS),
+  allowlist: new Set([...BROWSER_TOOL_POLICY_BASE_KEYS, "toolAllowlist"]),
+};
+const BROWSER_TOOL_POLICY_KEYS = new Set([
+  ...BROWSER_TOOL_POLICY_BASE_KEYS,
+  "toolAllowlist",
+]);
+const BROWSER_TOOL_POLICY_MODES = new Set([
+  "allow_all",
+  "read_only",
+  "allowlist",
+]);
+
+// Canonicalize one of the policy's allowlists as a SET of trimmed entries.
+//
+// Trimming (unlike builtInToolIds, which preserves ids verbatim) is right here
+// because these are matched by VALUE at runtime: `"example.com "` never
+// matches any origin, so a stored-verbatim entry is a rule that silently does
+// nothing. Normalizing it is the difference between an allowlist that works
+// and one that reads as though it does. Absent OR empty collapses to undefined
+// so the key is dropped, keeping "no allowlist" a single canonical shape.
+function canonicalizeBrowserAllowlist(
+  value: unknown,
+  field: string
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`hostConfigV2: browserToolPolicy.${field} must be a string[]`);
+  }
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${field} entries must be strings`
+      );
+    }
+    const trimmed = entry.trim();
+    if (trimmed === "") {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${field} entries must be non-empty strings`
+      );
+    }
+    seen.add(trimmed);
+  }
+  if (seen.size === 0) return undefined;
+  return Array.from(seen).sort();
+}
+
+// Canonicalize the unattended browser tool policy.
+//
+// This field is HASHED, which is the whole point of teaching the canonicalizer
+// about it: a canonicalizer that does not know a field drops it, and a dropped
+// field means editing the policy leaves the content hash unchanged — so the
+// edited config dedupes onto the old row, and a frozen/pinned config keeps the
+// old policy forever, with nothing anywhere saying so.
+//
+// Order does not survive (both allowlists are sets), key order does not
+// survive (the shape is rebuilt explicitly), but the VALUES do: two policies
+// that permit different things must hash differently.
+function canonicalizeBrowserToolPolicy(
+  value: unknown
+): CanonicalHostConfigBrowserToolPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: browserToolPolicy must be a plain object or null"
+    );
+  }
+  for (const key of Object.keys(value)) {
+    if (!BROWSER_TOOL_POLICY_KEYS.has(key)) {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy has unknown key "${key}"`
+      );
+    }
+  }
+  const mode = value.mode;
+  if (typeof mode !== "string" || !BROWSER_TOOL_POLICY_MODES.has(mode)) {
+    throw new Error(
+      `hostConfigV2: browserToolPolicy.mode must be one of ${Array.from(
+        BROWSER_TOOL_POLICY_MODES
+      )
+        .map((m) => `"${m}"`)
+        .join(", ")}`
+    );
+  }
+  const allowedForMode = BROWSER_TOOL_POLICY_KEYS_BY_MODE[mode]!;
+  for (const key of Object.keys(value)) {
+    if (!allowedForMode.has(key)) {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${key} is only meaningful with mode ` +
+          `"allowlist", not "${mode}"`
+      );
+    }
+  }
+  const originAllowlist = canonicalizeBrowserAllowlist(
+    value.originAllowlist,
+    "originAllowlist"
+  );
+  const toolAllowlist = canonicalizeBrowserAllowlist(
+    value.toolAllowlist,
+    "toolAllowlist"
+  );
+  // An `allowlist` mode naming nothing would mean "everything" — the opposite
+  // of what an allowlist says. Refuse it here rather than let a run inherit
+  // the widest possible policy from an empty one. (The inspector's parser
+  // reaches the same verdict at read time; this stops it being written.)
+  if (mode === "allowlist" && !originAllowlist && !toolAllowlist) {
+    throw new Error(
+      "hostConfigV2: browserToolPolicy mode \"allowlist\" needs a non-empty " +
+        "originAllowlist or toolAllowlist"
+    );
+  }
+  return {
+    mode: mode as CanonicalHostConfigBrowserToolPolicy["mode"],
+    ...(originAllowlist ? { originAllowlist } : {}),
+    ...(toolAllowlist ? { toolAllowlist } : {}),
+  };
+}
+
 // Allowed keys per skillSelection mode. Explicit construction below keeps
 // stray keys out of the canonical JSON; these sets make a stray key a loud
 // error instead of a silent drop (the `computer` precedent).
@@ -754,6 +891,22 @@ function canonicalizeMcpProfile(
     out.toolParamHeaderMirroring = input.toolParamHeaderMirroring;
   }
 
+  // Nested boolean record like `toolListChanged` below, one leaf per era: a
+  // host can cancel on 2025 and not on 2026. Absent per leaf is the conforming
+  // answer, so only an explicit `false` is emitted, and a malformed value is
+  // rejected rather than coerced — the backend validates this field the same
+  // way, and a coerced value would hash differently on the two sides.
+  if (input.toolCallCancellation !== undefined) {
+    const cancellation = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolCallCancellation",
+      input.toolCallCancellation,
+      ["legacy", "modern"]
+    );
+    if (Object.keys(cancellation).length > 0) {
+      out.toolCallCancellation = cancellation;
+    }
+  }
+
   // Client-conformance knobs (siblings of toolParamHeaderMirroring). Same
   // omit-when-absent discipline: absent → spec-conforming, hashes stable.
   // One validation loop; the top-level re-key below sorts every emitted
@@ -843,6 +996,21 @@ function canonicalizeMcpProfile(
         )[k];
       }
       out.initialize = sortedInit;
+    }
+  }
+
+  // Sibling to the enum-typed conformance knobs above, but a nested boolean
+  // record (two independently-measured facts) rather than a mode string.
+  // Same omit-when-absent discipline: absent -> spec-conforming, hashes
+  // stable.
+  if (input.toolListChanged !== undefined) {
+    const listChanged = canonicalBooleanCapabilityRecord(
+      "mcpProfile.toolListChanged",
+      input.toolListChanged,
+      ["listens", "refetches"]
+    );
+    if (Object.keys(listChanged).length > 0) {
+      out.toolListChanged = listChanged;
     }
   }
 
@@ -1008,6 +1176,21 @@ function canonicalizeMcpProfile(
           )[k];
         }
         sandboxOut.permissions = sortedPerms;
+      }
+
+      if (
+        (sandboxIn as { browserStorage?: unknown }).browserStorage !== undefined
+      ) {
+        const browserStorage = canonicalBooleanCapabilityRecord(
+          "mcpProfile.apps.sandbox.browserStorage",
+          (sandboxIn as { browserStorage?: unknown }).browserStorage,
+          ["localStorage", "sessionStorage", "indexedDB"]
+        );
+        if (Object.keys(browserStorage).length > 0) {
+          (
+            sandboxOut as { browserStorage?: Record<string, boolean> }
+          ).browserStorage = browserStorage;
+        }
       }
 
       if (
@@ -1235,6 +1418,52 @@ function canonicalizeMcpProfile(
           );
           if (Object.keys(domains).length > 0) {
             mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
+        } else if (key === "toolResult") {
+          // Two levels: a flat `structuredContent` boolean and a nested
+          // `content` record of ContentBlock kinds. Both collapse to absent
+          // when empty so a probe that measured nothing hashes identically
+          // to a config that never mentioned the field.
+          if (!isPlainObject(value)) {
+            throw new Error(
+              "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult must be a plain object"
+            );
+          }
+          for (const k of Object.keys(value)) {
+            if (k !== "structuredContent" && k !== "content") {
+              throw new Error(
+                `hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult has unknown key "${k}"`
+              );
+            }
+          }
+          const toolResultOut: NonNullable<McpAppsCapabilities["toolResult"]> =
+            {};
+          if (value.structuredContent !== undefined) {
+            if (typeof value.structuredContent !== "boolean") {
+              throw new Error(
+                "hostConfigV2: mcpProfile.apps.mcpAppsOverrides.toolResult.structuredContent must be a boolean"
+              );
+            }
+            toolResultOut.structuredContent = value.structuredContent;
+          }
+          if (value.content !== undefined) {
+            const content = canonicalBooleanCapabilityRecord(
+              "mcpProfile.apps.mcpAppsOverrides.toolResult.content",
+              value.content,
+              ["text", "image", "audio", "resource", "resourceLink"]
+            );
+            if (Object.keys(content).length > 0) {
+              toolResultOut.content = content;
+            }
+          }
+          if (Object.keys(toolResultOut).length > 0) {
+            const sortedToolResult = {} as typeof toolResultOut;
+            for (const k of Object.keys(toolResultOut).sort()) {
+              (sortedToolResult as Record<string, unknown>)[k] = (
+                toolResultOut as Record<string, unknown>
+              )[k];
+            }
+            mcpAppsOverridesOut.toolResult = sortedToolResult;
           }
         } else if (key === "widgetDisplayModeRequests") {
           if (
@@ -2298,6 +2527,10 @@ export function canonicalizeHostConfigV2(
     // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
+    // What an unattended run's browser may do. Absent ⇒ key omitted, so every
+    // row written before the policy existed hashes byte-identically; a
+    // declared policy is part of the identity, so editing it MOVES the hash.
+    browserToolPolicy: canonicalizeBrowserToolPolicy(input.browserToolPolicy),
     // Skill selection. all-visible collapses to absent (single identity per
     // behavior); explicit — including explicit-empty — survives.
     skillSelection: canonicalizeSkillSelection(input.skillSelection),

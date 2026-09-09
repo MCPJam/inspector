@@ -7,6 +7,7 @@ import {
   runtimeServersAreOverridden,
   runtimeSkills,
   toEnvironmentPreview,
+  turnSkillProvenance,
   translateEnvironmentRuntimeError,
   type ResolvedEnvironmentRuntime,
 } from "../runtime";
@@ -385,5 +386,231 @@ describe("toEnvironmentPreview", () => {
     );
     expect(emulated.capabilities.skillDelivery).toBe("emulated");
     expect(emulated.capabilities.hasComputer).toBe(false);
+  });
+});
+
+describe("turnSkillProvenance", () => {
+  // What a turn RECORDS about the configuration it ran with. Separate from
+  // `runtimeSkills`, which is what reaches the model — a recording change that
+  // also changed delivery would be impossible to review.
+
+  const PROVENANCED: ResolvedEnvironmentRuntime = {
+    ...SPEC,
+    skills: [
+      {
+        ...SPEC.skills![0],
+        provenance: {
+          skillId: "sk_1",
+          projectSkillVersionNumber: 3,
+          versionPinned: true,
+          name: "pdf-processing",
+          contentHash: "h1",
+          sharing: "project",
+          channels: ["host", "environment"],
+        },
+      },
+      {
+        ...SPEC.skills![1],
+        provenance: {
+          name: "release-notes",
+          modelRef: "notes/release-notes",
+          contentHash: "h2",
+          sharing: "project",
+          channels: ["plugin"],
+        },
+      },
+    ],
+  };
+
+  it("echoes the backend's rows verbatim, with the environment binding", () => {
+    expect(turnSkillProvenance(PROVENANCED, { delivery: "emulated" })).toEqual({
+      environmentAtTurn: {
+        environmentId: "env_1",
+        name: "Staging",
+        revision: 7,
+      },
+      skillsAtTurn: [
+        PROVENANCED.skills![0].provenance,
+        PROVENANCED.skills![1].provenance,
+      ],
+    });
+  });
+
+  it("never carries skill CONTENT — provenance is metadata", () => {
+    const out = turnSkillProvenance(PROVENANCED, { delivery: "emulated" })!;
+    expect(JSON.stringify(out)).not.toContain("SECRET INSTRUCTIONS");
+  });
+
+  it("returns undefined without an environment — nothing to record", () => {
+    expect(
+      turnSkillProvenance(undefined, { delivery: "emulated" })
+    ).toBeUndefined();
+    expect(
+      turnSkillProvenance(null, { delivery: "emulated" })
+    ).toBeUndefined();
+    expect(
+      turnSkillProvenance(
+        { environmentRef: undefined as never, skills: PROVENANCED.skills },
+        { delivery: "emulated" }
+      )
+    ).toBeUndefined();
+  });
+
+  it("rejects an EMPTY environment name rather than recording a blank one", () => {
+    // `readScenarioEnvironment` normalizes a missing `environmentRef.name` to
+    // `""`. Recording that would export `mcpjam.environment.name: ""`, which
+    // reads as a real environment called nothing instead of as absent
+    // provenance.
+    expect(
+      turnSkillProvenance(
+        {
+          environmentRef: { ...SPEC.environmentRef, name: "" },
+          skills: PROVENANCED.skills,
+        },
+        { delivery: "emulated" }
+      )
+    ).toBeUndefined();
+  });
+
+  const CAPTURE = {
+    serverSkillId: "ss_1",
+    versionId: "ssv_1",
+    serverId: "srv_1",
+    serverSlug: "acme",
+    serverLabel: "Acme",
+    ref: "acme/refunds",
+    skillUri: "skill://acme/refunds/SKILL.md",
+    name: "refunds",
+    description: "Handle refunds",
+    content: "CAPTURED SECRET",
+    contentSha256: "raw-digest",
+    versionHash: "vh_1",
+    versionNumber: 2,
+    capturedAt: 1,
+    files: [],
+  };
+
+  it("records CAPTURED server skills on an EMULATED turn, which delivers them", () => {
+    // `getEffectiveSkillToolsAndPrompt` mints a tool per entry of
+    // `allEffectiveSkills`, captures included and addressed by their `ref`.
+    // They really do reach the model here, so omitting them would leave a turn
+    // claiming to list what it ran while dropping every capture that ran.
+    const serverProvenance = {
+      serverSkillId: "ss_1",
+      serverSkillVersionId: "ssv_1",
+      serverSkillVersionNumber: 2,
+      name: "refunds",
+      modelRef: "acme/refunds",
+      contentHash: "h_capture",
+      sharing: "project",
+      channels: ["mcp-server"],
+    };
+    const out = turnSkillProvenance(
+      {
+        environmentRef: SPEC.environmentRef,
+        skills: PROVENANCED.skills,
+        serverSkills: [{ ...CAPTURE, provenance: serverProvenance }],
+      },
+      { delivery: "emulated" }
+    )!;
+
+    // Authored entries first, captures appended — the order the backend's own
+    // run snapshots pin them in.
+    expect(out.skillsAtTurn).toEqual([
+      PROVENANCED.skills![0].provenance,
+      PROVENANCED.skills![1].provenance,
+      serverProvenance,
+    ]);
+    expect(JSON.stringify(out)).not.toContain("CAPTURED SECRET");
+  });
+
+  it("does NOT record captures on a HARNESS turn, which cannot deliver them", () => {
+    // THE LIE THIS PREVENTS. A harness adapter receives only
+    // `runtimeSkills(spec)` — `spec.skills` alone. A capture's runtime address
+    // is `<serverSlug>/<name>`, and `isValidSkillName` rejects a name with a
+    // `/`, so the adapter would skip every one as `invalid-skill-name`.
+    // Recording it anyway would make the trace assert a skill the model never
+    // received, which is the one thing a provenance record must not do.
+    const out = turnSkillProvenance(
+      {
+        environmentRef: SPEC.environmentRef,
+        skills: PROVENANCED.skills,
+        serverSkills: [
+          { ...CAPTURE, provenance: { name: "refunds", contentHash: "h_c" } },
+        ],
+      },
+      { delivery: "harness" }
+    )!;
+
+    expect(out.skillsAtTurn).toEqual([
+      PROVENANCED.skills![0].provenance,
+      PROVENANCED.skills![1].provenance,
+    ]);
+    // The environment binding is still recorded — that part IS true.
+    expect(out.environmentAtTurn).toEqual(SPEC.environmentRef);
+  });
+
+  it("records NOTHING when the harness has no skill channel at all", () => {
+    // Codex today: the skills resolved and nothing delivered them. An empty
+    // list is the honest answer — the same lie one level up from captures.
+    const out = turnSkillProvenance(
+      {
+        environmentRef: SPEC.environmentRef,
+        skills: PROVENANCED.skills,
+        serverSkills: [
+          { ...CAPTURE, provenance: { name: "refunds", contentHash: "h_c" } },
+        ],
+      },
+      { delivery: "unsupported" }
+    )!;
+
+    expect(out.skillsAtTurn).toEqual([]);
+    expect(out.environmentAtTurn).toEqual(SPEC.environmentRef);
+  });
+
+  it("skips a captured skill the backend attached no provenance to", () => {
+    const out = turnSkillProvenance(
+      {
+        environmentRef: SPEC.environmentRef,
+        skills: [],
+        serverSkills: [CAPTURE],
+      },
+      { delivery: "emulated" }
+    )!;
+    expect(out.skillsAtTurn).toEqual([]);
+  });
+
+  it("returns an EMPTY array for an environment that resolves no skills", () => {
+    // "Ran with none" is a real answer and a different one from "unknown".
+    expect(
+      turnSkillProvenance(
+        { environmentRef: SPEC.environmentRef, skills: [] },
+        { delivery: "emulated" }
+      )
+    ).toEqual({
+      environmentAtTurn: SPEC.environmentRef,
+      skillsAtTurn: [],
+    });
+  });
+
+  it("skips entries the backend did not attach provenance to", () => {
+    // Deploy skew: an older backend omits the field. Recording only what this
+    // side can prove beats assembling a partial row from the other fields —
+    // `modelRef` and `versionPinned` appear nowhere else in this DTO, which is
+    // exactly how provenance goes quietly missing.
+    const mixed = turnSkillProvenance(
+      {
+        environmentRef: SPEC.environmentRef,
+        skills: [SPEC.skills![0], PROVENANCED.skills![1]],
+      },
+      { delivery: "emulated" }
+    )!;
+    expect(mixed.skillsAtTurn).toEqual([PROVENANCED.skills![1].provenance]);
+  });
+
+  it("skills delivery is untouched by any of this", () => {
+    // The invariant that makes the change reviewable: same flat list with and
+    // without provenance rows.
+    expect(runtimeSkills(PROVENANCED)).toEqual(runtimeSkills(SPEC));
   });
 });

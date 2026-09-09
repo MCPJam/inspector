@@ -1,4 +1,4 @@
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { resolveToolUiResourceUri } from "../widget-runtime/tool-ui-resource.js";
 import {
   scanWidgetMeta,
   scanWidgetPermissionNames,
@@ -25,7 +25,7 @@ export type ReadResourceFn = (uri: string) => Promise<ReadResourceResult>;
 function widgetResourceUri(
   meta: Record<string, unknown> | undefined
 ): string | undefined {
-  const mcpApps = getToolUiResourceUri({ _meta: meta });
+  const mcpApps = resolveToolUiResourceUri(meta);
   if (mcpApps) return mcpApps;
   const openai = meta?.["openai/outputTemplate"];
   return typeof openai === "string" && openai.length > 0 ? openai : undefined;

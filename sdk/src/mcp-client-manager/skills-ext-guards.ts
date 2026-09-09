@@ -145,22 +145,55 @@ export function isMCPSkillsWireError(
   return error instanceof MCPSkillsWireError;
 }
 
+/**
+ * Flattens one zod issue, DESCENDING into union alternatives.
+ *
+ * A `z.union` reports its own failure as a single `invalid_union` issue whose
+ * message is the useless "Invalid input", with the real per-field diagnoses
+ * buried in a nested `errors` array-of-arrays — one entry per alternative. A
+ * formatter that reads only the top level therefore turns
+ * "resources.0.digest is missing" into "resources: Invalid input", which
+ * defeats the entire reason these guards exist: naming WHICH field of WHICH
+ * entry a server got wrong.
+ *
+ * Sub-issue paths are relative to the union's input, so the parent path is
+ * prepended to rebuild the full address.
+ */
+function flattenIssue(issue: unknown, parentPath: string[]): string[] {
+  const rawPath = Array.isArray((issue as { path?: unknown }).path)
+    ? (issue as { path: unknown[] }).path.map((segment) =>
+        safeText(String(segment))
+      )
+    : [];
+  const path = [...parentPath, ...rawPath];
+
+  const alternatives = (issue as { errors?: unknown }).errors;
+  if (Array.isArray(alternatives)) {
+    const nested = alternatives
+      .flatMap((alternative) =>
+        Array.isArray(alternative)
+          ? alternative.flatMap((sub) => flattenIssue(sub, path))
+          : []
+      )
+      .filter((text) => text.length > 0);
+    // Only when an alternative actually explained something. An empty union
+    // report still has to say the field failed rather than vanish.
+    if (nested.length > 0) return nested;
+  }
+
+  const message = safeText(
+    String((issue as { message?: unknown }).message ?? "invalid")
+  );
+  const joined = path.join(".");
+  return [joined ? `${joined}: ${message}` : message];
+}
+
 function issuesOf(error: unknown): string[] {
   const zodIssues = (error as { issues?: unknown })?.issues;
   if (!Array.isArray(zodIssues)) {
     return [error instanceof Error ? error.message : String(error)];
   }
-  return zodIssues.map((issue) => {
-    const path = Array.isArray((issue as { path?: unknown }).path)
-      ? (issue as { path: unknown[] }).path
-          .map((segment) => safeText(String(segment)))
-          .join(".")
-      : "";
-    const message = safeText(
-      String((issue as { message?: unknown }).message ?? "invalid")
-    );
-    return path ? `${path}: ${message}` : message;
-  });
+  return zodIssues.flatMap((issue) => flattenIssue(issue, []));
 }
 
 /** Validates a `skills/list` result, preserving SEP-2549 cache attributes. */

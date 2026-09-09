@@ -83,7 +83,9 @@ mcpjam oauth metadata --url https://auth.example.com/.well-known/oauth-authoriza
 
 ### `oauth proxy`
 
-Send an arbitrary HTTP request through the OAuth proxy with hosted-mode safety checks. Useful for testing individual OAuth endpoints (registration, token, etc.) without building raw HTTP requests.
+Send an arbitrary HTTP request through the SSRF-hardened OAuth proxy. Useful for testing individual OAuth endpoints (registration, token, etc.) without building raw HTTP requests.
+
+Private targets — loopback, your LAN, or a hostname that resolves to one — are reachable by default, since the CLI runs on your machine. Add `--https-only` to apply the hosted app's stricter policy instead. Neither mode will dial a link-local or cloud-metadata address, and neither sends a plaintext request to a public host.
 
 ```bash
 # Test a DCR registration

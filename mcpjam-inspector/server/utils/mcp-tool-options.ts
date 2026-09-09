@@ -1,7 +1,7 @@
 /**
  * ONE builder for `getToolsForAiSdk`'s host-derived options.
  *
- * `MCPClientManager.getToolsForAiSdk(serverIds?, options = {})` takes four
+ * `MCPClientManager.getToolsForAiSdk(serverIds?, options = {})` takes six
  * host-derived inputs and, by its own docblock, refuses to resolve any of them
  * itself ("the mode is resolved by the CALLER — this class must not read host
  * configs"). Every execution surface therefore has to build the same object,
@@ -33,7 +33,14 @@
  *  - `includeAppOnly` when true (the caller resolves `respectToolVisibility
  *    === false` into it — an explicit opt-out of SEP-1865 filtering);
  *  - `modelVisibleMcpToolResults` when defined (a policy object, no default);
- *  - `tasks` when defined (absent === tasks off; see `task-seam.ts`).
+ *  - `tasks` when defined (absent === tasks off; see `task-seam.ts`);
+ *  - `toolCallCancellation` when defined — INCLUDING the empty record. Unlike
+ *    every field above it, absent and empty differ here: the manager reads
+ *    `override ?? config?.toolCallCancellation`, so absent falls through to the
+ *    connection's connect-time copy while `{}` overrides it with "no era is
+ *    suppressed". A caller that resolved a host config says so with `{}`.
+ *  - `toolDescriptionOverrides` when defined and non-empty (a description-
+ *    experiment rewrite; absent and `{}` are both "no override").
  */
 import type { MCPClientManager, ToolTaskSeamOptions } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
@@ -62,6 +69,22 @@ export interface McpToolOptionsInput {
   /** Resolved task seam, or absent for tasks-off. Never re-derived here: the
    *  surface owns its own row in the policy matrix (`task-seam.ts`). */
   tasks?: ToolTaskSeamOptions | undefined;
+  /**
+   * The host's tool-cancellation setting, resolved for THIS turn.
+   *
+   * Carried per turn rather than read off the connection: the connection's
+   * copy is captured when it connects, so a setting saved mid-session does
+   * not reach it until something reconnects — which reads as the toggle
+   * doing nothing.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean } | undefined;
+  /**
+   * Per-tool description rewrites for a description-experiment REWRITE arm.
+   * Included only when defined and non-empty — an empty record is the same
+   * instruction as absent (no override) and must not take the options
+   * overload on its own.
+   */
+  toolDescriptionOverrides?: Readonly<Record<string, string>> | undefined;
 }
 
 /**
@@ -78,5 +101,14 @@ export function mcpToolOptionsFor(
     options.modelVisibleMcpToolResults = input.modelVisibleMcpToolResults;
   }
   if (input.tasks !== undefined) options.tasks = input.tasks;
+  if (input.toolCallCancellation !== undefined) {
+    options.toolCallCancellation = input.toolCallCancellation;
+  }
+  if (
+    input.toolDescriptionOverrides !== undefined &&
+    Object.keys(input.toolDescriptionOverrides).length > 0
+  ) {
+    options.toolDescriptionOverrides = input.toolDescriptionOverrides;
+  }
   return Object.keys(options).length > 0 ? options : undefined;
 }

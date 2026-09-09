@@ -191,6 +191,7 @@ function baseParams(
     harnessMcpProxy: { plane: "local-mcp" } as never,
     acc: {
       messageHistory: [],
+      traceMessageHistory: [],
       capturedSpans: [],
       accumulatedUsage: {},
       toolsCalledByPrompt: [],

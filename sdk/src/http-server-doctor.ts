@@ -212,6 +212,15 @@ export async function collectConnectedHttpServerDoctorState(
     resourcesResult,
     promptsResult,
     resourceTemplatesResult,
+    // This doctor drives a bare client rather than an MCPClientManager, and the
+    // verified skills read path is manager-shaped. Reporting `skipped` states
+    // that honestly instead of implying the server serves none.
+    skillsResult: {
+      skills: [],
+      check: skippedCheck(
+        "Skills over MCP is not inspected on this surface."
+      ),
+    },
   });
 }
 
@@ -228,7 +237,8 @@ async function collectTools(
         withRetry(
           () =>
             client.listTools(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -285,7 +295,8 @@ async function collectResources(
         withRetry(
           () =>
             client.listResources(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -342,7 +353,8 @@ async function collectPrompts(
         withRetry(
           () =>
             client.listPrompts(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -386,7 +398,8 @@ async function collectResourceTemplates(
         withRetry(
           () =>
             client.listResourceTemplates(
-              cursor ? { cursor } : undefined,
+              // Presence, not truthiness: `""` is a valid continuation cursor.
+              cursor !== undefined ? { cursor } : undefined,
               withTimeout(options.timeout)
             ),
           options.retryPolicy
@@ -620,7 +633,21 @@ async function drainPaginatedList<TItem, TPage extends { nextCursor?: string }>(
     items.push(...selectItems(page));
     pages += 1;
 
-    if (!page.nextCursor) {
+    // ABSENCE ends the walk, not emptiness. MCP 2026-07-28
+    // `server/utilities/pagination` states that a client "MUST NOT" decide
+    // anything from a cursor's value beyond whether a non-null one was
+    // provided, and that "an empty string is a valid cursor and thus MUST NOT
+    // be treated as the end of results". A NON-STRING `nextCursor` is not a
+    // cursor at all and still ends the walk.
+    //
+    // There is deliberately NO repeated-cursor guard: comparing two cursors
+    // for equality is itself a determination based on cursor value, and a
+    // server may legally hand back one constant token — `""` included — for
+    // every page. `MAX_PAGINATION_PAGES` is the bound. It costs the same worst
+    // case a distinct-cursor server would produce anyway, so an equality check
+    // would buy almost nothing and break the empty-string case this module is
+    // being fixed for.
+    if (typeof page.nextCursor !== "string") {
       return items;
     }
 

@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import type { HostListItem } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 interface HostCardProps {
   host: HostListItem;
@@ -37,7 +38,7 @@ export function HostCard({
     <CardInteractive className="flex flex-col gap-4" onClick={onEdit}>
       <div className="flex items-start justify-between gap-2">
         <h3 className="min-w-0 flex-1 truncate text-lg font-bold tracking-tight">
-          {host.name}
+          {clientDisplayName(host)}
         </h3>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

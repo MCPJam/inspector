@@ -1,0 +1,484 @@
+import { isAssertStep, isToolCallStep } from "@/shared/steps";
+import {
+  formatDurationMs,
+  formatCompactNumber,
+} from "../evals/metric-strip-data";
+import {
+  getEffectiveSuiteServers,
+  iterationLatencyP50,
+  iterationLatencyP95,
+  runContextLabel,
+  runHostLabel,
+} from "../evals/helpers";
+import { computeRunEffectiveStats } from "../evals/suite-runs-list";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { RUN_ORIGIN_META, resolveRunOrigin } from "@/lib/evals/run-origin";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../evals/types";
+
+export const SUITE_RUN_HISTORY_PAGE_SIZE = 8;
+
+export type SuiteIdentityCounts = {
+  caseCount: number;
+  sourceCount: number;
+  serverCount: number;
+};
+
+export function suiteIdentityCounts(
+  suite: {
+    environment?: { servers?: string[] };
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+  },
+  cases: readonly { _id: string }[],
+  runs: readonly Pick<EvalSuiteRun, "source">[],
+): SuiteIdentityCounts {
+  const sources = new Set(runs.map((run) => run.source ?? "ui"));
+  return {
+    caseCount: cases.length,
+    sourceCount: sources.size,
+    serverCount: getEffectiveSuiteServers(suite).length,
+  };
+}
+
+export function formatSuiteIdentitySubline(
+  counts: SuiteIdentityCounts,
+): string {
+  return [
+    `${counts.caseCount} ${counts.caseCount === 1 ? "case" : "cases"}`,
+    `${counts.sourceCount} ${counts.sourceCount === 1 ? "source" : "sources"}`,
+    `${counts.serverCount} ${counts.serverCount === 1 ? "server" : "servers"}`,
+  ].join(" · ");
+}
+
+export type RunHistoryVerdict =
+  | "ship"
+  | "hold"
+  | "passed"
+  | "failed"
+  | "running"
+  | "pending"
+  | "cancelled";
+
+export type SuiteRunHistoryRow = {
+  runId: string;
+  runLabel?: string;
+  date: number;
+  dateLabel: string;
+  /**
+   * The run's LIFECYCLE status, carried through so a row can tell whether it
+   * has a decision to read at all. Not a verdict — see `statusMeta` in
+   * `project-runs-table.tsx` for the same distinction.
+   */
+  status: EvalSuiteRun["status"];
+  /**
+   * A marker for this row as currently observed. When it changes, a cached
+   * decision summary for the run is describing an older reading (asynchronous
+   * judge fanout lands after a run is already terminal).
+   */
+  revision: string;
+  /**
+   * LOCALLY DERIVED, and the trap this whole type sits next to: `verdict` /
+   * `verdictLabel` / `passRate` are computed from iteration rows, which is a
+   * second reading of a run that the run itself already decided. Canonical
+   * summaries OVERRIDE these wherever one has been fetched; they remain only
+   * as the pre-canonical fallback for rows nothing has read yet.
+   */
+  verdict: RunHistoryVerdict;
+  verdictLabel: string;
+  passRate: number | null;
+  platform: string;
+  source: NonNullable<EvalSuiteRun["source"]>;
+  client: string | null;
+  models: string[];
+  latencyMs: number | null;
+  tokens: number | null;
+  toolCalls: number | null;
+};
+
+export type SuiteRunHistoryAggregates = {
+  runCount: number;
+  totalTokens: number | null;
+  latencyP50: number | null;
+  latencyP95: number | null;
+  tokensPerRun: number | null;
+  toolCallsPerRun: number | null;
+};
+
+export type SuiteRunHistoryFilters = {
+  verdict: "all" | RunHistoryVerdict;
+  client: string | "all";
+  model: string | "all";
+};
+
+export type SuiteRunHistoryFilterOptions = {
+  verdicts: RunHistoryVerdict[];
+  clients: string[];
+  models: string[];
+};
+
+/**
+ * When a run happened, for ordering and display. `createdAt` is typed as
+ * required, but rows from older deployments have reached this through
+ * `_creationTime` alone, so every reader goes through this fallback chain
+ * rather than subtracting a possibly-absent field.
+ */
+export function runTimestamp(run: EvalSuiteRun): number {
+  return run.createdAt ?? run._creationTime ?? run.completedAt ?? 0;
+}
+
+export function formatSuiteRunDate(timestamp: number): string {
+  if (!timestamp) return "-";
+  const date = new Date(timestamp);
+  const now = new Date();
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+function passRateThreshold(
+  run: EvalSuiteRun,
+  suite: Pick<EvalSuite, "defaultPassCriteria">,
+): number | null {
+  return (
+    run.passCriteria?.minimumPassRate ??
+    suite.defaultPassCriteria?.minimumPassRate ??
+    null
+  );
+}
+
+export function resolveRunHistoryVerdict(
+  run: EvalSuiteRun,
+  passRate: number | null,
+  threshold: number | null,
+): { verdict: RunHistoryVerdict; label: string } {
+  if (run.status === "running") {
+    return { verdict: "running", label: "Running" };
+  }
+  if (run.status === "pending") {
+    return { verdict: "pending", label: "Pending" };
+  }
+  // Held for its judge: execution is over, the verdict is not. The pass rate
+  // below is pre-judge, so reading Ship or Hold off it would publish a
+  // decision the judge may still reverse.
+  if (run.status === "grading") {
+    return { verdict: "running", label: "Grading" };
+  }
+  if (run.status === "cancelled" || run.result === "cancelled") {
+    return { verdict: "cancelled", label: "Cancelled" };
+  }
+  if (threshold != null && passRate != null) {
+    return passRate >= threshold
+      ? { verdict: "ship", label: "Ship" }
+      : { verdict: "hold", label: "Hold" };
+  }
+  if (run.result === "passed") {
+    return { verdict: "passed", label: "Passed" };
+  }
+  if (run.result === "failed") {
+    return { verdict: "failed", label: "Failed" };
+  }
+  if (passRate != null) {
+    return passRate === 100
+      ? { verdict: "passed", label: "Passed" }
+      : { verdict: "failed", label: "Failed" };
+  }
+  return { verdict: "pending", label: "Pending" };
+}
+
+export function runPlatformLabel(run: EvalSuiteRun): string {
+  // The same resolution and the same table the badge and the filter chips use.
+  // This was a fourth hand-copied label list, and it could only ever say `API`
+  // for a CLI run, a GitHub Actions job or an MCP agent — the three things
+  // `source` cannot tell apart.
+  const origin = resolveRunOrigin(run);
+  const meta = RUN_ORIGIN_META[origin ?? "ui"] ?? RUN_ORIGIN_META.ui;
+  const ciId = run.ciMetadata?.pipelineId ?? run.ciMetadata?.jobId;
+  return ciId ? `${meta.label} #${ciId}` : meta.label;
+}
+
+function runClientLabel(
+  run: EvalSuiteRun,
+  hostNamesById: Map<string, string | null> | undefined,
+  projectEnvironmentsEnabled: boolean,
+): string | null {
+  if (projectEnvironmentsEnabled) {
+    return runContextLabel(run, hostNamesById);
+  }
+  return runHostLabel(run, hostNamesById);
+}
+
+function runModels(iterations: readonly EvalIteration[]): string[] {
+  const models = new Set<string>();
+  for (const iteration of iterations) {
+    const model = iteration.testCaseSnapshot?.model?.trim();
+    if (model) models.add(model);
+  }
+  return [...models];
+}
+
+function sumTokens(iterations: readonly EvalIteration[]): number {
+  return iterations.reduce(
+    (sum, iteration) => sum + (iteration.tokensUsed || 0),
+    0,
+  );
+}
+
+function sumToolCalls(iterations: readonly EvalIteration[]): number {
+  return iterations.reduce(
+    (sum, iteration) => sum + (iteration.actualToolCalls?.length ?? 0),
+    0,
+  );
+}
+
+export function buildSuiteRunHistoryRows(
+  runs: readonly EvalSuiteRun[],
+  allIterations: readonly EvalIteration[],
+  suite: Pick<EvalSuite, "defaultPassCriteria">,
+  hostNamesById: Map<string, string | null> | undefined,
+  projectEnvironmentsEnabled: boolean,
+): SuiteRunHistoryRow[] {
+  const iterationsByRun = new Map<string, EvalIteration[]>();
+  for (const iteration of allIterations) {
+    if (!iteration.suiteRunId) continue;
+    const list = iterationsByRun.get(iteration.suiteRunId);
+    if (list) list.push(iteration);
+    else iterationsByRun.set(iteration.suiteRunId, [iteration]);
+  }
+
+  return [...runs]
+    .sort(
+      (a, b) =>
+        runTimestamp(b) - runTimestamp(a) ||
+        (b.runNumber ?? 0) - (a.runNumber ?? 0),
+    )
+    .map((run) => {
+      const iterations = iterationsByRun.get(run._id) ?? [];
+      const stats = computeRunEffectiveStats(run, iterations);
+      const threshold = passRateThreshold(run, suite);
+      const { verdict, label } = resolveRunHistoryVerdict(
+        run,
+        stats.passRate,
+        threshold,
+      );
+      const date = runTimestamp(run);
+      const tokens = sumTokens(iterations);
+      const toolCalls = sumToolCalls(iterations);
+      return {
+        runId: run._id,
+        runLabel: run.runNumber ? `#${run.runNumber}` : run._id.slice(0, 8),
+        date,
+        dateLabel: formatSuiteRunDate(date),
+        status: run.status,
+        revision: evalRunDecisionRevision(run),
+        verdict,
+        verdictLabel: label,
+        passRate: stats.passRate,
+        platform: runPlatformLabel(run),
+        source: run.source ?? "ui",
+        client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),
+        models: run.effectiveModelId
+          ? [run.effectiveModelId]
+          : runModels(iterations),
+        latencyMs: iterationLatencyP50(iterations),
+        tokens: tokens > 0 ? tokens : null,
+        toolCalls: toolCalls > 0 ? toolCalls : null,
+      };
+    });
+}
+
+export function buildSuiteRunHistoryAggregates(
+  runs: readonly EvalSuiteRun[],
+  allIterations: readonly EvalIteration[],
+): SuiteRunHistoryAggregates {
+  const runIds = new Set(runs.map((run) => run._id));
+  const iterations = allIterations.filter(
+    (iteration) =>
+      iteration.suiteRunId != null && runIds.has(iteration.suiteRunId),
+  );
+  const totalTokens = sumTokens(iterations);
+  const totalToolCalls = sumToolCalls(iterations);
+  const runCount = runs.length;
+  return {
+    runCount,
+    totalTokens: totalTokens > 0 ? totalTokens : null,
+    latencyP50: iterationLatencyP50(iterations),
+    latencyP95: iterationLatencyP95(iterations),
+    tokensPerRun:
+      runCount > 0 && totalTokens > 0 ? totalTokens / runCount : null,
+    toolCallsPerRun:
+      runCount > 0 && totalToolCalls > 0 ? totalToolCalls / runCount : null,
+  };
+}
+
+export function runHistoryFilterOptions(
+  rows: readonly SuiteRunHistoryRow[],
+): SuiteRunHistoryFilterOptions {
+  const verdicts = [...new Set(rows.map((row) => row.verdict))];
+  const clients = [
+    ...new Set(
+      rows
+        .map((row) => row.client)
+        .filter((client): client is string => Boolean(client)),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  const models = [...new Set(rows.flatMap((row) => row.models))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  return { verdicts, clients, models };
+}
+
+export function filterSuiteRunHistoryRows(
+  rows: readonly SuiteRunHistoryRow[],
+  filters: SuiteRunHistoryFilters,
+): SuiteRunHistoryRow[] {
+  return rows.filter((row) => {
+    if (filters.verdict !== "all" && row.verdict !== filters.verdict) {
+      return false;
+    }
+    if (filters.client !== "all" && row.client !== filters.client) {
+      return false;
+    }
+    if (filters.model !== "all" && !row.models.includes(filters.model)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+export function formatRunHistoryMetric(
+  value: number | null,
+  kind: "number" | "duration",
+): string {
+  if (value == null) return "-";
+  if (kind === "duration") return formatDurationMs(value);
+  return formatCompactNumber(value);
+}
+
+const RUN_HISTORY_DAY: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+};
+
+export function formatRunHistoryDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
+  return new Date(timestamp).toLocaleString(undefined, {
+    ...RUN_HISTORY_DAY,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Earliest → latest calendar day for a suite group. Same day collapses to one date. */
+export function formatRunHistoryDateRange(
+  earliest: number,
+  latest: number,
+): string {
+  const timestamps = [earliest, latest].filter(
+    (timestamp) => Number.isFinite(timestamp) && timestamp > 0,
+  );
+  if (timestamps.length === 0) return "-";
+  const start = new Date(Math.min(...timestamps));
+  const end = new Date(Math.max(...timestamps));
+  const startLabel = start.toLocaleString(undefined, RUN_HISTORY_DAY);
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  if (sameDay) return startLabel;
+  return `${startLabel} – ${end.toLocaleString(undefined, RUN_HISTORY_DAY)}`;
+}
+
+export type SuiteTestCaseRow = {
+  caseId: string;
+  title: string;
+  summary: string;
+};
+
+function uniqueToolNames(testCase: EvalCase): string[] {
+  const names = new Set<string>();
+  for (const call of testCase.expectedToolCalls ?? []) {
+    if (call.toolName) names.add(call.toolName);
+  }
+  for (const step of testCase.steps ?? []) {
+    if (isToolCallStep(step) && step.toolName) {
+      names.add(step.toolName);
+    }
+  }
+  return [...names];
+}
+
+export function summarizeTestCase(testCase: EvalCase): string {
+  const assertCount = (testCase.steps ?? []).filter(isAssertStep).length;
+  const tools = uniqueToolNames(testCase);
+  const parts: string[] = [];
+  if (assertCount > 0) {
+    parts.push(
+      `${assertCount} ${assertCount === 1 ? "assertion" : "assertions"}`,
+    );
+  }
+  if (tools.length > 0) {
+    parts.push(tools.slice(0, 3).join(", "));
+  }
+  if (parts.length === 0 && testCase.expectedOutput?.trim()) {
+    parts.push("expected output");
+  }
+  if (parts.length === 0 && testCase.query?.trim()) {
+    const query = testCase.query.trim();
+    return query.length > 80 ? `${query.slice(0, 77)}…` : query;
+  }
+  return parts.join(" · ");
+}
+
+export function buildSuiteTestCaseRows(
+  cases: readonly EvalCase[],
+): SuiteTestCaseRow[] {
+  return cases.map((testCase) => ({
+    caseId: testCase._id,
+    title: testCase.title?.trim() || "Untitled test case",
+    summary: summarizeTestCase(testCase),
+  }));
+}
+
+export function suiteRunBlockedReason({
+  caseCount,
+  draftCount = 0,
+  hasServersConfigured,
+  isEnvironmentSuite,
+  isRerunning,
+  isReplaying,
+  runningTestCase,
+  evalRunsDisabledReason,
+}: {
+  caseCount: number;
+  draftCount?: number;
+  hasServersConfigured: boolean;
+  isEnvironmentSuite: boolean;
+  isRerunning: boolean;
+  isReplaying: boolean;
+  runningTestCase: boolean;
+  evalRunsDisabledReason?: string | null;
+}): string | null {
+  if (evalRunsDisabledReason) return evalRunsDisabledReason;
+  if (!isEnvironmentSuite && !hasServersConfigured) {
+    return "Configure suite servers before running the full suite.";
+  }
+  if (caseCount === 0) {
+    return draftCount > 0
+      ? `${draftCount} generated ${
+          draftCount === 1 ? "draft is" : "drafts are"
+        } waiting to be added. Use “Add all to suite” on the suite page before running.`
+      : "Add a test case first.";
+  }
+  if (isRerunning || isReplaying) {
+    return "A suite or replay is already in progress.";
+  }
+  if (runningTestCase) return "Finish the in-progress test case run first.";
+  return null;
+}

@@ -27,6 +27,8 @@
  * conclude the server returned the short value and debug the wrong thing.
  */
 
+import type { SecretScrubber } from "../../utils/secrets/secret-scrubber";
+
 /** Nesting beyond this is replaced by a marker rather than recursed into. */
 const MAX_DEPTH = 8;
 /** Serialized ceiling for ONE tool call's input or output. */
@@ -149,6 +151,17 @@ type EngineToolResult = {
 export function joinToolCalls(
   toolCalls: readonly EngineToolCall[],
   toolResults: readonly EngineToolResult[],
+  /**
+   * Materialized project secrets this turn delivered. Supplied, their values
+   * are replaced with `[secret:NAME]` in the LIVE response.
+   *
+   * The persistence path is scrubbed separately, at `buildIngestBody` — one
+   * pass over the serialized body. This is the other half: what this function
+   * returns goes straight back to the caller over HTTP and never passes through
+   * that pass, so scrubbing only there would keep the value out of the
+   * transcript while handing it to whoever made the request.
+   */
+  scrubber?: SecretScrubber,
 ): PublicToolCall[] {
   const resultsById = new Map<string, EngineToolResult>();
   for (const result of toolResults) {
@@ -158,14 +171,60 @@ export function joinToolCalls(
       resultsById.set(result.toolCallId, result);
     }
   }
+  const scrub = <T>(value: T): T =>
+    scrubber ? scrubber.scrubDeep(value) : value;
+  /**
+   * The scrub that runs AFTER bounding, dispatched on what bounding produced.
+   *
+   * `boundPayload` returns either structured data or, when it truncated, a
+   * SERIALIZED JSON PREFIX. Those need different needles, and using the wrong
+   * one is not merely ineffective: inside serialized JSON a value's real
+   * occurrences are escaped, so searching the raw form can only match by
+   * coincidence — including against the document's own punctuation — and
+   * replacing that rewrites structure in a payload which never held the
+   * secret. `scrubSerializedJson` exists for exactly this and the scrubber's
+   * own contract says so; the first version of this call site ignored it.
+   */
+  const scrubBounded = <T>(value: T): T => {
+    if (!scrubber) return value;
+    return typeof value === "string"
+      ? (scrubber.scrubSerializedJson(value) as unknown as T)
+      : scrubber.scrubDeep(value);
+  };
   return toolCalls.map((call) => {
     const result = resultsById.get(call.toolCallId);
-    const input = boundPayload(call.input);
+    // Scrubbed BEFORE bounding. This was the other way round, and the reason
+    // given — deterministic truncation points, since `[secret:NAME]` is
+    // usually shorter than the credential it replaces — was a real property
+    // but the wrong trade.
+    //
+    // Bounding first cuts the serialized payload at a fixed offset, and a
+    // credential STRADDLING that cut survives: the retained prefix holds only
+    // part of the value, so no needle matches it and those bytes go out in a
+    // response that crosses the trust boundary. Partial is not safe — it is a
+    // shorter secret. Scrubbing first means the cut can only ever land inside
+    // `[secret:NAME]`.
+    //
+    // What that costs is the consistency the old ordering bought: two runs of
+    // one tool now truncate at different offsets depending on whether a secret
+    // appeared. That is cosmetic, and arguably more honest — the redacted
+    // payload really is shorter.
+    //
+    // AND AGAIN AFTER, because neither pass alone is sufficient and they catch
+    // different things. `scrubDeep` returns a non-plain object (a Date, a class
+    // instance, a BigInt holder) by identity — rebuilding it as a plain object
+    // would corrupt the payload worse than a missed scrub — but `boundPayload`
+    // NORMALIZES exactly those into plain data. A credential reachable only
+    // through such an object therefore first becomes a scrubbable string
+    // during bounding, i.e. after the pre-pass has already run. The second pass
+    // is idempotent on everything the first one already replaced: the needles
+    // are the raw values, and those are gone.
+    const input = boundPayload(scrub(call.input));
     if (!result) {
       return {
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        input: input.value,
+        input: scrubBounded(input.value),
         status: "error" as const,
         // Not "the tool failed" — "no result reached us". The distinction
         // matters: an aborted turn and a tool that returned an error payload
@@ -175,15 +234,15 @@ export function joinToolCalls(
         ...(input.truncated ? { truncated: true as const } : {}),
       };
     }
-    const output = boundPayload(readToolOutput(result.output));
+    const output = boundPayload(scrub(readToolOutput(result.output)));
     return {
       toolCallId: call.toolCallId,
       toolName: call.toolName ?? result.toolName ?? "unknown",
-      input: input.value,
+      input: scrubBounded(input.value),
       status: isErrorOutput(result.output)
         ? ("error" as const)
         : ("ok" as const),
-      output: output.value,
+      output: scrubBounded(output.value),
       ...(input.truncated || output.truncated
         ? { truncated: true as const }
         : {}),

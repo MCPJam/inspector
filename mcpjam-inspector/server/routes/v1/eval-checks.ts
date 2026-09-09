@@ -32,8 +32,39 @@ import { translateConvexReadError } from "./convex-read-errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { logger } from "../../utils/logger.js";
 
 const evalChecks = new Hono();
+
+/**
+ * The one sentence this route answers with when the repository a caller named
+ * is not one it can connect.
+ *
+ * FLAT ON PURPOSE, and shared by the refusal below AND by the `notFoundMessage`
+ * the backend's own refusals are translated into, so the two cannot drift into
+ * two distinguishable answers. A repository that does not exist, one that
+ * exists in somebody else's account, and one this organization's installations
+ * cannot see must all read the same — otherwise the endpoint becomes an oracle
+ * for private repository names for anyone who can reach it. The backend words
+ * its half of this the same way and for the same reason; see
+ * `REPO_NOT_ACCESSIBLE_MESSAGE` in `github/checkRepoConfigsNode.ts`.
+ */
+const REPO_NOT_CONNECTABLE_MESSAGE =
+  "Repository, project or suite not found, or the MCPJam GitHub App cannot reach it.";
+
+/**
+ * The key a repository full name is compared on.
+ *
+ * Mirrors the backend's `canonicalizeRepoFullName` (trim + lowercase) exactly,
+ * because that is the spelling a connected row is STORED and looked up under.
+ * Matching case-sensitively here would refuse `Acme/Widgets` for a listing that
+ * says `acme/widgets` — the same repository, under the same stored key — and an
+ * agent surface types a name a human gave it rather than one it copied out of a
+ * picker.
+ */
+function canonicalRepoKey(raw: string): string {
+  return raw.trim().toLowerCase();
+}
 
 function convexClient(token: string): ConvexHttpClient {
   const url = process.env.CONVEX_URL;
@@ -203,6 +234,132 @@ evalChecks.post(
     const body = parseWithSchema(connectCheckRepoSchema, parsedBody);
     const client = convexClient(await getConvexBearerForRequest(c));
 
+    const writeErrorOptions = {
+      resource: "GitHub Checks repository",
+      // The backend words these refusals deliberately — "install the App on
+      // that repository" is different advice from "try again" — and it words
+      // them the same for a repository that does not exist as for one the
+      // App cannot see, on purpose: answering differently would turn this
+      // into an oracle for private repository names.
+      notFoundMessage: REPO_NOT_CONNECTABLE_MESSAGE,
+      fallbackMessage: "GitHub Checks connection rejected by the platform",
+      adminFailureIsForbidden: false,
+    };
+
+    // ── Resolve WHICH installation this repository is being connected through ─
+    //
+    // `connectVerifiedRepo` takes an optional `installationRef` naming one of
+    // the organization's active bindings. Sending nothing does not mean "pick
+    // one for me": it selects the action's PINNED COMPATIBILITY BRANCH, which
+    // resolves the deployment-level `GITHUB_CHECKS_INSTALLATION_ID` env var —
+    // deliberately retired, and unset in production. So every reference-less
+    // connect refused with "Repository is not accessible to the MCPJam GitHub
+    // App." while the GET on this very route listed that same repository as
+    // `connectable` one request earlier. The web UI never hit it because its
+    // picker sends the reference it read out of the listing; every agent
+    // surface did, because it has no picker to read.
+    //
+    // The fix is to do here what the picker does there: resolve the name
+    // against the same listing, and send the reference it carries. This route
+    // already exposes that listing on the GET beside this, so it grants a
+    // caller nothing they could not already enumerate — it just stops making
+    // them the one who has to carry infrastructure identifiers around.
+    let installationRepos: Array<Record<string, any>>;
+    try {
+      installationRepos = ((await client.action(
+        "github/checkRepoConfigsNode:listInstallationRepos" as any,
+        { organizationId } as any,
+      )) ?? []) as Array<Record<string, any>>;
+    } catch (error) {
+      // FAILS HARD, unlike the same call on the GET.
+      //
+      // There it fails soft to `connectable: null` because the connected list
+      // costs no GitHub call and must survive an outage. Here there is nothing
+      // to preserve: continuing without a reference would take the retired
+      // compatibility branch and answer "not accessible" — turning a GitHub
+      // blip into the exact misleading refusal this change exists to remove,
+      // and sending an admin off to re-install an App that is installed fine.
+      //
+      // Translated with the WRITE translator and the connect's own options, so
+      // no new copy is invented: the backend's own "Could not list
+      // repositories from GitHub." refusal keeps its retry advice, a
+      // membership or availability refusal maps exactly as the connect below
+      // would have mapped it, and a transport failure still answers 5xx. The
+      // read translator would flatten the first of those into a generic 502
+      // and page for somebody else's outage.
+      throw translateConvexWriteError(error, writeErrorOptions);
+    }
+
+    const wanted = canonicalRepoKey(body.repo);
+    const matches = installationRepos.filter(
+      (repo) =>
+        canonicalRepoKey(String(repo.fullName ?? repo.repoFullName ?? "")) ===
+        wanted,
+    );
+
+    if (matches.length > 1) {
+      // AMBIGUOUS, and refused rather than resolved by picking one.
+      //
+      // The backend deduplicates its fan-out across bindings by NUMERIC
+      // repository id, not by name, so two entries CAN carry one full name —
+      // a renamed repository whose freed name was taken in another account the
+      // App is also installed on, or one binding serving a stale listing.
+      // Picking either would stamp the row with an installation that may not
+      // be the one the caller meant, and the row's key is the name, so the
+      // mistake would only surface as checks that never run.
+      //
+      // The caller is told the same flat sentence as any other refusal: which
+      // accounts hold a same-named repository is exactly the kind of thing
+      // this endpoint must not narrate. The operator gets the diagnosis —
+      // `logger.warn` is Axiom-only, so a rare but confusing refusal becomes
+      // visible without paging anybody.
+      logger.warn("[v1.evalChecks] ambiguous repository selection", {
+        scope: "v1.evalChecks",
+        organizationId,
+        matches: matches.length,
+      });
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        REPO_NOT_CONNECTABLE_MESSAGE,
+      );
+    }
+
+    const selected = matches[0];
+    if (!selected) {
+      // Not in the listing: the repository does not exist, is somebody else's,
+      // or no installation of this organization can reach it. ONE answer for
+      // all three — see `REPO_NOT_CONNECTABLE_MESSAGE`. The candidate list is
+      // never echoed back, for the same reason.
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        REPO_NOT_CONNECTABLE_MESSAGE,
+      );
+    }
+
+    // ABSENT is a real, working case, not a failure to handle: entries listed
+    // through the pinned compatibility branch carry no `installationRef`, and
+    // that branch only produces entries at all when the pin IS set. So sending
+    // nothing there is both correct and functional, and it keeps "no
+    // reference" the byte-identical path the backend documents it as rather
+    // than a second, slightly different way to write a verified row.
+    const installationRef =
+      typeof selected.installationRef === "string" &&
+      selected.installationRef.length > 0
+        ? selected.installationRef
+        : undefined;
+    // Sent ALONGSIDE the ref and never without it — the action only consults it
+    // on the reference path, where it re-checks the id against GitHub's own
+    // answer and refuses a mismatch. That check is the point: it catches a
+    // rename-and-reuse race between the listing and this connect.
+    const repositoryId =
+      installationRef !== undefined &&
+      typeof selected.repositoryId === "number" &&
+      Number.isInteger(selected.repositoryId)
+        ? selected.repositoryId
+        : undefined;
+
     let result: { configId?: string } | null;
     try {
       result = await client.action(
@@ -213,21 +370,12 @@ evalChecks.post(
           suiteId: body.suiteId,
           repoFullName: body.repo,
           outagePolicy: body.outagePolicy,
+          ...(installationRef !== undefined ? { installationRef } : {}),
+          ...(repositoryId !== undefined ? { repositoryId } : {}),
         } as any,
       );
     } catch (error) {
-      throw translateConvexWriteError(error, {
-        resource: "GitHub Checks repository",
-        // The backend words these refusals deliberately — "install the App on
-        // that repository" is different advice from "try again" — and it words
-        // them the same for a repository that does not exist as for one the
-        // App cannot see, on purpose: answering differently would turn this
-        // into an oracle for private repository names.
-        notFoundMessage:
-          "Repository, project or suite not found, or the MCPJam GitHub App cannot reach it.",
-        fallbackMessage: "GitHub Checks connection rejected by the platform",
-        adminFailureIsForbidden: false,
-      });
+      throw translateConvexWriteError(error, writeErrorOptions);
     }
 
     return v1Resource(

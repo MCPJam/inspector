@@ -4,6 +4,14 @@ import { useConvexAuth } from "convex/react";
 import { GitBranch, Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@mcpjam/design-system/breadcrumb";
+import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -26,6 +34,7 @@ import { useEvalsRunsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
   aggregateSuite,
+  formatRunId,
   groupRunsByCommit,
 } from "./evals/helpers";
 import { RunIterationsSidebar } from "./evals/run-detail-view";
@@ -41,7 +50,7 @@ import { CommitDetailView } from "./evals/commit-detail-view";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
 import { EvalTabGate } from "./evals/EvalTabGate";
-import { EvalsHeader, type EvalLandingView } from "./evals/evals-header";
+import { EvalsHeader } from "./evals/evals-header";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
 import {
@@ -123,16 +132,6 @@ export function CiEvalsTab({
   });
 
   const ciNavigation = useMemo(() => createCiSuiteNavigation(route), [route]);
-
-  const handleOpenCreateSuite = useCallback(() => {
-    navigateApp(buildEvalsPath({ type: "create" }));
-  }, []);
-
-  const handleLandingViewChange = useCallback((view: EvalLandingView) => {
-    if (view === "suites") {
-      navigateApp(buildEvalsPath({ type: "list" }));
-    }
-  }, []);
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(convexProjectId),
@@ -268,6 +267,19 @@ export function CiEvalsTab({
     if (!selectedCommitSha) return null;
     return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
   }, [commitGroups, selectedCommitSha]);
+
+  const commitBreadcrumbContext = useMemo(() => {
+    if (route.type !== "suite-overview" || !route.fromCommit) return null;
+    const group = commitGroups.find((g) => g.commitSha === route.fromCommit);
+    const label = group
+      ? group.commitSha.startsWith("manual-")
+        ? "Manual"
+        : group.shortSha
+      : route.fromCommit.length > 7
+        ? route.fromCommit.slice(0, 7)
+        : route.fromCommit;
+    return { commitSha: route.fromCommit, label };
+  }, [route, commitGroups]);
 
   const selectedSuiteIdInCommit = useMemo(() => {
     if (route.type === "commit-detail" && route.suite) return route.suite;
@@ -470,6 +482,22 @@ export function CiEvalsTab({
     navigateToCiEvalsPath({ type: "list" });
   }, []);
 
+  const handleCiBreadcrumbToSuiteOverview = useCallback(() => {
+    if (!selectedSuite) return;
+    navigateToCiEvalsPath({
+      type: "suite-overview",
+      suiteId: selectedSuite._id,
+    });
+  }, [selectedSuite]);
+
+  const handleCiBreadcrumbToCommit = useCallback(() => {
+    if (!commitBreadcrumbContext) return;
+    navigateToCiEvalsPath({
+      type: "commit-detail",
+      commitSha: commitBreadcrumbContext.commitSha,
+    });
+  }, [commitBreadcrumbContext]);
+
   const isRunDetailView = route.type === "run-detail";
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). CI Evals is a read-only review of
@@ -513,20 +541,73 @@ export function CiEvalsTab({
       user={user}
       projectId={convexProjectId}
       header={
-        <EvalsHeader
-          onCreateSuite={
-            route.type === "list" ? handleOpenCreateSuite : undefined
-          }
-          onEvaluateClick={handleCiBreadcrumbToSuiteList}
-          isDetail={route.type !== "list"}
-          landingView={route.type === "list" ? "runs" : undefined}
-          onLandingViewChange={
-            route.type === "list" ? handleLandingViewChange : undefined
-          }
-        >
-          {showCiSuiteDrilldownSidebar && selectedSuite
-            ? selectedSuite.name
-            : null}
+        <EvalsHeader mode="runs">
+          {showCiSuiteDrilldownSidebar && selectedSuite ? (
+            <Breadcrumb className="min-w-0 flex-1">
+              <BreadcrumbList className="min-w-0 flex-nowrap">
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      type="button"
+                      onClick={handleCiBreadcrumbToSuiteList}
+                      className="inline-flex border-0 bg-transparent p-0 font-medium"
+                    >
+                      Suites
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                {commitBreadcrumbContext ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToCommit}
+                          title="Back to commit"
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                        >
+                          {commitBreadcrumbContext.label}
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                  </>
+                ) : null}
+                {route.type === "run-detail" ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToSuiteOverview}
+                          title={selectedSuite.name}
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                        >
+                          {selectedSuite.name}
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage className="truncate font-medium">
+                        Run {formatRunId(route.runId)}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                ) : (
+                  <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                    <BreadcrumbPage
+                      className="truncate font-medium"
+                      title={selectedSuite.name}
+                    >
+                      {selectedSuite.name}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                )}
+              </BreadcrumbList>
+            </Breadcrumb>
+          ) : null}
         </EvalsHeader>
       }
     >

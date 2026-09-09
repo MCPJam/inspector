@@ -37,7 +37,8 @@ export function EnvironmentSummaryLine({
   // rows. Every caller of THIS component passes a real context, so the fallback
   // is for type honesty rather than a case we expect to hit.
   const hostName = ctx.hostName?.(environment.hostId) ?? "Unknown client";
-  const { skillPins, pluginPins } = environmentPinCounts(environment);
+  const { skillPins, pluginPins, skillVersionPins } =
+    environmentPinCounts(environment);
   const imageLabel = environmentImageLabel(environment, ctx);
 
   return (
@@ -48,6 +49,10 @@ export function EnvironmentSummaryLine({
         {describeServerScope(environment)}
         {" · "}
         {skillPins} skill pin{skillPins === 1 ? "" : "s"}
+        {/* Exact-version pins are called out because they change what a future
+            edit does: a skill on Latest follows the edit, a pinned one does
+            not. */}
+        {skillVersionPins > 0 ? ` (${skillVersionPins} at a version)` : ""}
         {" · "}
         {pluginPins} plugin pin{pluginPins === 1 ? "" : "s"}
         {/* Image chip only when pinned AND the computers flag is on — absence is

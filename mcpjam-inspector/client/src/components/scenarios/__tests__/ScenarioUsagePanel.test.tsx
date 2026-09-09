@@ -8,6 +8,7 @@
  * every older session that matches — the failure mode is invisible, which is
  * exactly why it is pinned.
  */
+import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
@@ -30,6 +31,18 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadList", () => ({
     threadListMock(props);
     return <div data-testid="thread-list" />;
   },
+  SessionListChrome: ({
+    countLabel,
+    children,
+  }: {
+    countLabel: ReactNode;
+    children?: ReactNode;
+  }) => (
+    <div>
+      {countLabel}
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({

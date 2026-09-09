@@ -13,10 +13,15 @@ substitute — origin separation is what enforces isolation.
 
 ### Configuration
 
-Set at client build time:
+Two settings, and both are required. The client build says where widgets load
+from; the server says which hostnames serve nothing but widgets.
 
 ```bash
+# Client build time.
 VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
+
+# Server runtime. Comma-separated hostnames, no scheme, no port.
+SANDBOX_HOSTS=sandbox.example.com
 ```
 
 `VITE_MCPJAM_SANDBOX_ORIGIN` must be:
@@ -24,10 +29,63 @@ VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 - A different registrable origin from the host app (e.g. host on
   `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes
   cookies and storage separately.
-- Reachable by browsers. The same MCPJam backend can serve both DNS names —
-  no separate deploy is required. The sandbox host only needs to answer the
-  `GET` route:
-  - `/api/web/apps/mcp-apps/sandbox-proxy`
+- Reachable by browsers. The same MCPJam backend serves both DNS names — no
+  separate deploy is required.
+
+`SANDBOX_HOSTS` must list that hostname. A host on this list serves **exactly
+two paths** and answers `404` for everything else — no app shell, no assets, no
+API:
+
+- `GET /api/web/apps/mcp-apps/sandbox-proxy` — the sandbox document. It is
+  self-contained and receives widget HTML over `postMessage`, so this is all
+  the origin needs.
+- `GET /health` — so the canary and the platform probe still work there.
+
+Default: `sandbox.mcpjam.com,sandbox-staging.mcpjam.com`.
+
+Get this list wrong and the listed host stops serving the app, so change it on
+staging first. `SANDBOX_HOSTS=""` disables the partition entirely and is the
+rollback.
+
+### Why the partition exists
+
+Serving the whole app from the sandbox hostname is not a live session-theft
+path — cookies are set without a `Domain=` attribute, so they are host-only and
+never reach the sandbox host. What it breaks is everything else: the origin
+holding untrusted widget content also answered `/api/*` and served the app
+bundle, and the client's boot guard for a genuinely same-origin sandbox fired
+on ordinary traffic to the sandbox hostname, where the app's origin and the
+configured sandbox origin are equal by definition. No page can tell that apart
+from a deploy that pointed its sandbox at itself. Only the server knows which
+hostname it was supposed to answer as, which is why the check lives there.
+
+### Per-server view origins (optional)
+
+Each MCP server's views can be served from their own origin,
+`<label>.sandbox.example.com`, so apps do not share cookies or storage with
+each other and each gets an origin stable enough to name in an OAuth redirect
+URI or a third-party API-key allowlist. Off unless the deploy opts in:
+
+```bash
+# Client build time. Requires the DNS and certificate below.
+VITE_MCPJAM_VIEW_SUBDOMAINS=true
+```
+
+Before enabling it:
+
+- wildcard DNS for `*.sandbox.example.com` pointing at the same backend;
+- a certificate covering that wildcard. A one-level wildcard for the apex does
+  NOT cover `*.sandbox.example.com`, so this is usually a separate certificate;
+- if an access proxy fronts the sandbox host, its bypass must cover the
+  wildcard too, or the proxy document loads a login page instead.
+
+Enable it on staging first. With the DNS or certificate missing, a labelled
+host does not resolve and widgets fail to load rather than degrading — there is
+no fallback, by design, because silently sharing an origin is the failure this
+is meant to remove.
+
+`SANDBOX_HOSTS` needs no change: a label under a listed host is recognised
+automatically, and answers the sandbox proxy path only — not `/health`.
 
 ### DNS / routing
 
@@ -43,19 +101,34 @@ every `https://` entry from `CORS_ORIGINS`. Make sure the host app origin
 (e.g. `https://app.example.com`) is in `CORS_ORIGINS` so the host page is
 allowed to frame the sandbox.
 
+### Verifying a deploy
+
+`/health` reports `sandboxIsolation`:
+
+- `ok` — a sandbox hostname is configured and it is not the app's own host.
+- `same-origin` — `SANDBOX_HOSTS` contains the app's host from
+  `MCPJAM_HOSTED_ORIGIN`. Widgets are not isolated, and that hostname has
+  stopped serving the app.
+- `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
+  parsed to compare against.
+
+Anything other than `ok` is also logged once at error level during boot.
+
 ### Fallback behavior
 
-If `VITE_MCPJAM_SANDBOX_ORIGIN` is unset in a hosted build, the iframe falls
-back to same-origin and the client logs a security warning to the browser
-console. The fallback exists only as a soft-fail for misconfigured deploys;
-production deployments must set the variable. The regression test at
+If `VITE_MCPJAM_SANDBOX_ORIGIN` is unset in a hosted build — or set to the
+app's own origin, which produces the same iframe — the sandbox falls back to
+same-origin and the client logs a security warning to the browser console. The
+fallback exists only as a soft-fail for misconfigured deploys; production
+deployments must set the variable. The regression test at
 `client/src/components/ui/__tests__/sandboxed-iframe.hosted.test.tsx` pins
 this contract.
 
 ### Local development
 
 Local development is unaffected. The dev client swaps between `localhost`
-and `127.0.0.1` to get origin separation without operator configuration.
+and `127.0.0.1` to get origin separation without operator configuration, and
+no local Host header matches `SANDBOX_HOSTS`.
 
 ## Organization-derived confidential CIMD (disabled by default)
 
@@ -89,3 +162,37 @@ Use a local or explicitly approved non-production environment for verification;
 temporary test values must not be persisted into deployment configuration.
 Before expanding beyond debugger use, track KMS-backed signing or stored
 per-organization keys with dual-key rotation.
+
+## WorkOS API base URL (tests and local development only)
+
+`WORKOS_API_BASE_URL` redirects every server-side WorkOS call — the AuthKit
+session proxy, `sk_` API-key validation, and the key-management routes — at a
+local [`@workos/emulate`](https://github.com/workos/emulate) instance instead of
+`api.workos.com`. The `*.emulator.test.ts` suites set it themselves; you would
+only set it by hand to run the inspector against an emulator locally.
+
+**Never set it on a deployment.** It accepts loopback origins only —
+`localhost`, `127.0.0.1`, `[::1]` — and any other value makes the server throw
+at boot rather than at a user's first sign-in:
+
+```
+WORKOS_API_BASE_URL must be a loopback http(s) origin such as
+http://127.0.0.1:4820 (got "https://example.com")
+```
+
+The restriction is a mechanism, not a convention. `WORKOS_API_KEY` — the admin
+key that mints and revokes API keys — travels in an `Authorization` header on
+every one of those requests, so a base URL naming another host would send it
+there. Railway makes that worse than it sounds: preview environments are
+duplicated from staging wholesale (`pr-preview.yml`), and
+`.github/scripts/railway-set-vars.sh` can only set a variable, never unset one.
+A value written once to staging would therefore reach every future preview with
+no way to withdraw it. Refusing the value in code is the only durable defence.
+
+Unset — which is every deployment — the resolver returns `https://api.workos.com`
+and the SDK client is constructed with no options at all, exactly as it was
+before this variable existed.
+
+Not to be confused with `WORKOS_API_HOSTNAME`, which is a _browser_-facing
+hostname served in `window.__MCP_RUNTIME_CONFIG__` for `@workos-inc/authkit-js`.
+That one is unrelated and is documented by its use in `server/env.ts`.

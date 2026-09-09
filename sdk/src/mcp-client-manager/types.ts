@@ -304,6 +304,33 @@ export type BaseServerConfig = {
    */
   firstPageOnly?: boolean;
   /**
+   * Whether the client opens the server→client notification channel at all.
+   *
+   * `undefined` (the default) and `false` both open it. `true` simulates a
+   * client that never does — ChatGPT measures this way — so a server author
+   * can see that its `notifications/*` never reach that host, no matter what
+   * the server declares.
+   *
+   * On Streamable HTTP this refuses the standalone GET SSE stream the
+   * upstream client opens after `notifications/initialized`. On the legacy
+   * HTTP+SSE transport the GET stream IS the connection, so this cannot
+   * apply — a real client on that transport cannot not-listen either.
+   *
+   * Wired via `hostConfig.mcpProfile.toolListChanged.listens === false`.
+   */
+  suppressListenChannel?: boolean;
+  /**
+   * Whether the client acts on `notifications/tools/list_changed`.
+   *
+   * `undefined` (the default) and `false` both act on it. `true` simulates a
+   * client that ignores it: the notification is dropped before the client
+   * sees it, so its `tools/list` cache is never evicted and the stale list
+   * stays in use — exactly what a server author sees from such a host.
+   *
+   * Wired via `hostConfig.mcpProfile.toolListChanged.refetches === false`.
+   */
+  dropToolListChanged?: boolean;
+  /**
    * Whether the client drives MRTR (`resultType: "input_required"`) retry
    * rounds at all.
    *
@@ -322,6 +349,31 @@ export type BaseServerConfig = {
    * separate, already-modeled fact (`clientCapabilities.elicitation`).
    */
   supportsMrtr?: boolean;
+  /**
+   * Whether cancelling an in-flight request reaches the server, per era.
+   *
+   * Absent per leaf (and `true`) both signal normally. `false` simulates a host
+   * that ends the turn locally and tells the server nothing: the caller's
+   * promise still rejects promptly, but the server keeps running the tool to
+   * completion — side effects, cost and all — because it never learns the user
+   * pressed stop.
+   *
+   * Both leaves are carried rather than pre-reduced to one flag, because the
+   * era is only known once the connection has negotiated. On an unpinned
+   * (`"auto"`) host that answer does not exist at config-build time, and
+   * guessing there made one era's toggle unreachable. The manager reads
+   * {@link MCPClientManager.getNegotiatedProtocolVersion} — the same value the
+   * UI shows — and picks the leaf for the era the connection actually landed
+   * on.
+   *
+   * Withholding the caller's signal withholds whichever mechanism that era
+   * would have used, because the signal is the single input to both: closing
+   * the response stream on 2026-07-28 Streamable HTTP, POSTing
+   * `notifications/cancelled` everywhere else.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.toolCallCancellation`.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */

@@ -60,6 +60,15 @@ export type EvalTraceSpanInput = {
   // MCP server-contract metadata (tool spans). JSON-RPC error code from a
   // failed tools/call (OTel rpc.response.status_code).
   mcpErrorCode?: number;
+  // Harness evidence provenance (tool spans on harness runs): where the
+  // recorded output came from, and whether the wire corroborates it. Mirror of
+  // the inspector's `EvalTraceSpan`; see it for what each field claims. An SDK
+  // producer normally leaves these absent — they describe MCPJam's own proxy
+  // seam, which an externally-executed run does not have.
+  outputSource?: "narration" | "evidence" | "reconstructed";
+  wireCorroborated?: boolean;
+  evidenceRequestId?: string;
+  evidenceStatus?: "complete" | "incomplete";
 };
 
 export type EvalTraceInput =
@@ -131,6 +140,11 @@ export type EvalResultInput = {
    * precedence between two identity claims.
    */
   caseId?: string;
+  /**
+   * The authored analytics grouping label for this case. `null` explicitly
+   * records an unlabelled modern producer; omission remains legacy-compatible.
+   */
+  intent?: string | null;
   /**
    * This trial's LIFECYCLE status — what happened to the execution, which is a
    * different question from `passed` (the task verdict).

@@ -1,0 +1,97 @@
+# Local harness conformance suite
+
+Scenario scripts that exercise the real thing — a real runtime pack, the real
+supervisor, the real bridge, the real vendor CLI — against a mock Anthropic
+upstream behind a loopback gateway. They are the evidence behind
+`lifecycleConformanceVersion` in `compatibility.ts`: a manifest with an empty
+conformance version resolves as expired, so a platform is not native until
+these have actually passed on it.
+
+They are deliberately NOT vitest specs. Each one spawns process trees, aborts
+them mid-turn, crashes a supervisor and reclaims its orphans, and asserts on
+what survived — work that wants a process of its own, a scratch root, and an
+isolated `HOME`, not a test runner's shared one.
+
+## Scenarios
+
+| Script | Argument | Asserts |
+|---|---|---|
+| `run-native-turn.ts` | `full` | a turn end to end: read tool, bash with approval, detach + resume continuity, stop; nothing left in the workspace, no surviving pids, empty registry |
+| `run-native-turn.ts` | `no-launcher` | a pack without the loopback launcher is REFUSED — the exposure probe, not the launcher, is what enforces the guarantee |
+| `run-lifecycle.ts` | `abort` | aborting mid-turn takes the vendor CLI down with the bridge, and removes the session state |
+| `run-lifecycle.ts` | `orphan-a` / `orphan-b` | a tree orphaned by a crashed Inspector is reclaimed by the janitor on the next start |
+| `timing-decomp.mts` | — | cost decomposition: bare bridge spawn, digest, session ready |
+| `probe-timing.mts` | — | the exposure probe stays inside its budget on a machine with link-local addresses |
+| `group-settle.mts` | — | the group-member snapshot settles a tree whose root exited first (takes an optional node path; defaults to the running one) |
+
+## Running them
+
+```bash
+# from mcpjam-inspector/ — the worktree root breaks the @/shared alias
+S=/tmp/local-harness-conformance
+mkdir -p "$S/home" "$S/workspace" "$S/runtime"
+
+# A real pack, not a fixture: these scenarios exist to prove the thing a user
+# would install actually runs. `--node-tarball` takes an official nodejs.org
+# archive, or a bare node binary for a local run.
+node scripts/build-local-harness-pack.mjs \
+  --platform "$(node -p 'process.platform + "-" + process.arch')" \
+  --pack-version conformance \
+  --node-tarball "$(command -v node)" \
+  --out "$S/runtime-src" --skip-archive
+# `rm -rf` first: `cp -R` of a directory ONTO an existing directory of the
+# same name nests it (`runtime/claude-code/claude-code`), so re-running this
+# block after a first run silently produces a layout no scenario can resolve.
+rm -rf "$S/runtime/claude-code"
+cp -R "$S/runtime-src/claude-code" "$S/runtime/claude-code"
+
+for scenario in \
+  "run-native-turn.ts full" \
+  "run-native-turn.ts no-launcher" \
+  "run-lifecycle.ts abort" \
+  "run-lifecycle.ts orphan-a" \
+  "run-lifecycle.ts orphan-b" \
+  "probe-timing.mts" \
+  "timing-decomp.mts" \
+  "group-settle.mts"
+do
+  # UNQUOTED on purpose: the entries carry a script AND its argument, and
+  # quoting makes `run-native-turn.ts full` one filename.
+  HOME="$S/home" CONFORMANCE_ROOT="$S" MOCK_LATENCY_MS=50 npx tsx \
+    server/utils/harness/local/conformance/$scenario \
+    || { echo "FAILED: $scenario"; failed=1; }
+done
+# The loop swallowed every non-zero exit and returned success after printing
+# `FAILED`, so the documented way to run this suite could not be used as its
+# result.
+exit "${failed:-0}"
+```
+
+Every scenario ASSERTS and exits non-zero on failure. That is the whole
+contract: a run that prints a leaked credential, a surviving process or a
+dirtied workspace and exits 0 would make a green conformance job evidence of
+nothing. `orphan-a` is the one deliberate exception — it exits successfully
+WITHOUT stopping its session, because the crash it simulates is the input to
+`orphan-b`.
+
+`MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION` stamps the manifest these scripts
+build; CI sets it to the job's own identifier so a recorded conformance version
+always names the run that produced it.
+
+`MOCK_LATENCY_MS` holds every mock upstream response for that many
+milliseconds. CI sets it to 50 and a local run should too. An upstream that
+answers instantly is not a neutral simplification: it hid a gateway defect
+through four CI runs. The gateway destroyed its upstream request on the server
+request's `close` event, which since node 16 fires when the request BODY
+finishes uploading rather than when the client disconnects — so on this machine
+the mock always answered first and the suite went green, while on a loaded
+runner every call came back 502, the vendor CLI burned ten retries, and all
+three turns finished empty after ~180s each. A conformance upstream faster than
+everything it exercises can only ever agree with the code under test.
+
+## Platform coverage
+
+Two facts are darwin-specific and need a `macos-latest` job: the `(node)`
+command an exiting process reports, and the `ps -g` group probe. Everything
+else is portable — the SDK ships linux binaries and nodejs.org ships linux
+tarballs — so `ubuntu-latest` covers the rest.

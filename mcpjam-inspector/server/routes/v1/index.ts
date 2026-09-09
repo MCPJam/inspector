@@ -18,18 +18,24 @@ import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rat
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverGroups from "./server-groups.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
+import serverSkills from "./server-skills.js";
 import exporter from "./export.js";
 import evals from "./evals.js";
-import hosts from "./hosts.js";
+import clients from "./clients.js";
 import harness from "./harness.js";
+import builtInTools from "./built-in-tools.js";
 import environments from "./environments.js";
 import plugins from "./plugins.js";
+import skills from "./skills.js";
 import journeys from "./journeys.js";
 import personas from "./personas.js";
+import secrets from "./secrets.js";
+import traceDestinations from "./trace-destinations.js";
 import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
@@ -48,6 +54,7 @@ import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
+import spendBudget from "./spend-budget.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
 import evalDisclosure from "./eval-disclosure.js";
@@ -92,7 +99,7 @@ v1.use(
   "*",
   bearerAuthMiddleware,
   passthroughRateLimitMiddleware,
-  guestRateLimitMiddleware
+  guestRateLimitMiddleware,
 );
 
 v1.use("*", async (c, next) => {
@@ -107,16 +114,26 @@ v1.use("*", async (c, next) => {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+// Server groups (immutable standalone server snapshots). Guest-DENIED: the
+// Convex reads are membership-gated and creating one is a member write, so
+// there is no share-link flow that needs them.
+v1.route("/", serverGroups);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
+v1.route("/", serverSkills);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
 v1.route("/", conformanceRuns);
-v1.route("/", hosts);
+v1.route("/", clients);
 v1.route("/", harness);
+// MCPJam's own built-in tool definitions — static, and the same text for every
+// caller. Guest-DENIED by default (they are not on the allowlist): the browser
+// capability is never advertised to a guest turn, so a guest reading its
+// schemas would be reading about something they cannot be given.
+v1.route("/", builtInTools);
 // Project Environments (named execution bundles for suites and journeys) stay
 // OFF the guest allowlist — reads need project membership and every write needs
 // project admin. Distinct from the Computer sandbox images below.
@@ -125,6 +142,12 @@ v1.route("/", environments);
 // (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are member-gated
 // anyway, and there is no share-link flow that needs plugin inventory.
 v1.route("/", plugins);
+// Cloud Skills — READ-ONLY (list + detail). Authoring stays on `/api/web` and
+// stays behind the backend's `skills-enabled` gate; these reads are ungated,
+// matching the backend where reads and deletes are never gated. Guest-DENIED
+// by default (no GUEST_ALLOWED_V1_RULES entry): the Convex reads are
+// member-gated, and a share-link visitor has no business enumerating skills.
+v1.route("/", skills);
 // Journeys + journey runs — the public API for Swarms. Flag-gated beta
 // (`sandboxes-enabled`, enforced server-side on writes), so these are absent
 // from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
@@ -141,6 +164,17 @@ v1.route("/", journeys);
 // Personas and swarm containers — the authoring half of Swarms. Same beta
 // gate, same guest denial: authoring is a member-only surface end to end.
 v1.route("/", personas);
+// PROJECT SECRETS — the credential a real workflow needs, as a first-class
+// resource. WRITE-ONLY: nothing here returns a value, ever. Guest-DENIED by
+// default (`guest-allowed-paths.ts` is default-deny and there is deliberately
+// NO entry for `/secrets` — adding one would be the single change that breaks
+// the guarantee).
+v1.route("/", secrets);
+// TRACE DESTINATIONS — where an organization's traces are STREAMED. Header
+// values are WRITE-ONLY: nothing here returns one, ever. Guest-DENIED on the
+// same terms as secrets (`guest-allowed-paths.ts` is default-deny and there is
+// deliberately NO entry for `/trace-destinations`).
+v1.route("/", traceDestinations);
 v1.route("/", swarms);
 // The insights layer over runs: scorecards, findings, wave insights. Reads are
 // ungated (an empty result leaks nothing); REQUESTING wave insights spends
@@ -201,6 +235,7 @@ v1.route("/", registry);
 // Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
 v1.route("/", organizations);
 v1.route("/", evalChecks);
+v1.route("/", spendBudget);
 v1.route("/", projects);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which

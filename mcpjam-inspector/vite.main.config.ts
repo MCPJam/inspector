@@ -53,6 +53,20 @@ export default defineConfig({
         // off by design. Real Electron terminal support (extraResource +
         // custom resolution) is a scoped follow-up.
         "node-pty",
+        // Same story for Playwright, reached via `await import("playwright")`
+        // / `await import("playwright-core")` in browser-rendering-setup, the
+        // MCP App browser harness, and the WebMCP provider. Those literal
+        // dynamic imports make Rollup pull all of playwright-core into this
+        // bundle, and since 1.62 its inlined chokidar has a bare
+        // `require("fsevents")` that the commonjs plugin resolves to a native
+        // `.node` binary — which Rollup then tries to parse as JS and dies on
+        // ("Unexpected character"), breaking every macOS release build. Keep
+        // it external: as with node-pty the packaged app has no node_modules,
+        // so the import rejects and the browser-backed paths degrade off,
+        // exactly as they already did (a rolled-up playwright-core could never
+        // have found its wasm/registry assets at runtime anyway).
+        "playwright",
+        "playwright-core",
         ...builtinModules,
         ...builtinModules.map((m) => `node:${m}`),
       ],

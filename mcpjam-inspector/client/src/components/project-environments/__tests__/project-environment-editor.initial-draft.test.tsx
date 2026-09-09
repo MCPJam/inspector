@@ -38,6 +38,12 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
 vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
   ProjectEnvironmentSkillsPicker: () => <div />,
 }));
+// The secrets picker is a sibling section, not what these tests are about. It
+// is stubbed rather than mocked at the hook level because it reads a live
+// Convex query, and a real one here would need the whole provider.
+vi.mock("../ProjectEnvironmentSecretsPicker", () => ({
+  ProjectEnvironmentSecretsPicker: () => <div />,
+}));
 vi.mock("@/components/computer/EnvironmentBuildBadge", () => ({
   EnvironmentBuildBadge: () => null,
 }));
@@ -71,7 +77,7 @@ describe("ProjectEnvironmentEditor — initialDraft", () => {
         environment={null}
         canManage
         initialDraft={{ name: "Claude Code", hostId: "host_1" }}
-      />
+      />,
     );
     expect(screen.getByLabelText("Name")).toHaveValue("Claude Code");
     expect(screen.getByTestId("host-picker")).toHaveTextContent("host_1");
@@ -100,7 +106,7 @@ describe("ProjectEnvironmentEditor — initialDraft", () => {
         }}
         canManage
         initialDraft={{ name: "Seeded", hostId: "host_seed" }}
-      />
+      />,
     );
     expect(screen.getByLabelText("Name")).toHaveValue("Existing");
     expect(screen.getByTestId("host-picker")).toHaveTextContent("host_row");

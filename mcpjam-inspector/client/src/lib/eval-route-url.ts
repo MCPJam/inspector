@@ -1,23 +1,33 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import { stripProjectFromPath } from "./project-route";
 
 /**
  * Both eval modes live under `/evals`; Runs is the `/evals/runs` sub-tree.
  * The two prefixes stay mutually exclusive — parsing a Runs URL against the
  * Suites prefix returns null rather than a bare list route, so a mode never
  * silently renders the other mode's URL.
+ *
+ * `/evaluate` is the flag-gated Evaluate (New) tab. It is a SIBLING of
+ * `/evals`, not a sub-tree: it does not start with `/evals/`, so the guards
+ * below already keep the two from parsing each other's URLs.
  */
-export type EvalRoutePrefix = "/evals" | "/evals/runs";
+export type EvalRoutePrefix = "/evals" | "/evals/runs" | "/evaluate";
 
 export function parseEvalRouteFromUrl(
   prefix: EvalRoutePrefix,
   pathname: string,
   search = ""
 ): EvalRoute | null {
-  const normalizedPathname = pathname.startsWith("/")
-    ? pathname
-    : `/${pathname}`;
+  // Eval routes are project-owned, so the live pathname is
+  // `/p/<projectId>/evals/...`. The project comes off before matching: these
+  // prefixes are LOGICAL, and the eval route is the same route in every
+  // project.
+  const withoutProject = stripProjectFromPath(pathname);
+  const normalizedPathname = withoutProject.startsWith("/")
+    ? withoutProject
+    : `/${withoutProject}`;
   if (
     normalizedPathname !== prefix &&
     !normalizedPathname.startsWith(`${prefix}/`)
@@ -44,6 +54,18 @@ export function parseEvalRouteFromUrl(
 
   if (tail[0] === "create") {
     return { type: "create" };
+  }
+
+  // Evaluate (New) only. The v1 `/evals` tab has no first-run preview.
+  if (
+    prefix === "/evaluate" &&
+    tail[0] === "eval-server" &&
+    tail[1]
+  ) {
+    return {
+      type: "eval-server",
+      serverId: decodePathSegment(tail[1]),
+    };
   }
 
   if (prefix === "/evals/runs" && tail[0] === "commit" && tail[1]) {
@@ -104,6 +126,7 @@ export function parseEvalRouteFromUrl(
     }
     if (rest.length === 3 && rest[2] === "edit") {
       const openCompare = parseTruthyParam(params.get("compare"));
+      const fromEvalServer = params.get("fromEvalServer") || undefined;
       return {
         type: "test-edit",
         suiteId,
@@ -112,6 +135,7 @@ export function parseEvalRouteFromUrl(
         ...(params.get("iteration")
           ? { iteration: params.get("iteration") || undefined }
           : {}),
+        ...(fromEvalServer ? { fromEvalServer } : {}),
       };
     }
   }
@@ -140,7 +164,8 @@ export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {
 export type EvalsMode = "suites" | "runs";
 
 export function evalsModeForPathname(pathname: string): EvalsMode {
-  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const logical = stripProjectFromPath(pathname);
+  const normalized = logical.startsWith("/") ? logical : `/${logical}`;
   return normalized === "/evals/runs" || normalized.startsWith("/evals/runs/")
     ? "runs"
     : "suites";
@@ -160,6 +185,11 @@ export function useEvalsRouteFromUrl(): EvalRoute {
 
 export function useEvalsRunsRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evals/runs");
+}
+
+/** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
+export function useEvaluateRouteFromUrl(): EvalRoute {
+  return useEvalRouteFromUrl("/evaluate");
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {

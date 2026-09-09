@@ -23,8 +23,11 @@ import {
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
 import {
   deriveStageResults,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
   stageDerivationToMetadata,
 } from "./contract/stage-derivation.js";
+import { attachStageMeasurements } from "./contract/stage-measurements.js";
 
 /**
  * Per-iteration host-extras lookup:
@@ -391,6 +394,7 @@ export function promptsToEvalResult(
     externalIterationId: overrides.externalIterationId,
     caseId: overrides.caseId,
     externalCaseId: overrides.externalCaseId,
+    intent: overrides.intent,
     metadata: overrides.metadata,
     isNegativeTest: overrides.isNegativeTest,
     advancedConfig: overrides.advancedConfig,
@@ -519,6 +523,8 @@ export interface IterationToEvalResultOptions {
    * for the `caseTitle` consequence.
    */
   caseId?: string;
+  /** Authored analytics grouping label; omission keeps legacy wire behavior. */
+  intent?: string | null;
 }
 
 /**
@@ -578,6 +584,7 @@ export function iterationToEvalResult(
   return {
     caseTitle: options.caseTitle,
     ...(options.caseId !== undefined ? { caseId: options.caseId } : {}),
+    ...(options.intent !== undefined ? { intent: options.intent } : {}),
     query: selectedPrompt?.getPrompt(),
     passed,
     status: resolveIterationLifecycleStatus(iteration),
@@ -613,6 +620,8 @@ export interface RunToEvalResultsOptions {
   failOnToolError?: boolean;
   /** @see IterationToEvalResultOptions.caseId */
   caseId?: string;
+  /** Authored analytics grouping label; omission keeps legacy wire behavior. */
+  intent?: string | null;
 }
 
 /**
@@ -643,6 +652,7 @@ export function runToEvalResults(
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
       caseId: options.caseId,
+      intent: options.intent,
     })
   );
 }
@@ -664,6 +674,8 @@ export interface SuiteRunToEvalResultsOptions {
    * @see IterationToEvalResultOptions.caseId
    */
   caseIdByTest?: Record<string, string>;
+  /** Authored analytics labels keyed by test name. */
+  intentByTest?: Record<string, string | null>;
 }
 
 /**
@@ -686,6 +698,7 @@ export function suiteRunToEvalResults(
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
       caseId: options.caseIdByTest?.[testName],
+      intent: options.intentByTest?.[testName],
     });
     results.push(...testResults);
   }
@@ -793,6 +806,8 @@ export type EvalCaseIdentity = {
   /** The case's DECLARED identity — `EvalTestConfig.id`. */
   caseId?: string;
   externalCaseId?: string;
+  /** `null` explicitly records an unlabelled modern SDK case. */
+  intent?: string | null;
   isNegativeTest?: boolean;
   expectedOutput?: string;
 };
@@ -874,16 +889,29 @@ function deriveSdkStageResults(args: {
       ...(caseIdentity?.isNegativeTest !== undefined
         ? { isNegativeTest: caseIdentity.isNegativeTest }
         : {}),
+      // UVH-IN1's matrix, mirrored: a positive tool-call predicate expects a
+      // call, `toolNeverCalled` does not. This path builds its own authored
+      // case rather than calling `buildStageAuthoredCase` (it has no steps or
+      // turns to read, and its `mode` and `expectsWidgetRender` are fixed by
+      // what the SDK path can observe), so the matrix has to be applied twice
+      // — a pre-existing divergence this PR keeps in step rather than widens.
       expectsToolCall:
         (expectedToolCalls?.length ?? 0) > 0 ||
-        caseIdentity?.isNegativeTest === true,
+        caseIdentity?.isNegativeTest === true ||
+        (predicates ?? []).some((p) =>
+          isPositiveToolCallPredicateKind(p?.type)
+        ),
       // Render observations are not carried on the SDK path, so a case is
       // never treated as asserting a widget render here — claiming otherwise
       // would demand evidence this path cannot produce and report every SDK
       // run's `response` as an evidence gap.
+      //
+      // Tool-call predicates are excluded for the same reason they are on the
+      // server: their results are routed to `selection`, so counting them here
+      // would leave `userValue` applicable with nothing left to grade it.
       assertionCount:
-        (predicates?.length ?? 0) +
-        (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
+        (predicates ?? []).filter((p) => !isSelectionPredicateKind(p?.type))
+          .length + (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
     },
     evidence: buildSdkStageEvidence(iteration, trace),
     iteration: {
@@ -991,6 +1019,9 @@ export function iterationsToEvalResultInputs(
       ...(caseIdentity?.externalCaseId !== undefined
         ? { externalCaseId: caseIdentity.externalCaseId }
         : {}),
+      ...(caseIdentity?.intent !== undefined
+        ? { intent: caseIdentity.intent }
+        : {}),
       ...(caseIdentity?.isNegativeTest !== undefined
         ? { isNegativeTest: caseIdentity.isNegativeTest }
         : {}),
@@ -1015,7 +1046,12 @@ export function iterationsToEvalResultInputs(
             ? { predicates: iteration.predicateResults }
             : {}),
           ...scoreMetadata(iteration, evaluationConfig),
-          ...stageDerivationToMetadata(stageDerivation),
+          ...attachStageMeasurements(
+            stageDerivationToMetadata(stageDerivation),
+            trace && typeof trace === "object" && !Array.isArray(trace)
+              ? trace.spans
+              : undefined
+          ),
         },
         resolveIterationHostExtras(iteration, hostExtras)
       ),
@@ -1083,6 +1119,7 @@ export function suiteTestResultsToEvalResultInputs(
         ...(identity?.externalCaseId !== undefined
           ? { externalCaseId: identity.externalCaseId }
           : {}),
+        ...(identity?.intent !== undefined ? { intent: identity.intent } : {}),
         ...(identity?.isNegativeTest !== undefined
           ? { isNegativeTest: identity.isNegativeTest }
           : {}),
@@ -1109,14 +1146,19 @@ export function suiteTestResultsToEvalResultInputs(
               ? { predicates: iteration.predicateResults }
               : {}),
             ...scoreMetadata(iteration, testResult.evaluationConfig),
-            ...stageDerivationToMetadata(
-              deriveSdkStageResults({
-                iteration,
-                trace,
-                expectedToolCalls,
-                predicates,
-                caseIdentity: identity,
-              })
+            ...attachStageMeasurements(
+              stageDerivationToMetadata(
+                deriveSdkStageResults({
+                  iteration,
+                  trace,
+                  expectedToolCalls,
+                  predicates,
+                  caseIdentity: identity,
+                })
+              ),
+              trace && typeof trace === "object" && !Array.isArray(trace)
+                ? trace.spans
+                : undefined
             ),
           },
           resolveIterationHostExtras(iteration, hostExtras)
