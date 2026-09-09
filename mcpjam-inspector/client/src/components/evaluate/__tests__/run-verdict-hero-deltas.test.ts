@@ -233,6 +233,30 @@ describe("previous completed run", () => {
       }),
     ).toEqual([previousRow]);
   });
+
+  it("keeps only the selected pairing when filtering the previous launch", () => {
+    const previousRows = [
+      {
+        _id: "it-prev-cursor",
+        suiteRunId: "run-2",
+        result: "passed",
+      } as EvalIteration,
+      {
+        _id: "it-prev-chatgpt",
+        suiteRunId: "run-2b",
+        result: "failed",
+      } as EvalIteration,
+    ];
+    expect(
+      previousHeroIterations({
+        selectedRuns: [current],
+        suiteRuns: [current, previous, older, otherHost, sameGroup],
+        allIterations: previousRows,
+        previousRunId: "run-2",
+        matchSelectedPairings: true,
+      }),
+    ).toEqual([previousRows[0]]);
+  });
 });
 
 describe("buildHeroPairings", () => {

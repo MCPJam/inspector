@@ -303,7 +303,7 @@ export function previousHeroIterations({
     previousIds = [previousRunId];
   }
   if (matchSelectedPairings && launch) {
-    const wanted = new Set(selectedRuns.map(pairingKey));
+    const wanted = new Set(selectedRuns.map((run) => pairingKey(run)));
     previousIds = launch
       .filter((run) => wanted.has(pairingKey(run)))
       .map((run) => run._id);
