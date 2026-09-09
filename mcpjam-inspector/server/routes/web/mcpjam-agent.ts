@@ -1,4 +1,4 @@
-import { evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
+import { DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
  *
@@ -307,6 +307,9 @@ mcpjamAgent.post("/", async (c) => {
       throw error;
     }
 
+    if (DESCRIBE_ONLY_AGENT && (!body.evalScope || !body.evalScope.caseId)) {
+      return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Ask MCPJam is available only from Describe.");
+    }
     if (body.evalScope && body.evalScope.projectId !== body.projectId) {
       return webError(c, 400, ErrorCode.VALIDATION_ERROR, "Eval scope does not match the active project.");
     }

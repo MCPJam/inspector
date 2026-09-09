@@ -1,3 +1,6 @@
+import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
+import { useDescribeFlow } from "@/lib/mcpjam-agent/describe-flow";
+import { registerEvalDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
@@ -54,6 +57,7 @@ const scope = {
   projectId: "project-chat",
   suiteId: "suite-chat",
   suiteName: "Support",
+  caseId: "draft:describe",
 };
 function stream(parts: unknown[]) {
   return new Response(
@@ -77,6 +81,22 @@ beforeEach(() => {
   useEvalAgentScopes.setState({ scopes: {} });
   useEvalGeneration.setState({ suites: {} });
   useEvalPromptQueue.setState({ pending: {} });
+  useDescribeSurface.setState({
+    scope: { ...scope, kind: "evals", version: 1, id: "active" },
+  });
+  useDescribeFlow.setState({ sessions: {} });
+  registerEvalDraft(
+    { ...scope, kind: "evals", version: 1, id: "active" },
+    {
+      read: () => ({
+        draft: { title: "", steps: [] },
+        revision: "r1",
+        tools: [],
+      }),
+      edit: vi.fn(),
+      undo: vi.fn(),
+    },
+  );
   requests = [];
   save = vi.fn();
   generated = vi.fn(async (_instructions, stage) => {
@@ -108,9 +128,23 @@ beforeEach(() => {
         {
           type: "tool-input-available",
           toolCallId: `eval-call-${index}-${body.chatSessionId}`,
-          toolName: index === 1 ? "ui_eval_context" : "ui_eval_generate_cases",
+          toolName: index === 1 ? "ui_eval_context" : "ui_eval_propose_cases",
           input:
-            index === 1 ? {} : { instructions: "Generate one read-only case" },
+            index === 1
+              ? {}
+              : {
+                  subject: "record listing",
+                  summary: "Return available records.",
+                  revision: "r1",
+                  cases: [
+                    {
+                      title: "List available records",
+                      steps: [
+                        { id: "p", kind: "prompt", prompt: "List records" },
+                      ],
+                    },
+                  ],
+                },
         },
         { type: "finish-step" },
         { type: "finish", finishReason: "tool-calls" },
@@ -127,79 +161,70 @@ beforeEach(() => {
   });
 });
 
-describe("eval composer → transport → browser generation tool", () => {
-  it("submits a typed prompt, stages real tool output, and accepts a follow-up", async () => {
+describe("Describe composer → transport → proposal → Create", () => {
+  it("prepares real tool output without creating or saving before the click", async () => {
     const sessionId = openEvalChat(scope);
     renderWithProviders(
       <McpjamAgentThread
         sessionId={sessionId}
         projectId={scope.projectId}
         organizationId={null}
+        surface="side-panel"
         variant="sidebar"
       />,
     );
     const user = userEvent.setup();
-    const composer = await screen.findByPlaceholderText(
-      "Describe the coverage you want…",
+    await user.type(
+      await screen.findByPlaceholderText(
+        "Describe a user prompt or workflow you'd like to test e.g. find my open tickets and summarize them.",
+      ),
+      "List records and return their names",
     );
-    await user.type(composer, "Generate a read-only test case");
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Send", exact: true }),
       ).toBeEnabled(),
     );
     await user.click(screen.getByRole("button", { name: "Send", exact: true }));
-    await waitFor(() => expect(generated).toHaveBeenCalledOnce());
-    await waitFor(() => expect(requests.length).toBe(3));
-    expect(
-      useEvalGeneration.getState().suites[evalSuiteKey(scope)].drafts[0].input
-        .title,
-    ).toBe("List available records");
+    const create = await screen.findByRole("button", {
+      name: "Create 1 test for record listing",
+    });
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(requests).toHaveLength(2); // Stop after the proposal tool, without an extra narration turn.
+    expect(generated).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
-    expect(requests[0].evalScope.suiteId).toBe(scope.suiteId);
+    expect(useDescribeFlow.getState().sessions[sessionId].phase).toBe(
+      "proposed",
+    );
+    expect(requests[0].uiTools.map((tool: any) => tool.name).sort()).toEqual([
+      "ui_eval_context",
+      "ui_eval_propose_cases",
+      "ui_eval_question",
+    ]);
+    await user.click(create);
+    expect(screen.getByText(/Created 1 unsaved test/)).toBeVisible();
+    expect(save).not.toHaveBeenCalled();
     expect(
-      requests[0].uiTools.some((tool: any) => tool.name === "ui_navigate"),
-    ).toBe(false);
-    await user.type(composer, "Make the expected outcome clearer{Enter}");
-    await waitFor(() => expect(requests.length).toBe(4));
-  });
-
-  it("consumes Generate's queued prompt once, including a subsequent prompt in the mounted chat", async () => {
-    const sessionId = openEvalChat(scope);
-    useEvalPromptQueue.getState().enqueue(sessionId, "Generate test cases");
-    const { rerender } = renderWithProviders(
-      <McpjamAgentThread
-        sessionId={sessionId}
-        projectId={scope.projectId}
-        organizationId={null}
-        variant="sidebar"
-      />,
-    );
-    await waitFor(() => expect(generated).toHaveBeenCalledOnce());
-    await waitFor(() => expect(requests.length).toBe(3));
-    rerender(
-      <McpjamAgentThread
-        sessionId={sessionId}
-        projectId={scope.projectId}
-        organizationId={null}
-        variant="sidebar"
-      />,
-    );
-    expect(generated).toHaveBeenCalledOnce();
-    act(() =>
-      useEvalPromptQueue
-        .getState()
-        .enqueue(sessionId, "Refine the existing draft"),
-    );
-    await waitFor(() => expect(requests.length).toBe(4));
+      screen.queryByLabelText("Require tool approval"),
+    ).not.toBeInTheDocument();
   });
 });
 
 it("keeps transcripts and outgoing history separate when moving between cases", async () => {
+  useDescribeSurface.setState({
+    scope: {
+      ...scope,
+      kind: "evals",
+      version: 1,
+      id: "active",
+      caseId: "case-a",
+    },
+  });
   const a = openEvalChat({ ...scope, caseId: "case-a" });
   // Seed a real hoisted Chat with A's history as if the user had already chatted.
-  const { getOrCreateAgentChat } =
-    await import("@/lib/mcpjam-agent/agent-chat-instances");
+  const { getOrCreateAgentChat } = await import(
+    "@/lib/mcpjam-agent/agent-chat-instances"
+  );
   const entry = getOrCreateAgentChat(a);
   entry.config.seeded = true;
   entry.chat.messages = [
@@ -221,6 +246,15 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   await screen.findByText("Only case A knows this request");
   let b = "";
   act(() => {
+    useDescribeSurface.setState({
+      scope: {
+        ...scope,
+        kind: "evals",
+        version: 1,
+        id: "active",
+        caseId: "case-b",
+      },
+    });
     b = openEvalChat({ ...scope, caseId: "case-b" });
   });
   rerender(
@@ -244,10 +278,26 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
     ]);
   });
   const user = userEvent.setup();
-  await user.type(
-    screen.getByPlaceholderText("Describe a change to this case…"),
-    "Help with case B",
-  );
+  await user.type(screen.getByRole("textbox"), "Help with case B");
+  expect(
+    screen.getByRole("button", { name: "Send", exact: true }),
+  ).toBeEnabled(); // Input can queue while B’s bridge mounts.
+  expect(requests).toHaveLength(0);
+  act(() => {
+    registerEvalDraft(
+      { ...scope, caseId: "case-b", kind: "evals", version: 1, id: "b" },
+      {
+        read: () => ({
+          draft: { title: "B", steps: [] },
+          revision: "b1",
+          tools: [],
+        }),
+        edit: vi.fn(),
+        undo: vi.fn(),
+      },
+    );
+  });
+  expect(screen.getByRole("textbox")).toHaveValue("Help with case B");
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Send", exact: true }),
@@ -260,6 +310,15 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   expect(JSON.stringify(requests[0].messages)).not.toContain("Only case A");
   let resumed = "";
   act(() => {
+    useDescribeSurface.setState({
+      scope: {
+        ...scope,
+        kind: "evals",
+        version: 1,
+        id: "active",
+        caseId: "case-a",
+      },
+    });
     resumed = openEvalChat({ ...scope, caseId: "case-a" });
   });
   expect(resumed).toBe(a);
@@ -276,21 +335,145 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   expect(screen.queryByText("Help with case B")).not.toBeInTheDocument();
 });
 
-it("renders Describe guidance immediately and switches to refinement as the draft gains content", async () => {
-  const sessionId = openEvalChat({ ...scope, caseId: "draft:describe", hasCaseContent: false });
-  renderWithProviders(<McpjamAgentThread sessionId={sessionId} projectId={scope.projectId} organizationId={null} surface="side-panel" variant="sidebar" />);
-  expect(screen.queryByText("What behavior should this case verify?")).toBeNull();
+it("keeps Describe guidance focused when the draft gains content", async () => {
+  const sessionId = openEvalChat({
+    ...scope,
+    caseId: "draft:describe",
+    hasCaseContent: false,
+  });
+  renderWithProviders(
+    <McpjamAgentThread
+      sessionId={sessionId}
+      projectId={scope.projectId}
+      organizationId={null}
+      surface="side-panel"
+      variant="sidebar"
+    />,
+  );
+  expect(
+    screen.queryByText("What behavior should this case verify?"),
+  ).toBeNull();
   expect(screen.getByTestId("eval-chat-guidance")).toBeVisible();
   expect(document.querySelector("[data-eval-composer=true]")).toBeTruthy();
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Help me choose a behavior" }));
-  expect((screen.getByPlaceholderText("Describe a behavior and the expected outcome…") as HTMLTextAreaElement).value).toContain("help me choose");
-  expect(requests).toHaveLength(0);
+  expect(
+    screen.queryByRole("button", { name: "Help me choose a behavior" }),
+  ).toBeNull();
+  const suggest = screen.getByRole("button", {
+    name: "Suggest a test from my tools",
+  });
+  await waitFor(() => expect(suggest).toBeEnabled());
+  await user.click(suggest);
+  await waitFor(() => expect(requests.length).toBeGreaterThan(0));
+  expect(JSON.stringify(requests[0].messages)).toContain("Suggest one focused");
+  expect(screen.getByRole("textbox")).toHaveValue("");
   act(() => {
     const current = useEvalAgentScopes.getState().scopes[sessionId];
-    useEvalAgentScopes.getState().set(sessionId, { ...current, hasCaseContent: true });
+    useEvalAgentScopes
+      .getState()
+      .set(sessionId, { ...current, hasCaseContent: true });
   });
   expect(screen.queryByText("What would you like to improve?")).toBeNull();
-  expect(screen.getByRole("button", { name: "Make checks more precise" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Help me choose a behavior" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Make checks more precise" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Help me choose a behavior" }),
+  ).toBeNull();
+});
+
+it("asks before continuing a paused creation", async () => {
+  const sessionId = openEvalChat(scope);
+  useDescribeFlow.setState({
+    sessions: {
+      [sessionId]: {
+        phase: "describing",
+        questionUsed: false,
+        needsResume: true,
+      },
+    },
+  });
+  renderWithProviders(
+    <McpjamAgentThread
+      sessionId={sessionId}
+      projectId={scope.projectId}
+      organizationId={null}
+      surface="side-panel"
+      variant="sidebar"
+    />,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible();
+  expect(requests).toHaveLength(0);
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Not now" }));
+  expect(requests).toHaveLength(0);
+  expect(
+    screen.queryByRole("button", { name: "Continue", exact: true }),
+  ).toBeNull();
+});
+
+it("queues a description during tool loading and sends it once when metadata arrives", async () => {
+  const sessionId = openEvalChat(scope);
+  const currentScope = useEvalAgentScopes.getState().scopes[sessionId];
+  const bridge = (ready: boolean) => ({
+    read: () => ({
+      draft: { title: "", steps: [] },
+      revision: "r1",
+      tools: [],
+      metadata: {
+        environmentKey: "v1",
+        tools: ready ? [{ name: "search" }] : [],
+        servers: [
+          {
+            serverId: "server",
+            status: ready ? ("ready" as const) : ("loading" as const),
+            tools: ready ? [{ name: "search" }] : [],
+            updatedAt: 1,
+          },
+        ],
+      },
+    }),
+    edit: vi.fn(),
+    undo: vi.fn(),
+  });
+  registerEvalDraft(currentScope, bridge(false));
+  // A text-only response makes duplicate user submissions observable.
+  vi.mocked(authFetch).mockImplementation(async (_url, init) => {
+    requests.push(JSON.parse(init!.body as string));
+    return stream([
+      { type: "start", messageId: "reply" },
+      { type: "text-start", id: "text" },
+      { type: "text-delta", id: "text", delta: "Ready" },
+      { type: "text-end", id: "text" },
+      { type: "finish" },
+    ]);
+  });
+  renderWithProviders(
+    <McpjamAgentThread
+      sessionId={sessionId}
+      projectId={scope.projectId}
+      organizationId={null}
+      surface="side-panel"
+      variant="sidebar"
+    />,
+  );
+  const user = userEvent.setup();
+  const input = screen.getByRole("textbox");
+  await user.type(input, "Search for matching issues{Enter}");
+  await waitFor(() =>
+    expect(useEvalPromptQueue.getState().pending[sessionId]?.text).toBe(
+      "Search for matching issues",
+    ),
+  );
+  expect(requests).toHaveLength(0);
+  expect(input).toHaveValue("Search for matching issues");
+  act(() => {
+    registerEvalDraft(currentScope, bridge(true));
+  });
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect(input).toHaveValue("");
+  expect(useEvalPromptQueue.getState().pending[sessionId]).toBeUndefined();
 });

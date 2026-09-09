@@ -170,7 +170,7 @@ export function ProjectRunSuiteGroup({
               key={launch.key}
               {...shared}
               rows={launch.runs}
-              label={`Run #${representative.runNumber}`}
+              label={`#${representative.runNumber}`}
               date={formatRunHistoryDate(representative.createdAt)}
               onOpen={
                 representative.suiteName !== null
@@ -253,8 +253,8 @@ export function GroupSummaryRow({
         suite
           ? "[&_td]:bg-accent [&_td]:border-y [&_td]:border-border"
           : onOpen
-          ? "cursor-pointer"
-          : undefined
+            ? "cursor-pointer"
+            : undefined
       }
       {...(onOpen
         ? {
@@ -284,7 +284,6 @@ export function GroupSummaryRow({
               className="size-3.5 shrink-0 text-muted-foreground"
               aria-hidden
             />
-            <span>{dateLabel}</span>
           </button>
         ) : (
           dateLabel
@@ -323,10 +322,10 @@ export function GroupSummaryRow({
         {!rollup
           ? "—"
           : active
-          ? "In progress"
-          : suite
-          ? `${runCount} finished`
-          : "Finished"}
+            ? "In progress"
+            : suite
+              ? `${runCount} finished`
+              : "Finished"}
       </TableCell>
       <TableCell className="text-right tabular-nums">
         <span className="font-semibold">
@@ -337,6 +336,16 @@ export function GroupSummaryRow({
             {rollup.passed}/{rollup.total} passed
           </span>
         )}
+      </TableCell>
+
+      <TableCell className="text-right tabular-nums text-muted-foreground">
+        {formatRunHistoryMetric(rollup?.latencyP50 ?? null, "duration")}
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-muted-foreground">
+        {formatRunHistoryMetric(rollup?.totalTokens ?? null, "number")}
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-muted-foreground">
+        {formatRunHistoryMetric(rollup?.toolCalls ?? null, "number")}
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap gap-1">
@@ -355,15 +364,6 @@ export function GroupSummaryRow({
             />
           ))}
         </div>
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
-        {formatRunHistoryMetric(rollup?.latencyP50 ?? null, "duration")}
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
-        {formatRunHistoryMetric(rollup?.totalTokens ?? null, "number")}
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
-        {formatRunHistoryMetric(rollup?.toolCalls ?? null, "number")}
       </TableCell>
     </TableRow>
   );

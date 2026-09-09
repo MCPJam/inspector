@@ -264,7 +264,7 @@ describe("CaseScorecard — the library", () => {
     const user = userEvent.setup();
     const { onAddScorer } = renderCard();
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    await user.click(screen.getByTestId("add-scorer-noToolErrors"));
+    await user.click(screen.getByTestId("add-step-item-check:noToolErrors"));
     expect(onAddScorer).toHaveBeenCalledWith({ type: "noToolErrors" });
   });
 
@@ -272,7 +272,7 @@ describe("CaseScorecard — the library", () => {
     const user = userEvent.setup();
     renderCard();
     await user.click(screen.getByRole("button", { name: "Add scorer" }));
-    expect(screen.queryByTestId("add-scorer-toolCalledWith")).toBeNull();
+    expect(screen.queryByTestId("add-step-item-check:toolCalledWith")).toBeNull();
   });
 });
 

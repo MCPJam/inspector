@@ -1,3 +1,7 @@
+// General-agent behavior remains covered with the Describe-only MVP gate disabled.
+vi.mock("../../../../shared/eval-agent-scope.js", async (importOriginal) => ({
+  ...await importOriginal<object>(), DESCRIBE_ONLY_AGENT: false,
+}));
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 
@@ -318,7 +322,7 @@ describe("eval-scoped agent requests", () => {
       expect(args.prepare.uiTools.map((t: any) => t.name)).toEqual(["ui_eval_context"]);
       expect(args.prepare.selectedServerIds).toEqual([]);
       expect(args.prepare.builtInTools).toBeUndefined();
-      expect(args.prepare.systemPrompt).toContain("Stay in this eval workspace");
+      expect(args.prepare.systemPrompt).toContain("available only in Describe");
       expect(args.prepare.systemPrompt).not.toContain("Navigate to Playground");
       expect(managerState.constructedConfigs[0]).not.toHaveProperty(MCPJAM_PLATFORM_SERVER_ID);
     } finally { delete process.env.MCPJAM_AGENT_PLATFORM_TOOLS; }

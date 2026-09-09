@@ -241,8 +241,7 @@ export function RunResultsMatrix({
         : true,
   );
   useEffect(() => {
-    if (status === "pending" && !showPending)
-      setStatus(ALL_EVAL_FILTER_VALUES);
+    if (status === "pending" && !showPending) setStatus(ALL_EVAL_FILTER_VALUES);
     if (status === "cancelled" && counts.cancelled === 0)
       setStatus(ALL_EVAL_FILTER_VALUES);
   }, [showPending, status, counts.cancelled]);
@@ -320,7 +319,9 @@ export function RunResultsMatrix({
             className="w-32"
             value={activeStatus}
             options={[...statusOptions]}
-            formatOption={(value) => STATUS_LABEL[value as StatusFilter] ?? value}
+            formatOption={(value) =>
+              STATUS_LABEL[value as StatusFilter] ?? value
+            }
             onChange={setStatus}
           />
           {toolbarExtra}
@@ -594,8 +595,8 @@ function CaseIterations({
             <span />
             <span>Iter</span>
             <span>Result</span>
-            <span>01 · 02 · 03 · 04 · 05 · 06</span>
-            <span>E2E</span>
+            <span>User Value Chain</span>
+            <span>Latency</span>
             <span>Tokens</span>
             <span>Calls</span>
           </div>

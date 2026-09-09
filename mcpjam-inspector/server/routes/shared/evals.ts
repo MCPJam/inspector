@@ -996,6 +996,8 @@ export const CaseMixSchema = z.object({
 
 // Optional generation knobs forwarded to the backend generate endpoint.
 export const GenerationOptionsSchema = z.object({
+  testSet: z.enum(["quick", "comprehensive"]).optional(),
+  toolCoverage: z.enum(["read-only", "read-write"]).optional(),
   caseMix: CaseMixSchema.optional(),
   varyUserStyles: z.boolean().optional(),
   refinement: z.string().trim().min(1).max(2_000).optional(),

@@ -1,3 +1,4 @@
+import { useDescribeFlow } from "./describe-flow";
 import { compactEvalContextMessages } from "./eval-chat-context";
 /**
  * Module-level store of live MCPJam Agent `Chat` instances, keyed by
@@ -133,7 +134,6 @@ export function stopAgentChat(sessionId: string) {
   void instances.get(sessionId)?.chat.stop();
 }
 
-
 /**
  * When a navigation-capable UI tool fires while the session is rendered on a
  * route-bound surface, adopt the session into the always-mounted side panel
@@ -147,7 +147,7 @@ export function stopAgentChat(sessionId: string) {
  */
 function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   const onRouteBoundSurface = [...config.attachedSurfaces].some((s) =>
-    ROUTE_BOUND_SURFACES.has(s)
+    ROUTE_BOUND_SURFACES.has(s),
   );
   if (!onRouteBoundSurface) return;
   const panel = useAgentPanelStore.getState();
@@ -278,7 +278,13 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     transport: new DefaultChatTransport({
       api: AGENT_API_PATH,
       fetch: authFetch,
-      prepareSendMessagesRequest: ({ id, messages, trigger, messageId, body }) => ({
+      prepareSendMessagesRequest: ({
+        id,
+        messages,
+        trigger,
+        messageId,
+        body,
+      }) => ({
         body: {
           ...body,
           id,
@@ -298,7 +304,15 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
         evalScope: evalTurnScope(chatSessionId),
-        uiTools: useUiToolsRegistry.getState().snapshotForChatBody().filter(tool => evalTurnScope(chatSessionId) ? EVAL_AGENT_TOOL_NAMES.has(tool.name) : !EVAL_AGENT_TOOL_NAMES.has(tool.name) || tool.name === "ui_ask_user"),
+        uiTools: useUiToolsRegistry
+          .getState()
+          .snapshotForChatBody()
+          .filter((tool) =>
+            evalTurnScope(chatSessionId)
+              ? EVAL_AGENT_TOOL_NAMES.has(tool.name)
+              : !EVAL_AGENT_TOOL_NAMES.has(tool.name) ||
+                tool.name === "ui_ask_user",
+          ),
         // Guided-tour instructions for this session, if any (the route
         // prepends body.systemPrompt to the agent identity prompt). Read at
         // POST time so the tour context survives reloads and Recent Chats
@@ -335,7 +349,16 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     // skill-tool deny/approve path), but never while an approval pill is still
     // pending (BUG-4). Shared with the Playground surface so the two can't
     // drift; see `shouldAutoResumeTurn` for the full rationale.
-    sendAutomaticallyWhen: shouldAutoResumeTurn,
+    sendAutomaticallyWhen: (input) => {
+      const phase = useDescribeFlow.getState().sessions[chatSessionId]?.phase;
+      if (
+        phase === "clarifying" ||
+        phase === "proposed" ||
+        phase === "reviewing"
+      )
+        return false;
+      return shouldAutoResumeTurn(input);
+    },
   });
 
   const handleToolApprovalResponse = createUiAwareApprovalResponseHandler({

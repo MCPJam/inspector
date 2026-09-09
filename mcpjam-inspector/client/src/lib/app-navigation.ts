@@ -503,7 +503,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,
-      )}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
+      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
@@ -516,6 +516,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     case "test-edit": {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
+      if (route.checks) params.set("checks", "1");
       if (route.iteration) params.set("iteration", route.iteration);
       if (route.fromEvalServer) params.set("fromEvalServer", route.fromEvalServer);
       const query = params.toString();

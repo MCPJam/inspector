@@ -15,6 +15,7 @@ export function ScorecardGroupSection({
   label,
   question,
   state,
+  evidence,
   children,
 }: {
   stage: UserValueStage;
@@ -28,6 +29,7 @@ export function ScorecardGroupSection({
    * passed — and so nothing states the same verdict twice.
    */
   state?: { label: string; tone: "passed" | "failed" | "neutral" };
+  evidence?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -53,6 +55,7 @@ export function ScorecardGroupSection({
           {question}
         </p>
       </div>
+      {evidence}
       <ul className="space-y-1">{children}</ul>
     </section>
   );

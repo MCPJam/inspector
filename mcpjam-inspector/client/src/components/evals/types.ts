@@ -1,3 +1,4 @@
+import type { CaseSource } from "@mcpjam/sdk/contract";
 import type {
   EvalSuiteFileCaseImport,
   SuiteGatePolicyV1,
@@ -216,6 +217,7 @@ export type EvalSuiteConfigTest = {
    * run started, not what it claims now.
    */
   import?: EvalCaseImportClaim;
+  source?: CaseSource;
   /** The run's own decision about this case. Absent on a native case. */
   importRunDecision?: EvalImportRunDecision;
 };
@@ -473,6 +475,7 @@ export type EvalCase = {
    * from "imported, faithfulness unknown".
    */
   import?: EvalCaseImportClaim;
+  source?: CaseSource;
   _creationTime?: number; // Convex auto field
 };
 

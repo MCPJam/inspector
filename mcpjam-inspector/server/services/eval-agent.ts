@@ -1,4 +1,8 @@
 import {
+  readOnlyGenerationSnapshot,
+  filterReadOnlyGeneratedCases,
+} from "./eval-generation-coverage";
+import {
   deriveExpectedToolCalls,
   deriveQuery,
   normalizePromptTurns,
@@ -50,6 +54,8 @@ export interface CaseMixInput {
  * `/eval-generation/generate` body. Absent → today's default generation.
  */
 export interface GenerationOptions {
+  testSet?: "quick" | "comprehensive";
+  toolCoverage?: "read-only" | "read-write";
   caseMix?: CaseMixInput;
   /** Condition cases on a generated persona slate for realistic phrasing. */
   varyUserStyles?: boolean;
@@ -207,6 +213,10 @@ export async function generateTestCases(
   projectId?: string,
   generationOptions?: GenerationOptions,
 ): Promise<GeneratedTestCase[]> {
+  const snapshot =
+    generationOptions?.toolCoverage === "read-only"
+      ? readOnlyGenerationSnapshot(toolSnapshot)
+      : toolSnapshot;
   const response = await fetch(`${convexHttpUrl}/eval-generation/generate`, {
     method: "POST",
     headers: {
@@ -215,7 +225,13 @@ export async function generateTestCases(
     },
     body: JSON.stringify({
       mode: "normal",
-      toolSnapshot,
+      ...(generationOptions?.testSet
+        ? { testSet: generationOptions.testSet }
+        : {}),
+      ...(generationOptions?.toolCoverage
+        ? { toolCoverage: generationOptions.toolCoverage }
+        : {}),
+      toolSnapshot: snapshot,
       ...(projectId ? { projectId } : {}),
       ...(serverAttachment ? { serverAttachment } : {}),
       ...(generationOptions?.caseMix
@@ -247,5 +263,8 @@ export async function generateTestCases(
     );
   }
 
-  return data.tests.map(adaptCase);
+  const tests = data.tests.map(adaptCase);
+  return generationOptions?.toolCoverage === "read-only"
+    ? filterReadOnlyGeneratedCases(tests, snapshot)
+    : tests;
 }

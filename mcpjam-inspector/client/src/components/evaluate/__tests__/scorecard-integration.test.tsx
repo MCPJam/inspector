@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
   render,
@@ -107,7 +108,7 @@ describe("scorecard integration regressions", () => {
     ).toBe(true);
   });
 
-  it("withholds judge-derived totals, chain states and suggestions until reveal", () => {
+  it("withholds judge-derived totals, chain states and suggestions until reveal", async () => {
     const props = {
       authored: {
         ...authored,
@@ -124,18 +125,17 @@ describe("scorecard integration regressions", () => {
     };
     const view = render(<TrialScorecard {...props} judgeHidden />);
     expect(screen.queryByTestId("stage-strip")).not.toBeInTheDocument();
-    expect(screen.getByTestId("trial-scorecard-summary")).toHaveTextContent(
-      "No scorers ran",
-    );
+    expect(screen.queryByTestId("trial-scorecard-summary")).toBeNull();
     expect(
       screen.queryByText("Suggestions based on judge success"),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("0.93")).not.toBeInTheDocument();
     view.rerender(<TrialScorecard {...props} judgeHidden={false} />);
-    expect(screen.getByTestId("stage-strip")).toBeInTheDocument();
-    expect(screen.getByTestId("trial-scorecard-summary")).toHaveTextContent(
-      "1 of 1 gate passed",
-    );
+    expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /User value:/ }));
+    expect(screen.getByTestId("trial-stage-state")).toHaveTextContent("passed");
     expect(screen.getByText("0.93")).toBeInTheDocument();
   });
 

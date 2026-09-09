@@ -21,7 +21,10 @@ import {
   checkSeverity,
   type Predicate,
 } from "@mcpjam/sdk/predicates";
-import { formatCriterion, PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import {
+  formatCriterion,
+  PREDICATE_KIND_LABELS,
+} from "@/shared/predicate-kinds";
 import {
   STAGE_CHIP_TONE_CLASS,
   type StageCardView,
@@ -98,15 +101,17 @@ export const ROLE_LEGEND: Record<
 > = {
   gate: {
     label: "Gate",
-    meaning: "A miss fails the trial.",
+    meaning: "If this check fails, the iteration fails.",
   },
   warn: {
     label: "Warn",
-    meaning: "A miss is highlighted and does not fail the trial.",
+    meaning:
+      "If this check fails, a warning is shown without failing the iteration.",
   },
   report: {
     label: "Report",
-    meaning: "Recorded beside the verdict and never changes it.",
+    meaning:
+      "Records the result for reference without changing the iteration verdict.",
   },
 };
 
@@ -162,11 +167,7 @@ export function withGoalCompletionRole(
 }
 
 export type ScorerLibraryCategoryId =
-  | "selection"
-  | "call"
-  | "userValue"
-  | "budget"
-  | "response";
+  "selection" | "call" | "userValue" | "budget" | "response";
 
 export const SCORER_LIBRARY_CATEGORY_LABELS: Record<
   ScorerLibraryCategoryId,
@@ -258,11 +259,7 @@ export function scorerLibraryCategories(
   );
 }
 
-export type ScorerTableRowKind =
-  | "observed"
-  | "match"
-  | "predicate"
-  | "judge";
+export type ScorerTableRowKind = "observed" | "match" | "predicate" | "judge";
 
 export type ScorerTableRow = {
   id: string;
@@ -345,7 +342,8 @@ function budgetThreshold(predicate: Predicate): string {
   if (predicate.type === "tokenBudgetUnder") return String(predicate.tokens);
   if (predicate.type === "turnCountUnder") return String(predicate.turns);
   if (predicate.type === "toolLatencyUnder") return String(predicate.ms);
-  if (predicate.type === "toolResultSizeUnder") return String(predicate.maxBytes);
+  if (predicate.type === "toolResultSizeUnder")
+    return String(predicate.maxBytes);
   if (predicate.type === "toolCallCountUnder") return String(predicate.count);
   return "1";
 }
@@ -542,12 +540,7 @@ export function buildScorerTable(input: {
     ordinal: String(index + 1).padStart(2, "0"),
     label: USER_VALUE_STAGE_LABELS[stage],
     question: USER_VALUE_STAGE_QUESTIONS[stage],
-    rows: rowsForStage(
-      stage,
-      input.model,
-      input.predicates,
-      input.judgeConfig,
-    ),
+    rows: rowsForStage(stage, input.model, input.predicates, input.judgeConfig),
   }));
   const states = stageConfigStates(input.model, judgeMode(input.judgeConfig));
   const cards = states.map((state, index) => configCard(state, index));

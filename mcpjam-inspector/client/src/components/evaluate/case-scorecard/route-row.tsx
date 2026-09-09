@@ -16,6 +16,7 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@mcpjam/design-system/input";
 import {
   ToggleGroup,
@@ -28,8 +29,11 @@ import type {
   CaseKind,
   SimpleCaseTool,
 } from "../simple-case/simple-case-model";
-import { StatusDot, overlayStatus, type SimpleCaseOverlay } from "../simple-case/status-dot";
-import { ProvenanceChip } from "./provenance-chip";
+import {
+  StatusDot,
+  overlayStatus,
+  type SimpleCaseOverlay,
+} from "../simple-case/status-dot";
 import { RowMarker } from "./row-marker";
 import type { ScorecardRow } from "./case-scorecard-model";
 
@@ -63,7 +67,8 @@ export function RouteRow({
   const locked = route.kind === "locked" || readOnly;
   const tools =
     route.kind === "tools" || route.kind === "locked" ? route.tools : [];
-  const matchMode: CaseKind = route.kind === "tools" ? route.matchMode : "capability";
+  const matchMode: CaseKind =
+    route.kind === "tools" ? route.matchMode : "capability";
 
   return (
     <li
@@ -71,168 +76,182 @@ export function RouteRow({
       data-row-key={row.key}
       data-route={route.kind}
       data-role={row.role}
-      className="space-y-2 rounded-md border border-border/60 bg-background/40 px-2.5 py-2"
+      className="overflow-hidden rounded-lg border border-border bg-card"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2.5">
         <RowMarker row={row} />
-        <ProvenanceChip provenance="route" />
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground" title={row.tooltip}>
-          {row.label}
+
+        <span
+          className="min-w-0 flex-1 truncate text-xs text-foreground"
+          title={row.tooltip}
+        >
+          {route.kind === "tools" ? "Tool called with" : row.label}
         </span>
-        {route.kind === "tools" ? (
-          <ToggleGroup
-            type="single"
-            value={matchMode}
-            onValueChange={(value) => {
-              if (value === "capability" || value === "regression") {
-                onSetKind(value);
-              }
-            }}
-            className="shrink-0 gap-0.5"
-            aria-label="Route match mode"
-            disabled={locked}
-          >
-            <ToggleGroupItem value="capability" className="h-6 px-2 text-[11px]">
-              Reach the tool
-            </ToggleGroupItem>
-            <ToggleGroupItem value="regression" className="h-6 px-2 text-[11px]">
-              Exact route
-            </ToggleGroupItem>
-          </ToggleGroup>
-        ) : null}
         <RoleChip role={row.role} />
       </div>
-
-      {route.kind === "tools" && matchMode === "regression" ? (
-        <p className="text-[11px] leading-snug text-muted-foreground">
-          Strict order, no extra calls; arguments compared as pinned.
-        </p>
-      ) : null}
-
-      {route.kind === "locked" ? (
-        <p
-          className="text-[11px] text-muted-foreground"
-          data-testid="simple-case-route-locked"
-        >
-          {route.reason === "modelFree"
-            ? "This case runs a pinned tool call, so no model route applies. Edit it in Steps."
-            : "This case does not start with a prompt. Edit it in Steps."}
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant={route.kind === "noTool" ? "secondary" : "outline"}
-            size="sm"
-            className="h-7 text-xs"
-            onClick={onChooseNoTool}
-            disabled={readOnly}
-          >
-            No tool should be called
-          </Button>
-          {route.kind === "noTool" ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={onChooseTools}
-              disabled={readOnly}
-            >
-              Use tools instead
-            </Button>
+      <div className="space-y-3 p-3">
+        <details className="text-[11px] text-muted-foreground">
+          <summary className="cursor-pointer">Matching options</summary>
+          <div className="flex flex-wrap items-center gap-2 py-2">
+            {" "}
+            {route.kind === "tools" ? (
+              <ToggleGroup
+                type="single"
+                value={matchMode}
+                onValueChange={(value) => {
+                  if (value === "capability" || value === "regression") {
+                    onSetKind(value);
+                  }
+                }}
+                className="shrink-0 gap-0.5"
+                aria-label="Route match mode"
+                disabled={locked}
+              >
+                <ToggleGroupItem
+                  value="capability"
+                  className="h-6 px-2 text-[11px]"
+                >
+                  Reach the tool
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="regression"
+                  className="h-6 px-2 text-[11px]"
+                >
+                  Exact route
+                </ToggleGroupItem>
+              </ToggleGroup>
+            ) : null}
+          </div>
+          {route.kind === "tools" && matchMode === "regression" ? (
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Strict order, no extra calls; arguments compared as pinned.
+            </p>
           ) : null}
-        </div>
-      )}
 
-      {showUnsetError ? (
-        <p
-          className="text-[11px] text-destructive"
-          data-testid="simple-case-tools-unset"
-        >
-          {UNSET_TOOLS_BLOCK_REASON}
-        </p>
-      ) : null}
-
-      {negativeContradiction ? (
-        <p
-          className="text-[11px] text-destructive"
-          data-testid="simple-case-negative-contradiction"
-        >
-          This case says no tool should be called, but a check that requires a
-          tool call still applies — from the suite, this case, or a step. Those
-          cannot both hold.
-        </p>
-      ) : null}
-
-      {route.kind !== "noTool" ? (
-        <div className="space-y-2">
-          {tools.map((tool, index) => (
-            <div
-              key={tool.id}
-              className="space-y-2 rounded-md border border-border bg-muted/20 p-2.5"
-              data-testid="simple-case-tool-row"
+          {route.kind === "locked" ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="simple-case-route-locked"
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-[11px] font-medium text-muted-foreground">
-                  {matchMode === "regression" ? `Step ${index + 1}` : "Tool"}
-                </p>
-                <div className="flex items-center gap-1">
-                  <StatusDot status={overlayStatus(overlay, tool.id)} />
-                  {locked ? null : (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0 text-muted-foreground"
-                      aria-label={`Remove ${tool.toolName || "tool"}`}
-                      onClick={() =>
-                        onSetTools(tools.filter((row) => row.id !== tool.id))
-                      }
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <ToolCalledWithFields
-                predicate={{
-                  type: "toolCalledWith",
-                  toolName: tool.toolName,
-                  args: {
-                    args: matchMode === "regression" ? tool.arguments : {},
-                  },
-                }}
-                onChange={(next) => {
-                  if (next.type !== "toolCalledWith") return;
-                  onSetTools(
-                    tools.map((row) =>
-                      row.id === tool.id
-                        ? {
-                            ...row,
-                            toolName: next.toolName,
-                            arguments:
-                              matchMode === "regression"
-                                ? (next.args.args ?? {})
-                                : {},
-                          }
-                        : row,
-                    ),
-                  );
-                }}
-                availableTools={availableTools}
-                readOnly={locked}
-              />
+              {route.reason === "modelFree"
+                ? "This case runs a pinned tool call, so no model route applies. Edit it in Steps."
+                : "This case does not start with a prompt. Edit it in Steps."}
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant={route.kind === "noTool" ? "secondary" : "outline"}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={onChooseNoTool}
+                disabled={readOnly}
+              >
+                No tool should be called
+              </Button>
+              {route.kind === "noTool" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={onChooseTools}
+                  disabled={readOnly}
+                >
+                  Use tools instead
+                </Button>
+              ) : null}
             </div>
-          ))}
-          {locked ? null : (
-            <AddToolRow
-              availableTools={availableTools ?? []}
-              onAdd={onAddTool}
-            />
           )}
-        </div>
-      ) : null}
+        </details>
+
+        {showUnsetError ? (
+          <p
+            className="text-[11px] text-destructive"
+            data-testid="simple-case-tools-unset"
+          >
+            {UNSET_TOOLS_BLOCK_REASON}
+          </p>
+        ) : null}
+
+        {negativeContradiction ? (
+          <p
+            className="text-[11px] text-destructive"
+            data-testid="simple-case-negative-contradiction"
+          >
+            This case says no tool should be called, but a check that requires a
+            tool call still applies — from the suite, this case, or a step.
+            Those cannot both hold.
+          </p>
+        ) : null}
+
+        {route.kind !== "noTool" ? (
+          <div className="space-y-2">
+            {tools.map((tool) => (
+              <div
+                key={tool.id}
+                className="relative space-y-1 border-b border-border pb-3 last:border-b-0"
+                data-testid="simple-case-tool-row"
+              >
+                <div className="absolute right-2 top-2">
+                  <div className="flex items-center gap-1">
+                    <StatusDot status={overlayStatus(overlay, tool.id)} />
+                    {locked ? null : (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-muted-foreground"
+                        aria-label={`Remove ${tool.toolName || "tool"}`}
+                        onClick={() =>
+                          onSetTools(tools.filter((row) => row.id !== tool.id))
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <ToolCalledWithFields
+                  compact
+                  predicate={{
+                    type: "toolCalledWith",
+                    toolName: tool.toolName,
+                    args: {
+                      args: matchMode === "regression" ? tool.arguments : {},
+                    },
+                  }}
+                  onChange={(next) => {
+                    if (next.type !== "toolCalledWith") return;
+                    onSetTools(
+                      tools.map((row) =>
+                        row.id === tool.id
+                          ? {
+                              ...row,
+                              toolName: next.toolName,
+                              arguments:
+                                matchMode === "regression"
+                                  ? (next.args.args ?? {})
+                                  : {},
+                            }
+                          : row,
+                      ),
+                    );
+                  }}
+                  availableTools={availableTools}
+                  readOnly={locked}
+                />
+              </div>
+            ))}
+            {locked ? null : (
+              <AddToolRow
+                availableTools={availableTools ?? []}
+                onAdd={onAddTool}
+              />
+            )}
+          </div>
+        ) : null}
+      </div>
     </li>
   );
 }
@@ -255,19 +274,17 @@ function AddToolRow({
   return (
     <div className="flex items-center gap-2">
       {availableTools.length > 0 ? (
-        <select
-          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          aria-label="Add a tool"
-        >
-          <option value="">Pick a tool…</option>
-          {availableTools.map((tool) => (
-            <option key={tool} value={tool}>
-              {tool}
-            </option>
-          ))}
-        </select>
+        <Combobox
+          items={availableTools.map((tool) => ({ value: tool, label: tool }))}
+          value=""
+          onValueChange={(tool) => {
+            if (tool) onAdd(tool);
+          }}
+          placeholder="+ Add tool to this check"
+          searchPlaceholder="Search tools…"
+          emptyMessage="No matching tools"
+          className="h-8 w-full justify-between text-xs"
+        />
       ) : (
         <Input
           value={name}
@@ -277,20 +294,22 @@ function AddToolRow({
           className="h-8 flex-1 text-xs"
         />
       )}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 gap-1 text-xs"
-        onClick={() => {
-          onAdd(name);
-          setName("");
-        }}
-        disabled={!name.trim()}
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Add
-      </Button>
+      {availableTools.length === 0 && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1 text-xs"
+          onClick={() => {
+            onAdd(name);
+            setName("");
+          }}
+          disabled={!name.trim()}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add tool
+        </Button>
+      )}
     </div>
   );
 }
