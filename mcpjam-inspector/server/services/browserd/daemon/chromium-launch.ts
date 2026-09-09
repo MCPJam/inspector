@@ -19,6 +19,8 @@ import {
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
 import { PAGE_TEXT_FN } from "./page-text";
+import type { PendingDialog } from "./dialogs";
+import { NetworkRing } from "./network";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -107,6 +109,38 @@ export type AnyPage = {
 const CONSOLE_RING_SIZE = 200;
 /** Per-entry cap at CAPTURE time; the observe budget caps again for output. */
 const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
+/**
+ * Per-dialog message cap at capture time.
+ *
+ * A dialog's text is page-authored and reaches the model, so it is bounded
+ * here for the same reason console entries are — and generously, because the
+ * whole value of the message is that a person or a model can recognise which
+ * dialog it is.
+ */
+const DIALOG_MESSAGE_BYTES = 2_000;
+
+/** The shapes Playwright's `Request`/`Response` give us. Structural, like `AnyPage`. */
+interface PlaywrightRequest {
+  url?(): string;
+  method?(): string;
+  resourceType?(): string;
+  failure?(): { errorText?: string } | null;
+}
+interface PlaywrightResponse {
+  status?(): number;
+  statusText?(): string;
+  headers?(): Record<string, string>;
+  request?(): PlaywrightRequest;
+}
+
+/** The shape Playwright's `Dialog` gives us. Structural, like `AnyPage`. */
+interface PlaywrightDialog {
+  type?(): string;
+  message?(): string;
+  defaultValue?(): string | undefined;
+  accept(promptText?: string): Promise<void>;
+  dismiss(): Promise<void>;
+}
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
@@ -141,6 +175,98 @@ export function wrapPage(page: AnyPage): DriverPage {
       if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
     } catch {
       // A console listener must never take the page down.
+    }
+  });
+  // THE NETWORK RING. Playwright hands back objects rather than CDP ids, so
+  // the ring's own id is minted here and remembered against the Request — the
+  // same object the response reports, which is what folds the two events into
+  // one row. A WeakMap so a page that runs for hours does not accumulate ids
+  // for requests nobody will ask about again.
+  const network = new NetworkRing();
+  const requestIds = new WeakMap<object, string>();
+  let nextRequestId = 0;
+  const idFor = (request: object): string => {
+    const known = requestIds.get(request);
+    if (known) return known;
+    nextRequestId += 1;
+    const minted = `r${nextRequestId}`;
+    requestIds.set(request, minted);
+    return minted;
+  };
+  page.on("request", (request: PlaywrightRequest) => {
+    try {
+      network.started({
+        requestId: idFor(request as unknown as object),
+        method: request.method?.() ?? "GET",
+        url: request.url?.() ?? "",
+        ...(request.resourceType?.()
+          ? { resourceType: request.resourceType() }
+          : {}),
+      });
+    } catch {
+      // A network listener must never take the page down.
+    }
+  });
+  page.on("response", (response: PlaywrightResponse) => {
+    try {
+      const request = response.request?.();
+      if (!request) return;
+      const headers = response.headers?.();
+      const length = Number(headers?.["content-length"]);
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        ...(response.status ? { status: response.status() } : {}),
+        ...(response.statusText?.()
+          ? { statusText: response.statusText() }
+          : {}),
+        ...(Number.isFinite(length) ? { bytes: length } : {}),
+        ...(headers ? { headers } : {}),
+      });
+    } catch {
+      // As above.
+    }
+  });
+  page.on("requestfailed", (request: PlaywrightRequest) => {
+    try {
+      network.finished({
+        requestId: idFor(request as unknown as object),
+        failure: request.failure?.()?.errorText ?? "request failed",
+      });
+    } catch {
+      // As above.
+    }
+  });
+
+  // DIALOGS ARE CAPTURED, NOT ANSWERED HERE.
+  //
+  // Registering any `dialog` listener turns OFF Playwright's own auto-dismiss,
+  // which is what makes this possible at all: the dialog stays open, and the
+  // driver decides. That decision needs the lease — a dialog raised while a
+  // person is driving is theirs to answer, and dismissing it out from under
+  // them is exactly the surprise the handoff exists to prevent — and the lease
+  // is not something a page wrapper can see.
+  let pending: { dialog: PendingDialog; handle: PlaywrightDialog } | null =
+    null;
+  page.on("dialog", (dialog: PlaywrightDialog) => {
+    try {
+      pending = {
+        handle: dialog,
+        dialog: {
+          kind: (dialog.type?.() ?? "alert") as PendingDialog["kind"],
+          message: capText(dialog.message?.() ?? "", DIALOG_MESSAGE_BYTES),
+          ...(dialog.defaultValue?.()
+            ? {
+                defaultPrompt: capText(
+                  dialog.defaultValue()!,
+                  DIALOG_MESSAGE_BYTES,
+                ),
+              }
+            : {}),
+          at: Date.now(),
+        },
+      };
+    } catch {
+      // A dialog listener must never take the page down.
     }
   });
   page.on("pageerror", (error: unknown) => {
@@ -280,6 +406,27 @@ export function wrapPage(page: AnyPage): DriverPage {
       } catch {
         return "";
       }
+    },
+    networkEntries: () => network.entries(),
+    dropNetworkSince: (since: number) => network.dropSince(since),
+    networkCursor: () => network.count(),
+    pendingDialog: () => pending?.dialog ?? null,
+    async resolveDialog(accept: boolean, promptText?: string) {
+      const open = pending;
+      // CLEARED BEFORE THE ANSWER IS SENT, not after. `accept()` resolves once
+      // the renderer has taken the answer and started running again, and any
+      // command that arrives in that window must see an unblocked page rather
+      // than refuse against a dialog that is already on its way out.
+      pending = null;
+      if (!open) return false;
+      try {
+        if (accept) await open.handle.accept(promptText);
+        else await open.handle.dismiss();
+      } catch {
+        // Already gone — the page closed it, or the tab navigated. Answered
+        // either way, as far as the caller is concerned.
+      }
+      return true;
     },
     consoleEntries: () => consoleRing,
     consoleCursor: () => ({ console: consoleTotal, errors: errorsTotal }),
