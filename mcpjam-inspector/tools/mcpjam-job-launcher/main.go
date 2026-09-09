@@ -44,6 +44,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -59,6 +61,35 @@ func main() {
 }
 
 func run(exe string, args []string) int {
+	// Who may be started, decided HERE.
+	//
+	// The supervisor resolves the child from the digest-verified runtime pack
+	// (`bin/node.exe`, via `resolveNodeLauncher`) and refuses a relative path,
+	// so today argv[1] is never a value a user or an MCP server chose. That is
+	// a property of the caller, though, and this binary is the thing that
+	// actually creates the process: a future caller threading a path in from a
+	// config would turn the launcher into a general "start any program"
+	// primitive without a line of it changing. So the invariant is restated
+	// where it is enforceable — the child must be an absolute path inside the
+	// same pack whose tree digest covers this launcher.
+	//
+	// It is not a privilege boundary; per the header, a job object bounds
+	// lifetime and everything here runs as the user either way. It is a bound
+	// on what this launcher can be repurposed to start.
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcpjam-job-launcher: os.Executable: %v\n", err)
+		return 1
+	}
+	// Deliberately the checked path, not the argument: what StartProcess reads
+	// below is exactly what was verified, rather than a name that could resolve
+	// somewhere else by the time it is read.
+	exe, err = childInsidePack(exe, self)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcpjam-job-launcher: %v\n", err)
+		return 1
+	}
+
 	// The job is created first and never given a name: an unnamed job cannot be
 	// opened by another process, so nothing outside this launcher can add a
 	// process to it or, more importantly, remove one.
@@ -182,6 +213,57 @@ func run(exe string, args []string) int {
 	case <-stdinClosed:
 		return 143
 	}
+}
+
+// childInsidePack resolves the child executable and refuses one that is not
+// inside this launcher's own runtime pack.
+//
+// `self` is this process's own image. In every distribution the launcher ships
+// as `<pack>/bin/mcpjam-job-launcher.exe` and the child it is given is
+// `<pack>/bin/node.exe`, so the pack root is two directories up and the child
+// must be under it. The root rather than the `bin` directory alone, because
+// what the digest covers — and therefore what consent named — is the tree.
+//
+// Both sides go through EvalSymlinks: the comparison is then between paths that
+// exist, with `..` segments and links already collapsed, which is what makes it
+// a containment check rather than a string trick. Case is folded because
+// Windows paths are case-insensitive, so `C:\Pack\BIN\node.exe` names the
+// same file as `C:\pack\bin\node.exe`.
+func childInsidePack(exe string, self string) (string, error) {
+	if !filepath.IsAbs(exe) {
+		return "", fmt.Errorf(
+			"refusing to start %q: the child must be an absolute path inside "+
+				"the verified runtime pack, and a bare name would be resolved "+
+				"through a mutable PATH at spawn time", exe,
+		)
+	}
+	root, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(self)))
+	if err != nil {
+		return "", fmt.Errorf("resolving this launcher's pack root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", fmt.Errorf("resolving child %q: %w", exe, err)
+	}
+	if !withinRoot(root, resolved) {
+		return "", fmt.Errorf(
+			"refusing to start %q: it resolves to %q, which is outside this "+
+				"launcher's runtime pack %q", exe, resolved, root,
+		)
+	}
+	return resolved, nil
+}
+
+// withinRoot reports whether path is strictly below root. Both must already be
+// resolved; equality is not containment, since the root is a directory and the
+// child is a file inside it.
+func withinRoot(root string, path string) bool {
+	prefix := filepath.Clean(root)
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	path = filepath.Clean(path)
+	return len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
 }
 
 // resumeMainThread resumes the single thread of a CREATE_SUSPENDED process.
