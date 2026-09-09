@@ -623,6 +623,43 @@ describe("update-listeners", () => {
     }
   });
 
+  it("delivers the silent refusal to the window the user reopens", async () => {
+    // The other half of the case above: the watchdog fires with nobody to
+    // toast, and on macOS the app is still running, so the user comes back to
+    // a live Update pill. Dropping the failure there is what makes the pill
+    // click into nothing over and over.
+    vi.useFakeTimers();
+    try {
+      const window = createWindow();
+      windows.push(window);
+      const mod = await loadUpdateListeners();
+      mod.__setInstallQuitTimeoutForTests(1_000);
+
+      mod.registerUpdateListeners(window as any);
+      emitAutoUpdaterEvent("update-available");
+      emitAutoUpdaterEvent("update-downloaded", {}, "Notes", "2.5.0");
+      ipcListeners.get("app:restart-for-update")?.({ sender: { id: 1 } });
+
+      windows.splice(0, windows.length);
+      vi.advanceTimersByTime(1_000);
+      expect(errorBroadcastCount(window)).toBe(0);
+
+      const reopened = createWindow(2);
+      windows.push(reopened);
+      mod.registerUpdateListeners(reopened as any);
+
+      expect(errorBroadcastCount(reopened)).toBe(1);
+
+      // Squirrel explaining the same dead install afterwards must not toast
+      // a second time.
+      emitAutoUpdaterEvent("error", new Error("squirrel: refused the swap"));
+
+      expect(errorBroadcastCount(reopened)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not toast a slow shutdown that already closed its windows", async () => {
     // The false positive the warn-level path buys us: a working macOS install
     // is mid-shutdown with its windows gone. No error, no toast.

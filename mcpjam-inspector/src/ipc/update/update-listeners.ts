@@ -47,6 +47,11 @@ let installQuitTimer: ReturnType<typeof setTimeout> | null = null;
 // toasts for one failure. Cleared when a new attempt or a new check begins,
 // so a genuinely unrelated later error still reaches the user.
 let installFailureReported = false;
+// Set when a failure was raised with no renderer to receive it. macOS keeps
+// the app alive with every window closed, which is exactly the state a silent
+// Squirrel refusal leaves behind, so the toast has to wait for the window the
+// user reopens from the dock.
+let pendingInstallFailure = false;
 
 function clearStalledInstallWatchdog(): void {
   if (stalledInstallTimer !== null) {
@@ -92,6 +97,7 @@ function requestQuitAndInstall(): void {
   // reported its failure.
   clearInstallQuitWatchdog();
   installFailureReported = false;
+  pendingInstallFailure = false;
   try {
     autoUpdater.quitAndInstall();
   } catch (error) {
@@ -108,7 +114,6 @@ function requestQuitAndInstall(): void {
     // Let the user click Update again. Status stays "downloaded" because the
     // build really is staged — it's the swap-in that didn't happen.
     isQuittingForUpdate = false;
-    installFailureReported = true;
     if (hasLiveWindow()) {
       // A window is still up, so the shutdown never even got as far as
       // closing it. Tell the user, who is the one watching the pill: the
@@ -116,6 +121,10 @@ function requestQuitAndInstall(): void {
       log.error(
         `quitAndInstall() returned without starting a quit within ${installQuitTimeoutMs}ms — treating the install as failed`,
       );
+      // Only claim the failure is reported once a renderer has actually heard
+      // it; otherwise the late Squirrel `error` would be deduped away against
+      // a toast nobody saw.
+      installFailureReported = true;
       broadcastUpdateError();
       return;
     }
@@ -128,6 +137,10 @@ function requestQuitAndInstall(): void {
     log.warn(
       `quitAndInstall() has not quit after ${installQuitTimeoutMs}ms and no window remains — install may have been refused silently`,
     );
+    // Hold the failure for whichever window comes next. A working install
+    // never gets there — the process is gone — so this only surfaces on the
+    // path where the user really does come back to a dead Update pill.
+    pendingInstallFailure = true;
   }, installQuitTimeoutMs);
 }
 
@@ -146,20 +159,36 @@ function isTrustedSender(senderId: number): boolean {
 export function setTrustedUpdateWindow(window: BrowserWindow): void {
   trustedWindow = window;
 
-  if (currentStatus.kind === "idle") {
+  const replayInstallFailure = pendingInstallFailure;
+  if (replayInstallFailure) {
+    pendingInstallFailure = false;
+    // This window is the one that hears it, so the late Squirrel `error` can
+    // now be deduped against a toast the user will actually see.
+    installFailureReported = true;
+  }
+
+  if (currentStatus.kind === "idle" && !replayInstallFailure) {
     return;
   }
+
+  const deliver = () => {
+    if (window.isDestroyed()) {
+      return;
+    }
+    if (currentStatus.kind !== "idle") {
+      window.webContents.send("update-status", currentStatus);
+    }
+    if (replayInstallFailure) {
+      window.webContents.send("update-error");
+    }
+  };
 
   if (window.webContents.isLoading()) {
-    window.webContents.once("did-finish-load", () => {
-      if (!window.isDestroyed()) {
-        window.webContents.send("update-status", currentStatus);
-      }
-    });
+    window.webContents.once("did-finish-load", deliver);
     return;
   }
 
-  window.webContents.send("update-status", currentStatus);
+  deliver();
 }
 
 function broadcast(): void {
@@ -171,10 +200,18 @@ function broadcast(): void {
 }
 
 function broadcastUpdateError(): void {
+  let delivered = false;
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send("update-error");
+      delivered = true;
     }
+  }
+  if (!delivered) {
+    // Every window is gone but the process isn't, so this error would vanish.
+    // Keep it for the next window instead of leaving the user a staged update
+    // and no sign that installing it already failed.
+    pendingInstallFailure = true;
   }
 }
 
@@ -198,6 +235,7 @@ export function setupAutoUpdaterEvents(): void {
     // A fresh check starts a new cycle: whatever Squirrel reports from here
     // on is its own failure, not an echo of the install we already reported.
     installFailureReported = false;
+    pendingInstallFailure = false;
     log.info("Checking for updates...");
   });
 
@@ -442,6 +480,8 @@ export function __resetUpdateStateForTests(): void {
   currentStatus = { kind: "idle" };
   isQuittingForUpdate = false;
   isCheckingOrDownloading = false;
+  installFailureReported = false;
+  pendingInstallFailure = false;
   trustedWindow = null;
   updateListenersRegistered = false;
   stalledInstallTimeoutMs = DEFAULT_STALLED_INSTALL_TIMEOUT_MS;
