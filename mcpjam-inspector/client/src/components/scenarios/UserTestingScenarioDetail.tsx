@@ -714,20 +714,34 @@ export function UserTestingScenarioDetail({
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {tab === "findings" ? (
           <div className="absolute inset-0 overflow-y-auto px-8 py-4">
-            <ScenarioFindingsTab
-              scenarioId={scenario.scenarioId}
-              onOpenSession={(threadId) =>
-                navigate(
-                  buildUserTestingScenarioPath(scenario.scenarioId, {
-                    tab: "sessions",
-                    session: threadId,
-                    sel: selParam ?? undefined,
-                    view,
-                  }),
-                  { replace: true },
-                )
-              }
-            />
+            {/* Same guard, same reason, as Insights below — and it matters
+                MORE here. That boundary was added when Insights was a tab a
+                reader opted into; Findings is the landing tab, so a throw
+                from its drill-down query blanks the default view of
+                `/user-testing/:scenarioId` for everyone arriving without a
+                `?tab=`. `ScenarioGoalChain` already guards the secondary
+                query on this surface, which left the primary one as the only
+                unguarded `useQuery` on the page. */}
+            <ErrorBoundary
+              key={scenario.scenarioId}
+              name="user-testing-findings"
+              fallback={<ScenarioShareEmptyPanel scenario={scenario} />}
+            >
+              <ScenarioFindingsTab
+                scenarioId={scenario.scenarioId}
+                onOpenSession={(threadId) =>
+                  navigate(
+                    buildUserTestingScenarioPath(scenario.scenarioId, {
+                      tab: "sessions",
+                      session: threadId,
+                      sel: selParam ?? undefined,
+                      view,
+                    }),
+                    { replace: true },
+                  )
+                }
+              />
+            </ErrorBoundary>
           </div>
         ) : null}
         {tab === "sessions" ? (
