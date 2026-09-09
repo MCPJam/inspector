@@ -5641,7 +5641,10 @@ export function useServerState({
               ] as const;
             }
 
-            if (server.connectionStatus === "oauth-flow") {
+            if (
+              server.connectionStatus === "oauth-flow" &&
+              !options?.allowInteractiveOAuthFlow
+            ) {
               return [
                 resolvedKey,
                 {

@@ -1,3 +1,4 @@
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, MoreHorizontal, Plus, X } from "lucide-react";
@@ -218,7 +219,7 @@ export function ClientSelector({
   );
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
-  const leadHost = leadHostId ? hostsById.get(leadHostId) ?? null : null;
+  const leadHost = leadHostId ? (hostsById.get(leadHostId) ?? null) : null;
   const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
   const leadHostLogo = leadHost?.name
     ? resolveHostLogoByName(leadHost.name, themeMode)
@@ -496,7 +497,7 @@ export function ClientSelector({
                       "flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] disabled:pointer-events-none disabled:opacity-50",
                       isSelected
                         ? "border-primary bg-primary shadow-sm"
-                        : "border-border/60 bg-transparent hover:border-border"
+                        : "border-border/60 bg-transparent hover:border-border",
                     )}
                   >
                     {isSelected ? (
@@ -564,17 +565,20 @@ export function ClientSelector({
               })}
             </CommandList>
 
-            {projectId ? (
-              <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
-                <button
-                  type="button"
-                  onClick={() => openCreateWithTemplate(undefined)}
-                  className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
-                  data-testid="client-add-host"
-                >
-                  <Plus className="size-3.5" />
-                  <span>Add client</span>
-                </button>
+            <div className="flex items-center gap-2 overflow-hidden border-t px-2 py-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  navigateApp(routePaths.hosts);
+                }}
+                className="flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-sm text-foreground transition-colors hover:bg-accent"
+                data-testid="client-add-host"
+              >
+                <Plus className="size-3.5" />
+                <span>Manage clients</span>
+              </button>
+              {projectId && (
                 <span className="flex flex-1 items-center justify-between gap-0.5">
                   {orderedCatalogHosts
                     .slice(0, QUICK_ADD_VISIBLE)
@@ -603,20 +607,20 @@ export function ClientSelector({
                       );
                     })}
                 </span>
-                {orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
-                  <button
-                    type="button"
-                    aria-label="More clients"
-                    title="More clients"
-                    data-testid="client-quick-add-more"
-                    onClick={() => openCreateWithTemplate(undefined)}
-                    className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
+              )}
+              {projectId && orderedCatalogHosts.length > QUICK_ADD_VISIBLE ? (
+                <button
+                  type="button"
+                  aria-label="More clients"
+                  title="More clients"
+                  data-testid="client-quick-add-more"
+                  onClick={() => openCreateWithTemplate(undefined)}
+                  className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              ) : null}
+            </div>
           </Command>
         </PopoverContent>
       </Popover>

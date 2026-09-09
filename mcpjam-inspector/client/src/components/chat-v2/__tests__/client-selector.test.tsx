@@ -4,6 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { ClientSelector } from "../chat-input/client-selector";
 import type { HostListItem } from "@/hooks/useClients";
 
+const navigateMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", () => ({
+  navigateApp: navigateMock,
+  routePaths: { hosts: "/clients" },
+}));
 const mockResolveHostLogoByName = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
@@ -57,7 +62,7 @@ function renderClientSelector({
       enableMultiHost
       themeMode={themeMode}
       modalThemeMode={modalThemeMode}
-    />
+    />,
   );
 }
 
@@ -74,7 +79,7 @@ describe("ClientSelector", () => {
     await user.click(screen.getByTestId("client-selector-trigger"));
 
     const list = container.ownerDocument.querySelector(
-      "[data-slot='command-list']"
+      "[data-slot='command-list']",
     ) as HTMLElement | null;
     expect(list).not.toBeNull();
     expect(list).toHaveStyle({ maxHeight: "220px", overflowY: "auto" });
@@ -86,11 +91,11 @@ describe("ClientSelector", () => {
     renderClientSelector();
 
     expect(
-      screen.getByTestId("client-selector-trigger").querySelector("img")
+      screen.getByTestId("client-selector-trigger").querySelector("img"),
     ).toHaveAttribute("src", expect.stringContaining("mcp"));
     await user.click(screen.getByTestId("client-selector-trigger"));
     expect(
-      screen.getByTestId("client-row-host-0").querySelector("img")
+      screen.getByTestId("client-row-host-0").querySelector("img"),
     ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
@@ -103,7 +108,7 @@ describe("ClientSelector", () => {
     await user.click(screen.getByTestId("client-selector-trigger"));
 
     const list = container.ownerDocument.querySelector(
-      "[data-slot='command-list']"
+      "[data-slot='command-list']",
     ) as HTMLElement | null;
     expect(list).not.toBeNull();
     expect(list).toHaveStyle({ maxHeight: "160px", overflowY: "auto" });
@@ -128,7 +133,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     expect(screen.getByText("Global")).toBeInTheDocument();
@@ -151,7 +156,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
@@ -182,14 +187,14 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={onMultiHostEnabledChange}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
     expect(screen.queryByText("Multiple clients")).not.toBeInTheDocument();
     expect(
-      screen.queryByLabelText("Compare multiple clients")
+      screen.queryByLabelText("Compare multiple clients"),
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("client-row-compare-host-1"));
@@ -218,7 +223,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={onMultiHostEnabledChange}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
@@ -251,7 +256,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
@@ -277,7 +282,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
@@ -305,7 +310,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
@@ -341,18 +346,18 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
     expect(
-      screen.getByRole("button", { name: "Compare with Claude #2" })
+      screen.getByRole("button", { name: "Compare with Claude #2" }),
     ).toBeInTheDocument();
     // Exact match, so the raw-name version fails here too: it produced two
     // buttons with this name and the query cannot resolve them.
     expect(
-      screen.getByRole("button", { name: "Compare with Claude" })
+      screen.getByRole("button", { name: "Compare with Claude" }),
     ).toBeInTheDocument();
   });
 
@@ -376,7 +381,7 @@ describe("ClientSelector", () => {
         onMultiHostEnabledChange={vi.fn()}
         onPromoteLead={vi.fn()}
         enableMultiHost
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
@@ -401,20 +406,30 @@ describe("ClientSelector", () => {
       modalThemeMode: "light",
     });
 
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith(
-      "Goose",
-      "dark"
-    );
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "dark");
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith(
-      "Goose",
-      "light"
-    );
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith(
-      "Cline",
-      "light"
-    );
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "light");
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Cline", "light");
   });
+});
+
+it("offers Manage clients even in a picker without a creation project", async () => {
+  render(
+    <ClientSelector
+      hosts={hosts}
+      projectId={null}
+      currentHostId="host-0"
+      selectedHostIds={["host-0"]}
+      onHostChange={vi.fn()}
+      onSelectedHostIdsChange={vi.fn()}
+      onMultiHostEnabledChange={vi.fn()}
+      onPromoteLead={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("client-selector-trigger"));
+  await user.click(screen.getByRole("button", { name: "Manage clients" }));
+  expect(navigateMock).toHaveBeenCalledWith("/clients");
 });
