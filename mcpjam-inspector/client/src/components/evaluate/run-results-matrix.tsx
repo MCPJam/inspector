@@ -4,15 +4,9 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { toTrialCardViews } from "./stage-trial-model";
 import { TrialChainPanel } from "./trial-chain-panel";
-import { useMemo, useState } from "react";
-import {
-  ArrowUpRight,
-  ChevronRight,
-  Check,
-  Clock3,
-  Search,
-  X,
-} from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { ArrowUpRight, ChevronRight, Search } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -34,12 +28,23 @@ import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
 import { computeIterationResult } from "../evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "../evals/types";
 import {
+  ALL_EVAL_FILTER_VALUES,
+  EvalListFilter,
+} from "../evals/eval-list-filter";
+import { runHistoryFilterClass } from "../evals/run-history-table";
+import {
   buildRunResultsMatrix,
   resultCounts,
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 
-type Filter = "all" | "failed" | "pending";
+type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
+const STATUS_LABEL: Record<StatusFilter, string> = {
+  failed: "Failures",
+  passed: "Passed",
+  pending: "Pending",
+  cancelled: "Cancelled",
+};
 const outcomeLabel = (result: string) =>
   ({
     passed: "Passed",
@@ -184,6 +189,9 @@ export function RunResultsMatrix({
   chains,
   onOpenIteration,
   modelIds,
+  toolbarExtra,
+  extraFiltersActive = false,
+  onClearExtraFilters,
 }: {
   modelIds?: readonly string[];
   run: EvalSuiteRun;
@@ -196,6 +204,9 @@ export function RunResultsMatrix({
     testCaseId: string;
     iterationId: string;
   }) => void;
+  toolbarExtra?: ReactNode;
+  extraFiltersActive?: boolean;
+  onClearExtraFilters?: () => void;
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
@@ -213,24 +224,59 @@ export function RunResultsMatrix({
     };
   }, [run, runs, iterations, hostNamesById, modelIds]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [selection, setSelection] = useState<{
-    caseKey: string;
-    targetKey: string;
-  } | null>(null);
-  const rows = data.rows.filter(
-    (row) =>
-      row.title.toLowerCase().includes(search.toLowerCase()) &&
-      (filter === "all" ||
-        data.targets.some(
-          (target) => resultCounts(target.cells.get(row.key) ?? [])[filter] > 0,
-        )),
+  const [status, setStatus] = useState(ALL_EVAL_FILTER_VALUES);
+  const showPending = [run, ...runs].some(
+    (item) => !isTerminalEvalRunStatus(item.status),
   );
   const counts = resultCounts(
     data.targets.flatMap((target) => target.iterations),
   );
-  const total =
-    counts.passed + counts.failed + counts.pending + counts.cancelled;
+  const statusOptions = (
+    ["failed", "passed", "pending", "cancelled"] as const
+  ).filter((value) =>
+    value === "pending"
+      ? showPending
+      : value === "cancelled"
+        ? counts.cancelled > 0
+        : true,
+  );
+  useEffect(() => {
+    if (status === "pending" && !showPending)
+      setStatus(ALL_EVAL_FILTER_VALUES);
+    if (status === "cancelled" && counts.cancelled === 0)
+      setStatus(ALL_EVAL_FILTER_VALUES);
+  }, [showPending, status, counts.cancelled]);
+  const [selection, setSelection] = useState<{
+    caseKey: string;
+    targetKey: string;
+  } | null>(null);
+  const activeStatus =
+    status === "pending" && !showPending
+      ? ALL_EVAL_FILTER_VALUES
+      : status === "cancelled" && counts.cancelled === 0
+        ? ALL_EVAL_FILTER_VALUES
+        : status;
+  const query = search.trim().toLowerCase();
+  const rows = data.rows.filter(
+    (row) =>
+      row.title.toLowerCase().includes(query) &&
+      (activeStatus === ALL_EVAL_FILTER_VALUES ||
+        data.targets.some(
+          (target) =>
+            resultCounts(target.cells.get(row.key) ?? [])[
+              activeStatus as StatusFilter
+            ] > 0,
+        )),
+  );
+  const hasActiveFilters =
+    Boolean(query) ||
+    activeStatus !== ALL_EVAL_FILTER_VALUES ||
+    extraFiltersActive;
+  const clearFilters = () => {
+    setSearch("");
+    setStatus(ALL_EVAL_FILTER_VALUES);
+    onClearExtraFilters?.();
+  };
   const selectedRow = data.rows.find((row) => row.key === selection?.caseKey);
   const selectedTarget = data.targets.find(
     (target) => target.key === selection?.targetKey,
@@ -242,97 +288,52 @@ export function RunResultsMatrix({
       aria-label="Test case results"
       data-testid="run-results-matrix"
     >
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Run results
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <h3 className="text-lg font-semibold tracking-tight">
+          Test cases{" "}
+          <span className="ml-1 font-mono text-sm font-normal text-muted-foreground">
+            {data.rows.length}
+          </span>
+        </h3>
+        <div
+          className="flex flex-wrap items-center gap-2"
+          data-testid="run-results-toolbar"
+        >
+          <div className="relative w-56 max-w-full">
+            <Search
+              aria-hidden
+              className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              className={cn(
+                runHistoryFilterClass,
+                "w-full max-w-none pl-8 md:text-[11px] dark:bg-card",
+              )}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Find a test case…"
+              aria-label="Find a test case"
+            />
           </div>
-          <h3 className="text-lg font-semibold tracking-tight">
-            Test cases{" "}
-            <span className="ml-1 font-mono text-sm font-normal text-muted-foreground">
-              {data.rows.length}
-            </span>
-          </h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Cases down the rows. Clients and models across the columns. Open a
-            cell to inspect its iterations.
-          </p>
-        </div>
-        <div
-          className="flex items-center gap-4 text-xs tabular-nums"
-          aria-live="polite"
-        >
-          <span className="flex items-center gap-1.5">
-            <Check className="size-3.5 text-success" />
-            {counts.passed} passed
-          </span>
-          <span className="flex items-center gap-1.5">
-            <X className="size-3.5 text-destructive" />
-            {counts.failed} failed
-          </span>
-          {counts.pending > 0 && (
-            <span className="flex items-center gap-1.5">
-              <Clock3 className="size-3.5 text-pending" />
-              {counts.pending} pending
-            </span>
-          )}
-          {counts.cancelled > 0 && <span>{counts.cancelled} cancelled</span>}
-        </div>
-      </div>
-      {total > 0 && (
-        <div
-          className="flex h-1 overflow-hidden rounded-full bg-muted"
-          aria-label={`${total} loaded iterations`}
-        >
-          {(["passed", "failed", "pending", "cancelled"] as const).map(
-            (status) => (
-              <span
-                key={status}
-                className={cn(
-                  status === "passed"
-                    ? "bg-success"
-                    : status === "failed"
-                      ? "bg-destructive"
-                      : status === "pending"
-                        ? "bg-pending/60"
-                        : "bg-muted-foreground/40",
-                )}
-                style={{ width: `${(counts[status] / total) * 100}%` }}
-              />
-            ),
-          )}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1" aria-label="Filter test cases">
-          {(["all", "failed", "pending"] as const).map((value) => (
+          <EvalListFilter
+            label="Status"
+            className="w-32"
+            value={activeStatus}
+            options={[...statusOptions]}
+            formatOption={(value) => STATUS_LABEL[value as StatusFilter] ?? value}
+            onChange={setStatus}
+          />
+          {toolbarExtra}
+          {hasActiveFilters && (
             <Button
-              key={value}
+              variant="ghost"
               size="sm"
-              variant={filter === value ? "secondary" : "ghost"}
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
+              className="h-7 text-[11px]"
+              onClick={clearFilters}
             >
-              {value === "all"
-                ? "All cases"
-                : value === "failed"
-                  ? "With failures"
-                  : "In progress"}
+              Clear filters
             </Button>
-          ))}
-        </div>
-        <div className="relative w-full sm:w-60">
-          <Search
-            aria-hidden
-            className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground"
-          />
-          <Input
-            className="h-8 pl-8 text-xs"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Find a test case…"
-            aria-label="Find a test case"
-          />
+          )}
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border border-border">
@@ -359,9 +360,6 @@ export function RunResultsMatrix({
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                   Test case
                 </span>
-                <p className="mt-1 font-normal text-muted-foreground">
-                  Failures first
-                </p>
               </th>
               {data.targets.map((target) => (
                 <th
@@ -470,26 +468,9 @@ export function RunResultsMatrix({
             {data.rows.length
               ? "No cases match these filters."
               : "Waiting for the first test case results."}
-            {(search || filter !== "all") && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-2"
-                onClick={() => {
-                  setSearch("");
-                  setFilter("all");
-                }}
-              >
-                Clear filters
-              </Button>
-            )}
           </div>
         )}
       </div>
-      <p className="text-[11px] text-muted-foreground">
-        Showing recorded iterations from this run. Case verdicts and thresholds
-        are reported separately in diagnostics.
-      </p>
       <Sheet
         open={Boolean(selectedRow && selectedTarget)}
         onOpenChange={(open) => {

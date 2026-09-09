@@ -71,11 +71,6 @@ export function SuiteRunHistorySnapshot({
       data-testid="suite-run-history-snapshot"
       className="@container/history-metrics border-b border-border/50"
     >
-      <p className="px-5 pt-3 text-[10px] text-muted-foreground">
-        {data.series.length === 1
-          ? "Latest run"
-          : `Latest run · trends across ${data.series.length} runs`}
-      </p>
       <MetricStrip
         data={data}
         surface="embedded"

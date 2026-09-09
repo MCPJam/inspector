@@ -1,5 +1,5 @@
 import { type ReactNode, useRef, useState } from "react";
-import { ArrowRight, Loader2, Minus, Play, Plus } from "lucide-react";
+import { Loader2, Minus, Play, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
@@ -240,17 +240,12 @@ export function SuiteRunReviewContent({
         </SheetHeader>
         <div className="flex-1 space-y-8 overflow-y-auto p-6">
           <section>
-            <div className="mb-3 flex items-center justify-between">
-              <label
-                htmlFor="suite-run-iterations"
-                className="text-sm font-semibold"
-              >
-                Iterations per case
-              </label>
-              <span className="text-xs text-muted-foreground">
-                1–10 repetitions
-              </span>
-            </div>
+            <label
+              htmlFor="suite-run-iterations"
+              className="mb-3 block text-sm font-semibold"
+            >
+              Iterations per case
+            </label>
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -282,9 +277,6 @@ export function SuiteRunReviewContent({
               >
                 <Plus className="size-4" />
               </Button>
-              <span className="ml-2 text-xs text-muted-foreground">
-                Repeat every case to check consistency.
-              </span>
             </div>
             {!validCount && (
               <p role="alert" className="mt-2 text-xs text-destructive">
@@ -348,12 +340,12 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
-          <section className="border-t border-border pt-5">
+          <section>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">Grading policy</h3>
               {onEditSettings && (
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   disabled={starting}
                   onClick={() => {
@@ -361,7 +353,7 @@ export function SuiteRunReviewContent({
                     onEditSettings();
                   }}
                 >
-                  Edit suite settings <ArrowRight className="size-3.5" />
+                  Edit suite settings
                 </Button>
               )}
             </div>

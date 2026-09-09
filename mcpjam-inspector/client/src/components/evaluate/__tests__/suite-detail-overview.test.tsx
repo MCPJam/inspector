@@ -14,6 +14,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+import { formatRunHistoryDate } from "../suite-detail-model";
 import type {
   EvalCase,
   EvalIteration,
@@ -179,17 +180,25 @@ describe("SuiteDetailOverview", () => {
     const table = within(
       screen.getByRole("table", { name: "Suite run history" }),
     );
+    const headers = table
+      .getAllByRole("columnheader")
+      .map((header) => header.textContent);
+    expect(headers.slice(0, 2)).toEqual(["Date", "Run"]);
     expect(table.getAllByRole("button", { name: /^Run #/ })).toHaveLength(2);
     expect(screen.queryByTestId("suite-run-row-two")).toBeNull();
     const row = within(screen.getByTestId("suite-run-row-one"));
+    const cells = screen.getByTestId("suite-run-row-one").querySelectorAll("td");
+    expect(cells[0]).toHaveTextContent(formatRunHistoryDate(1000));
+    expect(cells[0]).not.toHaveTextContent("Run #");
+    expect(cells[1]).toHaveTextContent("Run #1");
+    expect(cells[1]).not.toHaveTextContent(formatRunHistoryDate(1000));
     expect(row.getByText("25%")).toBeVisible();
     expect(row.getByText("1/4 passed")).toBeVisible();
-    expect(
-      row.getByRole("button", { name: /Client model mapping:.*Claude/ }),
-    ).toBeVisible();
-    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
-      "trends across 2 runs",
-    );
+    expect(row.getByText(/Claude/)).toBeVisible();
+    expect(row.queryByRole("button", { name: /Client model mapping/ })).toBeNull();
+    expect(row.queryByText(/client : model pairings/i)).toBeNull();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toBeVisible();
+    expect(screen.queryByText(/trends across/)).toBeNull();
     await user.click(
       screen.getByRole("combobox", { name: "Filter by client" }),
     );
@@ -276,9 +285,7 @@ describe("SuiteDetailOverview", () => {
     expect(screen.queryByLabelText("Filter by verdict")).toBeNull();
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
-    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
-      "1 failed iteration",
-    );
+    expect(screen.getByTestId("suite-run-history-snapshot")).toBeVisible();
     expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
       "0/1 passed",
     );

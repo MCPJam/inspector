@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type {
   EvalSuite,
@@ -93,11 +93,30 @@ describe("SuitesOverview", () => {
       />,
     );
 
-    expect(screen.getByText("Suite")).toBeInTheDocument();
-    expect(screen.getAllByText("Client")).toHaveLength(2);
-    expect(screen.getAllByText("Server")).toHaveLength(2);
-    expect(screen.getByText("Pass rate")).toBeInTheDocument();
-    expect(screen.getByText("Last run")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Suite" })).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "Pass rate" }),
+    ).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Last run" })).toBeVisible();
+    const clientHeader = screen.getByRole("columnheader", { name: "Client" });
+    const serverHeader = screen.getByRole("columnheader", { name: "Server" });
+    const clientFilter = within(clientHeader).getByRole("combobox", {
+      name: "Filter by client",
+    });
+    const serverFilter = within(serverHeader).getByRole("combobox", {
+      name: "Filter by server",
+    });
+    expect(clientFilter).toBeVisible();
+    expect(serverFilter).toBeVisible();
+    expect(clientFilter).toHaveClass("text-muted-foreground", "border-0");
+    expect(clientFilter).not.toHaveClass("rounded-full");
+    expect(serverFilter).toHaveClass("text-muted-foreground", "border-0");
+    expect(serverFilter).not.toHaveClass("rounded-full");
+    expect(screen.getAllByText("Client")).toHaveLength(1);
+    expect(screen.getAllByText("Server")).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Clear filters" }),
+    ).not.toBeInTheDocument();
 
     expect(screen.getByText("Excalidraw Draw Small House")).toBeInTheDocument();
     expect(screen.getByText("Cursor")).toBeInTheDocument();
