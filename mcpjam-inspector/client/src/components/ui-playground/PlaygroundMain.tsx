@@ -106,6 +106,7 @@ import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { track } from "@/lib/analytics";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -1024,7 +1025,10 @@ export function PlaygroundMain({
     localHarnessWasInstallingRef.current = false;
     // Only after an install this surface watched: a runtime that was already
     // there needs no announcement.
-    if (localHarnessPhase === "needs-consent" || localHarnessPhase === "ready") {
+    if (
+      localHarnessPhase === "needs-consent" ||
+      localHarnessPhase === "ready"
+    ) {
       setLocalHarnessJustReady(true);
     }
   }, [localHarnessPhase]);
@@ -1205,6 +1209,22 @@ export function PlaygroundMain({
       composerOnResetRef.current();
     },
   });
+
+  // The Browser tab lives in the sibling right rail. Publish the current
+  // conversation only while this Playground center is mounted; the rail then
+  // binds the watched browser to the same durable owner. Clearing is guarded
+  // so an overlapping PlaygroundMain cannot erase a newer active session.
+  const setActiveChatSessionId = useActiveChatSessionStore(
+    (state) => state.setSessionId,
+  );
+  useEffect(() => {
+    setActiveChatSessionId(chatSessionId);
+    return () => {
+      useActiveChatSessionStore.setState((state) =>
+        state.sessionId === chatSessionId ? { sessionId: null } : state,
+      );
+    };
+  }, [chatSessionId, setActiveChatSessionId]);
 
   // Set playground active flag for widget renderers to read
   const setPlaygroundActive = useUIPlaygroundStore(
@@ -3576,35 +3596,36 @@ export function PlaygroundMain({
    * the context is re-checked. COLD: setup starts, this returns false, the
    * draft stays, and the user presses Send again.
    */
-  const ensureLocalHarnessReadyForSend = useCallback(async (): Promise<boolean> => {
-    if (!localHarnessRequested) return true;
-    const phase = localHarnessRef.current.phase;
-    if (phase === "ready") return true;
+  const ensureLocalHarnessReadyForSend =
+    useCallback(async (): Promise<boolean> => {
+      if (!localHarnessRequested) return true;
+      const phase = localHarnessRef.current.phase;
+      if (phase === "ready") return true;
 
-    if (phase === "installing" || phase === "authorizing") {
-      // Setup is running. Saying so beats a dialog that would only report the
-      // same thing.
-      toast.info("Claude Code is still setting up on this machine.");
-      return false;
-    }
-    if (phase === "unavailable") {
-      toast.error(
-        localHarnessRef.current.reason ??
-          "This Inspector can't run Claude Code on this machine.",
-      );
-      return false;
-    }
+      if (phase === "installing" || phase === "authorizing") {
+        // Setup is running. Saying so beats a dialog that would only report the
+        // same thing.
+        toast.info("Claude Code is still setting up on this machine.");
+        return false;
+      }
+      if (phase === "unavailable") {
+        toast.error(
+          localHarnessRef.current.reason ??
+            "This Inspector can't run Claude Code on this machine.",
+        );
+        return false;
+      }
 
-    // Deduplicated: repeated Send gestures while the dialog is open must not
-    // stack dialogs or capture a second approval.
-    if (localHarnessDialogOpenRef.current) return false;
+      // Deduplicated: repeated Send gestures while the dialog is open must not
+      // stack dialogs or capture a second approval.
+      if (localHarnessDialogOpenRef.current) return false;
 
-    return await new Promise<boolean>((resolve) => {
-      localHarnessPendingSendRef.current = () => resolve(true);
-      localHarnessCancelSendRef.current = () => resolve(false);
-      setLocalHarnessDialog({ trigger: "first_send" });
-    });
-  }, [localHarnessRequested]);
+      return await new Promise<boolean>((resolve) => {
+        localHarnessPendingSendRef.current = () => resolve(true);
+        localHarnessCancelSendRef.current = () => resolve(false);
+        setLocalHarnessDialog({ trigger: "first_send" });
+      });
+    }, [localHarnessRequested]);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
@@ -4658,10 +4679,10 @@ export function PlaygroundMain({
   const localHarnessNotice =
     localHarnessInScope &&
     (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
-    <LocalHarnessComposerNotice
-      controller={localHarness}
-      onRetry={() => setLocalHarnessDialog({ trigger: "chip" })}
-    />
+      <LocalHarnessComposerNotice
+        controller={localHarness}
+        onRetry={() => setLocalHarnessDialog({ trigger: "chip" })}
+      />
     ) : null;
   const localHarnessReadyNotice =
     localHarnessInScope && localHarnessJustReady ? (
@@ -4670,7 +4691,9 @@ export function PlaygroundMain({
       />
     ) : null;
   const composerNotice =
-    conversationTargetNotice || localHarnessNotice || localHarnessReadyNotice ? (
+    conversationTargetNotice ||
+    localHarnessNotice ||
+    localHarnessReadyNotice ? (
       <div className="flex flex-col gap-2">
         {conversationTargetNotice}
         {localHarnessNotice}
@@ -4959,7 +4982,7 @@ export function PlaygroundMain({
                         aria-hidden={effectiveThreadTheme === "dark"}
                         className={cn(
                           "h-10 w-auto mx-auto mb-4",
-                          effectiveThreadTheme === "dark" && "hidden"
+                          effectiveThreadTheme === "dark" && "hidden",
                         )}
                       />
                       <img
@@ -4969,7 +4992,7 @@ export function PlaygroundMain({
                         aria-hidden={effectiveThreadTheme !== "dark"}
                         className={cn(
                           "h-10 w-auto mx-auto mb-4",
-                          effectiveThreadTheme !== "dark" && "hidden"
+                          effectiveThreadTheme !== "dark" && "hidden",
                         )}
                       />
                       <div className="space-y-3">
@@ -5603,9 +5626,7 @@ export function PlaygroundMain({
                             personalComputerEngine={
                               personalComputerEngineOption
                             }
-                            localHarnessExecution={
-                              localHarnessExecutionOption
-                            }
+                            localHarnessExecution={localHarnessExecutionOption}
                             displayMode={displayMode}
                             onDisplayModeChange={handleDisplayModeChange}
                             hostStyle={hostStyle}

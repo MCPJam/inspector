@@ -80,11 +80,11 @@ export interface ComputerUsageView {
  * `projectId` is absent.
  */
 export function useComputerStatus(
-  projectId: string | null
+  projectId: string | null,
 ): ComputerView | null | undefined {
   return useQuery(
     "projectComputers:getComputerStatus" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    projectId ? ({ projectId } as never) : "skip",
   ) as ComputerView | null | undefined;
 }
 
@@ -95,11 +95,11 @@ export function useComputerStatus(
  * predates `getComputerUsage` — mount it behind an error boundary.
  */
 export function useComputerUsage(
-  projectId: string | null
+  projectId: string | null,
 ): ComputerUsageView | null | undefined {
   return useQuery(
     "projectComputers:getComputerUsage" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    projectId ? ({ projectId } as never) : "skip",
   ) as ComputerUsageView | null | undefined;
 }
 
@@ -148,6 +148,32 @@ export function useMintBrowserToken(): (args: {
   projectId: string;
 }) => Promise<TerminalTokenResult> {
   return useAction("projectComputers:mintBrowserToken" as never) as never;
+}
+
+/** Mint a browser token bound to one durable logical browser session. */
+export interface SessionBrowserTokenResult extends TerminalTokenResult {
+  sessionId: string;
+  target: "computer" | "sandbox";
+  sandboxRowId?: string;
+}
+
+export function useMintSessionBrowserToken(): (args: {
+  projectId: string;
+  sessionId: string;
+}) => Promise<SessionBrowserTokenResult> {
+  return useAction(
+    "projectComputers:mintSessionBrowserToken" as never,
+  ) as never;
+}
+
+/** Mint a browser token for the current conversation's logical session. */
+export function useMintConversationBrowserToken(): (args: {
+  projectId: string;
+  conversationId: string;
+}) => Promise<SessionBrowserTokenResult> {
+  return useAction(
+    "projectComputers:mintSessionBrowserToken" as never,
+  ) as never;
 }
 
 /**
@@ -309,10 +335,9 @@ export function useEphemeralCloudAvailable(): boolean | undefined {
 /** `undefined` while loading. On fetch failure assumes a local data plane —
  * the pre-config behavior, where the terminal WS surfaces the real error. */
 export function useComputersDataPlaneConfig():
-  | ComputersDataPlaneConfig
-  | undefined {
+  ComputersDataPlaneConfig | undefined {
   const [config, setConfig] = useState<ComputersDataPlaneConfig | undefined>(
-    cachedDataPlaneConfig ?? undefined
+    cachedDataPlaneConfig ?? undefined,
   );
 
   useEffect(() => {
@@ -345,7 +370,7 @@ export function useComputersDataPlaneConfig():
               localConfigured: true,
               remoteDataPlaneUrl: null,
             }),
-          }
+          },
         );
       }
     });

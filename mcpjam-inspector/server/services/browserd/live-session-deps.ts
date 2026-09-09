@@ -50,6 +50,7 @@ import {
   type EnsureBrowserSessionArgs,
   type SessionSandbox,
 } from "./browser-session.js";
+import { BrowserSessionService } from "./session-service.js";
 import { MCPJAM_BROWSERD_BUNDLE_BASE64 } from "./dist/mcpjam-browserd-bundle.generated.js";
 import { startHostedRecording } from "./hosted-recording.js";
 
@@ -110,10 +111,7 @@ export interface ConnectedSandboxLike {
      * recording read as UTF-8 is a corrupt file, and nothing downstream can
      * tell that apart from a corrupt recording.
      */
-    read?(
-      path: string,
-      options: { format: "bytes" },
-    ): Promise<Uint8Array>;
+    read?(path: string, options: { format: "bytes" }): Promise<Uint8Array>;
   };
   getHost(port: number): string;
 }
@@ -372,6 +370,7 @@ async function connectDesktopSandbox(
 /** The production deps for `ensureBrowserSession`. */
 export function liveBrowserSessionDeps(): BrowserSessionDeps {
   return {
+    sessionService: new BrowserSessionService(),
     reserveDesktop: async ({ bearer, projectId, signal }) => {
       const reserved = await ensureComputerReady({
         bearer,
@@ -450,7 +449,12 @@ export function ensureLiveBrowserSession(
 ): Promise<ComputerHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs & {
-    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+    target: {
+      kind: "sandbox";
+      sandboxRowId: string;
+      sandboxId: string;
+      watched?: boolean;
+    };
   },
 ): Promise<SandboxHostedBrowserSessionHandle>;
 export function ensureLiveBrowserSession(

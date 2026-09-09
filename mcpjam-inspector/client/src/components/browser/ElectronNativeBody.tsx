@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { PaneMessage } from "@/components/computer/PaneMessage";
 import {
   PaneControlBar,
@@ -52,6 +58,7 @@ export function ElectronNativeBody({
   error,
   active = true,
   engine = "local",
+  extra,
 }: {
   /** The browser this pane is looking at, or null while none is running. */
   session: { bootId: string } | null;
@@ -75,6 +82,7 @@ export function ElectronNativeBody({
    */
   active?: boolean;
   engine?: string;
+  extra?: ReactNode;
 }) {
   const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
   const slotRef = useRef<HTMLDivElement | null>(null);
@@ -291,6 +299,7 @@ export function ElectronNativeBody({
         control={control}
         onTakeControl={onTakeControl}
         onHandBack={onHandBack}
+        extra={extra}
         statsOpen={statsOpen}
         onToggleStats={(next) => {
           paneFrameStats.setEnabled(next);

@@ -32,6 +32,7 @@ import type {
 import type { SessionViewport } from "../../../shared/browser-viewport";
 import {
   asRecord,
+  BrowserdClientError,
   decodeCommandResponse,
   decodeHealth,
   decodeLease,
@@ -467,6 +468,22 @@ export class BrowserdClient {
         ? { distinctFrames: body.distinctFrames }
         : {}),
     };
+  }
+
+  /** Download a drained persistent profile snapshot from browserd. */
+  async exportProfile(): Promise<Uint8Array> {
+    const res = await this.request(
+      "/v1/profile/export",
+      { method: "POST" },
+      true,
+    );
+    if (!res.ok) {
+      throw new BrowserdClientError(
+        `browser profile export failed with status ${res.status}`,
+        res.status,
+      );
+    }
+    return new Uint8Array(await res.arrayBuffer());
   }
 
   /**

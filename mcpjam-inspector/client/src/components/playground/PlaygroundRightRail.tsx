@@ -26,7 +26,12 @@ import { useLocalBrowserRunning } from "@/hooks/useLocalBrowserRunning";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
 import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
 import { browserPanelAvailable } from "@/components/playground/PlaygroundBrowserPanel";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
+import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import {
   useComputerEngine,
   type ComputerEngineState,
@@ -140,6 +145,24 @@ function RightRailTabbed({
   // pointer rather than a cloud browser they did not ask for.
   const isLocalBrowser = engine.selectedEngine === "local";
   const mintBrowserToken = useMintBrowserToken();
+  const mintConversationBrowserToken = useMintConversationBrowserToken();
+  const browserSessionsEnabled = useBrowserSessionsEnabled();
+  const activeChatSessionId = useActiveChatSessionStore(
+    (state) => state.sessionId,
+  );
+  const browserSessionId = browserSessionsEnabled
+    ? (activeChatSessionId ?? undefined)
+    : undefined;
+  const mintHostedBrowserToken = useCallback(
+    ({ projectId: tokenProjectId }: { projectId: string }) =>
+      browserSessionId
+        ? mintConversationBrowserToken({
+            projectId: tokenProjectId,
+            conversationId: browserSessionId,
+          })
+        : mintBrowserToken({ projectId: tokenProjectId }),
+    [browserSessionId, mintBrowserToken, mintConversationBrowserToken],
+  );
 
   // A tab that disappears cannot stay selected: leaving `activeTab` on a
   // hidden pane hides all of them and the rail looks broken.
@@ -217,6 +240,7 @@ function RightRailTabbed({
           {isLocalBrowser ? (
             <LocalBrowserBody
               projectId={projectId}
+              sessionId={browserSessionId}
               consentGranted={engine.consent.granted}
               consentToken={engine.consent.token}
               active={activeTab === "browser"}
@@ -224,7 +248,8 @@ function RightRailTabbed({
           ) : (
             <HostedBrowserBody
               projectId={projectId}
-              mintToken={mintBrowserToken}
+              sessionId={browserSessionId}
+              mintToken={mintHostedBrowserToken}
               active={activeTab === "browser"}
             />
           )}

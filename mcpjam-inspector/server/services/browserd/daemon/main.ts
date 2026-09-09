@@ -17,6 +17,7 @@ import { launchBrowserdContext } from "./chromium-launch";
 import { HandoffLease } from "./lease";
 import { mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { readFile, unlink } from "node:fs/promises";
 import { displayGeometryFor, resizeHostedDisplay } from "./display-resize";
 import {
   announcedFeatures,
@@ -29,6 +30,10 @@ import {
   BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
 } from "../protocol";
+import {
+  exportBrowserProfileArchive,
+  importBrowserProfileArchive,
+} from "../profile-archive";
 
 function log(message: string): void {
   process.stderr.write(`[mcpjam-browserd] ${message}\n`);
@@ -69,7 +74,9 @@ function runShell(
  * the three numbers cannot drift apart.
  */
 function displayWidth(config: { deviceScaleFactor: number }): number {
-  return Math.round(BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor);
+  return Math.round(
+    BROWSERD_OBSERVATION_VIEWPORT.width * config.deviceScaleFactor,
+  );
 }
 
 function displayHeight(config: { deviceScaleFactor: number }): number {
@@ -81,6 +88,14 @@ function displayHeight(config: { deviceScaleFactor: number }): number {
 async function main(): Promise<void> {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
+  if (config.profileArchivePath && config.contextMode === "persistent") {
+    const archive = await readFile(config.profileArchivePath);
+    await importBrowserProfileArchive(
+      config.userDataDir,
+      new Uint8Array(archive),
+    );
+    await unlink(config.profileArchivePath).catch(() => {});
+  }
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
@@ -233,6 +248,9 @@ async function main(): Promise<void> {
     features,
     ...(video ? { video } : {}),
     ...(recorder ? { recorder } : {}),
+    ...(config.contextMode === "persistent"
+      ? { profileExport: () => exportBrowserProfileArchive(config.userDataDir) }
+      : {}),
     // THE DISPLAY AS IT IS NOW, not as it booted.
     //
     // `cssViewport` below already follows the session, and these two are one

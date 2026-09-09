@@ -35,15 +35,17 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { verifyComputerBrowserToken } from "../../utils/computers/browser-token.js";
+import type { ComputerBrowserClaims } from "../../utils/computers/browser-token.js";
 import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
   touchComputerActivity,
+  wakePlaygroundSandbox,
 } from "../../utils/computers/control-plane-client.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
-  type ComputerBrowserSessionRecord,
+  type BrowserSessionRecord,
 } from "../../services/browserd/browser-sessions-client.js";
 import {
   BrowserdClient,
@@ -68,9 +70,13 @@ import {
   BROWSER_INPUT_BATCH_LIMIT,
   isBrowserPaneInputEvent,
 } from "../../../shared/browser-pane-input.js";
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
 
 /** How long a panel's lease lives without a heartbeat. The panel beats every
  *  ~30s while visible; this is generous enough to survive a slow tab wake but
@@ -91,7 +97,7 @@ const isInputEvent = isBrowserPaneInputEvent as (
   value: unknown,
 ) => value is ViewportInputEvent;
 
-type Claims = { userId: string; computerId: string; projectId: string };
+type Claims = ComputerBrowserClaims;
 
 type AuthFailure = { status: 401 | 503; error: string };
 type AuthResult = { ok: true; claims: Claims } | ({ ok: false } & AuthFailure);
@@ -103,6 +109,7 @@ export interface BrowserPanelDeps {
   lookupSession?: typeof lookupBrowserSession;
   touchSession?: typeof touchBrowserSession;
   touchActivity?: typeof touchComputerActivity;
+  wakeSandbox?: typeof wakePlaygroundSandbox;
   bundleHash?: () => string;
   /**
    * Establish a session on an already-owned computer (`ensure=1`).
@@ -131,7 +138,7 @@ export interface BrowserPanelDeps {
     | "paneState"
     | "paneCommand"
     | "paneViewport"
-  >;
+  > & { exportProfile?: () => Promise<Uint8Array> };
   configured?: () => boolean;
 }
 
@@ -142,6 +149,18 @@ function bearerFrom(c: Context): string {
     : "";
 }
 
+function browserTarget(
+  claims: Claims,
+): { computerId: string } | { sandboxRowId: string } {
+  return claims.computerId
+    ? { computerId: claims.computerId }
+    : { sandboxRowId: claims.sandboxRowId };
+}
+
+function targetId(claims: Claims): string {
+  return claims.computerId ?? claims.sandboxRowId;
+}
+
 export function createComputerBrowserPanelRoutes(
   deps: BrowserPanelDeps = {},
 ): Hono {
@@ -150,6 +169,7 @@ export function createComputerBrowserPanelRoutes(
   const lookupSession = deps.lookupSession ?? lookupBrowserSession;
   const touchSession = deps.touchSession ?? touchBrowserSession;
   const touchActivity = deps.touchActivity ?? touchComputerActivity;
+  const wakeSandbox = deps.wakeSandbox ?? wakePlaygroundSandbox;
   const bundleHash = deps.bundleHash ?? browserdBundleHash;
   const configured = deps.configured ?? isComputersDataPlaneConfigured;
   const attachSession =
@@ -168,7 +188,7 @@ export function createComputerBrowserPanelRoutes(
         bearer: session.browserdToken,
       }));
 
-  /** Verify the token and re-check live ownership of the named computer. */
+  /** Verify the token and re-check live ownership of the named browser box. */
   async function authorize(c: Context): Promise<AuthResult> {
     if (!configured()) {
       return {
@@ -186,7 +206,7 @@ export function createComputerBrowserPanelRoutes(
       error: "Invalid or expired browser token.",
     };
     if (!claims) return unauthorized;
-    const info = await sandboxInfo({ computerId: claims.computerId });
+    const info = await sandboxInfo(browserTarget(claims));
     if (!info.ok) {
       return {
         ok: false,
@@ -205,10 +225,12 @@ export function createComputerBrowserPanelRoutes(
 
   /** The live session row for this computer, or null. */
   async function currentSession(
-    computerId: string,
-  ): Promise<ComputerBrowserSessionRecord | null> {
+    target: { computerId: string } | { sandboxRowId: string },
+    sessionId?: string,
+  ): Promise<BrowserSessionRecord | null> {
     const lookup = await lookupSession({
-      computerId,
+      ...target,
+      ...("sandboxRowId" in target ? { watched: true } : {}),
       expectedBundleHash: bundleHash(),
       // `"any"`: the panel is about THIS COMPUTER'S browser, whatever profile
       // it happens to be running. Pinning `persistent` here reported "no
@@ -216,6 +238,8 @@ export function createComputerBrowserPanelRoutes(
       // attach that then relaunched it into the other mode.
       expectedContextMode: "any",
     });
+    if (!lookup.session) return null;
+    if (sessionId && lookup.session.logicalSessionId !== sessionId) return null;
     return lookup.session;
   }
 
@@ -226,13 +250,16 @@ export function createComputerBrowserPanelRoutes(
     // COMPUTER-typed: this route only ever looks a session up by computer, and
     // narrowing here is what keeps the log line below honest about which box
     // could not answer.
-    session: ComputerBrowserSessionRecord,
+    session: BrowserSessionRecord,
   ): Promise<BrowserdLeaseState | { state: "unknown" }> {
     try {
       return await createClient(session).lease();
     } catch (error) {
       logger.warn("[computers] browser panel could not read the lease", {
-        computerId: session.computerId,
+        target:
+          session.target === "computer"
+            ? session.computerId
+            : session.sandboxRowId,
         error: error instanceof Error ? error.message : String(error),
       });
       return { state: "unknown" };
@@ -265,16 +292,35 @@ export function createComputerBrowserPanelRoutes(
   app.get("/session", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const { computerId, userId } = auth.claims;
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
 
     try {
       const ensure = c.req.query("ensure") === "1";
-      let session = await currentSession(computerId);
+      let session = await currentSession(target, auth.claims.sessionId);
       if (!session && ensure) {
-        // Attach, never reserve: see `attachBrowserSession`. A panel must not
-        // be able to provision a machine.
-        await attachSession({ computerId });
-        session = await currentSession(computerId);
+        if ("computerId" in target) {
+          // Attach, never reserve: see `attachBrowserSession`. A panel must
+          // not be able to provision a machine.
+          await attachSession({ computerId: target.computerId });
+        } else {
+          // Returning to a watched Playground session is the one case where
+          // ensure may wake a box: the row and provider id already exist, so
+          // this attaches to durable state rather than provisioning a new
+          // desktop behind the user's back.
+          const woke = await wakeSandbox({
+            bearer: bearerFrom(c),
+            sandboxRowId: target.sandboxRowId,
+          });
+          if (!woke.ok) {
+            return c.json(
+              { ok: false, error: woke.error },
+              woke.status === 503 ? 503 : 409,
+            );
+          }
+        }
+        session = await currentSession(target, auth.claims.sessionId);
       }
       if (!session) {
         return c.json(
@@ -298,7 +344,13 @@ export function createComputerBrowserPanelRoutes(
       const lease = await readLease(session);
       return c.json({
         ok: true,
-        computerId,
+        ...(auth.claims.computerId
+          ? { computerId: auth.claims.computerId }
+          : {}),
+        ...(auth.claims.sandboxRowId
+          ? { sandboxRowId: auth.claims.sandboxRowId }
+          : {}),
+        sessionId: session.sessionId,
         bootId: session.bootId,
         contextMode: session.contextMode,
         lease,
@@ -308,7 +360,7 @@ export function createComputerBrowserPanelRoutes(
       reportRouteFailure("browser panel session lookup failed", error, {
         source: "computer-browser-panel.session",
         hop: "mcpjam_internal",
-        context: { computerId },
+        context: { browserTarget: id },
       });
       return c.json(
         { ok: false, error: "Failed to resolve the browser session." },
@@ -320,7 +372,9 @@ export function createComputerBrowserPanelRoutes(
   app.post("/lease", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const { computerId, userId } = auth.claims;
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
 
     let body: { action?: unknown; ttlMs?: unknown };
     try {
@@ -337,7 +391,7 @@ export function createComputerBrowserPanelRoutes(
     }
 
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(target, auth.claims.sessionId);
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
@@ -354,7 +408,7 @@ export function createComputerBrowserPanelRoutes(
         ttlMs,
       });
       logger.info("[computers] browser panel lease", {
-        computerId,
+        browserTarget: id,
         action,
         took: outcome.took,
       });
@@ -377,7 +431,7 @@ export function createComputerBrowserPanelRoutes(
       reportRouteFailure("browser panel lease change failed", error, {
         source: "computer-browser-panel.lease",
         hop: "mcpjam_internal",
-        context: { computerId, action },
+        context: { browserTarget: id, action },
       });
       return c.json(
         { ok: false, error: "Failed to change the browser lease." },
@@ -401,7 +455,9 @@ export function createComputerBrowserPanelRoutes(
   app.post("/input", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const { computerId, userId } = auth.claims;
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
 
     // `null` is VALID JSON, so `c.req.json()` resolves rather than throwing —
     // and `body.events` on it then threw a TypeError that escaped every try
@@ -437,7 +493,7 @@ export function createComputerBrowserPanelRoutes(
     const events = batch as ViewportInputEvent[];
 
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(target, auth.claims.sessionId);
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
@@ -480,16 +536,31 @@ export function createComputerBrowserPanelRoutes(
       // solve a CAPTCHA issues no agent commands at all. Left as a panel
       // touch, their box would hibernate while they were typing into it.
       //
-      // Throttled through the shared per-computer window: input arrives twenty
-      // times a second and a touch is a control-plane write. Only on a
-      // dispatch that actually landed — refused input reached no page, and
-      // must not hold a machine awake.
-      if (shouldTouchActivity(computerId)) {
+      // BOTH touches are throttled, each on its OWN key, and only on a
+      // dispatch that actually landed — refused input reached no page and must
+      // not hold a machine awake. Input arrives twenty times a second and every
+      // touch is a control-plane write, so an ungated one is tens of writes a
+      // second per viewer.
+      //
+      // Separate keys because they are separate clocks: the session touch
+      // patches the browser session row (and, for a sandbox box, that box's
+      // `lastUsedAt` in the same transaction) and a watched Playground box has
+      // no computer id at all, so keying it by computer would leave the
+      // sandbox branch ungated — which is exactly what it used to be. Both are
+      // leading-edge, so the first input after a pause still writes at once.
+      if (shouldTouchSessionCommand(session.sessionId)) {
         void touchSession({
           sessionId: session.sessionId,
           kind: "command",
         }).catch(() => {});
-        void touchActivity({ computerId }).catch(() => {});
+      }
+      if (
+        auth.claims.computerId &&
+        shouldTouchActivity(auth.claims.computerId)
+      ) {
+        void touchActivity({ computerId: auth.claims.computerId }).catch(
+          () => {},
+        );
       }
       return c.json({ ok: true });
     } catch (error) {
@@ -502,7 +573,7 @@ export function createComputerBrowserPanelRoutes(
       reportRouteFailure("browser panel input failed", error, {
         source: "computer-browser-panel.input",
         hop: "mcpjam_internal",
-        context: { computerId },
+        context: { browserTarget: id },
       });
       return c.json(
         { ok: false, error: "Failed to send input to the browser." },
@@ -690,10 +761,11 @@ export function createComputerBrowserPanelRoutes(
   app.post("/keepalive", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const { computerId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
 
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(target, auth.claims.sessionId);
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
@@ -704,19 +776,65 @@ export function createComputerBrowserPanelRoutes(
         sessionId: session.sessionId,
         kind: "panel",
       });
-      if (counted && shouldTouchActivity(computerId)) {
+      if (
+        counted &&
+        auth.claims.computerId &&
+        shouldTouchActivity(auth.claims.computerId)
+      ) {
         // Fire-and-forget: a failed touch only risks an earlier hibernate.
-        void touchActivity({ computerId });
+        void touchActivity({ computerId: auth.claims.computerId });
       }
       return c.json({ ok: true, counted });
     } catch (error) {
       reportRouteFailure("browser panel keepalive failed", error, {
         source: "computer-browser-panel.keepalive",
         hop: "mcpjam_internal",
-        context: { computerId },
+        context: { browserTarget: id },
       });
       return c.json(
         { ok: false, error: "Failed to record panel activity." },
+        502,
+      );
+    }
+  });
+
+  app.post("/profile/export", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const target = browserTarget(auth.claims);
+    try {
+      const session = await currentSession(target, auth.claims.sessionId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      // Called ON the client, not detached from it. `BrowserdClient` is a
+      // class and `exportProfile` reaches `this.request(...)`, so pulling the
+      // method off the instance and invoking it bare throws a TypeError that
+      // surfaces as a 502 — and only in production, since the injected test
+      // client is an object literal that survives losing its receiver.
+      const client = createClient(session);
+      if (!client.exportProfile) {
+        return c.json({ ok: false, error: "profile_export_unavailable" }, 409);
+      }
+      const archive = await client.exportProfile();
+      // The DURABLE identity, never the boot row. `savedFrom` names the browser
+      // session an archive came from, and `session.sessionId` is replaced on
+      // every relaunch (`recordBrowserSession` hands back a new one), so a
+      // profile committed against it records provenance on a row that
+      // disappears. `currentSession` above already refused any row whose
+      // `logicalSessionId` disagrees with a conversation-scoped token's claim,
+      // so nothing needs re-checking here; a browser with no durable identity
+      // sends no header, and the Save button says it is not attached to a chat
+      // session yet.
+      return browserProfileArchiveResponse(archive, session.logicalSessionId);
+    } catch (error) {
+      reportRouteFailure("browser profile export failed", error, {
+        source: "computer-browser-panel.profile-export",
+        hop: "mcpjam_internal",
+        context: { browserTarget: target },
+      });
+      return c.json(
+        { ok: false, error: "Failed to export the browser profile." },
         502,
       );
     }
@@ -739,11 +857,13 @@ export function createComputerBrowserPanelRoutes(
   app.get("/page-tools", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const { computerId, userId } = auth.claims;
+    const { userId } = auth.claims;
+    const target = browserTarget(auth.claims);
+    const id = targetId(auth.claims);
     const tabId = c.req.query("tabId");
 
     try {
-      const session = await currentSession(computerId);
+      const session = await currentSession(target, auth.claims.sessionId);
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
@@ -773,7 +893,7 @@ export function createComputerBrowserPanelRoutes(
       reportRouteFailure("browser panel page-tools read failed", error, {
         source: "computer-browser-panel.page-tools",
         hop: "mcpjam_internal",
-        context: { computerId },
+        context: { browserTarget: id },
       });
       return c.json({ ok: false, error: "unreachable" }, 502);
     }

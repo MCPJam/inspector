@@ -40,6 +40,7 @@ import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
+import browserProfiles from "./browser-profiles.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
@@ -155,6 +156,12 @@ web.use(
   guestRateLimitMiddleware,
   denyGuests("Cloud Skills"),
 );
+web.use(
+  "/browser-profiles/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Browser profiles"),
+);
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",
@@ -210,6 +217,7 @@ if (HOSTED_MODE) {
   web.route("/webmcp", webmcpInspector);
 }
 web.route("/skills", skills);
+web.route("/browser-profiles", browserProfiles);
 // Skills served BY a connected MCP server (SEP-2640). A DISTINCT path from
 // `/skills` above, which serves the project's durable Convex skills.
 web.route("/server-skills", serverSkills);

@@ -390,6 +390,44 @@ describe("the agent browser pane — driving it", () => {
     expect(api.ensures).toEqual(["proj-1"]);
   });
 
+  it("drops the previous conversation's browser when the session changes", async () => {
+    // The same argument as the project switch above, one level down. A durable
+    // session is a browser identity in its own right — the agent drives
+    // `<project>:session:<id>` — so a conversation switch inside ONE project
+    // changes which browser this pane is looking at. Keyed on projectId alone,
+    // the reset saw no change: the rail kept showing conversation A's page,
+    // aimed input at it, and a profile export saved A's bytes under B's id.
+    const view = render(
+      <LocalBrowserBody
+        projectId="proj-1"
+        sessionId="chat-a"
+        consentGranted
+        consentToken="tok"
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await screen.findByText(/agent is driving/i);
+    await deliverFrame();
+
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        sessionId="chat-b"
+        consentGranted
+        consentToken="tok"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
+    );
+    // Reset, NOT auto-resolved: `ensure` launches a Chromium, so opening one
+    // for a conversation nobody asked about would be worse than the bug.
+    await screen.findByRole("button", { name: /open the browser/i });
+  });
+
   it("ignores a lease answer from a browser the pane has left", async () => {
     // Away and back again. The project id reads "proj-1" both times, so a
     // guard that compares ids alone sees no change and applies the answer —

@@ -4901,6 +4901,17 @@ const runHostedIterationWithBrowser = async (
             // other iteration of this suite can reach. The suite's project is
             // not enough: iterations run concurrently against it.
             ...(iterationId ? { runKey: iterationId } : {}),
+            ...(resolvedExecution.browserProfileId
+              ? { browserProfileId: resolvedExecution.browserProfileId }
+              : {}),
+            ...(iterationId
+              ? {
+                  browserSessionScope: {
+                    kind: "eval_iteration" as const,
+                    sessionId: String(iterationId),
+                  },
+                }
+              : {}),
             // The trusted binding to THIS iteration's box. It reaches the
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.

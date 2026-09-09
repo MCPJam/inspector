@@ -43,7 +43,8 @@ export interface ReservedComputer {
 }
 
 export interface ComputerSandboxInfo {
-  computerId: string;
+  computerId?: string;
+  sandboxRowId?: string;
   providerComputerId: string | null;
   provider: string;
   status: ComputerStatus;
@@ -70,6 +71,8 @@ export type ControlPlaneResult<T> =
       code?: string;
       /** Which budget a capacity refusal hit; see `postJson`. */
       resource?: string;
+      /** Server-provided retry hint, normalized to milliseconds. */
+      retryAfterMs?: number;
     };
 
 export function getConvexHttpUrl(): string | null {
@@ -119,9 +122,9 @@ function getServiceToken(): string | null {
 export function isComputersDataPlaneConfigured(): boolean {
   return Boolean(
     getConvexHttpUrl() &&
-      getServiceToken() &&
-      process.env.E2B_API_KEY &&
-      process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim()
+    getServiceToken() &&
+    process.env.E2B_API_KEY &&
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET?.trim(),
   );
 }
 
@@ -129,7 +132,7 @@ async function postJson<T>(
   path: string,
   headers: Record<string, string>,
   body: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ): Promise<ControlPlaneResult<T>> {
   const base = getConvexHttpUrl();
   if (!base) {
@@ -163,6 +166,8 @@ async function postJson<T>(
         ? String(body.error)
         : `request failed (${response.status})`;
     const code = typeof body?.code === "string" ? body.code : undefined;
+    const retryAfter = response.headers.get("retry-after");
+    const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
     return {
       ok: false,
       status: response.status,
@@ -174,6 +179,9 @@ async function postJson<T>(
       // from "this organization has too many sandboxes in flight".
       ...(typeof body?.resource === "string"
         ? { resource: body.resource }
+        : {}),
+      ...(Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+        ? { retryAfterMs: Math.round(retryAfterSeconds * 1000) }
         : {}),
     };
   }
@@ -243,7 +251,7 @@ export async function provisionEvalSandbox(args: {
       ...(args.iterationId ? { iterationId: args.iterationId } : {}),
       ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
     },
-    args.signal
+    args.signal,
   );
 }
 
@@ -278,7 +286,7 @@ export async function resolveEvalRunAttachments(args: {
     "/evals/sandbox/attachments",
     bearerHeader(args.bearer),
     { runId: args.runId },
-    args.signal
+    args.signal,
   );
 }
 
@@ -291,6 +299,141 @@ export interface JourneySandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+}
+
+export interface PlaygroundSandbox {
+  sandboxRowId: string;
+  status: "provisioning" | "live" | "sleeping" | "waking";
+  providerSandboxId?: string;
+}
+
+export interface SessionBrowserToken {
+  token: string;
+  expiresAt: number;
+  sessionId: string;
+  target: "computer" | "sandbox";
+  computerId?: string;
+  sandboxRowId?: string;
+  status: string;
+}
+
+/** Mint a short-lived token scoped to one durable logical browser session. */
+export async function mintBrowserTokenForSession(args: {
+  bearer: string;
+  projectId: string;
+  sessionId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<SessionBrowserToken>> {
+  return postJson<SessionBrowserToken>(
+    "/computers/browser-token",
+    bearerHeader(args.bearer),
+    { projectId: args.projectId, sessionId: args.sessionId },
+    args.signal,
+  );
+}
+
+/** Wake a sleeping Playground box owned by the current bearer. */
+export async function wakePlaygroundSandbox(args: {
+  bearer: string;
+  sandboxRowId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<{ ok: boolean; woke?: boolean }>> {
+  return postJson<{ ok: boolean; woke?: boolean }>(
+    "/playground/sandbox/wake",
+    bearerHeader(args.bearer),
+    { sandboxRowId: args.sandboxRowId },
+    args.signal,
+  );
+}
+
+/**
+ * Provision the watched desktop for one Playground conversation.
+ *
+ * Capacity is transient and shared by every sandbox family. Keep the retry
+ * policy here, at the control-plane boundary, so chat routes and browser tools
+ * cannot accidentally invent different retry loops. The ten-minute ceiling is
+ * intentionally finite: a full queue should become a user-visible notice,
+ * not an unbounded tool call.
+ */
+export async function provisionPlaygroundSandbox(args: {
+  bearer: string;
+  projectId: string;
+  chatSessionId: string;
+  hostId?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  onWait?: (info: { delayMs: number; resource?: string }) => void;
+}): Promise<ControlPlaneResult<PlaygroundSandbox>> {
+  const deadline = Date.now() + (args.timeoutMs ?? 10 * 60_000);
+  let delayMs = 30_000;
+  for (;;) {
+    // Bound each ATTEMPT, not only the sleeps. `postJson` sets no timeout of
+    // its own and `args.signal` fires only on a caller-level cancel, so a
+    // control plane that accepts the connection and then stalls parks this
+    // await well past the ceiling. 30s is the per-request deadline
+    // `swarm-sandbox.ts` already puts on `provisionJourneySandbox` — but
+    // capped by what is LEFT of the aggregate budget, so a caller that asked
+    // for less than 30s (or a last attempt with seconds to spare) still gets
+    // the deadline it asked for rather than a flat 30 on top of it.
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return {
+        ok: false,
+        status: 503,
+        error: "Playground browser capacity did not become available in time",
+        code: "at_capacity",
+      };
+    }
+    const attemptDeadline = AbortSignal.timeout(Math.min(30_000, remainingMs));
+    const result = await postJson<PlaygroundSandbox>(
+      "/playground/sandbox/provision",
+      bearerHeader(args.bearer),
+      {
+        projectId: args.projectId,
+        chatSessionId: args.chatSessionId,
+        ...(args.hostId ? { hostId: args.hostId } : {}),
+      },
+      args.signal
+        ? AbortSignal.any([args.signal, attemptDeadline])
+        : attemptDeadline,
+    );
+    if (result.ok || result.status !== 503 || result.code !== "at_capacity") {
+      return result;
+    }
+    const retryMs = Math.min(
+      5 * 60_000,
+      Math.max(30_000, result.retryAfterMs ?? delayMs),
+    );
+    if (Date.now() + retryMs > deadline || args.signal?.aborted) {
+      return {
+        ok: false,
+        status: 503,
+        error: "Playground browser capacity did not become available in time",
+        code: "at_capacity",
+        ...(result.resource ? { resource: result.resource } : {}),
+        retryAfterMs: retryMs,
+      };
+    }
+    args.onWait?.({
+      delayMs: retryMs,
+      ...(result.resource ? { resource: result.resource } : {}),
+    });
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, retryMs);
+      args.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    delayMs = Math.min(5 * 60_000, delayMs * 2);
+    if (args.signal?.aborted) {
+      return { ok: false, status: 499, error: "cancelled" };
+    }
+  }
 }
 
 /**
@@ -333,7 +476,7 @@ export async function provisionJourneySandbox(args: {
       sessionIdx: args.sessionIdx,
       ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
     },
-    args.signal
+    args.signal,
   );
 }
 
@@ -351,7 +494,7 @@ const SCENARIO_SANDBOX_NOTICES: ReadonlySet<string> = new Set([
 ]);
 
 export function isScenarioSandboxNotice(
-  value: unknown
+  value: unknown,
 ): value is ScenarioSandboxNotice {
   return typeof value === "string" && SCENARIO_SANDBOX_NOTICES.has(value);
 }
@@ -426,7 +569,7 @@ export async function provisionScenarioSandbox(args: {
       // notice here, before any SSE writer exists to carry it.
       noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
     },
-    args.signal
+    args.signal,
   );
 }
 
@@ -454,7 +597,7 @@ export async function ackScenarioSandboxNotices(args: {
     "/scenarios/sandbox/notices/ack",
     bearerHeader(args.bearer),
     { sandboxRowId: args.sandboxRowId, notices: args.notices },
-    args.signal
+    args.signal,
   );
   if (!result.ok) {
     // Best-effort by design: re-delivery is the failure mode, not loss.
@@ -485,14 +628,14 @@ export async function releaseSandbox(args: {
     "/computers/sandbox/release",
     headers,
     { sandboxRowId: args.sandboxRowId },
-    args.signal
+    args.signal,
   );
   if (!result.ok && result.status === 404) {
     result = await postJson(
       "/evals/sandbox/release",
       headers,
       { sandboxRowId: args.sandboxRowId },
-      args.signal
+      args.signal,
     );
   }
   if (!result.ok) {
@@ -538,13 +681,14 @@ export async function reserveComputer(args: {
     "/computers/reserve",
     bearerHeader(args.bearer),
     body,
-    args.signal
+    args.signal,
   );
 }
 
 /** Exchange a computer row id for its vendor sandbox info (service-token auth). */
 export async function getComputerSandboxInfo(args: {
-  computerId: string;
+  computerId?: string;
+  sandboxRowId?: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ComputerSandboxInfo>> {
   const headers = authHeaders();
@@ -558,11 +702,20 @@ export async function getComputerSandboxInfo(args: {
       error: "INSPECTOR_SERVICE_TOKEN is not set or was rejected",
     };
   }
+  if ((args.computerId ? 1 : 0) + (args.sandboxRowId ? 1 : 0) !== 1) {
+    return {
+      ok: false,
+      status: 400,
+      error: "exactly one of computerId or sandboxRowId is required",
+    };
+  }
   return postJson<ComputerSandboxInfo>(
     "/computers/sandbox-info",
     headers,
-    { computerId: args.computerId },
-    args.signal
+    args.computerId
+      ? { computerId: args.computerId }
+      : { sandboxRowId: args.sandboxRowId },
+    args.signal,
   );
 }
 
@@ -626,7 +779,7 @@ export async function reserveUploadBytes(args: {
     "/computers/reserve-upload-bytes",
     headers,
     { computerId: args.computerId, bytes: args.bytes },
-    args.signal
+    args.signal,
   );
 }
 
@@ -721,7 +874,7 @@ export async function ensureComputerReady(args: {
         ok: false,
         status: 504,
         error: `computer not ready after ${Math.round(
-          timeoutMs / 1000
+          timeoutMs / 1000,
         )}s (status: ${status})`,
       };
     }
