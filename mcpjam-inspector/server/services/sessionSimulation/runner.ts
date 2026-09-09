@@ -256,6 +256,8 @@ export interface SyntheticHostRuntime {
    * malformed ⇒ they are not advertised (fail-closed).
    */
   browserToolPolicy?: unknown;
+  /** Explicit profile pin for this unattended synthetic session. */
+  browserProfileId?: string;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   computer?: HostComputerResource;
@@ -442,6 +444,7 @@ export async function runSyntheticHostSession(
     progressiveToolDiscovery,
     builtInToolIds,
     browserToolPolicy,
+    browserProfileId,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     computer,
@@ -674,6 +677,12 @@ export async function runSyntheticHostSession(
         // Unattended: the run's declared policy is the only authorization
         // browser tools can have here, since nothing can pause to ask.
         ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+        ...(browserProfileId ? { browserProfileId } : {}),
+        browserSessionScope: {
+          kind:
+            persist.sourceType === "swarm" ? "swarm_attempt" : "eval_iteration",
+          sessionId: chatSessionId,
+        },
         // …and WITH one, bash binds to this session's own disposable box. The
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.

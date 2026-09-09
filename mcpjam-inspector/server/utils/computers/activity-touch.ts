@@ -18,7 +18,7 @@
  * hundreds of times a minute, not two replicas writing twice.
  */
 
-/** Don't touch computer activity more than once a minute per computer. */
+/** Don't touch a given key's activity more than once a minute. */
 export const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
 
 /**
@@ -35,7 +35,61 @@ export const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
  */
 export const MAX_TRACKED_COMPUTERS = 4_096;
 
-const lastActivityTouchAt = new Map<string, number>();
+/**
+ * One throttle, instantiated per key space.
+ *
+ * Two clocks front two different control-plane writes — a computer's
+ * `lastActiveAt` and a browser session's `lastCommandAt` — and they are keyed
+ * by ids from different tables. They get separate maps rather than one shared
+ * one so they cannot evict each other out of a single budget, and so both can
+ * be in different phases for the same interaction (on a desktop box a single
+ * input feeds both).
+ */
+function createTouchThrottle(windowMs: number, maxKeys: number) {
+  const lastTouchAt = new Map<string, number>();
+  return {
+    shouldTouch(key: string, now: number = Date.now()): boolean {
+      // `undefined` is kept distinct from a recorded 0: a key nobody has
+      // touched must always be eligible for its first touch, and coalescing to
+      // 0 makes that false whenever `now` is inside the window of the epoch.
+      const previous = lastTouchAt.get(key);
+      // `now - previous` is compared as an ABSOLUTE gap, so a clock that steps
+      // backwards — an NTP correction, a suspended VM waking — cannot suppress
+      // every touch until real time catches up with a stamp from the future.
+      // That silence would be indefinite, and would end with somebody's
+      // browser hibernating underneath them while they were using it.
+      if (previous !== undefined && Math.abs(now - previous) < windowMs) {
+        return false;
+      }
+      // Re-inserted rather than updated in place, so the key moves to the end
+      // of the Map's insertion order and the eviction below takes a genuinely
+      // old entry rather than a busy one that happened to be added first.
+      lastTouchAt.delete(key);
+      lastTouchAt.set(key, now);
+      while (lastTouchAt.size > maxKeys) {
+        const oldest = lastTouchAt.keys().next().value;
+        if (oldest === undefined) break;
+        lastTouchAt.delete(oldest);
+      }
+      return true;
+    },
+    reset(): void {
+      lastTouchAt.clear();
+    },
+    size(): number {
+      return lastTouchAt.size;
+    },
+  };
+}
+
+const computerThrottle = createTouchThrottle(
+  ACTIVITY_TOUCH_THROTTLE_MS,
+  MAX_TRACKED_COMPUTERS,
+);
+const sessionCommandThrottle = createTouchThrottle(
+  ACTIVITY_TOUCH_THROTTLE_MS,
+  MAX_TRACKED_COMPUTERS,
+);
 
 /**
  * May this computer's activity be touched now? Records the decision, so a
@@ -45,38 +99,33 @@ export function shouldTouchActivity(
   computerId: string,
   now: number = Date.now(),
 ): boolean {
-  // `undefined` is kept distinct from a recorded 0: a computer nobody has
-  // touched must always be eligible for its first touch, and coalescing to 0
-  // makes that false whenever `now` is inside the window of the epoch.
-  const previous = lastActivityTouchAt.get(computerId);
-  // `now - previous` is compared as an ABSOLUTE gap, so a clock that steps
-  // backwards — an NTP correction, a suspended VM waking — cannot suppress
-  // every touch until real time catches up with a stamp from the future. That
-  // silence would be indefinite, and would end with somebody's browser
-  // hibernating underneath them while they were using it.
-  if (
-    previous !== undefined &&
-    Math.abs(now - previous) < ACTIVITY_TOUCH_THROTTLE_MS
-  ) {
-    return false;
-  }
-  // Re-inserted rather than updated in place, so the key moves to the end of
-  // the Map's insertion order and the eviction below takes a genuinely old
-  // entry rather than a busy one that happened to be added first.
-  lastActivityTouchAt.delete(computerId);
-  lastActivityTouchAt.set(computerId, now);
-  while (lastActivityTouchAt.size > MAX_TRACKED_COMPUTERS) {
-    const oldest = lastActivityTouchAt.keys().next().value;
-    if (oldest === undefined) break;
-    lastActivityTouchAt.delete(oldest);
-  }
-  return true;
+  return computerThrottle.shouldTouch(computerId, now);
+}
+
+/**
+ * May this BROWSER SESSION's command clock be touched now?
+ *
+ * Keyed by session rather than computer because that is the row it patches —
+ * and a watched Playground box has no computer id at all. Same window, same
+ * leading-edge rule: the first input after an idle stretch writes immediately,
+ * so nothing is ever slept out from under somebody who just came back.
+ */
+export function shouldTouchSessionCommand(
+  sessionId: string,
+  now: number = Date.now(),
+): boolean {
+  return sessionCommandThrottle.shouldTouch(sessionId, now);
 }
 
 export function resetActivityThrottleForTests(): void {
-  lastActivityTouchAt.clear();
+  computerThrottle.reset();
+  sessionCommandThrottle.reset();
 }
 
 export function trackedComputerCountForTests(): number {
-  return lastActivityTouchAt.size;
+  return computerThrottle.size();
+}
+
+export function trackedSessionCountForTests(): number {
+  return sessionCommandThrottle.size();
 }

@@ -19,7 +19,11 @@ import {
   type FrameStreamHost,
   type FrameStreamOptions,
 } from "./frame-stream-route";
-import { guardLease, guardStaleness, type BrowserDriver } from "./browser-driver";
+import {
+  guardLease,
+  guardStaleness,
+  type BrowserDriver,
+} from "./browser-driver";
 import { HandoffLease } from "./lease";
 
 /** Requests bigger than this are refused with 413 before they reach the queue. */
@@ -64,6 +68,16 @@ function writeResponse(
       ...response.headers,
     });
     res.end();
+    return;
+  }
+  if (response.body instanceof Uint8Array) {
+    const payload = Buffer.from(response.body);
+    res.writeHead(response.status, {
+      "content-type": "application/octet-stream",
+      "content-length": payload.byteLength,
+      ...response.headers,
+    });
+    res.end(payload);
     return;
   }
   const payload = JSON.stringify(response.body);
@@ -213,7 +227,8 @@ export function buildBrowserdStack(
      * truncate a file the run is still filling.
      */
     recorder?: import("./video-recorder").VideoRecorder;
-    displaySize?: { width: number; height: number };
+    displaySize?: () => { width: number; height: number };
+    cssViewport?: () => { width: number; height: number };
     /** Observability and the lazy-upgrade decision, never admission. */
     bundleHash?: string;
     contextMode?: "persistent" | "ephemeral";
@@ -225,6 +240,8 @@ export function buildBrowserdStack(
      * and passed in at construction so no command envelope can ask for it.
      */
     captureTypedText?: boolean;
+    /** Export the persistent profile while the command queue is drained. */
+    profileExport?: () => Promise<Uint8Array>;
   } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
@@ -263,6 +280,7 @@ export function buildBrowserdStack(
       ? { setVideoTier: (tier) => config.video?.setTier(tier) }
       : {}),
     ...(config.recorder ? { recorder: config.recorder } : {}),
+    ...(config.profileExport ? { profileExport: config.profileExport } : {}),
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -270,6 +288,7 @@ export function buildBrowserdStack(
       ...(config.frames ?? {}),
       ...(config.video ? { video: config.video } : {}),
       ...(config.displaySize ? { displaySize: config.displaySize } : {}),
+      ...(config.cssViewport ? { cssViewport: config.cssViewport } : {}),
     },
   });
   // AFTER, because the stream host is built FROM the handler. Until this runs

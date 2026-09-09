@@ -24,7 +24,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserStream } from "./BrowserStream";
-import { useMintBrowserToken } from "@/hooks/useProjectComputer";
+import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
+import {
+  useMintBrowserToken,
+  useMintConversationBrowserToken,
+} from "@/hooks/useProjectComputer";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { BROWSER_SESSION_ID_HEADER } from "@/shared/browser-session-header";
 
 /** Heartbeat cadence while holding the lease (the daemon TTL is 2 minutes). */
 const LEASE_HEARTBEAT_MS = 30_000;
@@ -38,6 +44,7 @@ type LeaseState =
   | { state: "unknown" };
 
 interface SessionInfo {
+  sessionId: string;
   bootId: string;
   lease: LeaseState;
   // No `streamUrl` or `streamPassword`: the route stopped returning them, and
@@ -46,43 +53,92 @@ interface SessionInfo {
 
 export interface BrowserPanelProps {
   projectId: string;
+  /** Durable logical browser session, when this panel belongs to a chat. */
+  sessionId?: string;
   /** Boot a browser if none is running yet. Off by default: opening a panel
    *  should not start a machine's browser behind the user's back. */
   ensure?: boolean;
 }
 
-export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
+export function BrowserPanel({
+  projectId,
+  sessionId,
+  ensure = false,
+}: BrowserPanelProps) {
   const mintBrowserToken = useMintBrowserToken();
+  const mintConversationBrowserToken = useMintConversationBrowserToken();
+  const markBrowserSessionActive = useActiveChatSessionStore(
+    (state) => state.markBrowserSessionActive,
+  );
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [holding, setHolding] = useState(false);
   // A tab that is not visible must not keep a machine awake.
   const visibleRef = useRef(true);
+  /** Bumped whenever this panel changes which browser it is looking at. */
+  const panelGeneration = useRef(0);
 
   /** Every call mints its own token: they last ~60s, so caching one across a
    *  panel's lifetime would just produce expiry failures. */
   /** A bare token for the stream socket, which cannot send an auth header. */
   const mintStreamToken = useCallback(async () => {
-    const { token } = await mintBrowserToken({ projectId });
+    const { token } = sessionId
+      ? await mintConversationBrowserToken({
+          projectId,
+          conversationId: sessionId,
+        })
+      : await mintBrowserToken({ projectId });
     return token;
-  }, [mintBrowserToken, projectId]);
+  }, [mintBrowserToken, mintConversationBrowserToken, projectId, sessionId]);
 
   const authorized = useCallback(
     async (path: string, init: RequestInit = {}): Promise<Response> => {
-      const { token } = await mintBrowserToken({ projectId });
+      const { token } = sessionId
+        ? await mintConversationBrowserToken({
+            projectId,
+            conversationId: sessionId,
+          })
+        : await mintBrowserToken({ projectId });
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${token}`);
       if (init.body) headers.set("content-type", "application/json");
       return fetch(`/api/web/computers/browser${path}`, { ...init, headers });
     },
-    [mintBrowserToken, projectId],
+    [mintBrowserToken, mintConversationBrowserToken, projectId, sessionId],
   );
 
+  const exportProfile = useCallback(async () => {
+    const response = await authorized("/profile/export", { method: "POST" });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        error?: unknown;
+      } | null;
+      throw new Error(
+        typeof body?.error === "string"
+          ? body.error
+          : "The hosted browser profile could not be exported.",
+      );
+    }
+    const savedFrom = response.headers.get(BROWSER_SESSION_ID_HEADER) ?? undefined;
+    return {
+      archive: await response.blob(),
+      ...(savedFrom ? { savedFrom } : {}),
+    };
+  }, [authorized]);
+
   const refresh = useCallback(async () => {
+    // Captured before the await. Clearing state on a switch is not enough on
+    // its own: conversation A's refresh can still be in flight and land LAST,
+    // writing A's boot over B — and `BrowserStream` then pairs that stale boot
+    // with B's token, cannot connect, and leaves the viewer broken until some
+    // later refresh happens to fix it.
+    const generation = panelGeneration.current;
+    const stale = () => panelGeneration.current !== generation;
     try {
       const res = await authorized(`/session${ensure ? "?ensure=1" : ""}`);
       const body = await res.json();
+      if (stale()) return;
       if (!res.ok) {
         setSession(null);
         setError(
@@ -93,11 +149,43 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
         return;
       }
       setSession(body as SessionInfo);
+      if (sessionId) markBrowserSessionActive(sessionId);
       setError(null);
     } catch (cause) {
+      if (stale()) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [authorized, ensure]);
+  }, [authorized, ensure, markBrowserSessionActive, sessionId]);
+
+  /**
+   * A conversation switch is a change of BROWSER, so none of this panel's
+   * lease state survives it.
+   *
+   * `holding` in particular: the heartbeat effect below keys on `authorized`,
+   * which is rebuilt when `sessionId` changes, so without this reset the panel
+   * carried `holding: true` across the switch and began heartbeating the NEW
+   * conversation's lease with the new conversation's tokens — a lease it never
+   * acquired — while rendering "You have control" over it.
+   *
+   * It does NOT release the previous conversation's lease. Letting that one
+   * park is the documented behaviour (see the note at the top of this file):
+   * a lease that stops being heartbeaten parks rather than frees, precisely so
+   * an agent cannot resume underneath somebody who walked away mid-login.
+   * Freeing it here would trade a deliberate "stuck" for exactly the
+   * "surprising" this panel is built to avoid.
+   */
+  const identityRef = useRef<string | undefined>(sessionId);
+  useEffect(() => {
+    if (identityRef.current === sessionId) return;
+    identityRef.current = sessionId;
+    // Anything still in flight against the previous conversation's browser
+    // must not land on this one.
+    panelGeneration.current += 1;
+    setSession(null);
+    setHolding(false);
+    setBusy(false);
+    setError(null);
+  }, [sessionId]);
 
   useEffect(() => {
     void refresh();
@@ -208,6 +296,11 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
           </span>
         )}
         <div className="ml-auto flex gap-2">
+          <BrowserProfileSaveButton
+            projectId={projectId}
+            exportArchive={exportProfile}
+            disabled={holding || busy}
+          />
           {holding ? (
             <button
               type="button"

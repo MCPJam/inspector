@@ -12,7 +12,13 @@
  * across real navigations. Sharing a class would mean one set of options
  * meaning two different things.
  */
-import type { Browser, BrowserContext, CDPSession, Page } from "playwright";
+import type {
+  Browser,
+  BrowserContext,
+  CDPSession,
+  Frame,
+  Page,
+} from "playwright";
 import { existsSync } from "node:fs";
 import { ensureLocalChromiumInstalled } from "../../utils/browser-rendering-setup";
 import {
@@ -89,6 +95,39 @@ const JPEG_PROBE_BASE64_CHARS = 4_096;
 const SCREENSHOT_QUALITY_LADDER = [50, 30, 20] as const;
 /** The modifier keys a pointer event's snapshot can name, in Playwright's spelling. */
 const MODIFIER_KEYS = ["Alt", "Control", "Meta", "Shift"] as const;
+
+/**
+ * The ONE attachment failure that means "nothing to attach here".
+ *
+ * Attachment is a PROBE, not an origin comparison: comparing origins does not
+ * identify a separate renderer target, and Chromium's decision depends on
+ * process allocation, not on the URL. Our pinned Playwright
+ * (`playwright-core/lib/coreBundle.js`) throws exactly this when the frame has
+ * no entry of its own in the page's session map, which is precisely the
+ * question we are asking. Every OTHER failure — a target that went away
+ * mid-attach, a protocol error, a `WebMCP.enable` rejection — is a frame we
+ * SHOULD have seen and did not, and is reported rather than swallowed: a blind
+ * `catch` here would recreate the exact blind spot child sessions exist to
+ * close.
+ */
+const NO_SEPARATE_SESSION = /does not have a separate CDP session/i;
+
+/**
+ * The CDP frame id at the root of a child session's own frame tree.
+ *
+ * Playwright's `Frame` does not expose the CDP id, and the bridge routes
+ * invocations by it — `WebMCP.invokeTool` rejects a frame id belonging to
+ * another target — so it is read from the session itself. `Page.getFrameTree`
+ * answers without `Page.enable`, which the bridge sends a moment later.
+ */
+async function frameIdOf(session: CDPSession): Promise<string> {
+  const tree = (await session.send("Page.getFrameTree" as never)) as {
+    frameTree?: { frame?: { id?: string } };
+  };
+  const id = tree?.frameTree?.frame?.id;
+  if (!id) throw new Error("The frame session reported no frame id.");
+  return id;
+}
 
 /**
  * The one CDP payload this file still names.
@@ -190,6 +229,18 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
    * input dispatch, navigation, screenshots and lifecycle.
    */
   private readonly bridge: WebMcpBridge;
+  /**
+   * Playwright `Frame` → the bridge token for its attachment.
+   *
+   * Keyed by the frame OBJECT rather than its id: Playwright hands back the
+   * same object for the life of a frame, while the CDP frame id survives a
+   * cross-origin navigation and so cannot tell one attachment from the next.
+   * The token is what teardown quotes, which is what stops a late removal
+   * emptying a frame its replacement has already re-registered.
+   */
+  private readonly frameSessions = new Map<Frame, string>();
+  /** Frames a sweep is already attaching, so two sweeps do not race one frame. */
+  private readonly attaching = new Set<Frame>();
   private url: string;
   private disposed = false;
   /** Whether the browser is currently painting frames at us. */
@@ -438,6 +489,11 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
           "enabled for this origin.",
       );
     }
+    // LAST, and after the first navigation: the sweep sees the frames the
+    // start page actually created, and a session that is about to be refused
+    // as unsupported never pays for it. Frames that arrive later are caught by
+    // `frameattached` and by the post-navigation sweep.
+    await this.sweepFrameSessions();
   }
 
   /**
@@ -1043,6 +1099,108 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     // inspector tab is closed.
     this.page.on("framenavigated", () => this.callbacks.onActivityObserved());
     this.page.on("console", () => this.callbacks.onActivityObserved());
+    this.wireFrameSessions();
+  }
+
+  /**
+   * Keep one CDP session per separately-targeted frame.
+   *
+   * ATTACH on `frameattached`, and SWEEP `page.frames()` after every
+   * navigation. Both, because neither alone is enough: a frame can be attached
+   * before it has a target of its own (Chromium hands it one only once it
+   * commits a cross-origin document, which arrives as a `swap` detach on the
+   * page's session), and a frame already present when we started has no
+   * `frameattached` left to fire.
+   *
+   * REPLACE IS NOT OURS TO DO, on this transport. A Playwright frame session is
+   * bound to the FRAME, not to the target behind it: measured across a genuinely
+   * cross-site navigation of an out-of-process frame (`--site-per-process`,
+   * 127.0.0.1 → localhost), the session stays alive, keeps its frame id, and
+   * reports the NEW document's tools. So an attached frame is skipped by later
+   * sweeps rather than re-attached — re-attaching would open a second session on
+   * the same target and blank the panel for the moment between retiring the old
+   * attachment and the new one registering. The bridge's replace path still
+   * matters for Electron, where a target swap really does mint a new session id.
+   *
+   * NESTED TARGETS need no recursion here. Playwright's own auto-attach is
+   * already recursive, so `page.frames()` enumerates a cross-origin frame
+   * inside a cross-origin frame (measured in the spike), and a flat sweep of it
+   * reaches every depth. Recursing ourselves would revisit the same frames.
+   */
+  private wireFrameSessions(): void {
+    this.page.on("frameattached", (frame) => {
+      void this.attachFrameSession(frame);
+    });
+    this.page.on("framenavigated", () => {
+      // The whole sweep, not just the navigated frame. Two reasons: a
+      // navigation can give a DESCENDANT its own target, and a frame that was
+      // same-origin when we last looked (so had nothing to attach to) becomes
+      // attachable the moment it commits a cross-origin document.
+      void this.sweepFrameSessions();
+    });
+    // REMOVE, not SWAP. Playwright's `framedetached` fires only when the frame
+    // really goes away — the target swap that CDP reports when a frame becomes
+    // cross-origin never reaches here, which is what makes this the honest
+    // teardown signal. It quotes the attachment's TOKEN, so a removal landing
+    // after a re-attachment names an attachment that is already gone.
+    this.page.on("framedetached", (frame) => {
+      const token = this.frameSessions.get(frame);
+      if (token === undefined) return;
+      this.frameSessions.delete(frame);
+      this.bridge.removeSession(token);
+    });
+  }
+
+  /** Attach to every frame that turns out to have its own target. */
+  private async sweepFrameSessions(): Promise<void> {
+    if (this.disposed) return;
+    await Promise.all(
+      this.page.frames().map((frame) => this.attachFrameSession(frame)),
+    );
+  }
+
+  private async attachFrameSession(frame: Frame): Promise<void> {
+    if (this.disposed) return;
+    // The page's own session already covers the main frame; a second session on
+    // it would report every tool twice and give the bridge two owners for one
+    // frame.
+    if (frame === this.page.mainFrame()) return;
+    if (this.frameSessions.has(frame) || this.attaching.has(frame)) return;
+    this.attaching.add(frame);
+    try {
+      const session = await this.context.newCDPSession(frame);
+      if (this.disposed) return;
+      const frameId = await frameIdOf(session);
+      const token = await this.bridge.addSession(
+        frameId,
+        session as unknown as CdpLike,
+      );
+      // The frame can go away DURING the attach, and its `framedetached` has
+      // then already run and found no token to remove. Checking after the fact
+      // is what stops that leaving a dead session wired to the bridge, still
+      // publishing tools for a frame that is no longer on the page.
+      if (this.disposed || frame.isDetached()) {
+        this.bridge.removeSession(token);
+        return;
+      }
+      this.frameSessions.set(frame, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // "Nothing to attach here" is the ordinary answer for a same-origin
+      // frame, and the only one that is silent.
+      if (NO_SEPARATE_SESSION.test(message)) return;
+      logger.warn("[webmcp] could not attach a CDP session to a frame", {
+        url: frame.url(),
+        error: message,
+      });
+      // A frame we could not reach is a frame whose tools are missing, so it is
+      // a visible session condition rather than a page that merely looks empty.
+      this.callbacks.onSessionNotice?.(
+        `Could not inspect a frame at ${frame.url() || "about:blank"}: ${message}. Any WebMCP tools it registers are not listed.`,
+      );
+    } finally {
+      this.attaching.delete(frame);
+    }
   }
 
   async navigate(url: string): Promise<void> {
@@ -1424,6 +1582,8 @@ export class PlaywrightWebMcpSession implements WebMcpBrowserSession {
     }
     // Rejects every in-flight invocation and clears their timers.
     this.bridge.dispose();
+    this.frameSessions.clear();
+    this.attaching.clear();
     await waitForClose(this.context.close());
     await waitForClose(this.browser.close());
   }

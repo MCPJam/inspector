@@ -221,7 +221,12 @@ describe("agent-browser:set-viewport", () => {
     });
     expect(result).toEqual({ shown: true, inputAllowed: true });
     expect(window_.children).toContain(view);
-    expect(view.bounds).toEqual(BOUNDS);
+    // POSITION from the pane, SIZE from the session. A view's bounds ARE its
+    // CSS viewport on this engine, so taking the size from whatever the pane
+    // measured would let dragging the window silently change the coordinate
+    // space the agent is reasoning in — with no revision bump and no
+    // stale-observation refusal to catch it.
+    expect(view.bounds).toMatchObject({ x: BOUNDS.x, y: BOUNDS.y });
   });
 
   it("takes the view back out when the pane stops wanting it", () => {
@@ -327,6 +332,10 @@ describe("agent-browser:set-viewport", () => {
   });
 
   it("applies the window's zoom factor to what the renderer measured", () => {
+    // The renderer measures in ITS CSS pixels, and a zoomed rail's numbers are
+    // smaller than the window's by exactly that factor — so a view positioned
+    // from them sits inside its slot at 110% zoom and overhangs it at 90%.
+    // Only the POSITION reaches the view; the size is the session's.
     const { view, api } = withSurface();
     window_.zoom = 2;
     api.setViewport({
@@ -335,6 +344,28 @@ describe("agent-browser:set-viewport", () => {
       visible: true,
       bounds: { x: 5, y: 6, width: 100, height: 50 },
     });
-    expect(view.bounds).toEqual({ x: 10, y: 12, width: 200, height: 100 });
+    expect(view.bounds).toMatchObject({ x: 10, y: 12 });
+  });
+
+  it("reports the zoomed SIZE as a viewport request rather than applying it", () => {
+    // The size is a request the session decides on, through a barrier that
+    // coalesces a drag and refuses to resize mid-action.
+    const requested: Array<{ width: number; height: number }> = [];
+    const surface = createContextSurface({
+      onViewportRequest: (size) => requested.push(size),
+    });
+    surface.registerTab(fakeView());
+    surface.setLease({ state: "held", holder: "rail-1" });
+    const api = install({
+      surfaces: new Map<string, ContextSurface>([["boot-1", surface]]),
+    });
+    window_.zoom = 2;
+    api.setViewport({
+      bootId: "boot-1",
+      holder: "rail-1",
+      visible: true,
+      bounds: { x: 5, y: 6, width: 100, height: 50 },
+    });
+    expect(requested).toContainEqual({ width: 200, height: 100 });
   });
 });

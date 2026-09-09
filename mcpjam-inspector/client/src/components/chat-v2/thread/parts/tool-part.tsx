@@ -60,6 +60,7 @@ import {
 import { filterSafeExternalLinkUrls } from "@/lib/safe-external-url";
 import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/client-context-store";
+import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
@@ -179,6 +180,11 @@ export function ToolPart({
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
+  // The agent started browsing, so the browser gets its panel. Here because
+  // this card is the one place in the client that already knows a browser tool
+  // is running; it fires only while the call is LIVE, so scrolling back
+  // through a transcript full of them does not reopen anything.
+  useOpenBrowserOnBrowsing({ toolName: label, state });
 
   useEffect(() => {
     const isUserInjected = toolCallId?.startsWith("skill-load-");

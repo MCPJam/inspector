@@ -72,6 +72,30 @@ from it in one direction that matters: a browser holds **logins**.
 Derived from the approval delivery, never configured: a surface that can ask a
 person is interactive and keeps its logins; one that cannot starts blank.
 
+## Durable browser sessions
+
+Hosted Playground conversations use a durable logical session owned by the
+conversation, rather than treating a browser daemon boot as the identity. The
+first browser command lazily provisions a watched desktop sandbox; reloads and
+replica changes resolve the same session and reattach to its current box. An
+idle watched box can sleep after its activity window and wakes on the next
+explicit panel or browser touch. A cross-replica relaunch claim and the
+browserd handoff lease protect a person from a concurrent restart.
+
+Evals and swarm attempts use the same owner contract with an ephemeral,
+per-iteration or per-attempt desktop sandbox. They never fall back to the
+project computer and never inherit the user's default profile. Local sessions
+use the same logical identity when the hosted control plane is configured, and
+degrade to the existing local ledger when it is not.
+
+The backend also persists project-scoped browser-profile archives with a
+256 MB cap and default-profile selection. The runtime honors an explicit host
+or suite profile pin before the user's default. From the browser pane, a
+person can save a drained persistent profile; the archive is filtered to omit
+Chromium caches and singleton locks, uploaded to Convex storage, and imported
+only on the next fresh boot. Computer settings lists the saved profiles and
+lets the owner choose the default for new chats or delete one.
+
 ## The browser is a full Chromium, headless
 
 `headless: true` alone resolves to `chromium-headless-shell` — the _old_
@@ -116,16 +140,16 @@ points at it.
 
 ## Routes and their gates
 
-| Entry point                                      | Gates                                                                                                                                                          |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat `browser_*` (playground)                    | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-action approval                                                                 |
-| Chat `browser_*` (guest / scenario / journey)    | **never local** — coerced to the cloud family at the registry chokepoint                                                                                       |
-| `GET /local-browser/status`                      | session + verified sign-in + non-guest + kill switch. No consent: the consent screen needs it to describe itself.                                              |
-| `POST /local-browser/install`                    | the above **+ consent**                                                                                                                                        |
-| `POST /local-browser/{ensure,token,lease,input}` | the above **+ consent**                                                                                                                                        |
-| `POST /local-browser/{session,command,note,trace,artifact,close,sessions}` | the above **+ consent**. The agent surface; see below.                                                                              |
-| `GET /api/web/computers/local-browser/frames`    | allowed `Origin` (**absent Origin rejected**) + single-use, 60 s, kind-bound nonce + the nonce's consent fingerprint must still match + **the daemon's lease** |
-| Hosted build                                     | `/api/mcp` unmounted, kill switch forced off, WS route not mounted                                                                                             |
+| Entry point                                                                | Gates                                                                                                                                                          |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat `browser_*` (playground)                                              | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-action approval                                                                 |
+| Chat `browser_*` (guest / scenario / journey)                              | **never local** — coerced to the cloud family at the registry chokepoint                                                                                       |
+| `GET /local-browser/status`                                                | session + verified sign-in + non-guest + kill switch. No consent: the consent screen needs it to describe itself.                                              |
+| `POST /local-browser/install`                                              | the above **+ consent**                                                                                                                                        |
+| `POST /local-browser/{ensure,token,lease,input}`                           | the above **+ consent**                                                                                                                                        |
+| `POST /local-browser/{session,command,note,trace,artifact,close,sessions}` | the above **+ consent**. The agent surface; see below.                                                                                                         |
+| `GET /api/web/computers/local-browser/frames`                              | allowed `Origin` (**absent Origin rejected**) + single-use, 60 s, kind-bound nonce + the nonce's consent fingerprint must still match + **the daemon's lease** |
+| Hosted build                                                               | `/api/mcp` unmounted, kill switch forced off, WS route not mounted                                                                                             |
 
 Nonces are typed by what they open, so a terminal nonce cannot start a frame
 stream and a frames nonce cannot open a shell.
@@ -138,15 +162,15 @@ already uses. It is not a second way in: every command goes through the
 in-process client, so the auth check, the handoff lease, the bootId check and
 the idempotent queue apply exactly as they do to a model's tool call.
 
-| Concern                              | Where                                                        |
-| ------------------------------------ | ------------------------------------------------------------ |
-| The public contract (v1)             | `shared/browser-agent-contract.ts`                           |
-| Contract ⇄ daemon, exhaustive        | `server/services/browserd/agent-contract-mapper.ts`          |
-| The door: policy, actor, outcomes    | `server/services/browserd/local/agent-door.ts`               |
-| Logical session + durable ledger     | `server/services/browserd/local/agent-session-store.ts`       |
-| The ledger itself                    | `server/services/browserd/daemon/command-ledger.ts`          |
-| CLI                                  | `../cli/src/commands/browser.ts`                             |
-| The rail's Activity list             | `client/src/components/browser/BrowserActivityList.tsx`      |
+| Concern                           | Where                                                   |
+| --------------------------------- | ------------------------------------------------------- |
+| The public contract (v1)          | `shared/browser-agent-contract.ts`                      |
+| Contract ⇄ daemon, exhaustive     | `server/services/browserd/agent-contract-mapper.ts`     |
+| The door: policy, actor, outcomes | `server/services/browserd/local/agent-door.ts`          |
+| Logical session + durable ledger  | `server/services/browserd/local/agent-session-store.ts` |
+| The ledger itself                 | `server/services/browserd/daemon/command-ledger.ts`     |
+| CLI                               | `../cli/src/commands/browser.ts`                        |
+| The rail's Activity list          | `client/src/components/browser/BrowserActivityList.tsx` |
 
 Four things about it are load-bearing.
 
@@ -251,7 +275,7 @@ box still leaves a playable file — the case where the evidence matters most.
 An idle page emits nothing while timestamps stay on the wall clock, so the
 player holds the last frame across a gap and the duration still matches the
 run. `-fs` stops ffmpeg at the size cap and the take is reported `truncated`,
-never dropped: what lands is a complete, playable *beginning* of the run.
+never dropped: what lands is a complete, playable _beginning_ of the run.
 
 The inspector starts a take when the browser tools first ensure a hosted
 session (so a run that never calls `browser_*` never records) and collects it
@@ -380,10 +404,9 @@ PAGE, at the daemon's own observation viewport.
   hidden `BrowserWindow` + `webContents.debugger` rather than launching
   Playwright, so it no longer needs a browser the app does not ship — but that
   path has only been exercised in development.
-- **Unattended runs** cannot reach a hosted browser at all: no ephemeral box
-  carries a desktop runtime kind. Locally they get an ephemeral profile, but
-  the registry coerces those actors to the cloud family, so in practice
-  unattended browsing waits on the backend work.
+- **Save / use profile archives** are implemented for persistent browser panes
+  and project settings. The archive path still needs staging validation with
+  real Chromium logins and the hosted storage deployment before broad release.
 - **One upstream stream per pane.** Two panes on one hosted session open two
   daemon streams. Fine at the daemon's cap of four, but `viewport.ts`'s
   byte-identical dedupe keys off a `lastData` shared across subscribers, so a
@@ -392,7 +415,7 @@ PAGE, at the daemon's own observation viewport.
 - **No `browser_*` artifacts** are recorded for evals — no screenshots, no step
   replay. (The AGENT surface records its own: screenshots and trees land beside
   the session's ledger. A hosted unattended run also leaves a video; see
-  *Recording an unattended run* — per-step offsets into it still need the
+  _Recording an unattended run_ — per-step offsets into it still need the
   hosted tool path to emit `browserInteractionSteps` through the artifact
   outbox, which only the local widget harness does today. The eval trace
   is separate from both and still has none.)
@@ -405,7 +428,7 @@ PAGE, at the daemon's own observation viewport.
   an agent's access from the rail are M1.5 — to be built when two drivers
   actually collide in dogfood, not before.
 - **No network, HAR or diff.** Video has left this list — a hosted
-  unattended run records one, per *Recording an unattended run*. The console
+  unattended run records one, per _Recording an unattended run_. The console
   ring is the only page telemetry, and it is ephemeral.
   `consoleSeqAfter`/`errorsSeqAfter` on a ledger row already bracket a
   command's console output; nothing reads them yet.
@@ -454,3 +477,33 @@ loads and runs, (c) reparenting into a visible window keeps the page, (d)
 lets `window-all-closed` still fire with agent tabs open. Each is a claim about
 Electron's own implementation, which is exactly the class of thing a fake in a
 unit test cannot answer.
+
+## Browser workspace integration
+
+`browser-workspace-enabled` gates the shared browser shell, automatic takeover,
+and responsive pane measurements, including Electron's native surface. With the
+flag off, the pane keeps explicit Take control / Hand back controls and requests
+a fixed 1024 × 768 viewport.
+
+Sessions begin fixed. An enabled pane sends `policy: "followPane"` with its
+measurement; persistent local sessions and hosted sessions with a TigerVNC
+`VNC-0` output can opt in without a restart. Evals and older display images
+remain fixed. Browser tool commands declare `responsiveViewport: true`; callers
+without that capability receive `responsive_viewport_required` before acting on
+a responsive session. Pane-first and agent-first launches use the same path.
+
+Resize requests coalesce and wait for active commands and pointer drags to end.
+Hosted resizing switches both the active output mode and framebuffer, verifies
+the output geometry, and uses the same operation for rollback. A newer pane
+measurement supersedes a pending fixed-mode reset.
+
+The initiating streamed takeover gesture carries the daemon boot, active tab,
+URL, navigation counter, and viewport revision. The input boundary rechecks them
+after acquisition and before each event. If they changed, or an older daemon
+cannot supply an anchor, control is acquired but the gesture is discarded and
+the pane asks the user to try again.
+
+Profile export reserves an exclusive lease, closes Chromium to flush its
+persistent storage, and holds the reservation until archiving finishes. Local
+export also holds the session's creation lock, so reopening cannot race the
+archive. Export closes the live browser; the next ensure call relaunches it.

@@ -102,6 +102,7 @@ import {
 } from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { useBrowserSessionsEnabled } from "@/hooks/useBrowserSessionsEnabled";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
@@ -174,8 +175,10 @@ import {
 import {} from "@/state/oauth-orchestrator";
 import {
   deferPageToolCallForApproval,
+  fulfillApprovedPageToolCall,
   snapshotPageToolsForTurn,
 } from "@/lib/webmcp-inspector/chat-dispatch";
+import { pageToolCallNeedsApproval } from "@/shared/client-fulfilled-tools";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
@@ -213,6 +216,7 @@ import {
 } from "@/shared/hosted-task-created";
 import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type {
@@ -454,11 +458,7 @@ export interface UseChatSessionOptions {
 }
 
 export type ChatSessionResetReason =
-  | "auth-bootstrap"
-  | "hydrate"
-  | "fork"
-  | "servers-changed"
-  | "reset";
+  "auth-bootstrap" | "hydrate" | "fork" | "servers-changed" | "reset";
 
 /**
  * Shown when `detachToLocalFork` could not confirm its fork went live. The
@@ -1720,6 +1720,7 @@ export function useChatSession(
   // hook defaults rather than retaining the prior host's value.
   const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
+  const browserSessionsEnabled = useBrowserSessionsEnabled();
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -1974,6 +1975,16 @@ export function useChatSession(
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  /**
+   * The approval value the IN-FLIGHT turn was sent with.
+   *
+   * Stamped once per send, in the transport's `body` closure, beside
+   * `turnTaskScopeRef`. Everything that has to agree with the SERVER's view of
+   * this turn reads this rather than the live setting: the server declared
+   * every tool's `needsApproval` from the value in that request, and a user is
+   * free to flip the switch while the response streams.
+   */
+  const turnRequireToolApprovalRef = useRef(requireToolApproval);
 
   // Host-level progressive tool discovery toggle. The value comes from the
   // caller — each useChatSession site knows which host config row applies
@@ -2297,8 +2308,8 @@ export function useChatSession(
               ];
             const server =
               (log.serverName
-                ? appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName]
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
@@ -2770,9 +2781,8 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError = await classifyScenarioAccessResponse(
-                response,
-              );
+              const replayError =
+                await classifyScenarioAccessResponse(response);
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2962,6 +2972,9 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        ...(browserSessionsEnabled && isHostedDirectChat
+          ? { browserScope: "conversation" as const }
+          : {}),
         // Handshake: tells the server this bundle can render an elicitation
         // prompt. Catalog hosts already declare the capability, so without
         // this a stale bundle would leave the turn blocked for a full TTL on
@@ -2999,13 +3012,13 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-          // re-resolves the host's authoritative runtime config (harness /
-          // computer included). Only on the direct path — scenario sessions own
-          // their host via scenarioId and the server ignores hostId when
-          // scenarioId is set.
-          isHostedDirectChat && hostedHostId
-          ? { hostId: hostedHostId }
-          : {}),
+            // re-resolves the host's authoritative runtime config (harness /
+            // computer included). Only on the direct path — scenario sessions own
+            // their host via scenarioId and the server ignores hostId when
+            // scenarioId is set.
+            isHostedDirectChat && hostedHostId
+            ? { hostId: hostedHostId }
+            : {}),
         ...(hostedScenarioId && hostedScenarioSurface
           ? { surface: hostedScenarioSurface }
           : {}),
@@ -3023,8 +3036,16 @@ export function useChatSession(
         // the data-part handler, whose closure is recreated on a project
         // switch and would stamp the NEW project on a late part.
         turnTaskScopeRef.current = shouldUseOrgAwareChatApi
-          ? hostedProjectId ?? undefined
+          ? (hostedProjectId ?? undefined)
           : getTrackedTaskScope();
+        // And the approval value this turn is SENT with, for the same reason.
+        // The server declares each tool's `needsApproval` from the value in
+        // THIS request; a client that later read the live setting would answer
+        // a different question than the one the server answered. Flipping the
+        // switch mid-stream then either runs a page tool the server is about
+        // to request approval for, or defers one nothing will ever ask about
+        // — and that second one stalls the turn.
+        turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -3047,6 +3068,9 @@ export function useChatSession(
             : {
                 selectedServers,
                 chatSessionId,
+                ...(browserSessionsEnabled && !hostedScenarioId
+                  ? { browserScope: "conversation" as const }
+                  : {}),
                 // `directVisibility` only applies to direct chat. The
                 // /mcp/chat-v2 route gates it off when scenarioId is present
                 // (owner-preview persists as `sourceType: "scenario"`), but
@@ -3254,6 +3278,7 @@ export function useChatSession(
     // the very next turn.
     resolvedLocalEngine,
     localConsentToken,
+    browserSessionsEnabled,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -3313,16 +3338,37 @@ export function useChatSession(
 
       // WebMCP page tools: the model asked for a tool a real web page
       // registered, and the browser session that owns that page lives in this
-      // app. Claim it synchronously and wait for the approval pill to fulfill
-      // it. AI SDK delivers tool-input-available before tool-approval-request,
-      // so invoking here would bypass the user's decision.
+      // app. Claim it synchronously — the AI SDK delivers
+      // tool-input-available before tool-approval-request, so a claim is the
+      // only way to hold the call until the user's decision arrives.
+      const pageToolCallId = (toolCall as { toolCallId: string }).toolCallId;
+      const pageToolInput = (toolCall as { input: unknown }).input;
       if (
         deferPageToolCallForApproval({
           toolName,
-          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
-          input: (toolCall as { input: unknown }).input,
+          toolCallId: pageToolCallId,
+          input: pageToolInput,
         })
       ) {
+        // AND RUN IT, when nothing is going to ask. The server emits an
+        // approval request only when the tool it built declared one, so with
+        // the switch off there is no pill coming and a call left deferred
+        // waits for a decision nobody will make — the turn stalls on a tool
+        // that was never gated in the first place.
+        //
+        // The SAME predicate the server built the tool from, AND the same
+        // value: `turnRequireToolApprovalRef` is what this turn was sent with,
+        // not what the switch says now. A client that guessed differently
+        // either strands the turn or runs something the user was meant to see
+        // first, and flipping the switch mid-stream is enough to cause it.
+        if (!pageToolCallNeedsApproval(turnRequireToolApprovalRef.current)) {
+          void fulfillApprovedPageToolCall({
+            toolCallId: pageToolCallId,
+            alias: toolName,
+            input: pageToolInput,
+            addToolOutput,
+          });
+        }
         return;
       }
 
@@ -4316,9 +4362,28 @@ export function useChatSession(
       // superseding session change — is the one that actually went live.
       // Existing callers that ignore the return value are unaffected.
       const nextSessionId = generateId();
+      const previousSessionHadBrowser =
+        useActiveChatSessionStore.getState().browserSessionId ===
+        chatSessionIdRef.current;
+      const branchMessages = previousSessionHadBrowser
+        ? [
+            {
+              id: `browser-fork-note-${nextSessionId}`,
+              role: "system" as const,
+              parts: [
+                {
+                  type: "text" as const,
+                  text: "Browser state was not copied to this thread.",
+                },
+              ],
+              metadata: { source: "browser-fork-note" },
+            },
+            ...messages,
+          ]
+        : messages;
       const hydrationPromise = queueSessionHydration({
         sessionId: nextSessionId,
-        messages,
+        messages: branchMessages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],

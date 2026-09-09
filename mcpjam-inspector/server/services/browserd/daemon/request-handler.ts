@@ -17,6 +17,13 @@
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
 import {
+  parseAnchor,
+  paneCommandToAction,
+  parsePaneCommand,
+} from "./pane-command";
+import { shortHash } from "./state-token";
+import { randomUUID } from "node:crypto";
+import {
   BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
   BROWSERD_WEBMCP_FEATURES,
@@ -91,6 +98,7 @@ const ACTIVITY_BOOST_WINDOW_MS = 1_500;
 const MOTION_ACTIONS: ReadonlySet<string> = new Set([
   "navigate",
   "back",
+  "forward",
   "reload",
   "act",
 ]);
@@ -135,7 +143,7 @@ interface CommandRequestBody {
 }
 
 export interface BrowserdHandlerDeps {
-  queue: Pick<CommandQueue, "submit">;
+  queue: Pick<CommandQueue, "submit"> & Partial<Pick<CommandQueue, "isIdle">>;
   driver: Pick<
     BrowserDriver,
     | "health"
@@ -143,7 +151,23 @@ export interface BrowserdHandlerDeps {
     | "viewportIfWatched"
     | "tabsSnapshot"
     | "webmcpToolsSnapshot"
-  >;
+  > &
+    /**
+     * PARTIAL, so a driver that predates the browser shell is still a driver.
+     * Every one of these is answered with a documented refusal when absent —
+     * `state_unsupported`, `viewport_unsupported`, an unchecked anchor — which
+     * is what lets a unit fake and an older engine keep working unchanged.
+     */
+    Partial<
+      Pick<
+        BrowserDriver,
+        | "sessionViewportState"
+        | "stateSnapshot"
+        | "requestViewport"
+        | "currentStateToken"
+        | "interactionAnchor"
+      >
+    >;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -217,6 +241,8 @@ export interface BrowserdHandlerDeps {
    * status before asking never gets there.
    */
   recorder?: Pick<VideoRecorder, "start" | "stop" | "status">;
+  /** Export the persistent profile while the queue is drained. */
+  profileExport?: () => Promise<Uint8Array>;
 }
 
 /**
@@ -236,15 +262,8 @@ const UNATTRIBUTED_ACTOR: BrowserLedgerActor = {
 const RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class BrowserdRequestHandler {
-  private readonly queue: Pick<CommandQueue, "submit">;
-  private readonly driver: Pick<
-    BrowserDriver,
-    | "health"
-    | "viewport"
-    | "viewportIfWatched"
-    | "tabsSnapshot"
-    | "webmcpToolsSnapshot"
-  >;
+  private readonly queue: BrowserdHandlerDeps["queue"];
+  private readonly driver: BrowserdHandlerDeps["driver"];
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
@@ -256,6 +275,7 @@ export class BrowserdRequestHandler {
   private readonly ledger: CommandLedger | undefined;
   private readonly captureTypedText: boolean;
   private readonly recorder: BrowserdHandlerDeps["recorder"];
+  private readonly profileExport: BrowserdHandlerDeps["profileExport"];
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -298,6 +318,7 @@ export class BrowserdRequestHandler {
     this.ledger = deps.ledger;
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
+    this.profileExport = deps.profileExport;
   }
 
   /**
@@ -307,7 +328,8 @@ export class BrowserdRequestHandler {
    * reads as "this engine cannot tell you" rather than as "no tabs".
    */
   tabsSnapshot():
-    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
+    | { active?: string; list?: Array<{ id: string; url: string }> }
+    | undefined {
     return this.driver.tabsSnapshot?.();
   }
 
@@ -404,10 +426,14 @@ export class BrowserdRequestHandler {
         // never as a verdict: the caller applies its own quiet threshold, so
         // changing that threshold does not need a daemon deploy.
         lease: this.lease.state().state,
+        leaseHeld: this.lease.state().state !== "free",
         ...(this.watchers ? { watchers: this.watchers() } : {}),
         ...(this.lastActivityAt === null
           ? {}
           : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }),
+        ...(this.tabsSnapshot()?.list
+          ? { tabs: this.tabsSnapshot()!.list }
+          : {}),
       };
       return health.ok
         ? { status: 200, body: { ok: true, ...identity } }
@@ -455,6 +481,17 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "GET, POST" } };
       }
       return this.handleRecord(req);
+    }
+
+    // Profile export is a snapshot of the on-disk Chromium user-data-dir. It
+    // is deliberately outside the command queue, but only available once the
+    // queue has drained and while nobody holds the human lease. Otherwise a
+    // click or a password entry can land halfway through the archive.
+    if (req.path === "/v1/profile/export") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleProfileExport();
     }
 
     // Human input, which does NOT travel with the frames.
@@ -508,7 +545,328 @@ export class BrowserdRequestHandler {
       return this.handleArtifact(req);
     }
 
+    // What the browser IS: every tab, which one is on screen, whether the
+    // history has anywhere to go, who holds it, and how big the page is.
+    //
+    // ITS OWN ENDPOINT rather than more fields on `/v1/status`, because it is
+    // asked at a completely different rate by a completely different caller: a
+    // status probe decides whether to reuse a daemon and runs once, while this
+    // backs a tab strip and runs several times a minute for as long as somebody
+    // is looking. Bolting it onto status would make the reuse probe pay for a
+    // CDP round trip per tab.
+    if (req.path === "/v1/state") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      return this.handleState(req);
+    }
+
+    // A PERSON's navigation, as distinct from the agent's `/v1/commands`.
+    //
+    // The separation is the attribution. Every command reaching `/v1/commands`
+    // is refused while a lease is held; a pane command ACQUIRES the lease as
+    // its first act, because that is what "click the page and it is yours"
+    // means. Sharing one path and deciding by which fields were present is the
+    // ambiguity the ledger's `source` column exists to remove.
+    if (req.path === "/v1/pane-command") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePaneCommand(req);
+    }
+
+    // The panel measured a size.
+    //
+    // A REQUEST, and the daemon's answer is the size it ended up at — which
+    // for a `fixed` session is the size it was already at. The caller does not
+    // get to distinguish "you were refused" from "somebody else's measurement
+    // won", because both mean the same thing to it: read the viewport out of
+    // the answer and use that.
+    if (req.path === "/v1/viewport") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleViewport(req);
+    }
+
     return { status: 404 };
+  }
+
+  /**
+   * The browser's whole state, for the pane's shell.
+   *
+   * LEASE-GATED exactly as the frames are, and for exactly the same reason:
+   * the tab titles and URLs of a browser somebody has taken over describe the
+   * page they are signing into. "Reset your password | Acme" is not a
+   * screenshot, but it is not nothing either, and a second pane that could
+   * read it while the frames were withheld would be a hole in a wall that is
+   * otherwise complete.
+   */
+  private async handleState(req: DaemonRequest): Promise<DaemonResponse> {
+    const holder = req.query?.get("holder") ?? undefined;
+    const refusal = this.watcherRefusal(holder);
+    if (refusal) {
+      return { status: 423, body: { error: refusal, bootId: this.bootId } };
+    }
+    if (!this.driver.stateSnapshot) {
+      return {
+        status: 501,
+        body: { error: "state_unsupported", bootId: this.bootId },
+      };
+    }
+    const snapshot = await this.driver.stateSnapshot();
+    const lease = this.lease.state();
+    return {
+      status: 200,
+      body: {
+        bootId: this.bootId,
+        ...snapshot,
+        control:
+          lease.state === "free"
+            ? { kind: "agent" }
+            : {
+                kind: lease.holderKind === "script" ? "script" : "human",
+                holder: lease.holder,
+                ...(lease.state === "parked" ? { parked: true } : {}),
+              },
+      },
+    };
+  }
+
+  /**
+   * One human navigation, taking the browser first if it is free.
+   *
+   * The order is the whole design and it is not negotiable: acquire, THEN
+   * re-check the anchor, THEN dispatch. Acquiring is a round trip — to another
+   * continent on the hosted engine — and a page that finished loading during
+   * it is a different page. Dispatching first would race the agent; checking
+   * the anchor first would check a page that could still move.
+   */
+  private async handlePaneCommand(req: DaemonRequest): Promise<DaemonResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    const body = parsed as {
+      holder?: unknown;
+      command?: unknown;
+      commandId?: unknown;
+      anchor?: unknown;
+    };
+    if (typeof body?.holder !== "string" || !body.holder) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId },
+      };
+    }
+    const command = parsePaneCommand(body.command);
+    if (!command) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId },
+      };
+    }
+    const holder = body.holder;
+    // AUTOMATIC TAKEOVER. `acquire` is idempotent for the same holder and
+    // refuses a different one, so this is both "take it" and "confirm I still
+    // have it" in one call — which is what lets the pane send a command
+    // without first knowing whether it is the holder.
+    const lease = this.lease.acquire(holder);
+    if (lease.state === "free" || lease.holder !== holder) {
+      return {
+        status: 423,
+        body: {
+          error: "lease_held",
+          holder:
+            lease.state === "free"
+              ? undefined
+              : {
+                  kind: lease.holderKind === "script" ? "script" : "human",
+                  id: lease.holder,
+                },
+          bootId: this.bootId,
+        },
+      };
+    }
+    this.lastActivityAt = Date.now();
+    // The anchor, checked AFTER the acquire. @see handlePaneCommand's docstring
+    const anchor = parseAnchor(body.anchor);
+    if (anchor) {
+      const fresh = await this.currentAnchor(anchor.tabId);
+      // A driver that cannot mint a token is not consulted; see currentAnchor.
+      const moved =
+        fresh !== "unsupported" &&
+        // HASHED on this side. The pane sends the URL it saw; the daemon's
+        // token carries a digest of the URL it has. Comparing in the digest's
+        // space keeps the hashing scheme internal — the pane never learns it —
+        // and costs one hash of a string the pane already sent.
+        (!fresh ||
+          fresh.urlHash !== shortHash(anchor.url) ||
+          fresh.navCounter !== anchor.navCounter);
+      if (moved) {
+        return {
+          status: 409,
+          body: { error: "page_changed", bootId: this.bootId },
+        };
+      }
+    }
+    const mapped = paneCommandToAction(command);
+    const outcome = await this.queue.submit({
+      // `manual` is the one source `leaseRefusalFor` admits while a lease is
+      // held, which is what lets this run at all now that the pane owns the
+      // browser.
+      source: "manual",
+      holder,
+      commandId:
+        typeof body.commandId === "string" && body.commandId
+          ? body.commandId
+          : `pane-${Math.random().toString(36).slice(2)}-${Date.now()}`,
+      ...(mapped.tabId !== undefined ? { tabId: mapped.tabId } : {}),
+      action: mapped.action,
+    });
+    const viewport = this.driver.sessionViewportState
+      ? this.driver.sessionViewportState()
+      : undefined;
+    if (outcome.status !== "ok") {
+      return {
+        status: outcome.status === "busy" ? 429 : 409,
+        body: {
+          error: `command_${outcome.status}`,
+          ...(viewport ? { viewport } : {}),
+          bootId: this.bootId,
+        },
+      };
+    }
+    return {
+      status: outcome.result.ok ? 200 : 409,
+      body: {
+        ok: outcome.result.ok,
+        ...(outcome.result.ok ? {} : { error: outcome.result.error }),
+        ...(viewport ? { viewport } : {}),
+        bootId: this.bootId,
+      },
+    };
+  }
+
+  /**
+   * The tab's identity as the pane's anchor describes it.
+   *
+   * The DRIVER's token rather than a fresh CDP read: it already carries the
+   * nav counter and the URL, it is the number the staleness guard compares,
+   * and asking twice would let the two disagree.
+   */
+  private async currentAnchor(
+    tabId: string,
+  ): Promise<
+    { urlHash: string; navCounter: number } | null | "unsupported"
+  > {
+    // UNSUPPORTED IS NOT NULL, and the difference is the whole point of this
+    // return type. A driver with no `currentStateToken` has not told us the
+    // page moved — it has told us nothing, and it is optional precisely so
+    // that older drivers keep working. Answering `null` there made the caller
+    // refuse EVERY anchored command with `page_changed`, so on such a driver
+    // clicking the page could never take the browser: the pane would report a
+    // page that had changed, forever, on a page sitting perfectly still.
+    if (!this.driver.currentStateToken) return "unsupported";
+    const token = await this.driver.currentStateToken(tabId);
+    // Null still means what it meant: the driver CAN answer and could not read
+    // this tab, which is a tab that has gone or is mid-navigation. Refusing is
+    // right there.
+    if (!token) return null;
+    return { urlHash: token.urlHash, navCounter: token.navCounter };
+  }
+
+  /** The panel measured a size; answer with the size the session is at. */
+  private async handleViewport(req: DaemonRequest): Promise<DaemonResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    const body = parsed as {
+      width?: unknown;
+      height?: unknown;
+      policy?: unknown;
+    };
+    if (typeof body?.width !== "number" || typeof body?.height !== "number") {
+      return {
+        status: 400,
+        body: { error: "invalid_viewport", bootId: this.bootId },
+      };
+    }
+    if (!this.driver.requestViewport) {
+      return {
+        status: 501,
+        body: { error: "viewport_unsupported", bootId: this.bootId },
+      };
+    }
+    // NOT `lastActivityAt`. A panel that is being resized is a panel somebody
+    // can see, but the idle reap is about a browser nobody is USING, and a
+    // window left open on a second monitor sends a measurement every time the
+    // OS reflows it. Watching already defers the reap; this must not be a
+    // second, quieter way to keep a metered box awake forever.
+    const viewport = await this.driver.requestViewport({
+      ...(body.policy === "fixed" || body.policy === "followPane"
+        ? { policy: body.policy }
+        : {}),
+      width: body.width,
+      height: body.height,
+    });
+    return { status: 200, body: { viewport, bootId: this.bootId } };
+  }
+
+  private async handleProfileExport(): Promise<DaemonResponse> {
+    if (!this.profileExport) {
+      // A daemon built without an export capability is not BUSY. `main.ts`
+      // wires `profileExport` for persistent contexts only, so on an ephemeral
+      // one this is permanent — and a caller that retries a 409 waits forever
+      // for a state that can never arrive. 501, exactly as `/v1/trace` answers
+      // for a daemon that keeps no ledger.
+      return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    if (!this.queue.isIdle?.()) {
+      return { status: 409, body: { error: "profile_busy" } };
+    }
+    if (this.lease.state().state !== "free") {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    // Reserve the browser synchronously with the idle check. Expiry parks the
+    // lease, so even a long archive cannot reopen admission midway through it.
+    const holder = `profile-export:${randomUUID()}`;
+    const claim = this.lease.acquire(holder, undefined, "script");
+    if (claim.state === "free" || claim.holder !== holder) {
+      return { status: 423, body: { error: "lease_held" } };
+    }
+    try {
+      const archive = await this.profileExport();
+      return {
+        status: 200,
+        body: archive,
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": "attachment; filename=browser-profile.tar.gz",
+        },
+      };
+    } catch (error) {
+      return {
+        status: 500,
+        body: {
+          error:
+            error instanceof Error ? error.message : "profile_export_failed",
+        },
+      };
+    } finally {
+      this.lease.resume(holder);
+    }
   }
 
   private handleTrace(req: DaemonRequest): DaemonResponse {
@@ -543,7 +901,11 @@ export class BrowserdRequestHandler {
         body: { error: "ledger_unavailable", bootId: this.bootId },
       };
     }
-    let parsed: { command?: unknown; errorCode?: unknown; durationMs?: unknown };
+    let parsed: {
+      command?: unknown;
+      errorCode?: unknown;
+      durationMs?: unknown;
+    };
     try {
       parsed = JSON.parse(req.body || "{}") as typeof parsed;
     } catch {
@@ -561,13 +923,17 @@ export class BrowserdRequestHandler {
     const row = this.ledger.record({
       command: parsed.command,
       actor: parsed.command.actor ?? UNATTRIBUTED_ACTOR,
-      ...(parsed.command.sessionId ? { sessionId: parsed.command.sessionId } : {}),
+      ...(parsed.command.sessionId
+        ? { sessionId: parsed.command.sessionId }
+        : {}),
       ...(parsed.command.correlation
         ? { correlation: parsed.command.correlation }
         : {}),
       ts: Date.now(),
       durationMs:
-        typeof parsed.durationMs === "number" ? Math.max(0, parsed.durationMs) : 0,
+        typeof parsed.durationMs === "number"
+          ? Math.max(0, parsed.durationMs)
+          : 0,
       // Record-only means exactly one thing: NOTHING RAN. The inspector refused
       // it, so there is no page and no artifact to attach, and `capturePage`
       // stays off.
@@ -782,7 +1148,8 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_input", bootId: this.bootId },
       };
     }
-    const { holder, tabId, events } = parsed as {
+    const { holder, tabId, events, anchor } = parsed as {
+      anchor?: unknown;
       holder?: unknown;
       tabId?: unknown;
       events?: unknown;
@@ -813,11 +1180,17 @@ export class BrowserdRequestHandler {
       ...(typeof tabId === "string" ? { tabId } : {}),
       holder,
       events: events as ViewportInputEvent[],
+      ...(anchor !== undefined ? { anchor } : {}),
     });
     if (outcome.ok)
       return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
-      status: outcome.error === "unknown_tab" ? 404 : 423,
+      status:
+        outcome.error === "page_changed"
+          ? 409
+          : outcome.error === "unknown_tab"
+          ? 404
+          : 423,
       body: { error: outcome.error, bootId: this.bootId },
     };
   }
@@ -1011,7 +1384,10 @@ export class BrowserdRequestHandler {
     // row has aged out of the ring, which is recorded as a duplicate rather
     // than as a second click.
     if (outcome.deduped) {
-      const known = this.ledger.read({ commandId: command.commandId, limit: 1 });
+      const known = this.ledger.read({
+        commandId: command.commandId,
+        limit: 1,
+      });
       if (known.entries.length > 0) return;
       this.recordRow(command, startedAt, {
         outcome: "executed",
@@ -1036,7 +1412,13 @@ export class BrowserdRequestHandler {
       outcome: BrowserLedgerRow["outcome"];
       errorCode?: string;
       deduped?: boolean;
-      result?: { ok: boolean; error?: string; output?: unknown; stateToken?: unknown; cursors?: { console: number; errors: number } };
+      result?: {
+        ok: boolean;
+        error?: string;
+        output?: unknown;
+        stateToken?: unknown;
+        cursors?: { console: number; errors: number };
+      };
       /**
        * Artifacts are kept only for a command that actually looked at the page.
        * A refusal has no output by construction — the lease gate runs before
@@ -1067,11 +1449,32 @@ export class BrowserdRequestHandler {
       ...(what.capturePage && result?.stateToken
         ? { stateToken: result.stateToken as never }
         : {}),
-      ...(what.capturePage ? { viewport: { ...BROWSERD_OBSERVATION_VIEWPORT } } : {}),
+      // The SESSION's size, not the constant. The ledger row is what a replay
+      // is reconstructed from, so a row that recorded 1024x768 for a command
+      // executed at 1400x900 would produce an artifact whose coordinates
+      // cannot be read back — and there would be nothing in the row to say so.
+      ...(what.capturePage ? { viewport: this.publishedViewport() } : {}),
       ...(result?.cursors ? { cursors: result.cursors } : {}),
       ...(what.capturePage ? { capturePage: true } : {}),
       ...(this.captureTypedText ? { captureTypedText: true } : {}),
     });
+  }
+
+  /**
+   * The size to stamp on a published result.
+   *
+   * From the DRIVER, which is the only thing that knows whether a resize
+   * landed. A driver that cannot answer — a unit fake, an engine with no
+   * session viewport — falls back to the constant, which is the size it is
+   * necessarily running at.
+   */
+  private publishedViewport(): { width: number; height: number } {
+    const session = this.driver.sessionViewportState
+      ? this.driver.sessionViewportState()
+      : undefined;
+    return session
+      ? { width: session.width, height: session.height }
+      : { ...BROWSERD_OBSERVATION_VIEWPORT };
   }
 
   /**
@@ -1326,15 +1729,36 @@ export class BrowserdRequestHandler {
     tabId?: string;
     holder: string;
     events: readonly ViewportInputEvent[];
+    anchor?: unknown;
   }): Promise<{ ok: true } | { ok: false; error: string }> {
-    const stillTheirs = () =>
-      leaseRefusalFor(this.lease.state(), {
+    const stillTheirs = () => {
+      const refused = leaseRefusalFor(this.lease.state(), {
         source: "manual",
         holder: args.holder,
       });
+      if (refused) return refused;
+      if (args.anchor !== undefined) {
+        const before = parseAnchor(args.anchor);
+        const after = this.driver.interactionAnchor?.();
+        if (
+          !before ||
+          !after ||
+          before.bootId !== this.bootId ||
+          before.tabId !== after.tabId ||
+          before.url !== after.url ||
+          before.navCounter !== after.navCounter ||
+          before.viewportRevision !== after.viewportRevision
+        ) {
+          return "page_changed";
+        }
+      }
+      return undefined;
+    };
     const refusal = stillTheirs();
     if (refusal) return { ok: false, error: refusal };
-    const viewport = await this.driver.viewport?.(args.tabId);
+    const viewport = await this.driver.viewport?.(
+      parseAnchor(args.anchor)?.tabId ?? args.tabId,
+    );
     if (!viewport) return { ok: false, error: "unknown_tab" };
     // Re-asked after the await and then before EVERY event: a batch is up to
     // 64 keystrokes and pointer moves, and a lease that expires or is handed
@@ -1342,11 +1766,17 @@ export class BrowserdRequestHandler {
     // somebody else's page.
     const afterAwait = stillTheirs();
     if (afterAwait) return { ok: false, error: afterAwait };
+    let inputRefusal: string | undefined;
     await viewport.dispatchInput(
       args.events,
-      () => stillTheirs() === undefined,
+      () => {
+        inputRefusal = stillTheirs();
+        return inputRefusal === undefined;
+      },
       args.holder,
     );
+    if (inputRefusal === "page_changed")
+      return { ok: false, error: inputRefusal };
     // AFTER the dispatch, so the boost covers the repaint it caused rather
     // than the frame before it — and only when there WAS a dispatch: an empty
     // batch changed nothing on the page, and raising the screencast to 30fps

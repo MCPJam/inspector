@@ -104,6 +104,82 @@ export interface BrowserPaneSurfaceProps {
   tier?: QualityTier;
   onTier?: (next: QualityTier) => void;
   tiers?: readonly QualityTier[];
+  /**
+   * Draw the take-control bar above the picture, or not.
+   *
+   * `"none"` is for a pane wrapped in `BrowserShell`, whose two rows already
+   * carry the ownership status and the resume control — a bar above them would
+   * be a third row repeating both. Everything else this component does is
+   * unchanged: it is still the picture, the pointer, the keys and the
+   * letterbox arithmetic, and those are what make it worth sharing.
+   */
+  chrome?: "bar" | "none";
+  /**
+   * Whether the stats overlay is up, when somebody else owns that decision.
+   *
+   * A pane wrapped in `BrowserShell` moves the toggle into the shell's menu,
+   * and the menu writing only its own state left this component drawing the
+   * value it happened to mount with: the item showed a tick and the overlay
+   * never moved. Omitted, the surface keeps its own state, which is what the
+   * standalone pane still wants.
+   */
+  statsOpen?: boolean;
+  /**
+   * Handle a pointer or key event as a TAKEOVER when this pane does not hold
+   * the browser.
+   *
+   * Without it, `holding: false` simply drops input, which is what the surface
+   * did when taking control was a button. With it, the first click into the
+   * picture acquires the lease and is then delivered — or dropped with a
+   * notice, if the page moved while acquiring. The surface does not decide
+   * any of that; it reports the interaction and the body's coordinator does.
+   */
+  onTakeoverInput?: ((events: BrowserInputEvent[]) => void) | undefined;
+}
+
+/**
+ * Keys that are never somebody typing.
+ *
+ * A lone modifier is a hand resting or a host shortcut beginning, and taking
+ * the browser from the agent for one would be the keyboard's version of taking
+ * it on a hover.
+ */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set([
+  "Shift",
+  "Control",
+  "Alt",
+  "Meta",
+  "CapsLock",
+  "NumLock",
+  "ScrollLock",
+  "Dead",
+  "Process",
+]);
+
+/**
+ * Is this keystroke a character being typed, rather than a shortcut?
+ *
+ * A single-character `key` is not enough on its own. `Alt+F` reports `key: "f"`
+ * on Linux and Windows and `key: "ƒ"` on macOS — both length 1 — so a test that
+ * only excluded Ctrl and Meta sent an Alt shortcut down the text path, which
+ * drops the modifier entirely: the page never sees `Alt+F` and gets a stray "f"
+ * or "ƒ" typed into it instead.
+ *
+ * Shift is deliberately NOT here. `Shift+a` is how you type "A", and the `key`
+ * already carries the capital.
+ */
+function isTypedCharacter(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}): boolean {
+  return (
+    event.key.length === 1 &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  );
 }
 
 /** The DOM's button numbering, in the daemon's names. */
@@ -129,6 +205,9 @@ export function BrowserPaneSurface({
   tier,
   onTier,
   tiers,
+  chrome = "bar",
+  statsOpen: statsOpenProp,
+  onTakeoverInput,
 }: BrowserPaneSurfaceProps) {
   /**
    * Is the overlay up?
@@ -137,7 +216,10 @@ export function BrowserPaneSurface({
    * the console gets the overlay without hunting for the menu — and the menu
    * writes the same key back, so the choice survives a reload either way.
    */
-  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const [ownStatsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  // The prop WINS when it is given, and there is no syncing between the two:
+  // one owner per value, chosen by whether a caller supplied one.
+  const statsOpen = statsOpenProp ?? ownStatsOpen;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -180,6 +262,23 @@ export function BrowserPaneSurface({
       onInput(events);
     },
     [holding, onInput],
+  );
+
+  /**
+   * The interaction that TAKES the browser.
+   *
+   * Deliberately not routed through `send`. Taking is a round trip, and the
+   * events that would be forwarded on the way — a bare `mouse_down` whose
+   * `mouse_up` arrives while the acquire is still in flight — would leave the
+   * page holding a button nobody is pressing. So a takeover carries a COMPLETE
+   * interaction: a whole click, a whole wheel tick, a whole keystroke.
+   */
+  const takeover = useCallback(
+    (events: BrowserInputEvent[]) => {
+      if (holding || events.length === 0) return;
+      onTakeoverInput?.(events);
+    },
+    [holding, onTakeoverInput],
   );
 
   /**
@@ -376,9 +475,47 @@ export function BrowserPaneSurface({
           // The page gets the right-click; the host's own menu would cover it.
           if (holding) event.preventDefault();
         }}
+        onClick={(event) => {
+          // THE CLICK, not the mousedown, is what takes the browser. A
+          // takeover is a round trip; forwarding a lone `mouse_down` into it
+          // would leave the page holding a button whose release arrived while
+          // the acquire was still running. A click is complete by definition.
+          if (holding) return;
+          const point = pointAt(event);
+          if (!point) return;
+          takeover([
+            { type: "mouse_move", ...point, modifiers: modifiersOf(event) },
+            {
+              type: "mouse_down",
+              ...point,
+              button: buttonOf(event),
+              clickCount: event.detail || 1,
+              modifiers: modifiersOf(event),
+            },
+            {
+              type: "mouse_up",
+              ...point,
+              button: buttonOf(event),
+              clickCount: event.detail || 1,
+              modifiers: modifiersOf(event),
+            },
+          ]);
+        }}
         onWheel={(event) => {
           const point = pointAt(event);
           if (!point) return;
+          if (!holding) {
+            takeover([
+              {
+                type: "wheel",
+                ...point,
+                deltaX: event.deltaX,
+                deltaY: event.deltaY,
+                modifiers: modifiersOf(event),
+              },
+            ]);
+            return;
+          }
           send([
             {
               type: "wheel",
@@ -395,6 +532,7 @@ export function BrowserPaneSurface({
 
   return (
     <>
+      {chrome === "none" ? null : (
       <PaneControlBar
         control={control}
         onTakeControl={onTakeControl}
@@ -412,19 +550,28 @@ export function BrowserPaneSurface({
           setStatsOpen(next);
         }}
       />
+      )}
       <div
         ref={paneRef}
         className="relative min-h-0 flex-1 px-3 pb-3 outline-none"
-        // Keys go to the page only while this pane holds the browser.
-        tabIndex={holding ? 0 : -1}
+        // FOCUSABLE EVEN WHEN THE AGENT IS DRIVING, because typing is now one
+        // of the things that takes the browser. It used to be `-1` while not
+        // holding, which was right when taking control was a button: there was
+        // nothing a keystroke here could do. Now there is.
+        tabIndex={0}
         onPaste={(event) => {
           // Paste has no keystrokes to replay. `Ctrl+V` forwarded as a key
           // pair asks the PAGE to paste from a clipboard the sandbox does not
           // share, so nothing arrived at all; the text has to travel itself.
-          if (!holding) return;
           event.preventDefault();
           const text = event.clipboardData?.getData("text");
-          if (text) send([{ type: "text", text }]);
+          if (!text) return;
+          // TAKEOVER TOO, exactly as a keystroke does. Pasting into the page
+          // is somebody using the browser, and returning early here dropped
+          // the paste silently while the agent held the lease — no text, no
+          // takeover, and nothing on screen to say why.
+          if (holding) send([{ type: "text", text }]);
+          else takeover([{ type: "text", text }]);
         }}
         onCompositionStart={() => {
           composingRef.current = true;
@@ -432,11 +579,50 @@ export function BrowserPaneSurface({
         onCompositionEnd={(event) => {
           // The composed text, once — not the Latin keystrokes that built it.
           composingRef.current = false;
-          if (!holding) return;
-          if (event.data) send([{ type: "text", text: event.data }]);
+          if (!event.data) return;
+          // TAKEOVER TOO, not only `send`. Composing is typing, and typing is
+          // how a person takes the browser; dropping it while the agent held
+          // the lease meant an IME user's first sentence went nowhere and took
+          // nothing.
+          if (holding) send([{ type: "text", text: event.data }]);
+          else takeover([{ type: "text", text: event.data }]);
         }}
         onKeyDown={(event) => {
-          if (!holding) return;
+          if (!holding) {
+            // MID-COMPOSITION KEYSTROKES ARE NOT TEXT. They are the Latin keys
+            // building a character that has not been chosen yet, and sending
+            // them as well as the committed `event.data` types the scaffolding
+            // and the result. Ignored here rather than in `takeover`, because
+            // the browser is taken by the composition ending — which is the
+            // moment the person actually meant something.
+            if (composingRef.current) return;
+            // A modifier on its own is not somebody typing — it is somebody
+            // about to use a host shortcut, or resting a hand. Taking the
+            // browser away from the agent for a lone Shift would be the
+            // keyboard version of taking it on a hover.
+            if (MODIFIER_KEYS.has(event.key)) return;
+            if (event.key === "Tab") return; // Leaving the pane, not typing.
+            event.preventDefault();
+            takeover(
+              isTypedCharacter(event)
+                ? [{ type: "text", text: event.key }]
+                : [
+                    {
+                      type: "key_down",
+                      key: event.key,
+                      code: event.code,
+                      modifiers: modifiersOf(event),
+                    },
+                    {
+                      type: "key_up",
+                      key: event.key,
+                      code: event.code,
+                      modifiers: modifiersOf(event),
+                    },
+                  ],
+            );
+            return;
+          }
           // ESCAPE HATCH, and it has to be a key: taking control moves focus
           // into this pane and every other key goes to the page, so a person
           // navigating by keyboard had no way back to "Hand back" — including
@@ -454,7 +640,7 @@ export function BrowserPaneSurface({
           // A printable character is inserted as TEXT: paste and IME
           // composition have no keystrokes to replay, and a key table that
           // tried would be wrong for every non-US layout.
-          if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+          if (isTypedCharacter(event)) {
             send([{ type: "text", text: event.key }]);
             return;
           }

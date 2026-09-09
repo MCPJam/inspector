@@ -219,9 +219,17 @@ describe("resolveHostTools — local engine actor coercion (structural)", () => 
   }
 
   it("honors local for a signed-in member's direct turn", () => {
+    // `bashTool` threads `requireToolApproval: false`, and local bash follows
+    // the switch like every other family now. What "local" still decides is
+    // WHICH machine the description names, which is the coercion under test.
     const bash = bashTool({});
-    expect(bash?.needsApproval).toBe(true);
+    expect(bash?.needsApproval).toBe(false);
     expect(bash?.description).toMatch(/user's own machine/);
+  });
+
+  it("gates local bash when the switch is on", () => {
+    const bash = bashTool({ requireToolApproval: true });
+    expect(bash?.needsApproval).toBe(true);
   });
 
   it("downgrades local for a scenario session", () => {
@@ -602,16 +610,26 @@ describe("resolveHostTools — browser", () => {
 
   it("hands back tools that carry their own approval declaration", () => {
     // Nothing is threaded back any more. The registry's whole job here is to
-    // pass the built tools through unchanged, declarations included — a
-    // caller that forgets a step cannot un-gate a browser tool.
+    // pass the built tools through unchanged, declarations included — and to
+    // hand the builder the host's switch, which is what the declaration is
+    // computed from. A registry that dropped it would silently un-gate every
+    // browser tool on a host that asked for approval.
     withFlag("1", () => {
-      const tools = resolveHostTools(
+      const gated = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
-        browserCtx,
+        { ...browserCtx, requireToolApproval: true },
       );
       expect(
-        (tools?.browser_act as { needsApproval?: unknown })?.needsApproval,
+        (gated?.browser_act as { needsApproval?: unknown })?.needsApproval,
       ).toBe(true);
+
+      const free = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        { ...browserCtx, requireToolApproval: false },
+      );
+      expect(
+        (free?.browser_act as { needsApproval?: unknown })?.needsApproval,
+      ).toBe(false);
     });
   });
 

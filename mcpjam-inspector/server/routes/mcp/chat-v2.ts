@@ -1089,7 +1089,7 @@ chatV2.post("/", async (c) => {
     // the values do too — `modelSource` below reads this one.
     const isExternalAccountHarnessTurn = Boolean(
       resolvedExecution.harness &&
-        harnessUsesExternalAccount(resolvedExecution.harness),
+      harnessUsesExternalAccount(resolvedExecution.harness),
     );
     const usesMcpjamFreePath =
       isMcpJamProvidedModel || isExternalAccountHarnessTurn;
@@ -1214,7 +1214,10 @@ chatV2.post("/", async (c) => {
         // AuthKit at all is a 503 the operator fixes. Collapsing both into
         // "your target is malformed" is what sends a signed-out user to
         // re-pick a folder.
-        return c.json({ error: actor.message, reason: actor.reason }, actor.status);
+        return c.json(
+          { error: actor.message, reason: actor.reason },
+          actor.status,
+        );
       }
       localHarnessActingUserId = actor.actor.userId;
     }
@@ -1330,7 +1333,6 @@ chatV2.post("/", async (c) => {
       localConsentValid,
     });
 
-
     // WHAT THE PAGE OFFERS RIGHT NOW, read before the toolset is built. See
     // the twin block in `routes/web/chat-v2.ts`: read-only, fail-empty, and
     // skipped entirely for a turn that has no browser capability.
@@ -1341,7 +1343,8 @@ chatV2.post("/", async (c) => {
       isHarnessTurn: Boolean(resolvedExecution.harness),
       hasV1PageTools: validatedPageTools.length > 0,
       engine: computerEngine === "local" ? "local" : "hosted",
-      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      projectId:
+        typeof body.projectId === "string" ? body.projectId : undefined,
       ...(builtInAuthHeader ? { bearer: builtInAuthHeader } : {}),
     });
     const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
@@ -1382,9 +1385,7 @@ chatV2.post("/", async (c) => {
     // callback, exactly as it does the approval classification.
     let pageToolRefresh:
       | {
-          refreshPageTools: (ctx: {
-            signal?: AbortSignal;
-          }) => Promise<unknown>;
+          refreshPageTools: (ctx: { signal?: AbortSignal }) => Promise<unknown>;
           currentPageTools: () => MintedDeclaredTool[];
           currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
         }
@@ -1423,6 +1424,20 @@ chatV2.post("/", async (c) => {
             // advertised and keep a signed-in profile; surfaces that attest
             // nothing get none (see built-in-tools/browser.ts).
             browserApprovalDelivery: { kind: "attested" },
+            ...(resolvedExecution.browserProfileId
+              ? { browserProfileId: resolvedExecution.browserProfileId }
+              : {}),
+            ...(body.browserScope === "conversation" &&
+            body.chatSessionId &&
+            !isScenarioSession
+              ? {
+                  browserSessionScope: {
+                    kind: "conversation" as const,
+                    sessionId: body.chatSessionId,
+                    ...(bodyHostId ? { hostId: bodyHostId } : {}),
+                  },
+                }
+              : {}),
             ...(pageToolsSnapshot
               ? { browserPageTools: pageToolsSnapshot }
               : {}),
@@ -1595,7 +1610,7 @@ chatV2.post("/", async (c) => {
           ? {
               toolCallCancellation:
                 toolCallCancellationFromMcpProfile(
-                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
                 ) ?? {},
             }
           : {}),
@@ -1858,9 +1873,7 @@ chatV2.post("/", async (c) => {
         modelVisibleMcpToolResults,
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
-        ...(pageToolRefresh
-          ? { refreshTools: guardedRefreshTools }
-          : {}),
+        ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         // Harness engine only: it builds its own MCP tool set (host-executed
         // delivery) rather than consuming `allTools`, so the host's
         // tool-construction policies have to reach it separately. Inert on the
@@ -2140,9 +2153,7 @@ chatV2.post("/", async (c) => {
         modelVisibleMcpToolResults,
         // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
         // step and the tools it needs exist only from the next.
-        ...(pageToolRefresh
-          ? { refreshTools: guardedRefreshTools }
-          : {}),
+        ...(pageToolRefresh ? { refreshTools: guardedRefreshTools } : {}),
         scopeStepUpResume: scopeStepUpEngineResume,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,

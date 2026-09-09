@@ -282,6 +282,53 @@ describe("browserd WebMCP provider", () => {
     }
   });
 
+  it("carries a cross-document JSON-LD ARRAY across the daemon hop unchanged", async () => {
+    // THE EXTRA TRANSPORT BOUNDARY is what makes hosted worth measuring
+    // separately. Every provider ends at the same `WebMcpBridge.invoke` over
+    // CDP — hosted calls it INSIDE the daemon — so what differs here is not the
+    // invocation mechanism but the command protocol carrying the request and
+    // the response across the sandbox. That hop is JSON, and a top-level array
+    // is the shape most likely to be quietly re-wrapped or flattened by
+    // something on the way: the spike measured Blink answering a navigating
+    // tool with an ARRAY of every `application/ld+json` block, and this pins
+    // that the array is what a hosted caller receives.
+    const jsonLd = [
+      { "@context": "https://schema.org", "@type": "OrderConfirmation", orderNumber: "A-1" },
+      { "@context": "https://schema.org", "@type": "Receipt", total: "42.00" },
+    ];
+    const { provider, callbacks } = build((command) => {
+      const action = command.action as any;
+      if (action.kind === "webmcp_invoke") {
+        return {
+          status: "ok",
+          // Serialized and parsed, exactly as the real protocol does it: a
+          // structuredClone here would not exercise the hop at all.
+          result: JSON.parse(
+            JSON.stringify({
+              ok: true,
+              output: { invocationId: "inv-jsonld", result: jsonLd },
+            }),
+          ),
+          bootId: "b",
+        };
+      }
+      return { status: "ok", result: { ok: true, output: {} }, bootId: "b" };
+    });
+    const session = await provider.createSession({
+      url: "https://x.test/",
+      callbacks,
+    });
+    const out = await session.invokeTool({
+      frameId: "f1",
+      toolName: "submit_order",
+      input: { sku: "S1" },
+      signal: new AbortController().signal,
+    });
+    const result = (out.output as { result: unknown }).result;
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toEqual(jsonLd);
+  });
+
   it("surfaces the invocation output and cancels on abort", async () => {
     const { provider, callbacks, commands } = build((command) => {
       const action = command.action as any;

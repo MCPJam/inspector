@@ -48,6 +48,8 @@ import {
 import type {
   BrowserContextMode,
   BrowserRelaunchClaim,
+  BrowserSessionLookup,
+  BrowserSessionTargetArgs,
   BrowserSessionRecordResult,
   ComputerBrowserSessionLookup,
   ComputerBrowserSessionRecord,
@@ -57,7 +59,11 @@ import type {
 import { withKeyedLock } from "./probe-lock";
 // The same once-a-minute throttle the panel and the page tools use, so one
 // computer is never told it is busy by three callers in the same minute.
-import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
+import {
+  shouldTouchActivity,
+  shouldTouchSessionCommand,
+} from "../../utils/computers/activity-touch.js";
+import type { BrowserSessionService } from "./session-service.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -75,6 +81,9 @@ export const BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
  * drives can read it.
  */
 export const BROWSERD_TOKEN_FILE = "/home/user/.mcpjam-browserd.token";
+/** One-shot path used to import a saved profile before browserd launches. */
+export const BROWSERD_PROFILE_ARCHIVE_PATH =
+  "/tmp/mcpjam-browser-profile.tar.gz";
 
 /**
  * A `BrowserdClient`, narrowed to what sessions need (fakeable in tests).
@@ -91,7 +100,11 @@ export interface SessionClient {
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
-  lease?(): Promise<BrowserdLeaseState>;
+  /**
+   * Read the lease. The signal is what lets the handoff poll be cancelled;
+   * an implementation free to ignore it, but never to drop it silently.
+   */
+  lease?(options?: { signal?: AbortSignal }): Promise<BrowserdLeaseState>;
   leaseAction?(args: {
     action: "acquire" | "heartbeat" | "resume";
     holder: string;
@@ -108,6 +121,8 @@ export interface SessionClient {
    */
   record?(args: BrowserdRecordArgs): Promise<BrowserdRecordResult>;
   recordStatus?(): Promise<BrowserdRecordState>;
+  /** Export the persistent profile after the daemon queue has drained. */
+  exportProfile?(): Promise<Uint8Array>;
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -170,6 +185,8 @@ interface StoreRecordOptions {
   /** What wire the booted daemon announced, when it announced one. */
   protocolVersion?: number;
   replacesSessionId?: string;
+  logicalSessionId?: string;
+  watched?: boolean;
   signal?: AbortSignal;
 }
 
@@ -181,7 +198,11 @@ export interface SessionStore {
     args: { computerId: string; sandboxRowId?: undefined } & StoreLookupOptions,
   ): Promise<ComputerBrowserSessionLookup>;
   lookup(
-    args: { sandboxRowId: string; computerId?: undefined } & StoreLookupOptions,
+    args: {
+      sandboxRowId: string;
+      computerId?: undefined;
+      watched?: boolean;
+    } & StoreLookupOptions,
   ): Promise<SandboxBrowserSessionLookup>;
   // The stream rides the TARGET, not the options: it is REQUIRED on a computer
   // (the password exists nowhere else durable, so this row is the only way
@@ -217,18 +238,20 @@ export interface SessionStore {
    * the claim narrows a race that the record compare-and-swap still catches
    * afterwards, at the cost of a wasted boot.
    */
-  claimRelaunch?(args: {
-    computerId: string;
-    claimId: string;
-    ttlMs?: number;
-    signal?: AbortSignal;
-  }): Promise<BrowserRelaunchClaim>;
+  claimRelaunch?(
+    args: BrowserSessionTargetArgs & {
+      claimId: string;
+      ttlMs?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<BrowserRelaunchClaim>;
   /** Give it back. Best-effort: an unreleased claim expires on its own. */
-  releaseRelaunch?(args: {
-    computerId: string;
-    claimId: string;
-    signal?: AbortSignal;
-  }): Promise<void>;
+  releaseRelaunch?(
+    args: BrowserSessionTargetArgs & {
+      claimId: string;
+      signal?: AbortSignal;
+    },
+  ): Promise<void>;
   touch(args: {
     sessionId: string;
     kind: "command" | "panel";
@@ -260,6 +283,8 @@ export interface BrowserSessionDeps {
   /** Build the client for a daemon at `baseUrl` presenting `bearer`. */
   createClient(baseUrl: string, bearer: string): SessionClient;
   store: SessionStore;
+  /** Optional durable logical-session adapter; absent keeps legacy behavior. */
+  sessionService?: BrowserSessionService;
   /**
    * Keep the COMPUTER awake, as distinct from the session row.
    *
@@ -291,7 +316,12 @@ export interface EnsureBrowserSessionArgs {
    */
   target?:
     | { kind: "computer" }
-    | { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+    | {
+        kind: "sandbox";
+        sandboxRowId: string;
+        sandboxId: string;
+        watched?: boolean;
+      };
   /**
    * Persistent Chrome profile (playground/inspector) unless stated.
    *
@@ -302,6 +332,10 @@ export interface EnsureBrowserSessionArgs {
    * one) is a silent correctness failure either way.
    */
   contextMode?: BrowserContextMode;
+  /** Durable logical identity, when this surface has one. */
+  logicalSessionId?: string;
+  /** Saved profile bytes to apply only if this ensure has to boot a daemon. */
+  profileArchive?: Uint8Array;
   signal?: AbortSignal;
 }
 
@@ -342,8 +376,7 @@ interface HostedBrowserSessionHandleCommon {
  * A daemon on the member's durable computer — the Playground's browser, with
  * their logins, a panel that can watch it and a lease a person can take.
  */
-export interface ComputerHostedBrowserSessionHandle
-  extends HostedBrowserSessionHandleCommon {
+export interface ComputerHostedBrowserSessionHandle extends HostedBrowserSessionHandleCommon {
   target: "computer";
   computerId: string;
   streamUrl: string;
@@ -358,18 +391,20 @@ export interface ComputerHostedBrowserSessionHandle
  * back. Making it a union member rather than optional fields is what stops a
  * `streamUrl: ""` placeholder from reaching a panel that would render it.
  */
-export interface SandboxHostedBrowserSessionHandle
-  extends HostedBrowserSessionHandleCommon {
+export interface SandboxHostedBrowserSessionHandle extends HostedBrowserSessionHandleCommon {
   target: "sandbox";
   /** The control-plane row — the session's identity and its teardown hook. */
   sandboxRowId: string;
   /** The vendor box id the daemon actually runs in. */
   sandboxId: string;
+  /** True only for a Playground box with a live, authenticated panel stream. */
+  watched?: boolean;
+  streamUrl?: string;
+  streamPassword?: string;
 }
 
 export type HostedBrowserSessionHandle =
-  | ComputerHostedBrowserSessionHandle
-  | SandboxHostedBrowserSessionHandle;
+  ComputerHostedBrowserSessionHandle | SandboxHostedBrowserSessionHandle;
 
 /**
  * A browserd running INSIDE this inspector process — the npm engine's
@@ -410,7 +445,12 @@ export async function ensureBrowserSession(
 export async function ensureBrowserSession(
   deps: BrowserSessionDeps,
   args: EnsureBrowserSessionArgs & {
-    target: { kind: "sandbox"; sandboxRowId: string; sandboxId: string };
+    target: {
+      kind: "sandbox";
+      sandboxRowId: string;
+      sandboxId: string;
+      watched?: boolean;
+    };
   },
 ): Promise<SandboxHostedBrowserSessionHandle>;
 export async function ensureBrowserSession(
@@ -426,15 +466,21 @@ export async function ensureBrowserSession(
     // identity IS the isolation — no other run can resolve to it, so there is
     // no profile to share, no relaunch race across replicas and no human whose
     // page a restart could pull away.
-    if (contextMode !== "ephemeral") {
+    if (
+      target.watched
+        ? contextMode !== "persistent"
+        : contextMode !== "ephemeral"
+    ) {
       // The mode is not a preference here, it is what the box is FOR. A
       // persistent profile on a machine that dies with the run is a
       // contradiction, and accepting it would quietly promise durability
       // nothing can keep.
       throw new BrowserSessionTargetError(
         "persistent_requires_computer",
-        "a per-run sandbox browser is always ephemeral: the box dies with " +
-          "the run, so a persistent profile on it could keep nothing",
+        target.watched
+          ? "a watched Playground sandbox browser is always persistent"
+          : "a per-run sandbox browser is always ephemeral: the box dies with " +
+              "the run, so a persistent profile on it could keep nothing",
       );
     }
     // Keyed per BOX. Two ensures for one row serialize (the fixed port and one
@@ -564,6 +610,7 @@ async function tryReuse(
   lookup: ComputerBrowserSessionLookup,
   contextMode: BrowserContextMode,
   signal?: AbortSignal,
+  logicalContext?: LogicalSessionContext,
 ): Promise<ComputerHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
@@ -600,7 +647,14 @@ async function tryReuse(
   // failure this whole mechanism exists to end. Returning null here drops into
   // the ordinary relaunch path below, fence, claim and all.
   if (upgradeAvailable && daemonIsIdle(status)) return null;
-  return handleFromRecord(deps, session, client, true, upgradeAvailable);
+  return handleFromRecord(
+    deps,
+    session,
+    client,
+    true,
+    upgradeAvailable,
+    logicalContext,
+  );
 }
 
 /**
@@ -660,6 +714,7 @@ async function trySandboxReuse(
   contextMode: BrowserContextMode,
   sandboxId: string,
   signal?: AbortSignal,
+  logicalContext?: LogicalSessionContext,
 ): Promise<SandboxHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
@@ -672,7 +727,14 @@ async function trySandboxReuse(
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
     .catch(() => {});
-  return sandboxHandleFromRecord(deps, session, sandboxId, client, true);
+  return sandboxHandleFromRecord(
+    deps,
+    session,
+    sandboxId,
+    client,
+    true,
+    logicalContext,
+  );
 }
 
 /**
@@ -689,11 +751,20 @@ interface RelaunchFence {
   release(): Promise<void>;
 }
 
-interface RelaunchGate {
+interface RelaunchGate<Owner extends BrowserSessionLookup = BrowserSessionLookup> {
   /** The lease we took, or null when there was nothing to fence. */
   fence: RelaunchFence | null;
-  /** The row the ownership lookup saw, which may be a WINNER'S. */
-  owner: ComputerBrowserSessionLookup | null;
+  /**
+   * The row the ownership lookup saw, which may be a WINNER'S.
+   *
+   * Parameterised by TARGET, because the two arms return different rows: the
+   * computer overload can only ever see a computer row, the sandbox overload
+   * only a sandbox one. Pinning this to `ComputerBrowserSessionLookup`
+   * hard-coded the computer arm's answer for both and made the sandbox arm
+   * five type errors — invisible here only because this file's tsconfig is not
+   * a CI gate.
+   */
+  owner: Owner | null;
 }
 
 /**
@@ -726,9 +797,24 @@ interface RelaunchGate {
  * driving it through us either, so the relaunch proceeds — but a daemon that
  * answers "somebody else has it" always stops it.
  */
+// OVERLOADED per target, for the same reason `SessionStore.lookup` is: the
+// computer call site reads `owner` straight back into `tryReuse`, which takes
+// a computer lookup, while the sandbox call site takes only the fence.
 async function fenceForRelaunch(
   deps: BrowserSessionDeps,
-  computerId: string,
+  target: { computerId: string; sandboxRowId?: undefined },
+  bundleHash: string,
+  signal?: AbortSignal,
+): Promise<RelaunchGate<ComputerBrowserSessionLookup>>;
+async function fenceForRelaunch(
+  deps: BrowserSessionDeps,
+  target: { sandboxRowId: string; computerId?: undefined; watched?: boolean },
+  bundleHash: string,
+  signal?: AbortSignal,
+): Promise<RelaunchGate<SandboxBrowserSessionLookup>>;
+async function fenceForRelaunch(
+  deps: BrowserSessionDeps,
+  target: BrowserSessionTargetArgs,
   bundleHash: string,
   signal?: AbortSignal,
 ): Promise<RelaunchGate> {
@@ -739,14 +825,22 @@ async function fenceForRelaunch(
   // this box's browser?", and a persistent daemon with a person on it is the
   // most emphatic possible yes. Reusing the mode-filtered answer here read that
   // yes as "no row, nothing to protect" and killed them.
-  const owner = await deps.store
-    .lookup({
-      computerId,
-      expectedBundleHash: bundleHash,
-      expectedContextMode: "any",
-      ...(signal ? { signal } : {}),
-    })
-    .catch(() => null);
+  const owner = await (
+    target.computerId !== undefined
+      ? deps.store.lookup({
+          computerId: target.computerId,
+          expectedBundleHash: bundleHash,
+          expectedContextMode: "any",
+          ...(signal ? { signal } : {}),
+        })
+      : deps.store.lookup({
+          sandboxRowId: target.sandboxRowId,
+          ...(target.watched ? { watched: true } : {}),
+          expectedBundleHash: bundleHash,
+          expectedContextMode: "any",
+          ...(signal ? { signal } : {}),
+        })
+  ).catch(() => null);
   // RESIDUAL, and named rather than papered over: the backend checks the bundle
   // hash BEFORE the mode, so a daemon booted from a previous bundle answers
   // `null` here too and its holder is not protected. That is not a corner —
@@ -849,10 +943,17 @@ export class BrowserSessionInUseError extends Error {
  * the start rather than on completion is deliberate: a command that takes
  * thirty seconds, or never returns at all, is still the box being used.
  */
+interface LogicalSessionContext {
+  sessionId: string;
+  projectId: string;
+  bearer: string;
+}
+
 function withActivityTouches(
   deps: BrowserSessionDeps,
   session: { sessionId: string; computerId?: string },
   client: SessionClient,
+  logicalContext?: LogicalSessionContext,
 ): SessionClient {
   // Rebuilt method by method rather than spread: `client` is usually a
   // `BrowserdClient` INSTANCE, whose methods live on the prototype and would
@@ -860,9 +961,52 @@ function withActivityTouches(
   return {
     status: () => client.status(),
     sendCommand: (command, expectedBootId) => {
+      // UNTHROTTLED on purpose: this one is load-bearing. It advances the
+      // browser session's own clock and, for a sandbox box, that box's
+      // `lastUsedAt` in the SAME backend transaction — which is what keeps the
+      // sleep sweep and the reaper from taking a box out from under a run.
       void deps.store
         .touch({ sessionId: session.sessionId, kind: "command" })
         .catch(() => {});
+      if (deps.sessionService && logicalContext) {
+        // THROTTLED, unlike the store touch above: this is a SECOND
+        // control-plane round-trip to a different row, and nothing reads its
+        // clock to make a decision — the logical session's `lastActiveAt` is
+        // display only. Once a minute keeps it honest for a fraction of the
+        // writes. Revisit the moment a sweep is wired onto that column.
+        if (shouldTouchSessionCommand(`logical:${logicalContext.sessionId}`)) {
+          void deps.sessionService
+            .touch({
+              sessionId: logicalContext.sessionId,
+              projectId: logicalContext.projectId,
+              bearer: logicalContext.bearer,
+              kind: "command",
+            })
+            .catch(() => {});
+        }
+        // Tabs used to refresh on every 5th command, which on an agent run is
+        // a daemon round-trip plus a POST every few seconds. Nothing consumes
+        // this list live — it is surfaced for display — so it rides the same
+        // once-a-minute window on its own key.
+        if (shouldTouchSessionCommand(`tabs:${logicalContext.sessionId}`)) {
+          void client
+            .status()
+            .then((status) => {
+              if (!("tabs" in status) || !status.tabs) return;
+              return deps.sessionService?.setTabs({
+                sessionId: logicalContext.sessionId,
+                projectId: logicalContext.projectId,
+                bearer: logicalContext.bearer,
+                tabs: status.tabs.map((tab) => ({
+                  tabId: tab.id,
+                  url: tab.url,
+                  title: "",
+                })),
+              });
+            })
+            .catch(() => {});
+        }
+      }
       // The COMPUTER's own hibernation clock. A per-run box has none — it is
       // never hibernated, and the backend advances its `lastUsedAt` from the
       // session touch above, in the same transaction.
@@ -872,7 +1016,12 @@ function withActivityTouches(
       }
       return client.sendCommand(command, expectedBootId);
     },
-    ...(client.lease ? { lease: () => client.lease!() } : {}),
+    // ARGUMENTS FORWARDED, not just the call. A wrapper that took none
+    // silently dropped the abort signal the handoff poll passes, so a
+    // cancelled turn went on holding a lease read nobody was waiting for.
+    ...(client.lease
+      ? { lease: (options?: { signal?: AbortSignal }) => client.lease!(options) }
+      : {}),
     ...(client.leaseAction
       ? { leaseAction: (args) => client.leaseAction!(args) }
       : {}),
@@ -886,6 +1035,13 @@ function withActivityTouches(
     ...(client.recordStatus
       ? { recordStatus: () => client.recordStatus!() }
       : {}),
+    // Exactly the capability the comment above warns about: without this line
+    // a daemon that CAN export a profile looks like one that cannot, and the
+    // panel answers `profile_export_unavailable` on a browser that would have
+    // exported fine.
+    ...(client.exportProfile
+      ? { exportProfile: () => client.exportProfile!() }
+      : {}),
   };
 }
 
@@ -895,6 +1051,7 @@ function handleFromRecord(
   client: SessionClient,
   reused: boolean,
   upgradeAvailable = false,
+  logicalContext?: LogicalSessionContext,
 ): ComputerHostedBrowserSessionHandle {
   return {
     engine: "hosted",
@@ -902,7 +1059,7 @@ function handleFromRecord(
     sessionId: session.sessionId,
     computerId: session.computerId,
     bootId: session.bootId,
-    client: withActivityTouches(deps, session, client),
+    client: withActivityTouches(deps, session, client, logicalContext),
     streamUrl: session.streamUrl,
     streamPassword: session.streamPassword,
     contextMode: session.contextMode,
@@ -917,6 +1074,7 @@ function sandboxHandleFromRecord(
   sandboxId: string,
   client: SessionClient,
   reused: boolean,
+  logicalContext?: LogicalSessionContext,
 ): SandboxHostedBrowserSessionHandle {
   return {
     engine: "hosted",
@@ -925,9 +1083,16 @@ function sandboxHandleFromRecord(
     sandboxRowId: session.sandboxRowId,
     sandboxId,
     bootId: session.bootId,
-    client: withActivityTouches(deps, session, client),
+    client: withActivityTouches(deps, session, client, logicalContext),
     contextMode: session.contextMode,
     reused,
+    ...(session.watched ? { watched: true } : {}),
+    ...(session.stream
+      ? {
+          streamUrl: session.stream.url,
+          streamPassword: session.stream.password,
+        }
+      : {}),
   };
 }
 
@@ -945,6 +1110,10 @@ async function tryAdoptPrelaunched(
     computerId: string;
     contextMode: BrowserContextMode;
     observedSessionId?: string;
+    logicalSessionId?: string;
+    projectId?: string;
+    bearer?: string;
+    logicalContext?: LogicalSessionContext;
   },
   signal?: AbortSignal,
 ): Promise<ComputerHostedBrowserSessionHandle | null> {
@@ -987,6 +1156,9 @@ async function tryAdoptPrelaunched(
     bundleHash: deps.bundleHash(),
     protocolVersion: BROWSERD_PROTOCOL_VERSION,
     contextMode: target.contextMode,
+    ...(target.logicalSessionId
+      ? { logicalSessionId: target.logicalSessionId }
+      : {}),
     ...(target.observedSessionId
       ? { replacesSessionId: target.observedSessionId }
       : {}),
@@ -1015,7 +1187,14 @@ async function tryAdoptPrelaunched(
   // daemon is not the one this build ships, replaced the first moment nobody
   // is holding the lease, watching, or driving it.
   const stale = !!status.bundleHash && status.bundleHash !== deps.bundleHash();
-  return handleFromRecord(deps, session, client, true, stale);
+  return handleFromRecord(
+    deps,
+    session,
+    client,
+    true,
+    stale,
+    target.logicalContext,
+  );
 }
 
 /**
@@ -1048,6 +1227,78 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
+async function bindLogicalBox(
+  deps: BrowserSessionDeps,
+  args: {
+    logicalSessionId?: string;
+    projectId?: string;
+    bearer?: string;
+    signal?: AbortSignal;
+  },
+  box: { computerId: string } | { sandboxRowId: string },
+): Promise<void> {
+  if (!args.logicalSessionId || !deps.sessionService) return;
+  if (!args.projectId || !args.bearer) {
+    throw new Error(
+      "logical browser session requires project and bearer context",
+    );
+  }
+  const bound = await deps.sessionService.bindBox({
+    sessionId: args.logicalSessionId,
+    projectId: args.projectId,
+    bearer: args.bearer,
+    box,
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  if (!bound) {
+    throw new Error(
+      "logical browser session could not be bound to its browser box",
+    );
+  }
+}
+
+function logicalContextFromArgs(args: {
+  logicalSessionId?: string;
+  projectId?: string;
+  bearer?: string;
+}): LogicalSessionContext | undefined {
+  if (!args.logicalSessionId || !args.projectId || !args.bearer) {
+    return undefined;
+  }
+  return {
+    sessionId: args.logicalSessionId,
+    projectId: args.projectId,
+    bearer: args.bearer,
+  };
+}
+
+async function recordLogicalBoot(
+  deps: BrowserSessionDeps,
+  args: {
+    logicalSessionId?: string;
+    projectId?: string;
+    bearer?: string;
+    signal?: AbortSignal;
+  },
+  bootId: string,
+): Promise<void> {
+  if (!args.logicalSessionId || !deps.sessionService) return;
+  if (!args.projectId || !args.bearer) {
+    throw new Error(
+      "logical browser session requires project and bearer context",
+    );
+  }
+  const recorded = await deps.sessionService.recordBoot({
+    sessionId: args.logicalSessionId,
+    projectId: args.projectId,
+    bearer: args.bearer,
+    bootId,
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  if (!recorded)
+    throw new Error("logical browser session boot was not recorded");
+}
+
 /** What the shared relaunch tail ended up doing. */
 type BootOutcome<THandle> =
   /** Our daemon is up AND recorded; it now outlives this call. */
@@ -1075,6 +1326,7 @@ async function bootAndPublish<THandle>(
   args: {
     sandbox: SessionSandbox;
     contextMode: BrowserContextMode;
+    profileArchive?: Uint8Array;
     /** Re-read the store for THIS target and verify what comes back. */
     reuseAgain: () => Promise<THandle | null>;
     /**
@@ -1087,6 +1339,12 @@ async function bootAndPublish<THandle>(
     onAdopt?: () => void;
   },
 ): Promise<BootOutcome<THandle>> {
+  if (args.profileArchive) {
+    await args.sandbox.writeBundle(
+      BROWSERD_PROFILE_ARCHIVE_PATH,
+      args.profileArchive,
+    );
+  }
   await args.sandbox.writeBundle(BROWSERD_SCRIPT_PATH, deps.bundle());
   let booted: BrowserdHandle;
   try {
@@ -1095,6 +1353,9 @@ async function bootAndPublish<THandle>(
       port: BROWSERD_PORT,
       userDataDir: BROWSERD_USER_DATA_DIR,
       contextMode: args.contextMode,
+      ...(args.profileArchive
+        ? { profileArchivePath: BROWSERD_PROFILE_ARCHIVE_PATH }
+        : {}),
       // Applied to BOTH targets: a per-run desktop box has a display for the
       // same reason a computer does, and `hostedDisplayEnv` already keeps the
       // scale factor pinned at 1 for an ephemeral context — which is every
@@ -1146,11 +1407,10 @@ async function bootAndPublish<THandle>(
  * Deliberately much shorter than the computer path, and every omission is a
  * decision:
  *
- *   - NO relaunch claim and NO lease fence. Both exist to stop two parties
- *     fighting over one SHARED box — another replica, or a person at a
- *     keyboard. A per-run box has exactly one run and one driving process, and
- *     no panel can reach it, so there is nobody to fence. The record
- *     compare-and-swap stays as the backstop.
+ *   - An unattended run takes NO relaunch claim and NO lease fence: it has one
+ *     run and one driving process, and no panel can reach it. A watched
+ *     Playground box takes both, because it is shared persistent state that a
+ *     person may be using while a relaunch is being considered.
  *   - NO `resolveSandboxId`. The caller provisioned this box and already
  *     holds its vendor id; asking the control plane to resolve one again would
  *     be a round trip to learn something we were handed.
@@ -1160,13 +1420,20 @@ async function bootAndPublish<THandle>(
  */
 async function ensureOnSandbox(
   deps: BrowserSessionDeps,
-  target: { sandboxRowId: string; sandboxId: string },
+  target: { sandboxRowId: string; sandboxId: string; watched?: boolean },
   contextMode: BrowserContextMode,
-  args: { signal?: AbortSignal },
+  args: Pick<
+    EnsureBrowserSessionArgs,
+    "signal" | "logicalSessionId" | "profileArchive"
+  > &
+    Partial<Pick<EnsureBrowserSessionArgs, "bearer" | "projectId">>,
 ): Promise<SandboxHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
+  const logicalContext = logicalContextFromArgs(args);
+  await bindLogicalBox(deps, args, { sandboxRowId: target.sandboxRowId });
   const lookupArgs = {
     sandboxRowId: target.sandboxRowId,
+    ...(target.watched ? { watched: true } : {}),
     expectedBundleHash: bundleHash,
     expectedContextMode: contextMode,
     ...(args.signal ? { signal: args.signal } : {}),
@@ -1190,6 +1457,7 @@ async function ensureOnSandbox(
     contextMode,
     target.sandboxId,
     args.signal,
+    logicalContext,
   );
   if (reusedHandle) return reusedHandle;
 
@@ -1201,6 +1469,7 @@ async function ensureOnSandbox(
   const sandbox = await deps.connect(target.sandboxId);
   const connectedAt = Date.now();
   let handle: BrowserdHandle | undefined;
+  let stream: { streamUrl: string; streamPassword: string } | undefined;
   const reuseAgain = async () =>
     trySandboxReuse(
       deps,
@@ -1208,16 +1477,22 @@ async function ensureOnSandbox(
       contextMode,
       target.sandboxId,
       args.signal,
+      logicalContext,
     );
+  let releaseClaim: () => Promise<void> = async () => {};
+  let fence: RelaunchFence | null = null;
   try {
     // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
     //
     // `killBrowserd` is a `pkill` on the box, so it would reap a daemon
     // another party booted in the meantime and leave their row addressing
     // nothing — and the record compare-and-swap below cannot repair that,
-    // because it fires after the kill and the damage IS the kill. The computer
-    // path fences this with a control-plane relaunch claim; a per-run box
-    // needs no such thing, because the work that owns it is claimed exactly
+    // because it fires after the kill and the damage IS the kill. An
+    // unattended per-run box has exactly one owner, but a watched Playground
+    // box is shared and uses the same control-plane relaunch fence as the
+    // computer path.
+    //
+    // For an unattended box the work that owns it is claimed exactly
     // once a layer up (a swarm attempt whose claim came back `applied: false`
     // skips before it ever provisions, and two eval runners of one run mint
     // distinct iteration ids, hence distinct boxes). So there is no second
@@ -1230,21 +1505,84 @@ async function ensureOnSandbox(
     const raced = await reuseAgain();
     if (raced) return raced;
 
+    if (target.watched) {
+      const claimId = randomUUID();
+      const claimed = await deps.store.claimRelaunch?.({
+        sandboxRowId: target.sandboxRowId,
+        watched: true,
+        claimId,
+        ...(args.signal ? { signal: args.signal } : {}),
+      });
+      // Only a REFUSAL stops us, exactly as on the computer arm. `undefined`
+      // (no claim support) and `unavailable` (unreachable, unconfigured, or a
+      // control plane that predates the sandbox claim shape and answers 400)
+      // both proceed unclaimed — otherwise every watched relaunch fails
+      // against the backend this module is written to ship ahead of, and fails
+      // naming a replica that does not exist.
+      if (claimed?.ok === false && claimed.reason === "claimed") {
+        throw new BrowserSessionInUseError(
+          "another replica is restarting this browser right now; try again in a moment",
+        );
+      }
+      if (claimed?.ok === true) {
+        releaseClaim = async () => {
+          await deps.store
+            .releaseRelaunch?.({
+              sandboxRowId: target.sandboxRowId,
+              watched: true,
+              claimId,
+              ...(args.signal ? { signal: args.signal } : {}),
+            })
+            .catch(() => {});
+        };
+      }
+
+      fence = (
+        await fenceForRelaunch(
+          deps,
+          { sandboxRowId: target.sandboxRowId, watched: true },
+          bundleHash,
+          args.signal,
+        )
+      ).fence;
+
+      // The daemon may have recovered while the claim/fence round trips were
+      // in flight. Release our temporary script lease before reusing it.
+      const fencedRace = await reuseAgain();
+      if (fencedRace) {
+        await fence?.release();
+        fence = null;
+        return fencedRace;
+      }
+    }
+
     await sandbox.killBrowserd();
     const outcome = await bootAndPublish<SandboxHostedBrowserSessionHandle>(
       deps,
       {
         sandbox,
         contextMode,
+        ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
         reuseAgain,
-        publish: (booted) => {
+        publish: async (booted) => {
           handle = booted;
+          await recordLogicalBoot(deps, args, booted.bootId);
+          stream = target.watched ? await sandbox.ensureStream() : undefined;
           return deps.store.record({
             sandboxRowId: target.sandboxRowId,
             bootId: booted.bootId,
             browserdToken: booted.bearer,
             browserdPort: booted.port,
             publicOrigin: booted.publicOrigin,
+            ...(stream
+              ? {
+                  stream: {
+                    url: stream.streamUrl,
+                    password: stream.streamPassword,
+                  },
+                }
+              : {}),
+            ...(target.watched ? { watched: true } : {}),
             bundleHash,
             contextMode,
             // Same daemon, same wire: a per-run box records what it speaks so
@@ -1255,6 +1593,9 @@ async function ensureOnSandbox(
               : {}),
             ...(lookup.observedSessionId
               ? { replacesSessionId: lookup.observedSessionId }
+              : {}),
+            ...(args.logicalSessionId
+              ? { logicalSessionId: args.logicalSessionId }
               : {}),
             ...(args.signal ? { signal: args.signal } : {}),
           });
@@ -1288,14 +1629,21 @@ async function ensureOnSandbox(
         deps,
         { sessionId: outcome.sessionId },
         deps.createClient(booted.publicOrigin, booted.bearer),
+        logicalContext,
       ),
       contextMode,
       reused: false,
+      ...(target.watched ? { watched: true } : {}),
+      ...(target.watched && stream
+        ? { streamUrl: stream.streamUrl, streamPassword: stream.streamPassword }
+        : {}),
     };
   } finally {
     // On any failure after a boot, never leave an unrecorded daemon running.
     await handle?.stop().catch(() => {});
     await sandbox.disconnect().catch(() => {});
+    await fence?.release();
+    await releaseClaim();
   }
 }
 
@@ -1305,9 +1653,15 @@ async function ensureOnComputer(
   contextMode: BrowserContextMode,
   // Only the signal: the reserve's inputs are consumed by the caller, so this
   // function cannot accidentally reserve anything.
-  args: { signal?: AbortSignal },
+  args: Pick<
+    EnsureBrowserSessionArgs,
+    "signal" | "logicalSessionId" | "profileArchive"
+  > &
+    Partial<Pick<EnsureBrowserSessionArgs, "bearer" | "projectId">>,
 ): Promise<ComputerHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
+  const logicalContext = logicalContextFromArgs(args);
+  await bindLogicalBox(deps, args, { computerId });
   const lookupArgs = {
     computerId,
     expectedBundleHash: bundleHash,
@@ -1322,7 +1676,13 @@ async function ensureOnComputer(
   };
 
   const lookup = await deps.store.lookup(lookupArgs);
-  const reusedHandle = await tryReuse(deps, lookup, contextMode, args.signal);
+  const reusedHandle = await tryReuse(
+    deps,
+    lookup,
+    contextMode,
+    args.signal,
+    logicalContext,
+  );
   if (reusedHandle) return reusedHandle;
 
   // An aborted lookup comes back indistinguishable from "no session" — the
@@ -1337,6 +1697,7 @@ async function ensureOnComputer(
   const sandboxId = await deps.resolveSandboxId(computerId);
   const sandbox = await deps.connect(sandboxId);
   let handle: BrowserdHandle | undefined;
+  let stream: { streamUrl: string; streamPassword: string } | undefined;
   /**
    * Give back the relaunch claim, whatever happens.
    *
@@ -1357,7 +1718,13 @@ async function ensureOnComputer(
     // the whole relaunch below would be for nothing: it rotates `bootId` and
     // the stream password, so every open pane and every in-flight command
     // against this box breaks, to replace a daemon that was only asleep.
-    const awake = await tryReuse(deps, lookup, contextMode, args.signal);
+    const awake = await tryReuse(
+      deps,
+      lookup,
+      contextMode,
+      args.signal,
+      logicalContext,
+    );
     if (awake) return awake;
 
     // AND ANOTHER REPLICA MAY BE ABOUT TO DO THE SAME THING.
@@ -1404,7 +1771,7 @@ async function ensureOnComputer(
     // hope nobody acts in the gap.
     const { fence, owner } = await fenceForRelaunch(
       deps,
-      computerId,
+      { computerId },
       bundleHash,
       args.signal,
     );
@@ -1431,7 +1798,12 @@ async function ensureOnComputer(
     const adopted = await tryAdoptPrelaunched(
       deps,
       sandbox,
-      { computerId, contextMode, observedSessionId: lookup.observedSessionId },
+      {
+        computerId,
+        contextMode,
+        observedSessionId: lookup.observedSessionId,
+        ...(logicalContext ? { logicalContext } : {}),
+      },
       args.signal,
     ).catch((error: unknown) => {
       logger.warn("[browser-session] prelaunch adoption failed; relaunching", {
@@ -1461,7 +1833,13 @@ async function ensureOnComputer(
     // returning a session the agent is blocked out of would be worse than the
     // relaunch.
     if (owner?.session && owner.session.bootId !== lookup.session?.bootId) {
-      const winner = await tryReuse(deps, owner, contextMode, args.signal);
+      const winner = await tryReuse(
+        deps,
+        owner,
+        contextMode,
+        args.signal,
+        logicalContext,
+      );
       if (winner) {
         await fence?.release();
         return winner;
@@ -1481,21 +1859,23 @@ async function ensureOnComputer(
     // The stream, started INSIDE `publish` so its ordering relative to the
     // record cannot drift: the password exists nowhere else, so the row must
     // be written from the same start that minted it.
-    let stream: { streamUrl: string; streamPassword: string } | undefined;
     const outcome = await bootAndPublish<ComputerHostedBrowserSessionHandle>(
       deps,
       {
         sandbox,
         contextMode,
+        ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
         reuseAgain: async () =>
           tryReuse(
             deps,
             await deps.store.lookup(lookupArgs),
             contextMode,
             args.signal,
+            logicalContext,
           ),
         publish: async (booted) => {
           handle = booted;
+          await recordLogicalBoot(deps, args, booted.bootId);
           stream = await sandbox.ensureStream();
           // Compare-and-swap against the row observed at lookup: if another
           // replica booted and recorded in the meantime, OUR daemon is the
@@ -1521,6 +1901,9 @@ async function ensureOnComputer(
             ...(lookup.observedSessionId
               ? { replacesSessionId: lookup.observedSessionId }
               : {}),
+            ...(args.logicalSessionId
+              ? { logicalSessionId: args.logicalSessionId }
+              : {}),
             ...(args.signal ? { signal: args.signal } : {}),
           });
         },
@@ -1543,6 +1926,7 @@ async function ensureOnComputer(
         deps,
         { sessionId: outcome.sessionId, computerId },
         deps.createClient(booted.publicOrigin, booted.bearer),
+        logicalContext,
       ),
       streamUrl: stream!.streamUrl,
       streamPassword: stream!.streamPassword,

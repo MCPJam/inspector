@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   bootBrowserd,
   DISPLAY_GEOMETRY,
+  XVNC_LOOPBACK_PORT,
   type BrowserdSandbox,
 } from "../boot-browserd";
 import { HOSTED_DISPLAY } from "../protocol";
@@ -9,6 +10,18 @@ import { HOSTED_DISPLAY } from "../protocol";
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const READY = (over: Record<string, unknown> = {}) =>
   `${JSON.stringify({ event: "listening", host: "0.0.0.0", port: 8791, bootId: "boot-1", ...over })}\n`;
+
+/**
+ * Is this the command that brings up an X server?
+ *
+ * It is a shell `if` now rather than a bare `Xvfb`: the box gets Xvnc when it
+ * has one (a resizable display, which is what a followPane session needs) and
+ * Xvfb when it does not, and refusing to start anything on an older image
+ * would turn "this box cannot resize" into "this box has no browser".
+ */
+function isXServerCommand(command: string): boolean {
+  return command.includes("Xvnc ") || command.includes("Xvfb ");
+}
 
 function fakeSandbox(over: { displayUp?: boolean } = {}) {
   const state = {
@@ -18,7 +31,7 @@ function fakeSandbox(over: { displayUp?: boolean } = {}) {
     kills: 0,
     /** Every foreground command the boot ran, in order. */
     ran: [] as string[],
-    /** Every background command, in order — Xvfb and xfce4 land here. */
+    /** Every background command, in order — the X server and xfce4 land here. */
     background: [] as string[],
   };
   let displayUp = over.displayUp ?? true;
@@ -31,8 +44,8 @@ function fakeSandbox(over: { displayUp?: boolean } = {}) {
   const sandbox: BrowserdSandbox = {
     async runBackground(command, options) {
       state.background.push(command);
-      if (command.startsWith("Xvfb")) {
-        // A started Xvfb is what makes the next probe answer "up".
+      if (isXServerCommand(command)) {
+        // A started X server is what makes the next probe answer "up".
         displayUp = true;
         return { kill: async () => true, wait: () => new Promise(() => {}) };
       }
@@ -160,7 +173,7 @@ describe("bootBrowserd", () => {
     fake.emit(READY());
     const handle = await p;
     expect(handle.bootId).toBe("boot-1");
-    expect(fake.state.background[0]).toMatch(/^Xvfb :0 /);
+    expect(isXServerCommand(fake.state.background[0] ?? "")).toBe(true);
     expect(fake.state.background).toContain("startxfce4");
     expect(fake.state.command).toContain("mcpjam-browserd.mjs");
   });
@@ -171,7 +184,7 @@ describe("bootBrowserd", () => {
     await tick();
     fake.emit(READY());
     await p;
-    expect(fake.state.background.some((c) => c.startsWith("Xvfb"))).toBe(false);
+    expect(fake.state.background.some(isXServerCommand)).toBe(false);
     expect(fake.state.ran[0]).toContain("xdpyinfo -display :0");
   });
 
@@ -239,20 +252,53 @@ describe("the X geometry", () => {
     expect(DISPLAY_GEOMETRY).toBe("1024x768x24");
   });
 
-  it("is what the fallback Xvfb is started with", async () => {
+  it("is what the fallback X server is started with, either kind", async () => {
     const fake = fakeSandbox({ displayUp: false });
     const p = bootBrowserd(fake.sandbox, OPTS);
     await vi.waitFor(() =>
-      expect(
-        fake.state.background.some((command) => command.startsWith("Xvfb")),
-      ).toBe(true),
+      expect(fake.state.background.some(isXServerCommand)).toBe(true),
     );
     fake.emit(READY());
     await p;
-    const xvfb = fake.state.background.find((command) =>
-      command.startsWith("Xvfb"),
+    const start = fake.state.background.find(isXServerCommand) ?? "";
+    // Xvnc takes the size and the depth separately; Xvfb takes them as one
+    // `WxHxD`. Both have to describe the same screen, or a browser paints past
+    // the edge of what is captured and the missing strip is on the right where
+    // nothing looks obviously wrong.
+    expect(start).toContain(DISPLAY_GEOMETRY);
+    expect(start).toContain("-geometry 1024x768");
+  });
+
+  it("brings the resizable server up on loopback only", async () => {
+    // Xvnc IS a VNC server and cannot be run without a listener. Nothing
+    // connects to it — the authenticated desktop viewer keeps going through
+    // x11vnc + noVNC — and `-localhost` is what keeps it unreachable.
+    const fake = fakeSandbox({ displayUp: false });
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await vi.waitFor(() =>
+      expect(fake.state.background.some(isXServerCommand)).toBe(true),
     );
-    expect(xvfb).toContain(DISPLAY_GEOMETRY);
+    fake.emit(READY());
+    await p;
+    const start = fake.state.background.find(isXServerCommand) ?? "";
+    expect(start).toContain("-localhost");
+    expect(start).toContain(`-rfbport ${XVNC_LOOPBACK_PORT}`);
+  });
+
+  it("falls back rather than leaving an older box with no display at all", async () => {
+    // A box from before the TigerVNC image has no `Xvnc`. "This box cannot
+    // resize" is a session that negotiates a fixed viewport; "this box has no
+    // browser" is a run that cannot start.
+    const fake = fakeSandbox({ displayUp: false });
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await vi.waitFor(() =>
+      expect(fake.state.background.some(isXServerCommand)).toBe(true),
+    );
+    fake.emit(READY());
+    await p;
+    const start = fake.state.background.find(isXServerCommand) ?? "";
+    expect(start).toContain("command -v Xvnc");
+    expect(start).toContain("Xvfb :0");
   });
 });
 
@@ -265,20 +311,17 @@ describe("the X geometry", () => {
  * right-hand edge with nothing to say so.
  */
 describe("a sharper display", () => {
-  it("scales the fallback Xvfb with the browser", async () => {
+  it("scales the fallback X server with the browser", async () => {
     const fake = fakeSandbox({ displayUp: false });
     const p = bootBrowserd(fake.sandbox, { ...OPTS, deviceScaleFactor: 1.5 });
     await vi.waitFor(() =>
-      expect(
-        fake.state.background.some((command) => command.startsWith("Xvfb")),
-      ).toBe(true),
+      expect(fake.state.background.some(isXServerCommand)).toBe(true),
     );
     fake.emit(READY());
     await p;
-    const xvfb = fake.state.background.find((command) =>
-      command.startsWith("Xvfb"),
-    );
-    expect(xvfb).toContain("1536x1152x24");
+    const start = fake.state.background.find(isXServerCommand) ?? "";
+    expect(start).toContain("1536x1152x24");
+    expect(start).toContain("-geometry 1536x1152");
   });
 
   it("tells the daemon, so its own launch matches the screen", async () => {

@@ -1,3 +1,4 @@
+import { useBrowserWorkspaceEnabled } from "@/hooks/useComputersEnabled";
 import {
   browserPageToolsKey,
   noteWebmcpStats,
@@ -12,6 +13,15 @@ import {
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
 import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
+import { BrowserShell } from "@/components/browser/BrowserShell";
+import { PaneSettingsMenu } from "@/components/browser/PaneControlBar";
+import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
+import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
+import {
+  paneInteractionAnchor,
+  TAKEOVER_RETRY_NOTICE,
+} from "../../../../shared/browser-pane-command";
+import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command";
 import { BrowserActivityList } from "@/components/browser/BrowserActivityList";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
@@ -19,6 +29,9 @@ import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnLocalBrowserLease,
+  fetchLocalBrowserState,
+  reportLocalPaneViewport,
+  sendLocalPaneCommand,
   createInputForwarder,
   ensureLocalBrowser,
   fetchLocalBrowserStatus,
@@ -26,11 +39,13 @@ import {
   noteLocalBrowserWatch,
   openLocalBrowserFrameStream,
   sendLocalBrowserInput,
+  fetchLocalBrowserProfileArchive,
   startLocalBrowserInstall,
   type LocalBrowserLease,
   type LocalBrowserStatus,
   LocalBrowserRequestError,
 } from "@/lib/local-browser/client";
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 
 /**
  * The frame socket's close codes, mirroring `routes/web/local-browser-frames`.
@@ -101,11 +116,14 @@ const LEASE_RECHECK_MS = 5_000;
 
 export function LocalBrowserBody({
   projectId,
+  sessionId,
   consentGranted,
   consentToken,
   active = true,
 }: {
   projectId: string | null;
+  /** Durable logical session, when this pane belongs to a conversation. */
+  sessionId?: string;
   consentGranted: boolean;
   consentToken: string | null;
   /**
@@ -119,6 +137,7 @@ export function LocalBrowserBody({
    */
   active?: boolean;
 }) {
+  const workspaceEnabled = useBrowserWorkspaceEnabled();
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
@@ -128,6 +147,9 @@ export function LocalBrowserBody({
   // Bumped to re-open the frame socket after it was refused — see the 4401
   // branch below.
   const [streamAttempt, setStreamAttempt] = useState(0);
+  const markBrowserSessionActive = useActiveChatSessionStore(
+    (state) => state.markBrowserSessionActive,
+  );
   /**
    * This pane's identity as a lease holder.
    *
@@ -275,37 +297,86 @@ export function LocalBrowserBody({
     if (!consentGranted) setFrame(null);
   }, [consentGranted]);
 
+  /**
+   * And which conversation. A durable session is a browser identity in its own
+   * right — the agent drives `<project>:session:<id>` — so carrying a session,
+   * a lease and a frame across a conversation switch shows one conversation's
+   * browser in another's rail, and aims input at it.
+   */
+  const sessionRef = useRef(sessionId);
+
   useEffect(() => {
-    if (projectRef.current === projectId) return;
+    if (projectRef.current === projectId && sessionRef.current === sessionId) {
+      return;
+    }
     projectRef.current = projectId;
+    sessionRef.current = sessionId;
     railGeneration.current += 1;
     setSession(null);
     setLease({ state: "free" });
     setFrame(null);
     setError(null);
-  }, [projectId]);
+  }, [projectId, sessionId]);
 
   const start = useCallback(async () => {
     if (!projectId) return;
     setBusy(true);
     setError(null);
+    // Captured BEFORE the await, and compared after, exactly as `exportProfile`
+    // below does. The project check alone is not enough: a conversation switch
+    // stays inside one project, bumps this counter, and would otherwise let A's
+    // late answer install into B's pane — where the frame and input routes,
+    // keyed by project plus bootId, would happily show and drive A's browser
+    // under B's identity.
+    const generation = railGeneration.current;
     try {
-      const next = await ensureLocalBrowser(projectId, consentToken);
-      // The project may have changed while this was in flight; a late answer
-      // describes a browser this rail is no longer looking at.
-      if (projectRef.current !== projectId) return;
+      const next = await ensureLocalBrowser(projectId, consentToken, sessionId);
+      if (
+        projectRef.current !== projectId ||
+        railGeneration.current !== generation
+      ) {
+        return;
+      }
       // A different browser from here on, even within this project: anything
       // still in flight against the last one must not land on this one.
       railGeneration.current += 1;
       setSession({ bootId: next.bootId });
+      if (sessionId) markBrowserSessionActive(sessionId);
       setLease(next.lease);
     } catch (err) {
-      if (projectRef.current !== projectId) return;
+      if (
+        projectRef.current !== projectId ||
+        railGeneration.current !== generation
+      ) {
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [projectId, consentToken]);
+  }, [markBrowserSessionActive, projectId, consentToken, sessionId]);
+
+  const exportProfile = useCallback(async () => {
+    if (!session || !projectId) {
+      throw new Error("Open a browser before saving its profile.");
+    }
+    const generation = railGeneration.current;
+    const result = await fetchLocalBrowserProfileArchive({
+      bootId: session.bootId,
+      projectId,
+      ...(sessionId ? { sessionId } : {}),
+      consentToken,
+    });
+    // The export CLOSED that browser, so the pane must forget it — but only
+    // while it is still the browser on screen. A switch mid-request means
+    // these setters would otherwise clear a browser this export never touched.
+    if (railGeneration.current === generation) {
+      setSession(null);
+      setLease({ state: "free" });
+      setFrame(null);
+    }
+    return result;
+  }, [consentToken, projectId, session, sessionId]);
 
   // The frame socket. Re-opened when the browser changes; closed on unmount,
   // which is what tells the server to stop encoding JPEGs nobody is watching.
@@ -549,9 +620,19 @@ export function LocalBrowserBody({
     return () => useBrowserPageToolsStore.getState().clear(key);
   }, [projectId]);
 
+  /**
+   * Acquire or hand back, and say whether it landed.
+   *
+   * Returns a boolean because the TAKEOVER path needs the answer: a click that
+   * did not get the lease must not then be forwarded as input, and the pane
+   * has to know which. One function rather than two call sites, so that the
+   * generation guard cannot be skipped by the newer one — a lease belongs to
+   * ONE browser, and an answer arriving after the pane has moved to another
+   * would show control of something nobody is watching.
+   */
   const setLeaseAction = useCallback(
-    async (action: "acquire" | "resume") => {
-      if (!session) return;
+    async (action: "acquire" | "resume"): Promise<boolean> => {
+      if (!session) return false;
       const generation = railGeneration.current;
       setError(null);
       try {
@@ -562,11 +643,13 @@ export function LocalBrowserBody({
         // A lease belongs to ONE browser. If the pane moved on while this was
         // in flight — another project, or another browser in this one —
         // applying it would show control of something nobody is watching.
-        if (railGeneration.current !== generation) return;
+        if (railGeneration.current !== generation) return false;
         setLease(next);
+        return true;
       } catch (err) {
-        if (railGeneration.current !== generation) return;
+        if (railGeneration.current !== generation) return false;
         setError(err instanceof Error ? err.message : String(err));
+        return false;
       }
     },
     [session, holder, consentToken],
@@ -787,7 +870,7 @@ export function LocalBrowserBody({
   // apart, and a report that called them the same thing could not say whether
   // the native surface helped.
   const engineRef = useRef<string>("local");
-  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
+  engineRef.current = native ? "local-native" : status?.runtime ?? "local";
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -857,6 +940,17 @@ export function LocalBrowserBody({
     return undefined;
   })();
 
+  // The stats overlay's flag, which the take-control bar used to own. Seeded
+  // from the persisted key so somebody who set it in the console still gets
+  // the overlay, exactly as the bar did.
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const onStatsToggle = useCallback((next: boolean) => {
+    // The menu IS the flag: turning the overlay on has to START the recording,
+    // not merely reveal a set of zeros.
+    paneFrameStats.setEnabled(next);
+    setStatsOpen(next);
+  }, []);
+
   const control: PaneControl =
     lease.state === "free"
       ? "agent"
@@ -866,11 +960,136 @@ export function LocalBrowserBody({
           ? "script"
           : "other";
 
+  /**
+   * The shell's transport, for this engine.
+   *
+   * Built here rather than in the shell because everything in it is
+   * local-specific: the bootId that names this browser, the consent capability
+   * every route needs, and a `resume` that is the lease's own verb. The shell
+   * knows none of that and does not need to.
+   */
+  const bootId = session?.bootId ?? null;
+  const shellTransport = useMemo(() => {
+    if (!bootId) return null;
+    return {
+      readState: () =>
+        fetchLocalBrowserState({ bootId, holder, consentToken }),
+      sendCommand: (args: {
+        command: BrowserPaneCommand;
+        commandId?: string;
+      }) =>
+        sendLocalPaneCommand({
+          bootId,
+          holder,
+          consentToken,
+          command: args.command,
+          ...(args.commandId ? { commandId: args.commandId } : {}),
+        }),
+      reportViewport: (size: { width: number; height: number }) =>
+        reportLocalPaneViewport({
+          bootId,
+          consentToken,
+          ...size,
+          policy: "followPane",
+        }),
+      // THE PANE'S OWN lease action, not a bare call: it applies the answer to
+      // this body's `lease` and drops one that arrived after the pane moved to
+      // another browser. A resume that only reached the server would leave the
+      // shell saying "You have it" over a browser the agent had already
+      // resumed, until the next poll caught up.
+      resume: async () => {
+        // The boolean is for the takeover path, which must not deliver input
+        // it did not get the lease for. A resume has nothing to gate: it
+        // either handed back or reported its own error, and the shell's next
+        // reconcile says which.
+        await setLeaseAction("resume");
+      },
+    };
+  }, [bootId, holder, consentToken, setLeaseAction]);
+
+  useEffect(() => {
+    if (!workspaceEnabled && bootId)
+      void reportLocalPaneViewport({
+        bootId,
+        consentToken,
+        width: 1024,
+        height: 768,
+        policy: "fixed",
+      });
+  }, [workspaceEnabled, bootId, consentToken]);
+
+  const shell = useBrowserSession({
+    transport: workspaceEnabled ? shellTransport : null,
+    holderId: holder,
+    active,
+  });
+
+  /**
+   * Take the browser, then deliver the interaction that asked for it.
+   *
+   * THE LEASE ENDPOINT, not a pane command. `pane-command` acquires as a side
+   * effect of doing something, which is right for a navigation and wrong here:
+   * a person who clicked into the page has asked for exactly that click, and
+   * borrowing some other verb to get the lease would perform an action nobody
+   * requested. `acquire` is the verb whose whole meaning is "this is mine now".
+   *
+   * The ordinary input path is untouched. Once the lease is ours, `holding`
+   * flips and every later event goes through the batched forwarder over the
+   * socket, as it always has; this runs once, for the interaction that arrived
+   * before there was a lease to send it under.
+   */
+  useEffect(() => {
+    if (!native || !workspaceEnabled || shell.state.seq === 0) return;
+    const current = shell.state.control;
+    setLease(
+      current.kind === "agent"
+        ? { state: "free" }
+        : {
+            state: current.parked ? "parked" : "held",
+            holder: current.holder,
+            holderKind: current.kind === "script" ? "script" : "human",
+          },
+    );
+  }, [native, workspaceEnabled, shell.state.seq, shell.state.control]);
+
+  const [takeoverNotice, setTakeoverNotice] = useState<string | null>(null);
+  const takingRef = useRef(false);
+  const takeoverIdentityRef = useRef(bootId);
+  takeoverIdentityRef.current = bootId;
+  const takeover = useCallback(
+    async (events: BrowserInputEvent[]) => {
+      if (!bootId || takingRef.current) return;
+      const anchor = paneInteractionAnchor(shell.state, bootId);
+      takingRef.current = true;
+      try {
+        if (
+          !(await setLeaseAction("acquire")) ||
+          takeoverIdentityRef.current !== bootId
+        )
+          return;
+        if (!anchor) {
+          setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
+          return;
+        }
+        await sendLocalBrowserInput(
+          { bootId, holder, events, anchor },
+          consentToken,
+        );
+        setTakeoverNotice(null);
+      } catch {
+        setTakeoverNotice(TAKEOVER_RETRY_NOTICE);
+      } finally {
+        takingRef.current = false;
+      }
+    },
+    [bootId, holder, consentToken, setLeaseAction, shell.state],
+  );
+
   // The page ITSELF, in the app's own window — no encoder, no socket, no
   // decode. Everything above is unchanged and still applies: the same status,
   // the same lease, the same holder identity, the same take-control bar. What
   // differs is only that there is no picture to draw.
-  if (native) {
+  if (native && !workspaceEnabled) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         {/* `flex flex-col` and not merely `flex-1`: both pane bodies render a
@@ -898,6 +1117,15 @@ export function LocalBrowserBody({
             error={error}
             active={active}
             engine="local-native"
+            extra={
+              session && sessionId ? (
+                <BrowserProfileSaveButton
+                  projectId={projectId ?? ""}
+                  exportArchive={exportProfile}
+                  disabled={holding || busy}
+                />
+              ) : null
+            }
           />
         </div>
         <Activity
@@ -913,31 +1141,104 @@ export function LocalBrowserBody({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 flex-col">
-        <BrowserPaneSurface
-          // Gated as well as cleared: a frame that lands in the same tick as
-          // the revocation must not be the one that gets painted.
-          frame={consentGranted ? frame : null}
+        <BrowserShell
+          enabled={workspaceEnabled}
+          state={shell.state}
+          holderId={holder}
+          // THIS engine's lease, not the shell's polled copy: the local body
+          // learns about its own acquire the moment it lands, and the shell's
+          // reconcile is a beat behind. @see BrowserShellProps.control
           holding={holding}
-          control={control}
-          // Offered only when there is a browser to take and nobody has it. A
-          // lease held by somebody else is not something this pane may step
-          // over.
-          onTakeControl={
-            session && !holding && lease.state === "free"
-              ? () => void setLeaseAction("acquire")
-              : undefined
+          control={{
+            kind:
+              lease.state === "free"
+                ? "agent"
+                : lease.holderKind === "script"
+                  ? "script"
+                  : "human",
+            ...(lease.state !== "free" && lease.holder
+              ? { holder: lease.holder }
+              : {}),
+            ...(lease.state === "parked" ? { parked: true } : {}),
+          }}
+          onCommand={shell.run}
+          {...(session && holding ? { onResumeAgent: shell.resume } : {})}
+          resuming={shell.resuming}
+          // The shell owns the picture's SIZE, so it is the shell that
+          // measures. @see BrowserShellProps.onViewportMeasured
+          onViewportMeasured={shell.reportViewport}
+          // Not just "is there a browser": an engine too old to answer pane
+          // commands has a perfectly real session, and controls that look live
+          // and swallow every click read as broken rather than old.
+          ready={!!session && shell.supported}
+          // The shell's own notice wins over the pane's — a dropped takeover
+          // click is about this interaction, while the pane's notices are
+          // about the stream — and the pane's shows through when there is no
+          // shell notice to display.
+          notice={takeoverNotice ?? shell.notice}
+          error={error ?? shell.error}
+          // The ENGINE's blocked states — no consent, no Chromium, a browser
+          // that has gone — replace the page area entirely. @see the prop.
+          {...(placeholder ? { placeholder } : {})}
+          trailing={
+            <>
+              {session && sessionId ? (
+                <BrowserProfileSaveButton
+                  projectId={projectId ?? ""}
+                  exportArchive={exportProfile}
+                  disabled={holding || busy}
+                />
+              ) : null}
+              <PaneSettingsMenu
+                statsOpen={statsOpen}
+                onToggleStats={onStatsToggle}
+              />
+            </>
           }
-          onHandBack={
-            session && holding
-              ? () => void setLeaseAction("resume")
-              : undefined
-          }
-          onInput={send}
-          placeholder={placeholder}
-          error={error}
-          active={active}
-          engine={status?.runtime ?? "local"}
-        />
+        >
+          {native ? (
+            <ElectronNativeBody
+              session={session}
+              holder={holder}
+              control={control}
+              holding={holding}
+              consentGranted={consentGranted}
+              active={active}
+              engine="local-native"
+              chrome="none"
+            />
+          ) : (
+            <BrowserPaneSurface
+              // Gated as well as cleared: a frame that lands in the same tick as
+              // the revocation must not be the one that gets painted.
+              frame={consentGranted ? frame : null}
+              holding={holding}
+              control={control}
+              // NO take-control button. Using the browser is what takes it now,
+              // and the shell's second row already says who is driving.
+              chrome={workspaceEnabled ? "none" : "bar"}
+              // The shell's menu owns this now; the surface draws it.
+              statsOpen={workspaceEnabled ? statsOpen : undefined}
+              onInput={send}
+              onTakeoverInput={workspaceEnabled ? takeover : undefined}
+              onTakeControl={
+                !workspaceEnabled &&
+                session &&
+                !holding &&
+                lease.state === "free"
+                  ? () => void setLeaseAction("acquire")
+                  : undefined
+              }
+              onHandBack={
+                !workspaceEnabled && session && holding
+                  ? () => void setLeaseAction("resume")
+                  : undefined
+              }
+              active={active}
+              engine={status?.runtime ?? "local"}
+            />
+          )}
+        </BrowserShell>
       </div>
       <Activity
         projectId={projectId}

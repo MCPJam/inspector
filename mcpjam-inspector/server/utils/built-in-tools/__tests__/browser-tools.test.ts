@@ -174,8 +174,19 @@ describe("buildBrowserTools — fail-closed advertisement", () => {
       "browser_webmcp_invoke",
       "browser_webmcp_tools",
     ]);
-    // Everything gates by default: a page is third-party code and the browser
-    // is signed into things, so there is nothing trustworthy to relax on.
+    // The switch decides, and this build did not set it. A page is still
+    // third-party code in a browser that may be signed into things — what
+    // changed is that the person, not this builder, says whether to pause.
+    for (const [name, definition] of Object.entries(result!.tools)) {
+      expect(
+        (definition as { needsApproval?: unknown }).needsApproval,
+        name,
+      ).toBe(false);
+    }
+  });
+
+  it("gates every verb when the switch is on", () => {
+    const { result } = build({ requireToolApproval: true });
     for (const [name, definition] of Object.entries(result!.tools)) {
       expect(
         (definition as { needsApproval?: unknown }).needsApproval,
@@ -226,14 +237,14 @@ describe("buildBrowserTools — unattended policy", () => {
     expect(Object.keys(result!.tools)).toHaveLength(
       FIRST_CLASS_TOOL_NAMES.length,
     );
-    // The `build` helper runs unattended cases on the LOCAL engine, where the
-    // floor is `always` whoever is watching — a browser on someone's own
-    // machine is not something a policy can wave through.
+    // An UNATTENDED run declares none of them, whatever the switch says:
+    // there is nobody to ask, so a gate here would hang the run rather than
+    // protect it, and the declared `toolPolicy` is the answer instead.
     for (const [name, definition] of Object.entries(result!.tools)) {
       expect(
         (definition as { needsApproval?: unknown }).needsApproval,
         name,
-      ).toBe(true);
+      ).toBe(false);
     }
   });
 
@@ -524,6 +535,57 @@ describe("a token pin survives an approval resume", () => {
     expect(commands.at(-1).action.expectedState).toBeUndefined();
   });
 
+  it("does not park the resumption behind the command it is resuming", async () => {
+    // THE DEADLOCK. `send` holds an emission-order lock across its whole body,
+    // and the handoff's fresh observation is taken from inside that body. A
+    // nested `send` that takes the lock again chains behind a release that
+    // cannot happen until the nested call returns — so the turn hangs, with a
+    // person holding a browser nobody is coming back for, until the client
+    // gives up. `recovering` is what skips the second take.
+    const sendCommand = vi.fn(async (command: any) =>
+      command.action?.kind === "observe"
+        ? OK
+        : ({ status: "lease_blocked" } as SendResult),
+    );
+    const ensureSession = vi.fn(
+      async (): Promise<BrowserSessionHandle> =>
+        ({
+          engine: "hosted" as const,
+          target: "computer" as const,
+          sessionId: "session-1",
+          computerId: "computer-1",
+          bootId: "boot-1",
+          // A lease that is already free: the person handed it back while the
+          // command was in flight, which is the ordinary case this path exists
+          // to serve.
+          client: { sendCommand, lease: async () => ({ state: "free" }) } as never,
+          streamUrl: "https://stream.example/vnc.html",
+          streamPassword: "pw",
+          contextMode: "persistent",
+          reused: true,
+        }) as BrowserSessionHandle,
+    );
+    const built = buildBrowserTools({
+      authHeader: "Bearer user",
+      projectId: "project-1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession,
+    })!;
+
+    const settled = await Promise.race([
+      run(built.tools, "browser_act", { verb: "click", x: 1, y: 2 }).then(
+        (value: any) => ({ value }),
+      ),
+      // Generous, and still finite: without the fix nothing here ever settles,
+      // and a test that hangs forever reports nothing.
+      new Promise((resolve) => setTimeout(() => resolve("HUNG"), 2_000)),
+    ]);
+    expect(settled).not.toBe("HUNG");
+    expect((settled as any).value.error).toContain(
+      "YOUR ACTION WAS NOT PERFORMED",
+    );
+  });
+
   it("forgets a token a person had ten minutes to invalidate", async () => {
     let now = 1_000;
     const memory = new BrowserTokenMemory(() => now);
@@ -753,15 +815,18 @@ describe("buildBrowserTools — a human has the browser (W4/L6)", () => {
     bootId: "boot-1",
   };
 
-  it("tells the model to WAIT, and says nothing was observed", async () => {
-    // A bare "blocked" reads as a transient error and models retry it in a
-    // loop; the useful information is that a person is mid-flow and that no
-    // frame was captured, so waiting is correct and re-observing is required.
+  it("does not tell the model to wait, on an engine it cannot wait on", async () => {
+    // The advice used to be "wait for them to hand it back", which is correct
+    // and unusable: a model's only move is to call a tool, so "wait" becomes a
+    // retry loop while somebody signs in. Waiting now happens INSIDE the call
+    // (`browser-handoff.ts`) — but this fake client has no `lease()` to poll,
+    // so there is nothing to park on, and the honest answer is the one that
+    // does not send the model round the loop.
     const { result } = build({}, async () => LEASE_BLOCKED);
     const out = await run(result!.tools, "browser_observe", {});
     expect(out.error).toContain("browser_in_use");
-    expect(out.error).toContain("Wait");
     expect(out.error).toMatch(/nothing was observed/i);
+    expect(out.error).toMatch(/retrying will not free it/i);
   });
 
   it("drops cached page tokens, so the next act cannot be pinned to a pre-handoff page", async () => {
@@ -1084,19 +1149,32 @@ describe("the screenshot reaches the model as an IMAGE, not as text", () => {
 });
 
 describe("the coordinate space is stated and enforced", () => {
-  it("names the viewport and the origin in the act tool's description", async () => {
+  it("names the origin, and sends the model to its observation for the size", async () => {
+    // It used to name 1024x768. That works exactly as long as no session is
+    // ever a different size, and the interactive Playground's browser now
+    // follows a panel somebody can drag — so the description says where to
+    // READ the size instead, and says it once. A description that named the
+    // current size would have to be regenerated on every resize, and
+    // regenerating it rotates the host-configuration hash.
     const { result } = build();
     const description = (result!.tools as any).browser_act.description as string;
-    expect(description).toContain("1024x768");
     expect(description).toMatch(/top-left/i);
+    expect(description).toMatch(/viewport/i);
+    expect(description).not.toContain("1024x768");
   });
 
-  it("bounds x and y in the schema", () => {
+  it("bounds x and y at the WIDEST a page can be, not at one page's size", () => {
+    // A schema that named 1023 would refuse a perfectly good click at x=1200
+    // on a session somebody had widened, before it ever reached the browser.
+    // The real bound is the session's, and only the daemon knows it.
     const { result } = build();
     const schema = (result!.tools as any).browser_act.inputSchema;
-    expect(schema.safeParse({ verb: "click", x: 1024, y: 10 }).success).toBe(false);
     expect(schema.safeParse({ verb: "click", x: -1, y: 10 }).success).toBe(false);
     expect(schema.safeParse({ verb: "click", x: 1023, y: 767 }).success).toBe(true);
+    expect(schema.safeParse({ verb: "click", x: 1600, y: 900 }).success).toBe(true);
+    expect(
+      schema.safeParse({ verb: "click", x: 99_999, y: 10 }).success,
+    ).toBe(false);
   });
 
   it("REFUSES an out-of-range coordinate at execute time, without sending a command", async () => {
@@ -1113,7 +1191,9 @@ describe("the coordinate space is stated and enforced", () => {
     });
 
     expect(output.error).toMatch(/out_of_viewport/);
-    expect(output.error).toContain("1024x768");
+    // The ceiling, not one session's size: the session's own bound is the
+    // daemon's to enforce, because only it knows what the page is right now.
+    expect(output.error).toMatch(/at most \d+x\d+/);
     expect(sendCommand).not.toHaveBeenCalled();
   });
 });
@@ -1644,13 +1724,26 @@ describe("buildBrowserTools — engines and profile mode", () => {
     expect(seen[1]).toMatchObject({ contextMode: "persistent" });
   });
 
-  it("always asks before acting on the user's own machine", async () => {
-    const { result } = build({ engine: "local" });
+  it("asks before acting on the user's own machine when the switch is on", async () => {
+    const { result } = build({ engine: "local", requireToolApproval: true });
     for (const name of Object.keys(result!.tools)) {
       expect(
         (result!.tools as any)[name].needsApproval,
         `${name} must ask on the local engine`,
       ).toBe(true);
+    }
+  });
+
+  it("honours the switch being OFF on the local engine too", async () => {
+    // The local browser used to ask unconditionally. It is the sharpest case
+    // for asking and the weakest case for overruling: the machine is theirs,
+    // and so is the setting.
+    const { result } = build({ engine: "local" });
+    for (const name of Object.keys(result!.tools)) {
+      expect(
+        (result!.tools as any)[name].needsApproval,
+        `${name} must follow the switch`,
+      ).toBe(false);
     }
   });
 
@@ -1916,6 +2009,26 @@ describe("the toolset's context footprint is pinned", () => {
     // layout is right, whose list is empty, and whose console is silent, where
     // the cause is a 401 on the fetch behind the list. Without it a model can
     // only re-read a page that will keep looking the same.
+    // Raised to 5_800 for `forward` and the resizable page (+~240 bytes,
+    // ~5500 → 5738). Two things, both of which remove a wrong answer rather
+    // than adding a capability nobody asked for.
+    //
+    // `forward` is one enum member and two words in a sentence. Without it a
+    // model that has gone back has to remember a URL and re-navigate, and a
+    // PERSON driving the pane has a forward button that does nothing — which
+    // is the visible half, and the reason it exists.
+    //
+    // The rest is the page's size ceasing to be a constant. The description
+    // used to name 1024x768; it now tells the model to read `viewport` off its
+    // last observation, because the interactive browser follows a panel
+    // somebody can drag and a schema that named 1023 would refuse a good click
+    // at x=1200 before it left this process. It is written ONCE, deliberately:
+    // a description that named the current size would be regenerated on every
+    // resize, and regenerating it rotates the host-configuration hash — so
+    // dragging a divider would invalidate every cached tool manifest several
+    // times a second. Those bytes buy a coordinate space the model cannot be
+    // silently wrong about.
+    //
     // Raised to 5_700 for the review round (+~200 bytes, 5316 → ~5500):
     // `requestId` on `browser_observe`, the two dialog verbs on `browser_act`,
     // and an honest `browser_navigate` description. Each closes a gap between
@@ -1927,7 +2040,7 @@ describe("the toolset's context footprint is pinned", () => {
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(5_700);
+    ).toBeLessThanOrEqual(5_800);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {
@@ -2194,6 +2307,7 @@ describe("buildBrowserTools — first-class page tools", () => {
         approvalDelivery: { kind: "attested" },
         ensureSession,
         pageTools: PAGE_TOOLS,
+        requireToolApproval: true,
       }),
     )!;
     expect(Object.keys(built.tools)).toContain("webmcp_add_topping");
@@ -2205,6 +2319,25 @@ describe("buildBrowserTools — first-class page tools", () => {
       (built.tools.webmcp_add_topping as { needsApproval?: unknown })
         .needsApproval,
     ).toBe(true);
+  });
+
+  it("FLAG ON: a page tool follows the switch like everything else", () => {
+    // It used to gate whatever the switch said. The page's own annotations are
+    // still never consulted — the switch is what answers now.
+    const { ensureSession } = fakeSession(async () => OK);
+    const built = withFlag("first_class", () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        pageTools: PAGE_TOOLS,
+      }),
+    )!;
+    expect(
+      (built.tools.webmcp_add_topping as { needsApproval?: unknown })
+        .needsApproval,
+    ).toBe(false);
   });
 
   it("retires the generic verbs only on an engine that can grow mid-turn", () => {
@@ -2594,7 +2727,10 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     return { state, seen, commands, send };
   }
 
-  function build(fake: ReturnType<typeof daemon>) {
+  function build(
+    fake: ReturnType<typeof daemon>,
+    requireToolApproval = false,
+  ) {
     const { ensureSession } = fakeSession(fake.send);
     return withFlagOn(() =>
       buildBrowserTools({
@@ -2603,6 +2739,7 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
         approvalDelivery: { kind: "attested" },
         ensureSession,
         dynamicPageTools: true,
+        requireToolApproval,
         pageTools: {
           tools: [PAGE],
           bootId: "boot-1",
@@ -2864,7 +3001,9 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
 
   it("advertises a tool the page registered with no model action in between", async () => {
     const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
-    const built = build(fake);
+    // Switch ON, so the gate below is a real assertion rather than the
+    // default answer.
+    const built = build(fake, true);
     // The page registers a second tool two seconds after load. Nothing the
     // model did caused it, so nothing but this refresh could ever see it.
     fake.state.revision = 6;
@@ -2875,9 +3014,9 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     expect(Object.keys(refresh?.add ?? {})).toEqual(
       expect.arrayContaining(["webmcp_remove_topping"]),
     );
-    // It arrives WITH its gate, on the tool object. A tool that appeared
-    // mid-turn without one would be free — which on this engine executes
-    // with no pill at all.
+    // It arrives WITH the same gate a turn-start tool would have carried. A
+    // tool that appeared mid-turn and skipped the turn's approval policy would
+    // execute with no pill on an engine where every sibling has one.
     expect(
       (refresh?.add?.webmcp_remove_topping as { needsApproval?: unknown })
         ?.needsApproval,

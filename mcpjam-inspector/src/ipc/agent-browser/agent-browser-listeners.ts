@@ -46,6 +46,7 @@ export interface AgentBrowserViewportRequest {
   bootId: string;
   /** This pane's lease identity, compared against the daemon's holder. */
   holder?: string;
+  takeover?: boolean;
   /** Does the pane want the page on screen at all? */
   visible: boolean;
   /** The rail's slot, in the RENDERER's CSS pixels. */
@@ -206,6 +207,7 @@ export function registerAgentBrowserListeners(
         typeof request.holder === "string" && request.holder
           ? request.holder
           : undefined,
+        request.takeover === true,
       );
 
       if (!request.visible) {
