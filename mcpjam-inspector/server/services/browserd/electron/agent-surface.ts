@@ -42,6 +42,52 @@ export interface SurfaceView {
   };
 }
 
+/**
+ * A transparent view that sits OVER the browser and eats input.
+ *
+ * Electron's problem, and it has no DOM solution. A `WebContentsView` is a
+ * sibling of the renderer rather than a node in it: it paints over whatever
+ * the app draws in that rectangle, it does not participate in z-index, and it
+ * takes its input straight from the OS. So a React overlay — the obvious way
+ * to say "clicking here takes the browser" — is drawn UNDERNEATH the thing it
+ * is meant to cover, and the click it was supposed to intercept lands in the
+ * page instead. On every other engine the picture is a canvas and the pane can
+ * simply not forward what it receives; here there is nothing to not forward.
+ *
+ * The shield is therefore a second native view, owned by the main process,
+ * parented above the browser and covering exactly the same rectangle. It is
+ * empty and transparent, so it is invisible; what it does is receive the
+ * pointer and key events that would otherwise reach the page, and report the
+ * first of them as a request to take the browser.
+ *
+ * WHILE THE AGENT DRIVES, NOT ONLY DURING THE TRANSITION. A shield that
+ * appeared only after somebody clicked would be a shield that never
+ * intercepted the click it exists for.
+ */
+/**
+ * Builds a shield over one window.
+ *
+ * Takes the window because a shield belongs to the window it covers, and the
+ * surface only learns which window that is when the pane calls `show`. Returns
+ * null when this platform cannot build one, which the surface treats as "a
+ * click reaches the page directly" — the behaviour it had before shields
+ * existed.
+ */
+export type ShieldFactory = (deps: {
+  window: SurfaceWindow;
+  /** Somebody used the page. Take the browser. */
+  onGesture: () => void;
+}) => SurfaceShield | null;
+
+export interface SurfaceShield {
+  /** Cover this rectangle, in the holder window's coordinates. */
+  cover(bounds: SurfaceBounds): void;
+  /** Take it back out. */
+  remove(): void;
+  /** Destroy it for good. */
+  dispose(): void;
+}
+
 /** A `BaseWindow`'s child-view container. */
 export interface SurfaceContainer {
   addChildView(view: SurfaceView): void;
@@ -116,8 +162,28 @@ export interface ContextSurface {
   setViewport(size: SurfaceViewport): void;
   /** The daemon's lease moved. See the module docstring. */
   setLease(state: { state: "free" | "held" | "parked"; holder?: string }): void;
+  /** Is the input shield covering the page right now? For diagnostics. */
+  isShielded(): boolean;
+  /**
+   * Teach this surface to build an input shield.
+   *
+   * LATE, because the ordering is not ours to choose: the surface has to exist
+   * before the Electron context (the context registers each tab with it as the
+   * tab is made) and only the context has Electron loaded. Calling this a
+   * second time replaces the factory and destroys whatever the old one built.
+   */
+  setShieldFactory(factory: ShieldFactory | null): void;
   /** Which holder this pane is, so the lease can be compared against it. */
   setPaneHolder(holder: string | undefined): void;
+  /**
+   * The holder this pane last identified itself as.
+   *
+   * Read by the shield's gesture path, which knows somebody clicked and
+   * deliberately does not know who: a shield that carried an identity would be
+   * a renderer-supplied one reaching the lease through the path that exists to
+   * be trusted. This is the id the IPC channel already checked the sender of.
+   */
+  paneHolder(): string | undefined;
   /** Is the active view currently parented into a visible window? */
   isShown(): boolean;
   /** May the person's clicks reach the page right now? */
@@ -179,6 +245,26 @@ export interface CreateContextSurfaceOptions {
    */
   onViewportRequest?: (size: SurfaceViewport) => void;
   /**
+   * Build the input shield, when this platform can.
+   *
+   * Injected rather than constructed here for the same reason the window
+   * constructors are: this module is import-free at module scope, and reaching
+   * for `WebContentsView` would drag Electron into every unit test of it.
+   *
+   * Absent means NO SHIELD, and the consequence is stated plainly rather than
+   * hidden: a click into the native view reaches the page directly and does
+   * not take the browser. That is the behaviour this surface had before the
+   * shield existed, and it is what a platform without a second view can offer.
+   */
+  createShield?: ShieldFactory;
+  /**
+   * Somebody interacted with a shielded page.
+   *
+   * The surface does not acquire the lease itself — it has no client, and the
+   * lease belongs to the daemon. It reports, and whoever wired it decides.
+   */
+  onShieldGesture?: () => void;
+  /**
    * The size the views start at, before anything has resized them.
    *
    * Defaults to the session viewport every browser on every engine has always
@@ -202,6 +288,18 @@ export function createContextSurface(
    * Moved only by `setViewport`, i.e. only by a resize the session actually
    * decided. @see SurfaceViewport
    */
+  /**
+   * The shield, built lazily on the first time it is actually needed.
+   *
+   * Lazy because building it creates a real view and a real renderer process,
+   * and a surface whose lease is never free — an eval, an unattended run —
+   * never needs one.
+   */
+  let shield: SurfaceShield | null | undefined;
+  let shielded = false;
+  let shieldFactory: ShieldFactory | undefined = options.createShield;
+  /** Which window the current shield was built for. */
+  let shieldWindow: SurfaceWindow | undefined;
   let viewport: SurfaceViewport = options.viewport ?? {
     width: DEFAULT_SESSION_VIEWPORT.width,
     height: DEFAULT_SESSION_VIEWPORT.height,
@@ -284,6 +382,44 @@ export function createContextSurface(
     // because watching is the safe common case — but a click into it while
     // somebody else holds the browser must not reach the page.
     if (!allowed()) options.onVisibilityRefused?.(view);
+    applyShield();
+  };
+
+  /**
+   * Cover the page while this pane may not drive it, and uncover it when it may.
+   *
+   * The predicate is `allowed()`, exactly the one the input gate uses, so the
+   * shield and the refusal can never disagree — which is the failure that
+   * would matter: a shield up while input is allowed makes the browser
+   * unusable, and one down while it is not makes the lease decorative.
+   */
+  const applyShield = (): void => {
+    const wanted = !!holderWindow && !!bounds && !!parented && !allowed();
+    if (!wanted) {
+      if (shielded) {
+        shield?.remove();
+        shielded = false;
+      }
+      return;
+    }
+    // Rebuilt when the WINDOW changes, not only when there is none: a shield
+    // is a child of one window, and one left pointing at a window that has
+    // gone covers nothing while the new window's page is wide open.
+    if (shield === undefined || shieldWindow !== holderWindow) {
+      shield?.dispose();
+      shieldWindow = holderWindow;
+      shield =
+        shieldFactory?.({
+          window: holderWindow!,
+          onGesture: () => options.onShieldGesture?.(),
+        }) ?? null;
+    }
+    if (!shield || !bounds) return;
+    // `cover` on every apply, not only on the transition: the pane moves, the
+    // window resizes, and a shield left at the old rectangle is a hole over
+    // the page and a dead patch over the app beside it.
+    shield.cover(bounds);
+    shielded = true;
   };
 
   return {
@@ -328,6 +464,13 @@ export function createContextSurface(
     },
     hide() {
       detach();
+      // The shield comes out with the view. A shield over a page nobody is
+      // showing is an invisible rectangle that eats the clicks meant for
+      // whatever the pane switched to.
+      if (shielded) {
+        shield?.remove();
+        shielded = false;
+      }
       holderWindow = undefined;
       bounds = undefined;
     },
@@ -340,10 +483,27 @@ export function createContextSurface(
       apply();
     },
     isShown: () => !!parented,
+    paneHolder: () => paneHolder,
+    isShielded: () => shielded,
+    setShieldFactory(factory) {
+      shieldFactory = factory ?? undefined;
+      shield?.dispose();
+      shield = undefined;
+      shieldWindow = undefined;
+      shielded = false;
+      apply();
+    },
     inputAllowed: allowed,
     dispose() {
       disposed = true;
       detach();
+      // BEFORE the refs are dropped, and unconditionally: the shield owns a
+      // real view and a real renderer process, and one left behind outlives
+      // the browser it was covering — an invisible rectangle over the app that
+      // swallows every click in it.
+      shield?.dispose();
+      shield = null;
+      shielded = false;
       order = [];
       holderWindow = undefined;
       bounds = undefined;

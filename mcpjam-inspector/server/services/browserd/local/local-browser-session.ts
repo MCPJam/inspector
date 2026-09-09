@@ -460,9 +460,17 @@ async function startSession(
   let resizeSession:
     | ((size: { width: number; height: number }) => void)
     | undefined;
+  /**
+   * Take the browser when somebody clicks the native view.
+   *
+   * Late-bound for the same reason `resizeSession` is: the surface has to
+   * exist before the lease, and the lease is what this acquires.
+   */
+  let takeOnShieldGesture: (() => void) | undefined;
   const surface = nativeSurface
     ? createContextSurface({
         onViewportRequest: (size) => resizeSession?.(size),
+        onShieldGesture: () => takeOnShieldGesture?.(),
       })
     : undefined;
 
@@ -542,6 +550,29 @@ async function startSession(
   // Now that both exist, close the loop: a pane measurement reaches the
   // driver's barrier, and the size the barrier settles on comes back to the
   // surface through `onChange` above.
+  /**
+   * The pane's own holder, as the surface knows it.
+   *
+   * The shield reports a gesture and nothing else — it does not know who is
+   * clicking, and it must not: a shield that named a holder would be a
+   * renderer-supplied identity reaching the lease through the one path that
+   * exists to be trusted. The surface already holds the pane's id, set over
+   * the IPC channel whose sender is checked, so the acquire uses that.
+   */
+  takeOnShieldGesture = () => {
+    const holder = surface?.paneHolder();
+    // No holder is a pane that has not identified itself, which on this path
+    // means a click arrived before the renderer's first `set-viewport`. There
+    // is nobody to grant the lease to, and inventing one would create a hold
+    // nothing can hand back.
+    if (!holder) return;
+    // Refusals are ordinary here and say nothing new: the surface only shields
+    // a view it is showing, and it only shows one the lease has not given to
+    // somebody else — so the case this can lose is a race with the model's own
+    // turn, which the next click wins.
+    lease.acquire(holder);
+  };
+
   resizeSession = (size) => {
     void driver.requestViewport(size).catch(() => {
       // The barrier reports its own failures and restores the last confirmed

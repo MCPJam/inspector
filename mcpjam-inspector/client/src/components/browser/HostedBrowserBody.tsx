@@ -11,9 +11,13 @@ import {
   BrowserPaneSurface,
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
+import { BrowserShell } from "@/components/browser/BrowserShell";
+import { useBrowserSession } from "@/lib/browser-shell/use-browser-session";
+import { TakeoverCoordinator } from "@/lib/browser-shell/takeover";
+import type { BrowserPaneCommand } from "../../../../shared/browser-pane-command";
 import {
+  PaneSettingsMenu,
   PaneControlBar,
-  PaneTabStrip,
   labelFor,
 } from "@/components/browser/PaneControlBar";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
@@ -37,6 +41,9 @@ import {
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnHostedBrowserLease,
+  fetchHostedBrowserState,
+  reportHostedPaneViewport,
+  sendHostedPaneCommand,
   createBrowserTokenCache,
   fetchHostedBrowserSession,
   HostedBrowserError,
@@ -183,16 +190,16 @@ export function HostedBrowserBody({
   /** The latest round trip, for the tier controller's latency rule. */
   const rttRef = useRef<number | undefined>(undefined);
   /**
-   * Which tab the box is showing.
+   * Which tab the box was last showing, for the "the agent switched" notice.
    *
-   * The video stream grabs the X display, so a model `activate_tab` changes the
-   * picture out from under a watching person — and kiosk hides Chromium's own
-   * tab strip, so nothing in the picture says so.
+   * A REF now, not state. It used to feed a read-only strip beside the picture
+   * — the truncated `{id, url}` list the heartbeat carries, which is all the
+   * pane could get — and the shell's own strip reads the complete list from
+   * `/state` instead. What is still worth having from the heartbeat is its
+   * SPEED: it arrives several times a second, so the notice about a tab the
+   * agent just switched to shows up before the next reconcile. Nothing renders
+   * the value, so nothing needs a re-render when it changes.
    */
-  const [tabs, setTabs] = useState<{
-    active?: string;
-    list?: Array<{ id: string; url: string }>;
-  } | null>(null);
   const activeTabRef = useRef<string | undefined>(undefined);
   const [tabNotice, setTabNotice] = useState<string | null>(null);
   /**
@@ -405,7 +412,6 @@ export function HostedBrowserBody({
       list?: Array<{ id: string; url: string }>;
     }) => {
       if (closed || !next) return;
-      setTabs(next);
       const previous = activeTabRef.current;
       activeTabRef.current = next.active;
       if (!previous || !next.active || previous === next.active) return;
@@ -940,26 +946,38 @@ export function HostedBrowserBody({
     return () => useBrowserPageToolsStore.getState().clear(key);
   }, [projectId]);
 
+  /**
+   * Acquire or hand back, and say whether it landed.
+   *
+   * Returns a boolean because the TAKEOVER path needs the answer: a click that
+   * did not get the lease must not then be forwarded as input. One function
+   * rather than two call sites, so the generation guard cannot be skipped by
+   * the newer one — a lease belongs to ONE browser, and an answer arriving
+   * after the pane has moved to another would show control of something nobody
+   * is watching.
+   */
   const setLeaseAction = useCallback(
-    async (action: "acquire" | "resume") => {
-      if (!tokens || !session) return;
+    async (action: "acquire" | "resume"): Promise<boolean> => {
+      if (!tokens || !session) return false;
       const mine = generation.current;
       setError(null);
       try {
         const outcome = await actOnHostedBrowserLease(tokens, { action });
-        if (generation.current !== mine) return;
+        if (generation.current !== mine) return false;
         setLease(outcome.lease);
         setHolding(outcome.yours);
         if (!outcome.took) {
           setError("Someone else is using this browser right now.");
-          return;
+          return false;
         }
         // Taking control revokes every watcher the daemon had, including this
         // pane's own stream: it is reopened here rather than waited out.
         setStreamAttempt((n) => n + 1);
+        return true;
       } catch (cause) {
-        if (generation.current !== mine) return;
+        if (generation.current !== mine) return false;
         setError(cause instanceof Error ? cause.message : String(cause));
+        return false;
       }
     },
     [tokens, session],
@@ -1124,6 +1142,71 @@ export function HostedBrowserBody({
         ? "script"
         : "other";
 
+  /**
+   * The shell's transport, for this engine.
+   *
+   * Every call carries the token cache rather than a holder: the server reads
+   * the holder off the token's claims, exactly as `/input` and `/lease` do, so
+   * a holder this client could name would let anyone who echoed the right id
+   * drive somebody else's session.
+   */
+  const shellTransport = useMemo(() => {
+    if (!tokens || !session) return null;
+    return {
+      readState: () => fetchHostedBrowserState(tokens),
+      sendCommand: (args: {
+        command: BrowserPaneCommand;
+        commandId?: string;
+      }) => sendHostedPaneCommand(tokens, args),
+      reportViewport: (size: { width: number; height: number }) =>
+        reportHostedPaneViewport(tokens, size),
+      resume: async () => {
+        await setLeaseAction("resume");
+      },
+    };
+  }, [tokens, session, setLeaseAction]);
+
+  const shell = useBrowserSession({
+    transport: shellTransport,
+    // The hosted holder is the authenticated user, which this client never
+    // sees. `holding` is passed to the shell explicitly instead, so it never
+    // has to guess from an id it does not have.
+    holderId: null,
+    active,
+  });
+
+  const takeoverRef = useRef<TakeoverCoordinator<BrowserInputEvent[]> | null>(
+    null,
+  );
+  const setLeaseActionRef = useRef(setLeaseAction);
+  setLeaseActionRef.current = setLeaseAction;
+  const tokensRef = useRef(tokens);
+  tokensRef.current = tokens;
+  const takeover = useCallback((events: BrowserInputEvent[]) => {
+    takeoverRef.current ??= new TakeoverCoordinator<BrowserInputEvent[]>({
+      isHolding: () => holdingRef.current,
+      acquire: async () =>
+        (await setLeaseActionRef.current("acquire"))
+          ? { ok: true as const }
+          : { ok: false as const },
+    });
+    void takeoverRef.current.gesture({ payload: events }).then((result) => {
+      if (result.status !== "deliver") return;
+      const current = tokensRef.current;
+      if (!current) return;
+      void sendHostedBrowserInput(current, {
+        events: result.payload,
+      }).catch(() => {});
+    });
+  }, []);
+
+  // The stats overlay's flag, which the take-control bar used to own.
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const onStatsToggle = useCallback((next: boolean) => {
+    paneFrameStats.setEnabled(next);
+    setStatsOpen(next);
+  }, []);
+
   // The DESKTOP view, not the page: `BrowserPanel` proxies RFB and shows the
   // window manager, dialogs and popups. It is the honest answer to "the new
   // viewer is not working for me", and it only exists for a hosted box.
@@ -1151,28 +1234,7 @@ export function HostedBrowserBody({
     );
   }
 
-  return (
-    <BrowserPaneSurface
-      frame={frame}
-      holding={holding}
-      control={control}
-      // A lease somebody else holds is not one this pane may step over.
-      onTakeControl={
-        session && !holding && lease.state === "free"
-          ? () => void setLeaseAction("acquire")
-          : undefined
-      }
-      onHandBack={
-        session && holding ? () => void setLeaseAction("resume") : undefined
-      }
-      onInput={send}
-      placeholder={placeholder}
-      error={notice ?? error}
-      notice={tabNotice}
-      controls={<PaneTabStrip tabs={tabs} />}
-      tier={tierPreference}
-      tiers={HOSTED_TIERS}
-      onTier={(next) => {
+  const onTier = (next: QualityTier) => {
         setTierPreference(next);
         const resolved = tierController.current.setPreference(next);
         const wasVideo =
@@ -1198,9 +1260,57 @@ export function HostedBrowserBody({
             }),
           );
         }
+  };
+
+  return (
+    <BrowserShell
+      state={shell.state}
+      holderId={null}
+      // THIS engine's lease, not the shell's polled copy: the hosted body
+      // learns about its own acquire the moment it lands, and the shell's
+      // reconcile is a beat behind. @see BrowserShellProps.control
+      holding={holding}
+      control={{
+        kind:
+          control === "you"
+            ? "human"
+            : control === "script"
+              ? "script"
+              : control === "other"
+                ? "human"
+                : "agent",
+        ...(lease.state === "parked" ? { parked: true } : {}),
       }}
-      active={active}
-      engine="hosted"
-    />
+      onCommand={shell.run}
+      {...(session && holding ? { onResumeAgent: shell.resume } : {})}
+      resuming={shell.resuming}
+      onViewportMeasured={shell.reportViewport}
+      ready={!!session}
+      notice={shell.notice ?? tabNotice}
+      error={notice ?? error ?? shell.error}
+      {...(placeholder ? { placeholder } : {})}
+      trailing={
+        <PaneSettingsMenu
+          statsOpen={statsOpen}
+          onToggleStats={onStatsToggle}
+          tier={tierPreference}
+          tiers={HOSTED_TIERS}
+          onTier={onTier}
+        />
+      }
+    >
+      <BrowserPaneSurface
+        frame={frame}
+        holding={holding}
+        control={control}
+        // NO take-control button. Using the browser is what takes it now, and
+        // the shell's second row already says who is driving.
+        chrome="none"
+        onInput={send}
+        onTakeoverInput={takeover}
+        active={active}
+        engine="hosted"
+      />
+    </BrowserShell>
   );
 }
