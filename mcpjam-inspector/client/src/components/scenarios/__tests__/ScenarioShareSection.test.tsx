@@ -274,7 +274,7 @@ describe("ScenarioShareSection", () => {
       }),
     ).toHaveAttribute("data-disabled");
     expect(
-      screen.getByRole("menuitemradio", { name: /Acme/i }),
+      screen.getByRole("menuitemradio", { name: /Team members/i }),
     ).not.toHaveAttribute("data-disabled");
   });
 

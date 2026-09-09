@@ -107,9 +107,13 @@ export function ScenarioShareSection({
           },
           {
             value: "project",
-            label: projectLabel,
-            description:
-              "Signed-in members of this project can open the scenario with the link. Guests cannot.",
+            // The project's own NAME used to be the label here, which made a
+            // third way of saying one thing (sidebar "team members", create
+            // flow "Project members", this one "Acme"). The vocabulary is the
+            // label's job; which project it is stays in the description, so
+            // nothing is lost (BB-203).
+            label: "Team members",
+            description: `Signed-in members of ${projectLabel} can open the scenario with the link. Guests cannot.`,
           },
         ],
         settings.maxShareMode,

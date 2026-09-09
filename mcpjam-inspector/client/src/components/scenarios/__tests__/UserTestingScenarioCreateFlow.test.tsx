@@ -1198,10 +1198,10 @@ describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
     const { onCreateScenario } = renderFlow();
 
     expect(
-      screen.getByText("Your organization limits sharing to project members."),
+      screen.getByText("Your organization limits sharing to team members."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-create-access")).toHaveTextContent(
-      "Project members",
+      "Team members",
     );
 
     await user.click(screen.getByTestId("user-testing-create-access"));

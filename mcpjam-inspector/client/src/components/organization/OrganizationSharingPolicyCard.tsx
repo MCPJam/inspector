@@ -27,7 +27,7 @@ import {
 const MODE_OPTIONS: Array<{ value: ShareMode; label: string }> = [
   { value: "anyone_with_link", label: "Anyone with the link" },
   { value: "invited_only", label: "Invited users only" },
-  { value: "project_members", label: "Project members" },
+  { value: "project_members", label: "Team members" },
 ];
 
 export function OrganizationSharingPolicyCard({

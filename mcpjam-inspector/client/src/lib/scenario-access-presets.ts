@@ -47,9 +47,12 @@ export const SCENARIO_ACCESS_OPTIONS: ReadonlyArray<{
   },
   {
     value: "project",
-    label: "Project members",
+    // "Team members", not "Project members": the sidebar has always called
+    // these people the team, and a second name for one group read as a second
+    // group (BB-203).
+    label: "Team members",
     description:
-      "Signed-in members of this project can open it with the link. Guests cannot.",
+      "Signed-in team members can open it with the link. Guests cannot.",
   },
 ];
 
@@ -78,7 +81,7 @@ export function applyShareCeilingToScenarioOptions(
   ceiling?: ShareMode | null,
 ): ShareAccessOption[] {
   return options.map((option) => {
-    // Project members is rank 0 — a ceiling never greys it out.
+    // Team members is rank 0 — a ceiling never greys it out.
     if (option.value === "project") {
       return { ...option, disabled: undefined, disabledReason: undefined };
     }
