@@ -87,7 +87,11 @@ describe("NetworkRing", () => {
   it("folds a response onto the request it answers — ONE row, not two", () => {
     const ring = new NetworkRing();
     ring.started({ requestId: "r1", method: "GET", url: "https://x.test/api" });
-    ring.finished({ requestId: "r1", status: 500, mimeType: "application/json" });
+    ring.finished({
+      requestId: "r1",
+      status: 500,
+      mimeType: "application/json",
+    });
     expect(ring.entries()).toHaveLength(1);
     expect(ring.entries()[0]).toMatchObject({
       method: "GET",
@@ -121,7 +125,11 @@ describe("NetworkRing", () => {
   it("evicts oldest-first and keeps counting past what it can still show", () => {
     const ring = new NetworkRing(3);
     for (let i = 0; i < 5; i += 1) {
-      ring.started({ requestId: `r${i}`, method: "GET", url: `https://x.test/${i}` });
+      ring.started({
+        requestId: `r${i}`,
+        method: "GET",
+        url: `https://x.test/${i}`,
+      });
     }
     expect(ring.entries().map((r) => r.requestId)).toEqual(["r2", "r3", "r4"]);
     // Monotonic, like the console cursor: the gap between what was captured
@@ -147,11 +155,19 @@ describe("NetworkRing", () => {
     // they hand it back. That would make the lease's promise "you must wait to
     // read it" rather than "it is private".
     const ring = new NetworkRing();
-    ring.started({ requestId: "before", method: "GET", url: "https://x.test/a" });
+    ring.started({
+      requestId: "before",
+      method: "GET",
+      url: "https://x.test/a",
+    });
     const handoffAt = Date.now() + 1;
     // Everything from here on happened while a person was driving.
     const later = { ...ring.entries()[0]! };
-    ring.started({ requestId: "during", method: "POST", url: "https://x.test/login" });
+    ring.started({
+      requestId: "during",
+      method: "POST",
+      url: "https://x.test/login",
+    });
     for (const row of ring.entries()) {
       if (row.requestId === "during") row.at = handoffAt + 5;
     }
@@ -162,7 +178,11 @@ describe("NetworkRing", () => {
 
   it("reads one exchange back by its id", () => {
     const ring = new NetworkRing();
-    ring.started({ requestId: "r7", method: "POST", url: "https://x.test/pay" });
+    ring.started({
+      requestId: "r7",
+      method: "POST",
+      url: "https://x.test/pay",
+    });
     expect(ring.get("r7")).toMatchObject({ method: "POST" });
     expect(ring.get("nope")).toBeUndefined();
   });

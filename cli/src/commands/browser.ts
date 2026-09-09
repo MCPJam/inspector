@@ -428,12 +428,12 @@ export function registerBrowserCommands(program: Command): void {
   )
     .option(
       "--mode <mode>",
-      "a11y | screenshot | text | dom | console | network | url | page_tools",
+      "a11y | screenshot | text | dom | console | network | dialog | url | page_tools",
       "a11y",
     )
     .option(
       "--request <id>",
-      "With --mode network: read one exchange instead of the tail"
+      "With --mode network: read one exchange instead of the tail",
     )
     .option("--root-ref <ref>", "Scope an a11y tree to a ref")
     .option("--root-selector <selector>", "Scope an a11y tree to a selector")
@@ -536,7 +536,7 @@ export function registerBrowserCommands(program: Command): void {
   )
     .requiredOption(
       "--verb <verb>",
-      "click | type | press | scroll | hover | drag | select | close_tab | activate_tab",
+      "click | type | press | scroll | hover | drag | select | close_tab | activate_tab | accept_dialog | dismiss_dialog",
     )
     .option("--ref <ref>", "Target a ref from the last a11y observation")
     .option("--selector <selector>", "Target a CSS selector")

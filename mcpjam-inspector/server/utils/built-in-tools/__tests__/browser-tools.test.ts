@@ -1916,10 +1916,18 @@ describe("the toolset's context footprint is pinned", () => {
     // layout is right, whose list is empty, and whose console is silent, where
     // the cause is a 401 on the fetch behind the list. Without it a model can
     // only re-read a page that will keep looking the same.
+    // Raised to 5_700 for the review round (+~200 bytes, 5316 → ~5500):
+    // `requestId` on `browser_observe`, the two dialog verbs on `browser_act`,
+    // and an honest `browser_navigate` description. Each closes a gap between
+    // what a tool says and what it does: the CLI could read one network
+    // exchange and the model could not; a dialog could be answered by policy
+    // and not by the model; and navigate claimed to return "what the page
+    // looks like" while returning a screenshot with no refs, which is the one
+    // thing a model needs to act on what it just opened.
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(5_400);
+    ).toBeLessThanOrEqual(5_700);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {
@@ -3347,6 +3355,238 @@ describe("buildBrowserTools — a refresher with NO turn-start snapshot", () => 
     } finally {
       if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
       else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
+  });
+});
+
+/**
+ * What the tools SAY they do, against what they send.
+ *
+ * Each of these was a gap between a description or a capability and the wire —
+ * the kind a model cannot detect, because the only evidence it has is the
+ * sentence that is wrong.
+ */
+describe("buildBrowserTools — the tool surface matches the daemon's", () => {
+  it("lets the model read ONE network exchange, as the CLI can", () => {
+    // The daemon and the CLI both took `requestId`; the built-in declared only
+    // the mode, so a model could list the tail and never drill into the 401
+    // it found there.
+    const { result } = build();
+    const observe = result!.tools.browser_observe as {
+      inputSchema: unknown;
+    };
+    const schema = z.toJSONSchema(observe.inputSchema as never, {
+      io: "input",
+    }) as { properties?: Record<string, unknown> };
+    expect(Object.keys(schema.properties ?? {})).toContain("requestId");
+  });
+
+  it("forwards that requestId to the daemon", async () => {
+    const commands: any[] = [];
+    const { ensureSession } = fakeSession(async (command) => {
+      commands.push(command);
+      return OK;
+    });
+    const built = buildBrowserTools({
+      authHeader: "Bearer t",
+      projectId: "p1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession,
+      pageTools: OPEN_PAGE,
+    })!;
+    await (built.tools.browser_observe as any).execute(
+      { mode: "network", requestId: "r7" },
+      {},
+    );
+    expect(commands[0].action).toMatchObject({
+      kind: "observe",
+      mode: "network",
+      requestId: "r7",
+    });
+  });
+
+  it("RETURNS what navigate says it returns — refs, not just a picture", async () => {
+    // The description promised "what the page looks like… so you do not need
+    // to observe separately", and sent a screenshot with no tree. A model that
+    // believed it could not act by ref on the page it had just opened.
+    const commands: any[] = [];
+    const { ensureSession } = fakeSession(async (command) => {
+      commands.push(command);
+      return OK;
+    });
+    const built = buildBrowserTools({
+      authHeader: "Bearer t",
+      projectId: "p1",
+      approvalDelivery: { kind: "attested" },
+      ensureSession,
+      pageTools: OPEN_PAGE,
+    })!;
+    await (built.tools.browser_navigate as any).execute(
+      { url: "https://x.test" },
+      {},
+    );
+    expect(commands[0].action).toMatchObject({
+      kind: "navigate",
+      observe: "both",
+    });
+    const description = (built.tools.browser_navigate as { description: string })
+      .description;
+    expect(description).toContain("a11y");
+  });
+
+  it("offers the dialog verbs, so a client can decide for itself", () => {
+    const { result } = build();
+    const schema = z.toJSONSchema(
+      (result!.tools.browser_act as { inputSchema: unknown }).inputSchema as never,
+      { io: "input" },
+    ) as { properties?: { verb?: { enum?: string[] } } };
+    expect(schema.properties?.verb?.enum).toEqual(
+      expect.arrayContaining(["accept_dialog", "dismiss_dialog"]),
+    );
+  });
+});
+
+/**
+ * The page-tool hint, derived from what this turn built rather than from a
+ * flag that usually implies it.
+ *
+ * The two came apart: page tools are built whenever the mode is first-class
+ * and the daemon can bind them, while `dynamic` says only whether that set
+ * refreshes mid-turn. So a non-dynamic turn — a BYOK engine — was told to call
+ * `browser_webmcp_invoke` "using the name listed above", with the tools
+ * sitting in its own toolset and no names listed anywhere, because only the
+ * retired listing verb ever carries them.
+ */
+describe("buildBrowserTools — the page-tool hint names what is actually there", () => {
+  const PAGE_TOOLS = {
+    tools: [
+      {
+        name: "add_topping",
+        description: "Add a topping",
+        origin: "https://pizza.test",
+        isMainFrame: true,
+        frameId: "frame-main",
+        registrationSeq: 2,
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+    bootId: "boot-1",
+    tabId: "@session",
+    navCounter: 1,
+  };
+
+  function withFlag<T>(mode: string, run: () => T): T {
+    const before = process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+    process.env.MCPJAM_WEBMCP_PAGE_TOOLS = mode;
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.MCPJAM_WEBMCP_PAGE_TOOLS;
+      else process.env.MCPJAM_WEBMCP_PAGE_TOOLS = before;
+    }
+  }
+
+  function noteFrom(
+    over: Partial<Parameters<typeof buildBrowserTools>[0]>,
+    mode: "first_class" | "verbs" = "first_class",
+  ) {
+    const { ensureSession } = fakeSession(async () => ({
+      ...OK,
+      result: {
+        ...OK.result!,
+        webmcpTools: { revision: 1, hash: "h", count: 2, supported: true },
+      },
+    }));
+    const built = withFlag(mode, () =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        ...over,
+      }),
+    )!;
+    return (built.tools.browser_navigate as any)
+      .execute({ url: "https://x.test" }, {})
+      .then((r: { pageToolsNote?: string }) => r.pageToolsNote ?? "");
+  }
+
+  it("says the tools ARE the toolset when they were built, dynamic or not", async () => {
+    // The regression: this turn has `webmcp_*` tools and was told to reach
+    // them through a generic verb, by a name nothing listed.
+    const note = await noteFrom({ pageTools: PAGE_TOOLS });
+    expect(note).toContain("directly as `webmcp_*` tools");
+    // Only a refreshing engine should be promised they change.
+    expect(note).not.toContain("change when you navigate");
+  });
+
+  it("adds the churn warning only where the set actually refreshes", async () => {
+    const note = await noteFrom({
+      pageTools: PAGE_TOOLS,
+      dynamicPageTools: true,
+    });
+    expect(note).toContain("change when you navigate");
+  });
+
+  it("points at the listing verb when THAT is what was built", async () => {
+    // No snapshot and no refresher ⇒ nothing first-class ever, both verbs
+    // kept, and the note has to name one of them.
+    const note = await noteFrom({ pageTools: undefined });
+    expect(note).toContain("browser_webmcp_tools");
+    expect(note).not.toContain("`webmcp_*`");
+  });
+
+  it("says the tools are COMING while the refresher has yet to mint one", async () => {
+    // The middle state, and a real turn: before the first navigate there is no
+    // tab to peek at, so nothing is minted, and the refresher adds the page's
+    // tools on the NEXT step. Told they are "available to you directly" the
+    // model goes looking for a `webmcp_*` tool that is not in its toolset yet;
+    // told only about the verbs it never learns they are coming.
+    const note = await noteFrom({
+      pageTools: undefined,
+      dynamicPageTools: true,
+    });
+    expect(note).toContain("will appear as `webmcp_*` tools on your next step");
+    expect(note).not.toContain("are available to you directly");
+    // And what reaches them RIGHT NOW, because both verbs stayed.
+    expect(note).toContain("browser_webmcp_invoke");
+  });
+
+  it("never names a verb this turn does not have", async () => {
+    for (const over of [
+      { pageTools: PAGE_TOOLS },
+      { pageTools: PAGE_TOOLS, dynamicPageTools: true },
+      { pageTools: undefined },
+      { pageTools: { ...PAGE_TOOLS, canBind: false } },
+    ]) {
+      const { ensureSession } = fakeSession(async () => ({
+        ...OK,
+        result: {
+          ...OK.result!,
+          webmcpTools: { revision: 1, hash: "h", count: 2, supported: true },
+        },
+      }));
+      const built = withFlag("first_class", () =>
+        buildBrowserTools({
+          authHeader: "Bearer t",
+          projectId: "p1",
+          approvalDelivery: { kind: "attested" },
+          ensureSession,
+          ...over,
+        }),
+      )!;
+      const note: string = (
+        await (built.tools.browser_navigate as any).execute(
+          { url: "https://x.test" },
+          {},
+        )
+      ).pageToolsNote;
+      for (const verb of ["browser_webmcp_tools", "browser_webmcp_invoke"]) {
+        if (note.includes(verb)) {
+          expect(Object.keys(built.tools), `${verb} named but not built`)
+            .toContain(verb);
+        }
+      }
     }
   });
 });

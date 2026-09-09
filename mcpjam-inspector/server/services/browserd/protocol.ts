@@ -296,7 +296,23 @@ export type BrowserAction =
         | "select"
         | "fill_form"
         | "close_tab"
-        | "activate_tab";
+        | "activate_tab"
+        /**
+         * Answer the dialog this page is blocked on.
+         *
+         * SEPARATE FROM THE DEFAULTS the daemon applies. A default exists so a
+         * tab can never wedge, but it is a guess at what the caller meant —
+         * "Delete this account?" is cancelled because that is the safe answer
+         * for an absent user, not because it is the right one for every
+         * client. A client with its own rules (ask the person, always confirm
+         * a known flow) answers here instead, and runs the daemon with
+         * `dialogPolicy: "ask"` so nothing is decided for it.
+         *
+         * `accept_dialog` takes the prompt's reply in `value`, when the dialog
+         * is a `prompt` and the caller has one.
+         */
+        | "accept_dialog"
+        | "dismiss_dialog";
       target?: BrowserActTarget;
       value?: string;
       /**
@@ -354,6 +370,14 @@ export type BrowserAction =
          * `requestId` reads ONE exchange rather than the tail.
          */
         | "network"
+        /**
+         * The dialog this page is blocked on, or `null`.
+         *
+         * A cache read: it touches no page, which is what makes it answerable
+         * while a dialog has the renderer stopped. The point of asking is to
+         * DECIDE — see the `accept_dialog` / `dismiss_dialog` verbs.
+         */
+        | "dialog"
         | "url"
         | "webmcp_tools"
         /**

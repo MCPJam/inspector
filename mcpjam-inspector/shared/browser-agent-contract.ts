@@ -92,7 +92,18 @@ export type BrowserAgentActVerb =
   | "select"
   /** Tab lifecycle rides `act_in_browser`; the protocol already has the verbs. */
   | "close_tab"
-  | "activate_tab";
+  | "activate_tab"
+  /**
+   * Answer the dialog blocking this page. `accept_dialog` takes a `prompt`
+   * reply in `value`.
+   *
+   * The capability, as distinct from the daemon's defaults: a default exists
+   * so a tab can never wedge, but it is a guess at what the caller meant. A
+   * client with its own rules answers here, and opens its session with the
+   * daemon deciding nothing.
+   */
+  | "accept_dialog"
+  | "dismiss_dialog";
 
 export type BrowserAgentObserveMode =
   | "a11y"
@@ -109,6 +120,8 @@ export type BrowserAgentObserveMode =
    * logged nothing.
    */
   | "network"
+  /** The dialog blocking this page, or `null`. Touches no page. */
+  | "dialog"
   | "url"
   /** WebMCP tools the page offers. Named for what it is to a caller. */
   | "page_tools";

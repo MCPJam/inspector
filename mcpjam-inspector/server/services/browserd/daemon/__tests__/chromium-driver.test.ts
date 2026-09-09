@@ -4015,8 +4015,10 @@ describe("ChromiumDriver — JavaScript dialogs", () => {
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
-    const first = await driver.execute(cmd({ kind: "observe", mode: "url" }));
-    const second = await driver.execute(cmd({ kind: "observe", mode: "url" }));
+    // `dom` rather than `url`: a URL read does not need the page unblocked, so
+    // it deliberately does NOT answer the dialog (see the safe set).
+    const first = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    const second = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
     expect(first.output).toMatchObject({ dialog: { kind: "confirm" } });
     expect(second.output).not.toHaveProperty("dialog");
   });
@@ -4283,5 +4285,111 @@ describe("ChromiumDriver — the lease across the awaits refs added", () => {
     expect(res.output).toMatchObject({
       dialog: { kind: "confirm", pending: true },
     });
+  });
+});
+
+/**
+ * Deciding about a dialog, as a capability rather than a policy.
+ *
+ * The defaults exist so a tab can never wedge, and that is worth having — but
+ * a default is a guess at what the caller meant, and cancelling every
+ * `confirm` decides for a client that may have its own rules. So the answer is
+ * available explicitly, under either policy, and the guessing can be turned
+ * off.
+ */
+describe("ChromiumDriver — who decides about a dialog", () => {
+  const CONFIRM = { kind: "confirm" as const, message: "Delete?", at: 1 };
+
+  function withDialog(options: { dialogPolicy?: "auto" | "ask" } = {}) {
+    const page = fakePage({ url: "https://x.test/", dialog: CONFIRM });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, options);
+    return { page, driver };
+  }
+
+  it('"ask" decides NOTHING and refuses the command instead', async () => {
+    const { page, driver } = withDialog({ dialogPolicy: "ask" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("dialog_pending");
+    // The refusal names what the caller can do about it.
+    expect(String(res.error)).toContain("accept_dialog");
+    expect(page.dialogAnswers).toEqual([]);
+  });
+
+  it('"auto" is still the default, so a tab can never wedge', async () => {
+    const { page, driver } = withDialog();
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "dom" }));
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+  });
+
+  it("reads the pending dialog without answering it, under either policy", async () => {
+    // How a client learns what it is being asked to decide.
+    for (const dialogPolicy of ["auto", "ask"] as const) {
+      const { page, driver } = withDialog({ dialogPolicy });
+      await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+      const res = await driver.execute(cmd({ kind: "observe", mode: "dialog" }));
+      expect(res.ok, dialogPolicy).toBe(true);
+      expect(res.output).toMatchObject({
+        dialog: { kind: "confirm", message: "Delete?" },
+      });
+      expect(page.dialogAnswers, dialogPolicy).toEqual([]);
+    }
+  });
+
+  it("ANSWERS explicitly, and the client's choice is not the default", async () => {
+    // The point of the verb: the default for a `confirm` is cancel, and a
+    // client that knows this flow can say yes.
+    const { page, driver } = withDialog({ dialogPolicy: "ask" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "accept_dialog" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([{ accept: true }]);
+    // Recorded, and NOT as an automatic choice — a reader should be able to
+    // tell what the page asked from who answered it.
+    expect(res.output).toMatchObject({
+      dialog: { kind: "confirm", choice: "accepted" },
+    });
+    expect((res.output as { dialog: { auto?: true } }).dialog.auto).toBeUndefined();
+  });
+
+  it("carries a prompt's reply", async () => {
+    const page = fakePage({
+      url: "https://x.test/",
+      dialog: { kind: "prompt", message: "Your name?", at: 1 },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { dialogPolicy: "ask" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(
+      cmd({ kind: "act", verb: "accept_dialog", value: "Ada" }),
+    );
+    expect(page.dialogAnswers).toEqual([{ accept: true, promptText: "Ada" }]);
+  });
+
+  it("answering works under `auto` too — the policy governs the FALLBACK", async () => {
+    const { page, driver } = withDialog({ dialogPolicy: "auto" });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "dismiss_dialog" }),
+    );
+    expect(res.ok).toBe(true);
+    expect(page.dialogAnswers).toEqual([{ accept: false }]);
+  });
+
+  it("says so plainly when there is no dialog to answer", async () => {
+    const page = fakePage({ url: "https://x.test/" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "act", verb: "accept_dialog" }),
+    );
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain("no dialog open");
   });
 });

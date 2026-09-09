@@ -81,14 +81,40 @@ export function safeUnderDialog(action: {
       action.mode === "screenshot" ||
       action.mode === "url" ||
       action.mode === "console" ||
+      action.mode === "network" ||
+      // Reading the dialog is how a caller learns what it is deciding about.
+      action.mode === "dialog" ||
       action.mode === "webmcp_revision"
     );
   }
   if (action.kind === "act") {
-    return action.verb === "close_tab" || action.verb === "activate_tab";
+    return (
+      action.verb === "close_tab" ||
+      action.verb === "activate_tab" ||
+      // ANSWERING it is the one act that must always get through: it is the
+      // thing that unblocks the page, and refusing it because a dialog is open
+      // would be the deadlock this whole file exists to prevent.
+      action.verb === "accept_dialog" ||
+      action.verb === "dismiss_dialog"
+    );
   }
   return false;
 }
+
+/**
+ * Who decides what an unanswered dialog means.
+ *
+ * `auto` applies the safe defaults above, so a tab can never wedge and a
+ * client that has no opinion gets a browser that keeps working. `ask` decides
+ * nothing: the command that met the dialog is refused with `dialog_pending`,
+ * and the client answers it with `accept_dialog` / `dismiss_dialog` — which is
+ * what a client with its own interaction rules needs, because a default is a
+ * guess at what it meant.
+ *
+ * The explicit verbs work under BOTH: the policy governs the fallback, not the
+ * capability.
+ */
+export type DialogPolicy = "auto" | "ask";
 
 /** The refusal a blocked command gets, in the model's own terms. */
 export function dialogRefusal(dialog: PendingDialog): string {
@@ -96,6 +122,7 @@ export function dialogRefusal(dialog: PendingDialog): string {
   return (
     `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page` +
     `${quoted}. The page cannot be read or acted on until it is answered — ` +
-    "hand the browser back so a person can answer it, or close the tab."
+    "answer it with `accept_dialog` or `dismiss_dialog`, hand the browser " +
+    "back so a person can, or close the tab."
   );
 }

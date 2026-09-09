@@ -38,6 +38,7 @@ import {
   dialogRefusal,
   safeUnderDialog,
   type DialogOutcome,
+  type DialogPolicy,
 } from "./dialogs";
 import {
   coveringElementAt,
@@ -282,6 +283,13 @@ export interface ChromiumDriverOptions {
   console?: ConsoleBudget;
   /** How many network rows one observation returns. */
   network?: NetworkBudget;
+  /**
+   * What an UNANSWERED dialog means. `auto` (default) applies the safe
+   * defaults so a tab can never wedge; `ask` decides nothing and refuses the
+   * command instead, leaving the choice to a client that has its own rules.
+   * The explicit answer verbs work under both.
+   */
+  dialogPolicy?: DialogPolicy;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
   /** Byte budget for one `observe {mode:"text"}` (L9). */
@@ -376,6 +384,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly networkBudget: NetworkBudget;
+  private readonly dialogPolicy: DialogPolicy;
   private readonly webmcpOutputBudgetBytes: number;
   private readonly pageTextMaxBytes: number;
   private readonly lease:
@@ -481,6 +490,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.dialogPolicy = options.dialogPolicy ?? "auto";
     this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
@@ -619,6 +629,41 @@ export class ChromiumDriver implements BrowserDriver {
       await page.close().catch(() => {});
       await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
+      // ALWAYS AVAILABLE, under either policy. The policy decides what happens
+      // to an UNANSWERED dialog; answering one is the capability, and a client
+      // that has its own rules needs it whatever the fallback is.
+      const pending = page.pendingDialog?.();
+      if (!pending) {
+        return {
+          ok: false,
+          error: formatBrowserdError(
+            "act_failed",
+            "there is no dialog open on this page to answer",
+          ),
+        };
+      }
+      const accept = action.verb === "accept_dialog";
+      await page.resolveDialog?.(
+        accept,
+        accept && action.value !== undefined ? action.value : undefined,
+      );
+      // Recorded like an automatic answer, minus `auto`: a reader of the
+      // transcript should be able to tell what the page asked and who decided.
+      this.dialogNotes.set(tabId, {
+        kind: pending.kind,
+        message: pending.message,
+        choice: accept ? "accepted" : "dismissed",
+      });
+      const settledAfter = await this.settle(page);
+      const observed = await this.afterAct(
+        tabId,
+        entry,
+        permit,
+        wantsFor(action.observe),
+      );
+      return observed.ok ? { settled: settledAfter, ...observed } : observed;
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
@@ -1624,6 +1669,20 @@ export class ChromiumDriver implements BrowserDriver {
         this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
+      case "dialog": {
+        // Touches no page, which is the property that makes it answerable
+        // while a dialog has the renderer stopped — and reading it is how a
+        // caller learns what it is about to decide.
+        const pending = entry.page.pendingDialog?.() ?? null;
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { dialog: pending },
+          frame,
+          permit,
+        );
+      }
       case "network": {
         const all = entry.page.networkEntries?.();
         if (!all) {
@@ -2162,13 +2221,31 @@ export class ChromiumDriver implements BrowserDriver {
     const entry = this.tabs.get(tabId);
     const dialog = entry?.page.pendingDialog?.();
     if (!entry || !dialog) return undefined;
-    // A PERSON'S OWN COMMAND NEVER ANSWERS THEIR DIALOG. `manual` is the pane,
-    // which is the surface where they can read it and decide; answering it
-    // from under one of their own reads would take the decision away at the
-    // exact moment they were making it. They still get the reads that do not
-    // touch the blocked page, which is how the pane shows them the dialog.
-    if (source === "manual" || !permit()) {
-      if (safeUnderDialog(action)) return undefined;
+    // WHO GETS TO DECIDE, and the three ways the answer is "not us":
+    //
+    //   - `manual` is the pane. A person's own command never answers their own
+    //     dialog: answering it from under one of their reads would take the
+    //     decision away at the exact moment they were making it.
+    //   - Somebody else holds the lease, so the dialog is theirs.
+    //   - The client asked to decide for itself (`dialogPolicy: "ask"`). A
+    //     default is a guess at what a client meant, and one with its own
+    //     interaction rules — ask the person, always confirm a known flow —
+    //     needs that guess not to be made. It answers with `accept_dialog` /
+    //     `dismiss_dialog`, which work under either policy.
+    //
+    // In all three the reads that do not touch the blocked page still pass,
+    // which is how anyone sees the dialog they are being asked about.
+    // A COMMAND THAT DOES NOT NEED THE PAGE UNBLOCKED IS NEVER A REASON TO
+    // ANSWER. Checked first, above every policy: a screenshot, the URL, the
+    // console, and the dialog read itself are precisely how a caller looks at
+    // the dialog before deciding — and answering one in order to serve them
+    // destroys the thing they were looking at. Answering it is also on this
+    // list, which is what stops the fallback from consuming the dialog before
+    // the explicit verb can reach it.
+    if (safeUnderDialog(action)) return undefined;
+    const decideForCaller =
+      source !== "manual" && permit() && this.dialogPolicy === "auto";
+    if (!decideForCaller) {
       return { ok: false, error: dialogRefusal(dialog) };
     }
     const accept = agentDefaultAccepts(dialog.kind);

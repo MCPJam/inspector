@@ -412,8 +412,6 @@ async function resolveObjectId(
 ): Promise<string | undefined> {
   const resolved = (await cdp
     .send("DOM.resolveNode", { backendNodeId })
-    .catch(() => undefined)) as
-    | { object?: { objectId?: string } }
-    | undefined;
+    .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
   return resolved?.object?.objectId;
 }

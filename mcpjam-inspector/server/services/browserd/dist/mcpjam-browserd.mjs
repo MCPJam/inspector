@@ -3118,16 +3118,20 @@ function agentDefaultAccepts(kind) {
 }
 function safeUnderDialog(action) {
   if (action.kind === "observe") {
-    return action.mode === "screenshot" || action.mode === "url" || action.mode === "console" || action.mode === "webmcp_revision";
+    return action.mode === "screenshot" || action.mode === "url" || action.mode === "console" || action.mode === "network" || // Reading the dialog is how a caller learns what it is deciding about.
+    action.mode === "dialog" || action.mode === "webmcp_revision";
   }
   if (action.kind === "act") {
-    return action.verb === "close_tab" || action.verb === "activate_tab";
+    return action.verb === "close_tab" || action.verb === "activate_tab" || // ANSWERING it is the one act that must always get through: it is the
+    // thing that unblocks the page, and refusing it because a dialog is open
+    // would be the deadlock this whole file exists to prevent.
+    action.verb === "accept_dialog" || action.verb === "dismiss_dialog";
   }
   return false;
 }
 function dialogRefusal(dialog) {
   const quoted = dialog.message ? `: "${dialog.message}"` : "";
-  return `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page${quoted}. The page cannot be read or acted on until it is answered \u2014 hand the browser back so a person can answer it, or close the tab.`;
+  return `dialog_pending: a JavaScript ${dialog.kind} dialog is blocking this page${quoted}. The page cannot be read or acted on until it is answered \u2014 answer it with \`accept_dialog\` or \`dismiss_dialog\`, hand the browser back so a person can, or close the tab.`;
 }
 
 // server/services/browserd/daemon/cdp-a11y.ts
@@ -4953,6 +4957,7 @@ var ChromiumDriver = class {
   a11yBudget;
   consoleBudget;
   networkBudget;
+  dialogPolicy;
   webmcpOutputBudgetBytes;
   pageTextMaxBytes;
   lease;
@@ -5047,6 +5052,7 @@ var ChromiumDriver = class {
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.dialogPolicy = options.dialogPolicy ?? "auto";
     this.networkBudget = options.network ?? DEFAULT_NETWORK_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
     this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
@@ -5155,6 +5161,36 @@ var ChromiumDriver = class {
       });
       await this.dropTab(tabId);
       return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "accept_dialog" || action.verb === "dismiss_dialog") {
+      const pending = page.pendingDialog?.();
+      if (!pending) {
+        return {
+          ok: false,
+          error: formatBrowserdError(
+            "act_failed",
+            "there is no dialog open on this page to answer"
+          )
+        };
+      }
+      const accept = action.verb === "accept_dialog";
+      await page.resolveDialog?.(
+        accept,
+        accept && action.value !== void 0 ? action.value : void 0
+      );
+      this.dialogNotes.set(tabId, {
+        kind: pending.kind,
+        message: pending.message,
+        choice: accept ? "accepted" : "dismissed"
+      });
+      const settledAfter = await this.settle(page);
+      const observed2 = await this.afterAct(
+        tabId,
+        entry,
+        permit,
+        wantsFor(action.observe)
+      );
+      return observed2.ok ? { settled: settledAfter, ...observed2 } : observed2;
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
@@ -5800,6 +5836,17 @@ var ChromiumDriver = class {
         this.commitRefs(tabId, result, rendered.refMap);
         return result;
       }
+      case "dialog": {
+        const pending = entry.page.pendingDialog?.() ?? null;
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { dialog: pending },
+          frame,
+          permit
+        );
+      }
       case "network": {
         const all = entry.page.networkEntries?.();
         if (!all) {
@@ -6190,8 +6237,9 @@ var ChromiumDriver = class {
     const entry = this.tabs.get(tabId);
     const dialog = entry?.page.pendingDialog?.();
     if (!entry || !dialog) return void 0;
-    if (source === "manual" || !permit()) {
-      if (safeUnderDialog(action)) return void 0;
+    if (safeUnderDialog(action)) return void 0;
+    const decideForCaller = source !== "manual" && permit() && this.dialogPolicy === "auto";
+    if (!decideForCaller) {
       return { ok: false, error: dialogRefusal(dialog) };
     }
     const accept = agentDefaultAccepts(dialog.kind);

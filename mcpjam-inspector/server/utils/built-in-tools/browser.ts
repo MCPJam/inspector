@@ -1167,15 +1167,32 @@ export function buildBrowserTools(
     }
   };
 
-  // What an observation says about the page's tools. Computed once: it is a
-  // property of the TURN (which engine, which mode), not of a call.
-  // Both gated on `canBindPageTools`, like the verbs: a turn that kept the
-  // listing verb must be told to use it, not that the page's tools are
-  // "available directly" when none were built.
+  // What an observation says about the page's tools.
+  //
+  // READ AT CALL TIME from what this turn actually holds. `built`, the page
+  // toolset and the refresher are all filled in below; every call happens
+  // inside a tool's `execute`, long after. Computing it eagerly is what
+  // produced a note that named a verb this turn does not have.
+  //
+  // FROM THE TOOLS THAT EXIST, not from the flags that usually imply them.
+  // `firstClassPageTools && canBindPageTools` is the condition for BUILDING
+  // page tools from a turn-start snapshot — and it is true on a turn that had
+  // no snapshot to build from, where nothing was minted and, without a
+  // refresher, nothing ever will be. That turn was being told its page's
+  // tools were "available to you directly as `webmcp_*` tools", naming tools
+  // it does not have, while the generic verbs it DOES have went unmentioned.
+  //
+  // The refresher owns the advertised set once it exists (it starts from the
+  // minted one), so asking it is the same question asked of whoever can
+  // answer it.
   const presented = (outcome: CommandOutcome & { tabId: string }) =>
     present(outcome, {
-      firstClass: firstClassPageTools && canBindPageTools,
-      dynamic: opts.dynamicPageTools === true && canBindPageTools,
+      advertised:
+        (refresher ? refresher.current().length : page.minted.length) > 0,
+      arriving: refresher !== undefined,
+      dynamic: refresher !== undefined,
+      listVerb: built.includes("browser_webmcp_tools"),
+      invokeVerb: built.includes("browser_webmcp_invoke"),
     });
 
   const tools: ToolSet = {};
@@ -1196,8 +1213,9 @@ export function buildBrowserTools(
     "browser_navigate",
     tool({
       description:
-        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns what the page ` +
-        "looks like after it settles, so you do not need to observe separately.",
+        `Open a URL in ${engineLabel(engine)} (or go back / reload). Returns the page ` +
+        "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
+        "so you do not need to observe separately before acting.",
       inputSchema: z.object({
         url: z
           .string()
@@ -1244,7 +1262,15 @@ export function buildBrowserTools(
               ? { kind: "back" }
               : { kind: "reload" };
         return presented(
-          await send(browserAction, { tabId, signal: abortSignal }),
+          await send(
+            // BOTH, matching `browser_act` and matching what the description
+            // promises. A navigate used to return a screenshot alone, so a
+            // model that wanted to act on what it had just opened had to spend
+            // a whole extra call getting the refs — the round trip refs exist
+            // to remove.
+            { ...browserAction, observe: "both" },
+            { tabId, signal: abortSignal },
+          ),
         );
       },
     }),
@@ -1255,7 +1281,8 @@ export function buildBrowserTools(
     tool({
       description:
         "Interact with the page: click, type, press a key, scroll, hover, drag or select. " +
-        "fill_form fills several fields in one call. " +
+        "fill_form fills several fields in one call. accept_dialog / dismiss_dialog " +
+        "answer a JavaScript dialog that is blocking the page. " +
         "Target by `ref` from the last a11y observation (best: it is the element you read, and a covered one is refused rather than mis-clicked), or by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
         "screenshot. Coordinates are CSS pixels in a " +
@@ -1272,6 +1299,8 @@ export function buildBrowserTools(
           "drag",
           "select",
           "fill_form",
+          "accept_dialog",
+          "dismiss_dialog",
         ]),
         selector: z.string().optional().describe("CSS selector to target."),
         x: z
@@ -1445,11 +1474,18 @@ export function buildBrowserTools(
           .string()
           .optional()
           .describe('With mode "a11y": zoom into a CSS selector instead.'),
+        requestId: z
+          .string()
+          .optional()
+          .describe(
+            'With mode "network": read ONE exchange in full instead of the ' +
+              "tail. Use a requestId the list gave you.",
+          ),
         tabId: z.string().optional(),
       }),
       needsApproval: observationNeedsApproval,
       execute: async (
-        { mode, filter, rootRef, rootSelector, tabId },
+        { mode, filter, rootRef, rootSelector, requestId, tabId },
         { abortSignal },
       ) =>
         presented(
@@ -1460,6 +1496,7 @@ export function buildBrowserTools(
               ...(filter ? { filter } : {}),
               ...(rootRef ? { rootRef } : {}),
               ...(rootSelector ? { rootSelector } : {}),
+              ...(requestId ? { requestId } : {}),
             },
             { tabId, signal: abortSignal },
           ),
@@ -2442,7 +2479,18 @@ function takeScreenshot(rest: Record<string, unknown>): string | undefined {
 
 function present(
   outcome: CommandOutcome & { tabId: string },
-  options: { firstClass?: boolean; dynamic?: boolean } = {},
+  options: {
+    /** Page tools were built, so the model HAS them as `webmcp_*` tools. */
+    advertised?: boolean;
+    /** A refresher will mint them before the next step, if it hasn't yet. */
+    arriving?: boolean;
+    /** That set refreshes between steps, so it can change on a navigation. */
+    dynamic?: boolean;
+    /** `browser_webmcp_tools` was built. */
+    listVerb?: boolean;
+    /** `browser_webmcp_invoke` was built. */
+    invokeVerb?: boolean;
+  } = {},
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
@@ -2460,10 +2508,7 @@ function present(
           note: "the page was still loading when this was captured; observe again if it looks incomplete",
         }
       : {}),
-    ...pageToolsNote(outcome, {
-      firstClass: options.firstClass === true,
-      dynamic: options.dynamic === true,
-    }),
+    ...pageToolsNote(outcome, options),
   };
 }
 
@@ -2492,7 +2537,13 @@ function present(
  */
 function pageToolsNote(
   outcome: CommandOutcome,
-  options: { firstClass: boolean; dynamic: boolean },
+  options: {
+    advertised?: boolean;
+    arriving?: boolean;
+    dynamic?: boolean;
+    listVerb?: boolean;
+    invokeVerb?: boolean;
+  },
 ): Record<string, unknown> {
   const revision = outcome.webmcpTools;
   // NOT GATED ON `firstClass`. Verbs mode has `browser_webmcp_tools` to learn
@@ -2506,14 +2557,44 @@ function pageToolsNote(
       count: revision.count,
       ...(names.length > 0 ? { names } : {}),
     },
-    pageToolsNote: options.dynamic
+    // DERIVED FROM WHAT THIS TURN ACTUALLY BUILT, not from the flag that
+    // usually implies it. The two came apart: page tools are built whenever
+    // the mode is first-class and the daemon can bind them, while `dynamic`
+    // says only whether that set REFRESHES mid-turn — so a non-dynamic turn
+    // was told to call `browser_webmcp_invoke` "using the name listed above",
+    // with the tools sitting in its own toolset and no names listed, because
+    // only the retired listing verb ever carries them.
+    //
+    // THREE STATES, NOT TWO, and the middle one is a real turn: a turn that
+    // started before there was a tab has no snapshot, mints nothing, and gets
+    // a refresher that will add the page's tools on its NEXT step. Told the
+    // first sentence it goes looking for tools that are not in its toolset
+    // yet; told the third it never learns they are coming. So it is told both
+    // where they will be and what reaches them in the meantime — and the
+    // meantime clause names a verb only if this turn kept one.
+    pageToolsNote: options.advertised
       ? "This page's tools are available to you directly as `webmcp_*` tools — " +
-        "call one by name rather than clicking. They change when you navigate."
-      : options.firstClass
-        ? "This page offers WebMCP tools. Call one with `browser_webmcp_invoke`, " +
-          "using the name listed above."
-        : "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
-          "then call one with `browser_webmcp_invoke`.",
+        "call one by name rather than clicking." +
+        (options.dynamic ? " They change when you navigate." : "")
+      : options.arriving
+        ? "This page's tools will appear as `webmcp_*` tools on your next " +
+          "step." +
+          (options.invokeVerb
+            ? " Until then, call one with `browser_webmcp_invoke`" +
+              (options.listVerb
+                ? " — `browser_webmcp_tools` lists their names."
+                : ".")
+            : "")
+        : options.listVerb
+          ? "This page offers WebMCP tools. List them with `browser_webmcp_tools`, " +
+            "then call one with `browser_webmcp_invoke`."
+          : options.invokeVerb && names.length > 0
+            ? "This page offers WebMCP tools. Call one with " +
+              "`browser_webmcp_invoke`, using a name listed above."
+            : // Nothing this toolset can reach them with. Said plainly rather
+              // than pointing at a verb that is not here.
+              "This page offers WebMCP tools, but none of this browser's tools " +
+              "can reach them; interact with the page itself instead.",
   };
 }
 
