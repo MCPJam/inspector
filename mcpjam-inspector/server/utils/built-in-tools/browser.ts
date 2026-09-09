@@ -137,6 +137,16 @@ export interface BrowserToolsOptions {
   projectId: string;
   executionScope?: ExecutionScope;
   /**
+   * The host's Tool Approval switch.
+   *
+   * Threaded like `bash` threads it, and read for the same reason: this family
+   * follows the user's setting rather than overruling it. Absent counts as
+   * off, so a caller that never had a switch to thread gets the same answer it
+   * did before this option existed — and an UNATTENDED run ignores it either
+   * way, because its floor is `never` (nobody to ask).
+   */
+  requireToolApproval?: boolean;
+  /**
    * Where L3 tokens live BETWEEN requests, so an act that paused for approval
    * is still pinned when it resumes. Defaults to the process-wide one;
    * injected by tests, which otherwise inherit each other's tokens through it.
@@ -991,24 +1001,39 @@ export function buildBrowserTools(
     return undefined;
   }
 
-  // Floors, one per shape of run. Local is forced to ask, exactly as `bash` is
-  // — the browser is driving a real, signed-in Chromium on someone's own
-  // machine, where the blast radius of an unreviewed click is their accounts
-  // rather than a disposable box. An attested (interactive) run has someone to
-  // ask, so it always does. What is left is an unattended run on a disposable
-  // box: nobody to ask, so the declared policy is the answer, and the
-  // interactive tools it might have freed were never built (see `names`).
+  // Floors, one per shape of run.
   //
-  // NOT the switch, on any branch: `requireToolApproval` cannot lower a floor,
-  // and there is no reading of this family where it should.
+  // A run with SOMEBODY TO ASK — an attested interactive turn, or the local
+  // engine driving a real signed-in Chromium on someone's own machine — asks
+  // when the user's switch says to. It used to ask unconditionally, and that
+  // made "Tool Approval: off" untrue for the most common thing anyone does
+  // here: opening a page. The blast radius argument was real, but it is an
+  // argument for what to DEFAULT to, not for overruling a person who has just
+  // told this host what they want.
+  //
+  // An UNATTENDED run keeps `never`, and that is not the switch being ignored
+  // — there is nobody to ask, so a gate would hang the run rather than protect
+  // it. The declared `toolPolicy` is the answer instead, and the interactive
+  // tools it might have freed were never built (see `names`).
+  //
+  // ON DELIVERY ALONE, not on the engine. An unattended run uses the LOCAL
+  // engine (a throwaway Chromium keyed per run), so an `|| engine === "local"`
+  // here would put every unattended local run back on the switch — and a host
+  // config with approval on would then hang each eval iteration against a pill
+  // nobody can click. The engine says whose machine it is; only the delivery
+  // says whether anyone is there to ask.
   const interactiveFloor: ApprovalFloor =
-    delivery.kind === "attested" || engine === "local" ? "always" : "never";
+    delivery.kind === "attested" ? "setting" : "never";
   // Observation is the one thing a read-only policy may free, and only there:
   // a policy cannot make clicking a button on a live logged-in page safe, but
   // it can say this run only looks.
   const observationFloor: ApprovalFloor = readOnly ? "never" : interactiveFloor;
-  const needsApproval = needsApprovalFor(interactiveFloor, false);
-  const observationNeedsApproval = needsApprovalFor(observationFloor, false);
+  const requireToolApproval = opts.requireToolApproval === true;
+  const needsApproval = needsApprovalFor(interactiveFloor, requireToolApproval);
+  const observationNeedsApproval = needsApprovalFor(
+    observationFloor,
+    requireToolApproval,
+  );
 
   /**
    * The tab the model is actually working in.
