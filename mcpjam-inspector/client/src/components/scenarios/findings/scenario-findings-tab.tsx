@@ -72,6 +72,12 @@ export function ScenarioFindingsTab({
     [drilldown]
   );
 
+  // A User Testing goal is a cluster, and the list must carry the same
+  // hide-synthetic policy as the count that opened it.
+  const sessionScope = useMemo(
+    () => ({ kind: "scenario", scenarioId, filters }) as const,
+    [scenarioId, filters]
+  );
   const summary = useMemo(
     () => composeScenarioFindingsSummary(model),
     [model]
@@ -186,6 +192,7 @@ export function ScenarioFindingsTab({
             : undefined
         }
         onOpenSession={onOpenSession}
+        sessionScope={sessionScope}
       />
     </div>
   );
