@@ -7,7 +7,7 @@
  *   - SCENARIO scope starts the first analysis on open, and tells the diagram
  *     that a missing run means work in progress rather than a button to find.
  *   - SWARM scope does not. It already auto-queues when a run settles
- *     (`journeyRuns.recomputeRunSummaries`), so a swarm with no run is a
+ *     (journeyRuns.ts, on first settle), so a swarm with no run is a
  *     different story from an unanalyzed scenario.
  *   - BENCHMARK scope does not. Its flow analysis is the one PAID call here,
  *     an action rather than a mutation, designed to wait to be asked.

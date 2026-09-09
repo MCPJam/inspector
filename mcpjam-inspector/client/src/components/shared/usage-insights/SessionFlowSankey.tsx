@@ -40,14 +40,12 @@ interface SessionFlowSankeyProps {
     opts?: { force?: boolean },
   ) => void;
   /**
-   * This surface starts its own analysis, so the ABSENCE of a run is a run
-   * being arranged rather than a request waiting to be made (BB-196). It
-   * changes what "no analysis yet" is allowed to say: a working state, never
-   * an "Analyze sessions" button the user has to find.
+   * This surface starts its own analysis, so a MISSING run means one is being
+   * arranged rather than waiting to be asked for (BB-196) — a working state,
+   * not an "Analyze sessions" button.
    *
-   * Off by default, because it is a promise the OWNER has to keep — the
-   * benchmark diagram deliberately waits to be asked, and a surface that
-   * claimed this without queueing anything would show a spinner forever.
+   * Off by default: it is a promise the owner has to keep, and a surface that
+   * claimed it without queueing anything would spin forever.
    */
   analysisIsAutomatic?: boolean;
   /** False for scopes with no topic map, where link distance means nothing. */
@@ -326,11 +324,9 @@ export function SessionFlowSankey({
       {/* One analysis banner at a time, most-live state first: a rebuild in
           flight beats advertising the button that starts one, and
           never-analyzed beats the old-signals nudge (which requires a run to
-          exist at all).
-          On a self-analyzing surface the never-analyzed branch below is
-          unreachable — `analysisInFlight` absorbs a missing run — which is
-          how the Analyze sessions button stops being a required first step
-          without being deleted from the surfaces that still need it. */}
+          exist at all). On a self-analyzing surface `analysisInFlight` absorbs
+          a missing run, so the never-analyzed branch below is unreachable
+          there but still serves the surfaces that wait to be asked. */}
       {analysisInFlight ? (
         <div
           role="status"

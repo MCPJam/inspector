@@ -214,20 +214,14 @@ export function InsightsWorkbench({
   );
 
   /**
-   * User Testing analyzes itself (BB-196): a scenario with sessions and no
-   * analysis starts one on open, so the surface never asks for a click it
-   * could make itself.
+   * User Testing analyzes itself (BB-196).
    *
-   * Keyed on the scope rather than taken as a prop because the client rule
-   * MIRRORS a backend one — `scenarioWindowFreshness`'s first-analysis fast
-   * path — and the scope is the same fact both are keyed on. Two ways to say
-   * it would let a caller turn off half of a guarantee.
-   *
-   * The other two scopes are deliberately excluded. Swarms already auto-queue
-   * when a run settles (`journeyRuns.recomputeRunSummaries`), so a swarm with
-   * no run has a different story than an unanalyzed scenario. And the
-   * benchmark flow is the one PAID analysis here — an action, not a mutation —
-   * whose whole design is to wait to be asked.
+   * Keyed on the scope, not a prop: this mirrors a backend rule keyed on the
+   * same fact (`scenarioWindowFreshness`'s first-analysis fast path), and two
+   * ways to say it would let a caller turn off half of a guarantee. Swarms are
+   * excluded because a settling run already queues theirs (journeyRuns.ts);
+   * the benchmark flow because it is the one paid analysis and waits to be
+   * asked.
    */
   const scopeAnalyzesItself = scope?.kind === "scenario";
   const { failed: firstAnalysisRefused } = useEnsureFirstAnalysis({
@@ -236,15 +230,9 @@ export function InsightsWorkbench({
     breakdown,
     rebuild,
   });
-  /**
-   * A refused start WITHDRAWS the promise, handing the manual affordance back.
-   *
-   * `analysisIsAutomatic` makes the diagram read a missing run as work in
-   * progress and hide the rebuild button. If the start was refused there will
-   * never be a run, so keeping the promise would leave the viewer watching a
-   * spinner with the one control that could fix it hidden behind it — worst of
-   * all for the signed-out guest the rebuild mutation always refuses.
-   */
+  // A refused start withdraws the promise: with no run ever coming, keeping it
+  // would leave the viewer watching a spinner with the only control that could
+  // fix it hidden behind it.
   const analysisIsAutomatic = scopeAnalyzesItself && !firstAnalysisRefused;
 
   const { setView } = flow;

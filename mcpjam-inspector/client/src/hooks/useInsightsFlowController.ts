@@ -258,40 +258,31 @@ export function useInsightsRebuild(rebuild: RebuildFn, cohortKey: string) {
  * analyzed, so no surface presents "analyze this" as a required first step
  * (BB-196).
  *
- * ONE SHOT PER COHORT, and only from a standing start: it fires when there is
- * NO analysis at all and never to refresh one that exists. Staleness is the
- * backend's to judge — its idle rebuild runs on a clock that knows when a
- * session's outcome became assertable, which a mount cannot know. Same
- * discipline as the workbench's topic-map backfill.
+ * One attempt per cohort, and only from a standing start — never to refresh an
+ * analysis that exists. Staleness is the backend's to judge, on a clock that
+ * knows when a session's outcome became assertable; a mount knows nothing
+ * about that.
  *
- * Racing is fine and expected. The scenario's own backend fast path queues the
- * same analysis minutes after its testers stop, and two tabs may mount at
- * once; the rebuild mutation's in-flight guard coalesces all of them into a
- * single job. The ref is hygiene for the window before Convex reflects the
- * queued run.
- *
- * Deliberately NOT routed through {@link useInsightsRebuild}: that hook toasts
- * the result, and nobody asked for this one — a toast would report an outcome
- * for an action the user did not take.
+ * Racing is fine: the backend fast path queues the same analysis minutes after
+ * the testers stop, and the rebuild mutation's in-flight guard coalesces that,
+ * this, and any other tab into a single job.
  *
  * Returns `failed` when the start was REFUSED, which the caller must use to
- * stop promising that this surface analyzes itself. Without that, a rejection
- * strands the viewer: `latestRun` stays null forever, the diagram keeps saying
- * "Analyzing sessions", and the state that hides the manual rebuild is the
- * state that can no longer recover on its own.
+ * stop promising that the surface analyzes itself — otherwise `latestRun`
+ * stays null forever while the diagram says "Analyzing sessions" and hides the
+ * manual rebuild. Not a rare path: `rebuildScenarioInsights` authenticates, so
+ * a signed-out guest on a shared scenario link is refused every time, and
+ * guests do reach this surface.
  *
- * That is not a rare path. `rebuildScenarioInsights` authenticates, so a
- * SIGNED-OUT GUEST on a shared scenario link is refused every time — and
- * guests can read window signals, so they do reach this surface.
+ * A refused cohort is therefore never retried — handing the button back is the
+ * recovery, and it reports its own outcome because the manual path toasts. Note
+ * this is the OPPOSITE policy to the topic-map backfill in `InsightsWorkbench`,
+ * which releases its latch and is gated on an opt-in prop. That one retries a
+ * cheap map rebuild on a run that already succeeded; this one starts a paid
+ * analysis whose refusals are systemic. Do not align them by reflex.
  *
- * The latch is kept SET on failure rather than released. Releasing it would
- * re-attempt on the next breakdown push, and the refusal above is precisely
- * the kind that will refuse again; a bounded retry would spend attempts to
- * arrive at the same place. Handing the button back is the recovery, and it
- * reports its own outcome because the manual path toasts.
- *
- * Shared rather than inlined in the workbench so a second User Testing surface
- * — the Findings tab — can adopt the same rule with one call.
+ * Not routed through {@link useInsightsRebuild}: that hook toasts, and nobody
+ * asked for this one.
  */
 export function useEnsureFirstAnalysis({
   enabled,
@@ -301,33 +292,49 @@ export function useEnsureFirstAnalysis({
 }: {
   /** False on surfaces whose analysis must stay explicitly requested. */
   enabled: boolean;
-  /** Identity of the cohort; the one-shot latch is per cohort. */
+  /** Identity of the cohort; attempts and refusals are tracked per cohort. */
   cohortKey: string;
   breakdown: UsageBreakdown | null | undefined;
   rebuild: RebuildFn;
 }): { failed: boolean } {
-  const startedKeyRef = useRef<string | null>(null);
+  /**
+   * Every cohort attempted, not just the last one. A single key could only
+   * remember the most recent cohort, so leaving a refused scenario and coming
+   * back passed the guard and re-queued it — silently, while `failed` was
+   * still presenting the manual button that says it will not.
+   */
+  const attemptedKeysRef = useRef<Set<string>>(new Set());
   // State, not a ref: the caller has to re-render to withdraw the promise.
-  const [failedKey, setFailedKey] = useState<string | null>(null);
+  const [failedKeys, setFailedKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   useEffect(() => {
     if (!enabled) return;
     // `undefined` is the first subscription, not an answer. Acting on it would
     // queue an analysis for every cohort the user merely passes through.
     if (!breakdown) return;
-    // Absent is not zero — a backend that does not report the count is not a
-    // cohort with no sessions. Only an explicit zero means there is nothing
-    // here to analyze.
+    // Typed `number`, but it crosses an `as any` Convex boundary, so an absent
+    // count is reachable at runtime — and absent means unknown, not empty.
+    // Only an explicit zero says there is nothing here to analyze.
     if (breakdown.totalSessions === 0) return;
     if (breakdown.latestRun) return;
-    if (startedKeyRef.current === cohortKey) return;
-    startedKeyRef.current = cohortKey;
-    void rebuild().catch(() => {
-      setFailedKey(cohortKey);
+    if (attemptedKeysRef.current.has(cohortKey)) return;
+    attemptedKeysRef.current.add(cohortKey);
+    void rebuild().catch((error: unknown) => {
+      // Logged, unlike the neighbouring backfill: this starts a paid pass
+      // nobody asked for, so a systemic refusal (quota, backend down) must
+      // leave a trace somewhere rather than only turning a spinner into a
+      // button.
+      console.warn(
+        `[insights] automatic first analysis refused for ${cohortKey}`,
+        error,
+      );
+      setFailedKeys((prev) => new Set(prev).add(cohortKey));
     });
   }, [enabled, breakdown, cohortKey, rebuild]);
 
   // Keyed on the cohort rather than reset by an effect, so switching scenarios
   // cannot show one scenario's refusal against another's data for a frame.
-  return { failed: failedKey === cohortKey };
+  return { failed: failedKeys.has(cohortKey) };
 }

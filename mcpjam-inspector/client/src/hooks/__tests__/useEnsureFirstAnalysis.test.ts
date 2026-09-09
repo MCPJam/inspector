@@ -160,6 +160,31 @@ describe("useEnsureFirstAnalysis", () => {
     expect(view.result.current.failed).toBe(true);
   });
 
+  it("does not re-attempt a refused cohort when the user returns to it", async () => {
+    // The single-key latch could only remember the LAST cohort. Go to a
+    // refused scenario, leave, come back, and the guard passed again — so the
+    // hook re-queued in the background while `failed` was still presenting the
+    // manual button that says it will not.
+    const rebuild = vi.fn().mockRejectedValue(REFUSED);
+    const props = {
+      enabled: true,
+      cohortKey: "scenario-1",
+      breakdown: breakdown(),
+      rebuild,
+    };
+    const view = renderHook((p: typeof props) => useEnsureFirstAnalysis(p), {
+      initialProps: props,
+    });
+    await waitFor(() => expect(view.result.current.failed).toBe(true));
+
+    view.rerender({ ...props, cohortKey: "scenario-2" });
+    await waitFor(() => expect(rebuild).toHaveBeenCalledTimes(2));
+
+    view.rerender({ ...props, cohortKey: "scenario-1" });
+    expect(rebuild).toHaveBeenCalledTimes(2);
+    expect(view.result.current.failed).toBe(true);
+  });
+
   it("does not carry one cohort's refusal over to the next", async () => {
     const rebuild = vi
       .fn()
