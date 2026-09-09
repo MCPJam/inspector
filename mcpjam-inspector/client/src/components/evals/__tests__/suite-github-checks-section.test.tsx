@@ -7,13 +7,15 @@ const {
   mockRepos,
   mockBindings,
   mockConnectRepo,
+  mockSetRepoForkCredentials,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockNavigate,
   mockToast,
 } = vi.hoisted(() => ({
   mockAvailability: {
-    value: undefined as { state: "enabled" | "disabled" } | undefined,
+    value: undefined as
+      { state: "enabled" | "disabled"; canManage?: boolean } | undefined,
   },
   mockRepos: { value: undefined as any[] | undefined },
   // The org's installations, on a live query. What the listing below is a
@@ -22,6 +24,9 @@ const {
   // The unverified connect the backend still exposes for the two-deploy
   // window. Handed to the component so that reaching for it is a recorded
   // call rather than a crash — "never called" is the assertion.
+  mockSetRepoForkCredentials: vi.fn(async (_args?: unknown) => ({
+    changed: true,
+  })),
   mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
   // Loosely typed for the same reason as the settings-route suite: these stand
   // in for Convex actions whose arguments are hand-mirrored, and a narrow
@@ -56,6 +61,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     repos: mockRepos.value,
     bindings: mockBindings.value,
     connectRepo: mockConnectRepo,
+    setRepoForkCredentials: mockSetRepoForkCredentials,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     listInstallationRepos: mockListInstallationRepos,
   }),
@@ -84,7 +90,8 @@ const CONNECTED_ELSEWHERE = {
 
 function renderSection(
   opts: {
-    availability?: { state: "enabled" | "disabled" } | undefined;
+    availability?:
+      { state: "enabled" | "disabled"; canManage?: boolean } | undefined;
     repos?: any[] | undefined;
   } = {},
 ) {
@@ -468,4 +475,30 @@ describe("SuiteGithubChecksSection binding changes", () => {
 
     expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
   });
+});
+
+it("the suite section edits the same repository credential policy", async () => {
+  renderSection({
+    availability: { state: "enabled", canManage: true },
+    repos: [{ ...CONNECTED_HERE, connectionStatus: "verified" }],
+  });
+  const toggle = screen.getByRole("switch", {
+    name: /Allow suite credentials in approved forks/,
+  });
+  expect(toggle).not.toBeChecked();
+  await userEvent.setup().click(toggle);
+  expect(mockSetRepoForkCredentials).toHaveBeenCalledWith({
+    configId: CONNECTED_HERE._id,
+    enabled: true,
+  });
+});
+
+it("the suite section keeps credential controls disabled for a member", () => {
+  renderSection({
+    availability: { state: "enabled", canManage: false },
+    repos: [{ ...CONNECTED_HERE, connectionStatus: "verified" }],
+  });
+  expect(
+    screen.getByRole("switch", { name: /Allow suite credentials/ }),
+  ).toBeDisabled();
 });

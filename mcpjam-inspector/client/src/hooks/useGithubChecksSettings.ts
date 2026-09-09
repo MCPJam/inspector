@@ -47,7 +47,7 @@ import { useIsMemberActor } from "@/hooks/use-is-member-actor";
  * would bounce a legitimately-flagged user who cold-loads the URL directly.
  */
 export type GithubChecksAvailability =
-  { state: "enabled" | "disabled" } | undefined;
+  { state: "enabled" | "disabled"; canManage?: boolean } | undefined;
 
 /**
  * What the check concludes when MCPJam cannot run the suite — an outage, or a
@@ -188,6 +188,7 @@ export type GithubCheckRepoConfigRow = {
    * not silently add a required MCPJam Conformance check.
    */
   conformanceEnabled?: boolean;
+  allowSuiteCredentialsInForks?: boolean;
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
   /**
    * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
@@ -322,6 +323,16 @@ export function useGithubChecksSettings(
   );
   const setRepoOutagePolicyMutation = useMutation(
     "github/checkRepoConfigs:setRepoOutagePolicy" as any,
+  );
+  const setRepoForkCredentialsMutation = useMutation(
+    "github/checkRepoConfigs:setRepoForkCredentials" as any,
+  );
+  const setRepoForkCredentials = useCallback(
+    (args: { configId: string; enabled: boolean }) =>
+      setRepoForkCredentialsMutation({ organizationId, ...args }) as Promise<{
+        changed: boolean;
+      }>,
+    [organizationId, setRepoForkCredentialsMutation],
   );
   const setRepoConformanceMutation = useMutation(
     "github/checkRepoConfigs:setRepoConformance" as any,
@@ -503,6 +514,7 @@ export function useGithubChecksSettings(
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoForkCredentials,
     setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
